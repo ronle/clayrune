@@ -851,6 +851,7 @@
     color: var(--text); font-weight: 500; background: #1a2234;
     margin: 6px -8px; padding: 8px 10px; border-radius: 5px; border-left: 3px solid var(--accent);
     -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    white-space: pre-wrap;
   }
 
   /* Rich text formatting for agent output */
@@ -2921,7 +2922,7 @@ function agentPanelHTML(p) {
   let tabContent = '';
   if (activeSession && activeSessionId) {
     const outputLines = (() => {
-      const buf = (agentOutputBuffers[activeSessionId] || []).flatMap(l => l.split('\n'));
+      const buf = (agentOutputBuffers[activeSessionId] || []).flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n'));
       let result = '';
       let tableLines = [];
       let planBlock = '';   // accumulates non-tool lines for plan detection
@@ -3429,7 +3430,8 @@ function appendAgentLine(sessionId, text) {
   el.style.display = 'block';
 
   // Split multi-line text blocks into individual lines
-  if (text.includes('\n')) {
+  // But keep user prompts (> ) as a single block so styling covers all lines
+  if (text.includes('\n') && !text.trimStart().startsWith('> ')) {
     for (const line of text.split('\n')) {
       appendAgentLine(sessionId, line);
     }
@@ -3902,7 +3904,7 @@ function renderAgentConsole() {
 
   body.innerHTML = agentHistory.map(h => {
     const isOpen = acOpenSessions.has(h.sessionId);
-    const lines = (agentOutputBuffers[h.sessionId] || []).flatMap(l => l.split('\n'));
+    const lines = (agentOutputBuffers[h.sessionId] || []).flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n'));
     const outputHTML = (() => {
       let result = '';
       let tableLines = [];
@@ -4651,7 +4653,7 @@ function openPlanViewer(sessionId) {
   const taskTitle = cached ? (cached.task || '').substring(0, 80) : 'Agent Output';
 
   // Render lines with rich formatting (same logic as outputLines builder)
-  const flatLines = lines.flatMap(l => l.split('\n'));
+  const flatLines = lines.flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n'));
   let bodyHTML = '';
   let tableLines = [];
   function flushTable() {
