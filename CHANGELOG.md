@@ -1,5 +1,37 @@
 # Mission Control — Changelog
 
+## [2026-03-16d] — Full-height agent chat + performance overhaul
+
+### Full-height agent chat
+- Agent chat now fills the entire modal window height instead of fixed 450px
+- `sizeAgentChat()` calculates available height dynamically and sets explicit pixel height
+- ResizeObserver on modal content triggers re-sizing on window/modal resize
+- Chat opens scrolled to the bottom showing latest messages
+- 8px buffer between input area and modal bottom edge
+
+### Draggable separator
+- Replaced counter-intuitive bottom-corner resize handle with a draggable separator bar
+- Separator sits between output and input areas — drag up/down to resize input
+- Visual indicator (thin bar) with hover highlight
+
+### Follow-up performance — non-blocking sends
+- `sendFollowup()` is now fire-and-forget — no `await`, no `refreshModal()` call
+- Local echo: user message appears instantly in DOM (`.agent-echo` class) before API responds
+- Echo removed when server's version arrives via SSE (deduplication)
+- Lightweight `updateAgentStatusUI()` replaces full modal rebuild for status changes
+
+### Server-side performance
+- Flask runs with `threaded=True` — SSE streams no longer block other requests
+- Follow-up subprocess spawned in background thread — endpoint returns immediately
+- SSE `since` parameter prevents replay of all historical lines on reconnect
+
+### Long-running session optimizations
+- DOM preservation in `refreshModalById()` — agent output element detached before `innerHTML` wipe, reattached after rebuild
+- `_skipAgentOutput` flag skips expensive output line processing during preserved rebuilds
+- Agent output DOM limited to 500 lines in modal, 200 in console tile, with "click to load all" button
+- `agentOutputBuffers` capped at 2000 entries (trimmed to 1500 when exceeded)
+- `renderAgentConsole()` optimized: skips line processing when panel is closed, efficient reverse-loop for lastTool
+
 ## [2026-03-16c] — Use Claude's native MEMORY.md for project memory
 
 ### Native memory integration

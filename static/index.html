@@ -670,10 +670,13 @@
   .att-uploading { color: var(--text-faint); font-size: 12px; text-align: center; padding: 6px; }
 
   /* ── AGENT PANEL ─────────────────────────────────────────────── */
-  .agent-panel { padding: 16px 18px 16px 22px; border-bottom: 1px solid var(--border); }
+  .agent-panel {
+    padding: 16px 18px 16px 22px;
+    display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden;
+  }
   .agent-panel-header {
     display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
-    user-select: none;
+    user-select: none; flex-shrink: 0;
   }
   .agent-panel-header .section-title { margin-bottom: 0; flex: 1; }
   .agent-status-dot {
@@ -704,7 +707,7 @@
   /* Tab bar */
   .agent-tab-bar {
     display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap;
-    align-items: center;
+    align-items: center; flex-shrink: 0;
   }
   .agent-tab {
     display: flex; align-items: center; gap: 5px;
@@ -740,8 +743,8 @@
   .agent-task-input {
     flex: 1; background: var(--bg); border: 1px solid var(--border);
     color: var(--text); font-family: 'Inter', sans-serif; font-size: 13px;
-    padding: 8px 12px; border-radius: 5px; outline: none; resize: vertical;
-    min-height: 38px; max-height: 120px; line-height: 1.5;
+    padding: 8px 12px; border-radius: 5px; outline: none; resize: none;
+    min-height: 38px; line-height: 1.5;
     transition: border-color 0.15s;
   }
   .agent-task-input:focus { border-color: var(--accent); }
@@ -811,28 +814,28 @@
 
   .agent-chat {
     background: #0a0c10; border: 1px solid var(--border); border-radius: 6px;
-    display: flex; flex-direction: column; height: 450px; margin-bottom: 10px;
-    min-height: 120px; max-height: 80vh; position: relative;
+    display: flex; flex-direction: column;
+    position: relative; overflow: hidden;
   }
-  .agent-chat-resize {
-    position: absolute; bottom: -4px; left: 0; right: 0; height: 8px;
-    cursor: ns-resize; z-index: 5;
+  .agent-chat-separator {
+    flex-shrink: 0; height: 6px; cursor: ns-resize;
+    display: flex; align-items: center; justify-content: center;
+    border-top: 1px solid var(--border); user-select: none;
   }
-  .agent-chat-resize::after {
-    content: ''; position: absolute; left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
-    width: 32px; height: 3px; border-radius: 2px;
+  .agent-chat-separator::after {
+    content: ''; width: 32px; height: 2px; border-radius: 2px;
     background: var(--border); transition: background 0.15s;
   }
-  .agent-chat-resize:hover::after { background: var(--accent); }
+  .agent-chat-separator:hover::after { background: var(--accent); }
   .agent-output {
-    flex: 1; overflow-y: auto; overflow-x: hidden; padding: 12px;
+    flex: 1; min-height: 0;
+    overflow-y: auto; overflow-x: hidden; padding: 12px;
     font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6;
     color: #e2e8f0; white-space: pre-wrap; word-break: break-word; min-width: 0;
   }
   .agent-output:empty { display: none; }
   .agent-chat-input {
-    flex-shrink: 0; border-top: 1px solid var(--border); padding: 8px 10px;
+    flex-shrink: 0; padding: 8px 10px;
   }
   .agent-chat-input-row { display: flex; gap: 8px; }
   .agent-chat-input-row .agent-task-input {
@@ -1561,6 +1564,7 @@ let modalSearchQuery = {};  // projectId → search filter string
 let openAttPanels = new Set();
 let undoStack = [];  // [{type, projectId, itemId, data, label}]
 let modalActiveTab = {};  // projectId → 'backlog' | 'agent' | 'agent-log' | 'activity'
+let textareaHeights = {}; // textarea id → height string (persists user resize across refreshes)
 let refreshCountdown = 30;
 let refreshInterval, countdownInterval;
 let lastDragEnd = 0;
@@ -1923,6 +1927,7 @@ function modalContentHTML(p) {
       <div class="modal-tab ${activeTab==='activity'?'active':''}" onclick="switchModalTab('${esc(p.id)}','activity')">Activity</div>
       <div class="modal-tab ${activeTab==='skills'?'active':''}" onclick="switchModalTab('${esc(p.id)}','skills')">Skills</div>
       <div class="modal-tab ${activeTab==='memory'?'active':''}" onclick="switchModalTab('${esc(p.id)}','memory')">Memory</div>
+      <div class="modal-tab ${activeTab==='rules'?'active':''}" onclick="switchModalTab('${esc(p.id)}','rules')">Rules</div>
       ${activeTab !== 'agent' ? `<div class="modal-tab-search">
         <input type="text" id="tab-search-${esc(p.id)}" placeholder="Filter..."
           value="${esc(modalSearchQuery[p.id] || '')}"
@@ -1960,7 +1965,6 @@ function modalContentHTML(p) {
       </div>
       <div class="modal-tab-content ${activeTab==='agent'?'active':''}" data-tab="agent">
         ${agentPanelHTML(p)}
-        ${rulesPanelHTML(p)}
       </div>
       <div class="modal-tab-content ${activeTab==='agent-log'?'active':''}" data-tab="agent-log">
         ${agentLogPanelHTML(p)}
@@ -1976,6 +1980,9 @@ function modalContentHTML(p) {
       </div>
       <div class="modal-tab-content ${activeTab==='memory'?'active':''}" data-tab="memory">
         ${memoryTabHTML(p)}
+      </div>
+      <div class="modal-tab-content ${activeTab==='rules'?'active':''}" data-tab="rules">
+        ${rulesTabHTML(p)}
       </div>
     </div>`;
 }
@@ -2043,6 +2050,16 @@ function openProjectModal(projectId) {
   centerModalElement(win);
   focusModal(projectId);
   fetchAgentStatus(projectId).then(() => refreshModalById(projectId));
+
+  // Re-size agent chat when modal is resized
+  new ResizeObserver(() => {
+    const entry = openModals.get(projectId);
+    if (!entry || entry.minimized) return;
+    const sid = activeAgentTab[projectId];
+    if (sid && (modalActiveTab[projectId] || 'agent') === 'agent') {
+      sizeAgentChat(entry.element, sid);
+    }
+  }).observe(content);
 }
 
 function closeModalById(modalId) {
@@ -2226,6 +2243,39 @@ function restoreModal(modalId) {
   focusModal(modalId);
 }
 
+function sizeAgentChat(win, sessionId) {
+  const scrollBody = win.querySelector('.modal-scroll-body');
+  const chat = win.querySelector('.agent-chat');
+  const out = document.getElementById(`agent-output-${sessionId}`);
+  if (!scrollBody || !chat) return;
+  scrollBody.style.overflow = 'hidden';
+  const available = scrollBody.clientHeight;
+  const panel = chat.parentElement;
+  let used = 0;
+  for (const child of panel.children) {
+    if (child !== chat) used += child.offsetHeight;
+  }
+  const panelStyle = getComputedStyle(panel);
+  used += parseFloat(panelStyle.paddingTop) + parseFloat(panelStyle.paddingBottom);
+  const chatHeight = Math.max(120, available - used - 8);
+  chat.style.height = chatHeight + 'px';
+  if (out) {
+    out.scrollTop = out.scrollHeight;
+    requestAnimationFrame(() => { out.scrollTop = out.scrollHeight; });
+  }
+}
+
+function updateAgentStatusUI(sessionId, status) {
+  // Update status dot and label without rebuilding the modal
+  const dot = document.querySelector(`#session-metrics-${CSS.escape(sessionId)}`)?.closest('.agent-panel')?.querySelector('.agent-status-dot');
+  const label = document.querySelector(`#session-metrics-${CSS.escape(sessionId)}`)?.closest('.agent-panel')?.querySelector('.agent-status-label');
+  if (dot) { dot.className = `agent-status-dot ${status}`; }
+  if (label) { label.className = `agent-status-label ${status}`; label.textContent = status; }
+  // Also update the session tab dot
+  const tabDot = document.querySelector(`.agent-tab.active .agent-status-dot`);
+  if (tabDot) { tabDot.className = `agent-status-dot ${status}`; }
+}
+
 function refreshModalById(modalId) {
   const entry = openModals.get(modalId);
   if (!entry || entry.minimized) return;
@@ -2239,41 +2289,72 @@ function refreshModalById(modalId) {
   let focusedId = null, selStart = 0, selEnd = 0;
   content.querySelectorAll('textarea, input[type="text"]').forEach(ta => {
     if (ta.id && ta.value) saved[ta.id] = ta.value;
+    if (ta.id && ta.tagName === 'TEXTAREA' && ta.offsetHeight > 50) {
+      textareaHeights[ta.id] = ta.offsetHeight + 'px';
+    }
     if (ta === document.activeElement) {
       focusedId = ta.id;
       selStart = ta.selectionStart;
       selEnd = ta.selectionEnd;
     }
   });
+
+  // Preserve existing agent output DOM to avoid expensive re-render
+  const sid = activeAgentTab[entry.projectId];
+  const curTab = modalActiveTab[entry.projectId] || 'agent';
+  let savedOutput = null, savedOutputScroll = 0, savedChatHeight = null;
+  if (sid && curTab === 'agent') {
+    const existingOutput = document.getElementById(`agent-output-${sid}`);
+    if (existingOutput && existingOutput.children.length > 0) {
+      savedOutputScroll = existingOutput.scrollTop;
+      const chat = existingOutput.closest('.agent-chat');
+      if (chat) savedChatHeight = chat.style.height;
+      existingOutput.remove();  // detach from DOM before innerHTML wipe
+      savedOutput = existingOutput;
+    }
+  }
+
+  _skipAgentOutput = !!savedOutput;
   content.innerHTML = modalContentHTML(p);
+  _skipAgentOutput = false;
+
+  // Re-attach preserved agent output (replacing the freshly rendered empty one)
+  if (savedOutput) {
+    const newOutput = document.getElementById(`agent-output-${sid}`);
+    if (newOutput) {
+      newOutput.replaceWith(savedOutput);
+      savedOutput.scrollTop = savedOutputScroll;
+      if (savedChatHeight) {
+        const chat = savedOutput.closest('.agent-chat');
+        if (chat) chat.style.height = savedChatHeight;
+      }
+    }
+  }
+
   for (const [id, val] of Object.entries(saved)) {
     const el = document.getElementById(id);
     if (el) el.value = val;
   }
-  // Restore focus and cursor position
+  for (const [id, h] of Object.entries(textareaHeights)) {
+    const el = document.getElementById(id);
+    if (el) el.style.height = h;
+  }
   if (focusedId) {
     const el = document.getElementById(focusedId);
     if (el) { el.focus(); el.selectionStart = selStart; el.selectionEnd = selEnd; }
   }
-  // Restore scroll position
   const newScrollBody = content.querySelector('.modal-scroll-body');
   if (newScrollBody) newScrollBody.scrollTop = savedScroll;
-  // Auto-size name input
   const nameInput = content.querySelector('.name-edit');
   if (nameInput) autoSizeNameInput(nameInput);
-  // Scroll agent output to bottom
-  const sid = activeAgentTab[entry.projectId];
-  if (sid) {
-    const out = document.getElementById(`agent-output-${sid}`);
-    if (out) out.scrollTop = out.scrollHeight;
+  if (sid && curTab === 'agent') {
+    sizeAgentChat(entry.element, sid);
   }
-  // Reapply per-modal zoom level
   if (modalZoomLevels[modalId]) {
     entry.element.querySelectorAll('.agent-output, .ac-session-output, .plan-viewer-body').forEach(el => {
       el.style.fontSize = modalZoomLevels[modalId] + 'px';
     });
   }
-  // Reapply tab search filter
   if (modalSearchQuery[entry.projectId]) {
     applyTabFilter(entry.projectId);
   }
@@ -2862,6 +2943,8 @@ function getProjectSessions(projectId) {
   return agentHistory.filter(h => h.projectId === projectId);
 }
 
+let _skipAgentOutput = false;  // set by refreshModalById to skip expensive output rendering
+
 function agentPanelHTML(p) {
   const pp = p.project_path || '';
   if (!pp) {
@@ -2928,8 +3011,12 @@ function agentPanelHTML(p) {
   // Active tab content
   let tabContent = '';
   if (activeSession && activeSessionId) {
-    const outputLines = (() => {
-      const buf = (agentOutputBuffers[activeSessionId] || []).flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n'));
+    const MAX_RENDER_LINES = 500;
+    const outputLines = _skipAgentOutput ? '' : (() => {
+      const fullBuf = (agentOutputBuffers[activeSessionId] || []).flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n'));
+      const forceAll = expandedOutputSessions.has(activeSessionId);
+      const truncated = !forceAll && fullBuf.length > MAX_RENDER_LINES;
+      const buf = truncated ? fullBuf.slice(-MAX_RENDER_LINES) : fullBuf;
       let result = '';
       let tableLines = [];
       let planBlock = '';   // accumulates non-tool lines for plan detection
@@ -2983,6 +3070,9 @@ function agentPanelHTML(p) {
       }
       flushTable();
       result += planBlock; // flush any remaining non-plan text
+      if (truncated) {
+        result = `<div class="agent-line" style="text-align:center;padding:8px;opacity:0.6;cursor:pointer" onclick="expandAgentOutput('${esc(activeSessionId)}')">&#x25B2; ${fullBuf.length - MAX_RENDER_LINES} earlier lines — click to load all &#x25B2;</div>` + result;
+      }
       return result;
     })();
 
@@ -3011,7 +3101,7 @@ function agentPanelHTML(p) {
         })()
       : '';
     tabContent = `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;flex-shrink:0">
         <span class="agent-status-dot ${st}"></span>
         <span class="agent-status-label ${st}">${st}</span>
         ${stopBtn}
@@ -3021,9 +3111,8 @@ function agentPanelHTML(p) {
         <button class="btn-popout" onclick="openPlanViewer('${esc(activeSessionId)}')" title="Open output in viewer window">Pop Out &#8599;</button>
       </div>
       <div class="agent-chat">
-        <div class="agent-chat-resize"></div>
         <div class="agent-output" id="agent-output-${esc(activeSessionId)}">${outputLines}</div>
-        ${chatInput}
+        ${chatInput ? `<div class="agent-chat-separator"></div>${chatInput}` : ''}
       </div>`;
   }
 
@@ -3209,7 +3298,9 @@ function connectAgentStream(projectId, sessionId) {
     agentEventSources[sessionId].close();
   }
 
-  const es = new EventSource(API_BASE + `/api/project/${projectId}/agent/stream?session=${sessionId}`);
+  // Tell server how many lines we already have, so it doesn't replay them
+  const since = (agentOutputBuffers[sessionId] || []).length;
+  const es = new EventSource(API_BASE + `/api/project/${projectId}/agent/stream?session=${sessionId}&since=${since}`);
   agentEventSources[sessionId] = es;
 
   es.onmessage = (event) => {
@@ -3219,6 +3310,18 @@ function connectAgentStream(projectId, sessionId) {
         sseRetryCount[sessionId] = 0;  // successful data — reset retry counter
         if (!agentOutputBuffers[sessionId]) agentOutputBuffers[sessionId] = [];
         agentOutputBuffers[sessionId].push(msg.text);
+        // Cap buffer to prevent unbounded memory growth
+        if (agentOutputBuffers[sessionId].length > 2000) {
+          agentOutputBuffers[sessionId] = agentOutputBuffers[sessionId].slice(-1500);
+        }
+        // Remove local echo if server sends the real user prompt
+        if (msg.text && msg.text.trimStart().startsWith('> ')) {
+          const el = document.getElementById(`agent-output-${sessionId}`);
+          if (el) {
+            const echo = el.querySelector('.agent-echo');
+            if (echo) echo.remove();
+          }
+        }
         appendAgentLine(sessionId, msg.text);
         updateConsoleOutput(sessionId);
         // Update live activity ticker for tool lines
@@ -3431,6 +3534,13 @@ function collapseIntoPlanButton(sessionId, container) {
   container.insertBefore(btn, wrapper);
 }
 
+const expandedOutputSessions = new Set();  // sessions where user clicked "load all"
+
+function expandAgentOutput(sessionId) {
+  expandedOutputSessions.add(sessionId);
+  refreshModal();
+}
+
 function appendAgentLine(sessionId, text) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el) return;
@@ -3518,37 +3628,50 @@ async function sendFollowup(projectId, sessionId) {
   if (!message) { input.focus(); return; }
   input.value = '';
 
+  // Immediate local echo — show the user's message in DOM only (not buffer)
+  // The server will send the real version via SSE which gets added to the buffer
+  const echoEl = document.getElementById(`agent-output-${sessionId}`);
+  if (echoEl) {
+    const div = document.createElement('div');
+    div.className = 'agent-line agent-line-prompt agent-echo';
+    div.textContent = `> ${message}`;
+    div.style.whiteSpace = 'pre-wrap';
+    echoEl.appendChild(div);
+    echoEl.scrollTop = echoEl.scrollHeight;
+  }
+
   // Upload any pasted images and build final message
   const imageKey = 'fu_' + sessionId;
   const imagePaths = await uploadAgentImages(imageKey);
   const fullMessage = buildTaskWithImages(message, imagePaths);
   clearAgentImages(imageKey);
+  // Remove preview thumbnails from DOM
+  const previewContainer = input.closest('.agent-chat-input')?.querySelector('.agent-image-previews');
+  if (previewContainer) previewContainer.remove();
 
-  try {
-    const res = await fetch(API_BASE + `/api/project/${projectId}/agent/followup`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ message: fullMessage, session_id: sessionId })
-    });
-    const data = await res.json();
-    if (!data.ok) { alert(data.error || 'Follow-up failed'); return; }
-    if (data.queued) {
-      // Follow-up queued — will be sent after current task completes
-      // SSE is still connected and will stream the queued confirmation
-      return;
-    }
-    if (agentStatusCache[sessionId]) {
-      agentStatusCache[sessionId].status = 'running';
-      delete agentStatusCache[sessionId].usage;
-      delete agentStatusCache[sessionId].cost_usd;
-    }
-    updateHistoryStatus(sessionId, 'running');
-    refreshModal();
-    renderAgentConsole();
-    connectAgentStream(projectId, sessionId);
-  } catch(e) {
-    alert('Failed to send follow-up: ' + e.message);
+  // Optimistically update status to running before API returns
+  if (agentStatusCache[sessionId]) {
+    agentStatusCache[sessionId].status = 'running';
+    delete agentStatusCache[sessionId].usage;
+    delete agentStatusCache[sessionId].cost_usd;
   }
+  updateHistoryStatus(sessionId, 'running');
+  updateAgentStatusUI(sessionId, 'running');
+
+  // Fire the API call without blocking — SSE will deliver the response
+  fetch(API_BASE + `/api/project/${projectId}/agent/followup`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ message: fullMessage, session_id: sessionId })
+  }).then(r => r.json()).then(data => {
+    if (!data.ok && !data.queued) {
+      console.error('Follow-up failed:', data.error);
+    }
+    // Reconnect SSE after server confirms (agent process is now started)
+    if (!data.queued && !agentEventSources[sessionId]) {
+      connectAgentStream(projectId, sessionId);
+    }
+  }).catch(e => console.error('Follow-up error:', e));
 }
 
 async function stopAgent(projectId, sessionId) {
@@ -3777,6 +3900,32 @@ function clearAgentImages(key) {
 
 let rulesLoaded = {}; // project_id → {agent_rules, shared_rules}
 
+function rulesTabHTML(p) {
+  const pp = p.project_path || '';
+  if (!pp) return '<div class="memory-section"><div class="memory-hint">Set a project path to enable rules.</div></div>';
+
+  const loaded = rulesLoaded[p.id];
+  if (!loaded) return '<div class="memory-section"><div class="memory-hint">Loading...</div></div>';
+
+  return `<div class="memory-section">
+    <div class="memory-hint">Project-specific and shared rules injected into every agent session.</div>
+    <div class="rules-label">Agent Rules (AGENT_RULES.md)</div>
+    <textarea spellcheck="true" class="rules-textarea" id="rules-agent-${esc(p.id)}" rows="8"
+      placeholder="Project-specific rules for the agent...">${esc(loaded.agent_rules || '')}</textarea>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <button class="btn-save-rules" onclick="saveProjectRules('${esc(p.id)}')">Save Agent Rules</button>
+      <span class="rules-saved" id="rules-saved-agent-${esc(p.id)}">Saved</span>
+    </div>
+    <div class="rules-label" style="margin-top:14px">Shared Baseline (SHARED_RULES.md)</div>
+    <textarea spellcheck="true" class="rules-textarea" id="rules-shared-${esc(p.id)}" rows="8"
+      placeholder="Shared rules applied to all projects...">${esc(loaded.shared_rules || '')}</textarea>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <button class="btn-save-rules" onclick="saveSharedRules('${esc(p.id)}')">Save Shared Rules</button>
+      <span class="rules-saved" id="rules-saved-shared-${esc(p.id)}">Saved</span>
+    </div>
+  </div>`;
+}
+
 function rulesPanelHTML(p) {
   const pp = p.project_path || '';
   if (!pp) return '';
@@ -3911,8 +4060,12 @@ function renderAgentConsole() {
 
   body.innerHTML = agentHistory.map(h => {
     const isOpen = acOpenSessions.has(h.sessionId);
-    const lines = (agentOutputBuffers[h.sessionId] || []).flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n'));
+    const rawBuf = agentOutputBuffers[h.sessionId] || [];
+    // Only split lines when panel is open (expensive for large buffers)
+    const allLines = isOpen ? rawBuf.flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n')) : [];
+    const lines = allLines.length > 200 ? allLines.slice(-200) : allLines;
     const outputHTML = (() => {
+      if (!isOpen) return '';
       let result = '';
       let tableLines = [];
       function flushTable() {
@@ -3946,7 +4099,12 @@ function renderAgentConsole() {
       : '';
 
     // Show last tool activity in console header for running sessions
-    const lastTool = h.status === 'running' ? (lines.filter(l => l.startsWith('[tool:')).pop() || '') : '';
+    let lastTool = '';
+    if (h.status === 'running') {
+      for (let i = rawBuf.length - 1; i >= 0; i--) {
+        if (rawBuf[i].startsWith('[tool:')) { lastTool = rawBuf[i]; break; }
+      }
+    }
 
     return `<div class="ac-session">
       <div class="ac-session-header" onclick="toggleConsoleSession('${esc(h.sessionId)}')">
@@ -4320,6 +4478,10 @@ function switchModalTab(projectId, tab) {
   }
   if (tab === 'memory' && !memoryCache[projectId]) {
     loadMemory(projectId);
+    return;
+  }
+  if (tab === 'rules' && !rulesLoaded[projectId]) {
+    loadRules(projectId).then(() => refreshModal());
     return;
   }
   refreshModal();
@@ -5234,27 +5396,37 @@ document.addEventListener('mouseup', () => {
   modalDrag = null;
 });
 
-// ── Agent chat resize handle ────────────────────────────────────────────────
+// ── Agent chat separator drag (resize input area) ───────────────────────────
 
 let chatResize = null;
 
 document.getElementById('modal-layer').addEventListener('mousedown', (e) => {
-  const handle = e.target.closest('.agent-chat-resize');
+  const handle = e.target.closest('.agent-chat-separator');
   if (!handle) return;
   e.preventDefault();
-  const chat = handle.parentElement;
-  chatResize = { element: chat, startY: e.clientY, origHeight: chat.offsetHeight };
+  const chat = handle.closest('.agent-chat');
+  const textarea = handle.nextElementSibling?.querySelector('.agent-task-input');
+  if (!textarea || !chat) return;
+  const chatH = chat.offsetHeight;
+  chatResize = { textarea, chat, startY: e.clientY, origH: textarea.offsetHeight, chatH };
+  document.body.style.cursor = 'ns-resize';
+  document.body.style.userSelect = 'none';
 });
 
 document.addEventListener('mousemove', (e) => {
   if (!chatResize) return;
-  const dy = e.clientY - chatResize.startY;
-  const newH = Math.max(120, Math.min(window.innerHeight * 0.8, chatResize.origHeight + dy));
-  chatResize.element.style.height = newH + 'px';
+  const dy = chatResize.startY - e.clientY;  // drag up = positive = grow textarea
+  const maxH = chatResize.chatH - 80;  // leave at least 80px for output + separator
+  const newH = Math.max(38, Math.min(maxH, chatResize.origH + dy));
+  chatResize.textarea.style.height = newH + 'px';
 });
 
 document.addEventListener('mouseup', () => {
-  chatResize = null;
+  if (chatResize) {
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    chatResize = null;
+  }
 });
 
 // ── Ctrl+Scroll zoom on agent output areas ──────────────────────────────────

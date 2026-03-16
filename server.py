@@ -1088,6 +1088,7 @@ def agent_dispatch(project_id):
 def agent_stream(project_id):
     """SSE endpoint streaming agent output for a specific session."""
     session_id = request.args.get('session', '')
+    since = request.args.get('since', '0')
 
     def generate():
         session = agent_sessions.get(session_id)
@@ -1095,7 +1096,7 @@ def agent_stream(project_id):
             yield f"data: {json.dumps({'type': 'error', 'msg': 'no active session'})}\n\n"
             return
 
-        sent = 0
+        sent = int(since) if since.isdigit() else 0
         tick = 0
         while True:
             lines = session['log_lines']
@@ -1154,15 +1155,19 @@ def agent_followup(project_id):
             _log_agent_activity(project_id, f"Agent follow-up queued: {message[:100]}")
             return jsonify({'ok': True, 'queued': True, 'session_id': session_id})
 
-        # Agent is not running — send follow-up immediately via resume
+        # Mark as running and return quickly — spawn process in background
+        existing['status'] = 'running'
+        user_label = CONFIG.get('user_name') or 'User'
+        existing['log_lines'].append(f"\n> {user_label}: {message}\n")
         claude_sid = existing.get('claude_session_id')
+
+    # Spawn process outside the lock to avoid blocking other requests
+    def _start_followup():
         if claude_sid:
             resume_flags = ['-r', claude_sid]
         else:
             resume_flags = ['--continue']
-
         cmd = ['claude', *resume_flags, '-p', message, *_build_claude_flags(p)]
-
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
@@ -1175,16 +1180,11 @@ def agent_followup(project_id):
             creationflags=_POPEN_FLAGS,
             startupinfo=_STARTUPINFO,
         )
-
         threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
-
         existing['proc'] = proc
-        existing['status'] = 'running'
-        user_label = CONFIG.get('user_name') or 'User'
-        existing['log_lines'].append(f"\n> {user_label}: {message}\n")
+        threading.Thread(target=_read_agent_stream, args=(proc, existing), daemon=True).start()
 
-        t = threading.Thread(target=_read_agent_stream, args=(proc, existing), daemon=True)
-        t.start()
+    threading.Thread(target=_start_followup, daemon=True).start()
 
     _log_agent_activity(project_id, f"Agent follow-up: {message[:100]}")
     return jsonify({'ok': True, 'session_id': session_id})
@@ -1793,4 +1793,4 @@ def index():
 
 if __name__ == '__main__':
     print(f"Mission Control running at http://localhost:{PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
