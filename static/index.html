@@ -1511,6 +1511,7 @@
     <button class="btn-header-action" onclick="openSharedRulesEditor()">Shared Rules</button>
     <button class="btn-header-action" onclick="openSkillsManager()">Skills</button>
     <button class="btn-new-project" onclick="openNewProjectForm()">+ New</button>
+    <button class="btn-header-action" onclick="showDesktop()" title="Minimize all windows">&#x1F5D4;</button>
     <span class="refresh-timer" id="refresh-timer">refresh in 30s</span>
     <div class="live-badge"><div class="live-dot"></div>Live</div>
   </div>
@@ -2203,6 +2204,12 @@ function minimizeModal(modalId) {
       if (!e.minimized && e.zIndex > topZ) { topZ = e.zIndex; topId = id; }
     }
     if (topId) focusModal(topId);
+  }
+}
+
+function showDesktop() {
+  for (const [modalId, entry] of openModals) {
+    if (!entry.minimized) minimizeModal(modalId);
   }
 }
 
@@ -2906,9 +2913,9 @@ function agentPanelHTML(p) {
     return `<div class="resume-indicator">Resuming: ${esc(label)} <span class="ri-clear" onclick="selectResumeSession('${esc(p.id)}','')">clear</span></div>`;
   })() : '';
 
-  // Dispatch row (always visible)
-  const dispatchPreviews = renderAgentImagePreviews(p.id);
-  const dispatchRow = `${picker}${resumeIndicator}<div class="agent-input-row">
+  // Dispatch row (only shown on the +New screen, not when viewing an active session)
+  const dispatchPreviews = noActiveTab ? renderAgentImagePreviews(p.id) : '';
+  const dispatchRow = noActiveTab ? `${picker}${resumeIndicator}<div class="agent-input-row">
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
       placeholder="Describe a task for the agent... (paste screenshots here)"
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'))"
@@ -2916,7 +2923,7 @@ function agentPanelHTML(p) {
     ></textarea>
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
-  ${dispatchPreviews}`;
+  ${dispatchPreviews}` : '';
 
   // Active tab content
   let tabContent = '';
