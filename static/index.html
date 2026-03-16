@@ -1099,6 +1099,107 @@
   }
   .rules-saved.show { opacity: 1; }
 
+  /* ── MEMORY TAB ──────────────────────────────────────────────── */
+  .memory-section { padding: 16px 22px; }
+  .memory-hint {
+    font-size: 11px; color: var(--text-faint); margin-bottom: 12px; line-height: 1.5;
+  }
+  .memory-textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    padding: 10px 12px; border-radius: 5px; outline: none; resize: vertical;
+    min-height: 200px; line-height: 1.5; box-sizing: border-box;
+    transition: border-color 0.15s;
+  }
+  .memory-textarea:focus { border-color: var(--accent); }
+
+  /* ── SKILLS TAB ──────────────────────────────────────────────── */
+  .skills-section { padding: 16px 22px; }
+  .skills-section-title {
+    font-size: 11px; color: var(--text-faint); text-transform: uppercase;
+    letter-spacing: 0.8px; font-weight: 600; margin-bottom: 8px; margin-top: 16px;
+  }
+  .skills-section-title:first-child { margin-top: 0; }
+  .skills-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .skill-card {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 14px; transition: border-color 0.15s;
+  }
+  .skill-card:hover { border-color: var(--border2); }
+  .skill-card-header {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .skill-name {
+    font-size: 13px; font-weight: 600; color: var(--text); flex: 1;
+  }
+  .skill-desc {
+    font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.4;
+  }
+  .skill-scope-badge {
+    font-size: 9px; padding: 2px 6px; border-radius: 3px;
+    letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600;
+  }
+  .skill-scope-global { background: var(--purple-dim); color: var(--purple-text); }
+  .skill-scope-project { background: var(--green-dim); color: var(--green-text); }
+  .skill-actions {
+    display: flex; gap: 6px; flex-shrink: 0;
+  }
+  .skill-btn {
+    background: none; border: none; color: var(--text-faint); cursor: pointer;
+    font-size: 11px; padding: 2px 4px; transition: color 0.15s;
+  }
+  .skill-btn:hover { color: var(--accent); }
+  .skill-btn.danger:hover { color: var(--red-text); }
+  .skill-editor {
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+    display: none;
+  }
+  .skill-editor.open { display: block; }
+  .skill-editor label {
+    display: block; font-size: 11px; color: var(--text-faint); text-transform: uppercase;
+    letter-spacing: 0.6px; font-weight: 600; margin-bottom: 4px; margin-top: 10px;
+  }
+  .skill-editor label:first-child { margin-top: 0; }
+  .skill-editor input[type="text"] {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: 'Inter', sans-serif; font-size: 12px;
+    padding: 6px 10px; border-radius: 4px; outline: none; box-sizing: border-box;
+    transition: border-color 0.15s;
+  }
+  .skill-editor input[type="text"]:focus { border-color: var(--accent); }
+  .skill-editor textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    padding: 8px 10px; border-radius: 4px; outline: none; resize: vertical;
+    min-height: 100px; line-height: 1.5; box-sizing: border-box;
+    transition: border-color 0.15s;
+  }
+  .skill-editor textarea:focus { border-color: var(--accent); }
+  .skill-editor-actions {
+    display: flex; gap: 8px; align-items: center; margin-top: 10px;
+  }
+  .skill-empty {
+    font-size: 12px; color: var(--text-faint); font-style: italic; padding: 8px 0;
+  }
+  .skill-attach-wrap { position: relative; display: inline-block; }
+  .skill-attach-dropdown {
+    position: absolute; bottom: 100%; left: 0; margin-bottom: 4px;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 6px; min-width: 260px; z-index: 60;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4); overflow: hidden; display: none;
+  }
+  .skill-attach-dropdown.open { display: block; }
+  .skill-attach-item {
+    display: block; width: 100%; text-align: left; padding: 8px 12px;
+    background: none; border: none; color: var(--text-dim); cursor: pointer;
+    font-family: 'Inter', sans-serif; font-size: 12px; border-radius: 0;
+    transition: background 0.1s;
+  }
+  .skill-attach-item:hover { background: var(--surface3); color: var(--text); }
+  .skill-attach-item .att-desc {
+    display: block; font-size: 10px; color: var(--text-faint); margin-top: 2px;
+  }
+
   /* ── PATH EDITOR ────────────────────────────────────────────── */
   .path-row {
     display: flex; align-items: center; gap: 8px; margin-top: 8px;
@@ -1407,6 +1508,7 @@
     </span>
     <div class="tc-context-menu" id="tc-context-menu"></div>
     <button class="btn-header-action" onclick="openSharedRulesEditor()">Shared Rules</button>
+    <button class="btn-header-action" onclick="openSkillsManager()">Skills</button>
     <button class="btn-new-project" onclick="openNewProjectForm()">+ New</button>
     <span class="refresh-timer" id="refresh-timer">refresh in 30s</span>
     <div class="live-badge"><div class="live-dot"></div>Live</div>
@@ -1817,6 +1919,8 @@ function modalContentHTML(p) {
       <div class="modal-tab ${activeTab==='backlog'?'active':''}" onclick="switchModalTab('${esc(p.id)}','backlog')">Backlog${openItems.length ? `<span class="tab-badge">${openItems.length}</span>` : ''}</div>
       <div class="modal-tab ${activeTab==='agent-log'?'active':''}" onclick="switchModalTab('${esc(p.id)}','agent-log')">Agent Log</div>
       <div class="modal-tab ${activeTab==='activity'?'active':''}" onclick="switchModalTab('${esc(p.id)}','activity')">Activity</div>
+      <div class="modal-tab ${activeTab==='skills'?'active':''}" onclick="switchModalTab('${esc(p.id)}','skills')">Skills</div>
+      <div class="modal-tab ${activeTab==='memory'?'active':''}" onclick="switchModalTab('${esc(p.id)}','memory')">Memory</div>
       ${activeTab !== 'agent' ? `<div class="modal-tab-search">
         <input type="text" id="tab-search-${esc(p.id)}" placeholder="Filter..."
           value="${esc(modalSearchQuery[p.id] || '')}"
@@ -1864,6 +1968,12 @@ function modalContentHTML(p) {
           <div class="section-title">Activity Log</div>
           <div class="log-entries">${logHTML || '<div style="color:var(--text-faint);font-style:italic">No activity yet</div>'}</div>
         </div>
+      </div>
+      <div class="modal-tab-content ${activeTab==='skills'?'active':''}" data-tab="skills">
+        ${skillsTabHTML(p)}
+      </div>
+      <div class="modal-tab-content ${activeTab==='memory'?'active':''}" data-tab="memory">
+        ${memoryTabHTML(p)}
       </div>
     </div>`;
 }
@@ -3915,10 +4025,291 @@ function autoSizeNameInput(input) {
 
 // ── Modal tab switching ─────────────────────────────────────────────────────
 
+// ── Memory tab ──────────────────────────────────────────────────────────────
+
+const memoryCache = {};  // projectId -> { content, loaded }
+
+function memoryTabHTML(p) {
+  const cached = memoryCache[p.id];
+  if (!cached) {
+    return `<div class="memory-section"><div class="memory-hint">Loading...</div></div>`;
+  }
+  return `<div class="memory-section">
+    <div class="memory-hint">Persistent project memory &mdash; injected into every agent session as context. Use markdown.</div>
+    <textarea class="memory-textarea" id="memory-editor-${esc(p.id)}" rows="16"
+      placeholder="# Project Memory\n\n## Architecture Decisions\n- ...\n\n## Gotchas\n- ..."
+    >${esc(cached.content || '')}</textarea>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <button class="btn-save-rules" onclick="saveMemory('${esc(p.id)}')">Save</button>
+      <span class="rules-saved" id="memory-saved-${esc(p.id)}">Saved</span>
+    </div>
+  </div>`;
+}
+
+async function loadMemory(projectId) {
+  try {
+    const res = await fetch(API_BASE + '/api/project/' + projectId + '/memory');
+    const data = await res.json();
+    memoryCache[projectId] = { content: data.content || '', loaded: true };
+  } catch(e) {
+    memoryCache[projectId] = { content: '', loaded: true };
+  }
+  refreshModal();
+}
+
+async function saveMemory(projectId) {
+  const el = document.getElementById('memory-editor-' + projectId);
+  if (!el) return;
+  try {
+    await fetch(API_BASE + '/api/project/' + projectId + '/memory', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ content: el.value })
+    });
+    memoryCache[projectId] = { content: el.value, loaded: true };
+    flashSaved('memory-saved-' + projectId);
+  } catch(e) { alert('Failed to save memory'); }
+}
+
+// ── Skills tab ──────────────────────────────────────────────────────────────
+
+const skillsCache = {};       // projectId -> { project, attached, available }
+let skillEditorState = {};    // key -> true (open editors)
+let globalSkillsCache = null; // array of global skills
+
+function skillsTabHTML(p) {
+  const cached = skillsCache[p.id];
+  if (!cached) {
+    return `<div class="skills-section"><div class="skill-empty">Loading...</div></div>`;
+  }
+  let html = '<div class="skills-section">';
+
+  // Project skills
+  html += '<div class="skills-section-title">Project Skills</div>';
+  if (cached.project.length) {
+    html += '<div class="skills-list">';
+    for (const s of cached.project) {
+      html += skillCardHTML(s, p.id, 'project');
+    }
+    html += '</div>';
+  } else {
+    html += '<div class="skill-empty">No project-specific skills yet</div>';
+  }
+
+  // New project skill form
+  const newKey = 'new-proj-' + p.id;
+  if (skillEditorState[newKey]) {
+    html += skillEditorFormHTML(newKey, null, p.id, 'project');
+  } else {
+    html += `<button class="btn-save-rules" style="margin-top:8px" onclick="skillEditorState['${newKey}']=true;refreshModal()">+ Create Project Skill</button>`;
+  }
+
+  // Attached global skills
+  html += '<div class="skills-section-title" style="margin-top:20px">Attached Global Skills</div>';
+  if (cached.attached.length) {
+    html += '<div class="skills-list">';
+    for (const s of cached.attached) {
+      html += skillCardHTML(s, p.id, 'attached');
+    }
+    html += '</div>';
+  } else {
+    html += '<div class="skill-empty">No global skills attached</div>';
+  }
+
+  // Attach dropdown
+  if (cached.available.length) {
+    html += `<div class="skill-attach-wrap">
+      <button class="btn-save-rules" style="margin-top:8px" onclick="toggleAttachDropdown('${esc(p.id)}')">+ Attach Global Skill</button>
+      <div class="skill-attach-dropdown" id="attach-dd-${esc(p.id)}">
+        ${cached.available.map(s => `<button class="skill-attach-item" onclick="attachSkill('${esc(p.id)}','${esc(s.id)}')">
+          <span>${esc(s.name)}</span>
+          ${s.description ? `<span class="att-desc">${esc(s.description)}</span>` : ''}
+        </button>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function skillCardHTML(skill, projectId, type) {
+  const edKey = type + '-' + skill.id;
+  const isEditing = skillEditorState[edKey];
+  let actions = '';
+  if (type === 'project') {
+    actions = `<div class="skill-actions">
+      <button class="skill-btn" onclick="toggleSkillEditor('${edKey}')" title="Edit">&#x270E;</button>
+      <button class="skill-btn danger" onclick="deleteProjectSkill('${esc(projectId)}','${esc(skill.id)}')" title="Delete">&#x2715;</button>
+    </div>`;
+  } else if (type === 'attached') {
+    actions = `<div class="skill-actions">
+      <button class="skill-btn" onclick="detachSkill('${esc(projectId)}','${esc(skill.id)}')" title="Detach">&#x2715;</button>
+    </div>`;
+  } else if (type === 'global') {
+    actions = `<div class="skill-actions">
+      <button class="skill-btn" onclick="toggleSkillEditor('${edKey}')" title="Edit">&#x270E;</button>
+      <button class="skill-btn danger" onclick="deleteGlobalSkill('${esc(skill.id)}')" title="Delete">&#x2715;</button>
+    </div>`;
+  }
+  let html = `<div class="skill-card">
+    <div class="skill-card-header">
+      <span class="skill-name">${esc(skill.name)}</span>
+      <span class="skill-scope-badge ${type === 'project' ? 'skill-scope-project' : 'skill-scope-global'}">${type === 'project' ? 'project' : 'global'}</span>
+      ${actions}
+    </div>
+    ${skill.description ? `<div class="skill-desc">${esc(skill.description)}</div>` : ''}`;
+  if (isEditing) {
+    const scope = type === 'project' ? 'project' : 'global';
+    html += skillEditorFormHTML(edKey, skill, projectId, scope);
+  }
+  html += '</div>';
+  return html;
+}
+
+function skillEditorFormHTML(key, skill, projectId, scope) {
+  const name = skill ? esc(skill.name) : '';
+  const desc = skill ? esc(skill.description || '') : '';
+  const content = skill ? esc(skill.content || '') : '';
+  const skillId = skill ? skill.id : '';
+  return `<div class="skill-editor open">
+    <label>Name</label>
+    <input type="text" id="se-name-${key}" value="${name}" placeholder="Skill name">
+    <label>Description</label>
+    <input type="text" id="se-desc-${key}" value="${desc}" placeholder="When should this skill activate?">
+    <label>Content</label>
+    <textarea id="se-content-${key}" rows="8" placeholder="Markdown instructions for the agent...">${content}</textarea>
+    <div class="skill-editor-actions">
+      <button class="btn-save-rules" onclick="saveSkillFromEditor('${key}','${esc(projectId)}','${scope}','${esc(skillId)}')">Save</button>
+      <button class="skill-btn" onclick="cancelSkillEditor('${key}')">Cancel</button>
+      <span class="rules-saved" id="se-saved-${key}">Saved</span>
+    </div>
+  </div>`;
+}
+
+function toggleSkillEditor(key) {
+  skillEditorState[key] = !skillEditorState[key];
+  if (key.startsWith('global-')) {
+    refreshSkillsManager();
+  } else {
+    refreshModal();
+  }
+}
+
+function cancelSkillEditor(key) {
+  delete skillEditorState[key];
+  if (key.startsWith('new-global') || key.startsWith('global-')) {
+    refreshSkillsManager();
+  } else {
+    refreshModal();
+  }
+}
+
+async function loadProjectSkills(projectId) {
+  try {
+    const res = await fetch(API_BASE + '/api/project/' + projectId + '/skills');
+    const data = await res.json();
+    skillsCache[projectId] = { project: data.project || [], attached: data.attached || [], available: data.available || [] };
+  } catch(e) {
+    skillsCache[projectId] = { project: [], attached: [], available: [] };
+  }
+  refreshModal();
+}
+
+async function saveSkillFromEditor(key, projectId, scope, skillId) {
+  const name = (document.getElementById('se-name-' + key) || {}).value || '';
+  const desc = (document.getElementById('se-desc-' + key) || {}).value || '';
+  const content = (document.getElementById('se-content-' + key) || {}).value || '';
+  if (!name.trim()) { alert('Name is required'); return; }
+  const body = { name: name.trim(), description: desc.trim(), content: content.trim() };
+  try {
+    if (skillId) {
+      // Update
+      const url = scope === 'global'
+        ? API_BASE + '/api/skills/global/' + skillId
+        : API_BASE + '/api/project/' + projectId + '/skills/' + skillId;
+      await fetch(url, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    } else {
+      // Create
+      const url = scope === 'global'
+        ? API_BASE + '/api/skills/global'
+        : API_BASE + '/api/project/' + projectId + '/skills';
+      await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    }
+    delete skillEditorState[key];
+    globalSkillsCache = null;
+    if (projectId) {
+      delete skillsCache[projectId];
+      loadProjectSkills(projectId);
+    } else {
+      refreshSkillsManager();
+    }
+    flashSaved('se-saved-' + key);
+  } catch(e) { alert('Failed to save skill'); }
+}
+
+async function deleteProjectSkill(projectId, skillId) {
+  if (!confirm('Delete this project skill?')) return;
+  try {
+    await fetch(API_BASE + '/api/project/' + projectId + '/skills/' + skillId, { method: 'DELETE' });
+    delete skillsCache[projectId];
+    loadProjectSkills(projectId);
+  } catch(e) { alert('Failed to delete skill'); }
+}
+
+async function attachSkill(projectId, skillId) {
+  try {
+    await fetch(API_BASE + '/api/project/' + projectId + '/skills/attach', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ skill_id: skillId })
+    });
+    delete skillsCache[projectId];
+    loadProjectSkills(projectId);
+  } catch(e) { alert('Failed to attach skill'); }
+}
+
+async function detachSkill(projectId, skillId) {
+  try {
+    await fetch(API_BASE + '/api/project/' + projectId + '/skills/detach', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ skill_id: skillId })
+    });
+    delete skillsCache[projectId];
+    loadProjectSkills(projectId);
+  } catch(e) { alert('Failed to detach skill'); }
+}
+
+function toggleAttachDropdown(projectId) {
+  const dd = document.getElementById('attach-dd-' + projectId);
+  if (!dd) return;
+  const isOpen = dd.classList.contains('open');
+  document.querySelectorAll('.skill-attach-dropdown.open').forEach(d => d.classList.remove('open'));
+  if (!isOpen) {
+    dd.classList.add('open');
+    const close = (ev) => {
+      if (!dd.contains(ev.target)) {
+        dd.classList.remove('open');
+        document.removeEventListener('mousedown', close);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', close), 0);
+  }
+}
+
+// ── Tab switch ──────────────────────────────────────────────────────────────
+
 function switchModalTab(projectId, tab) {
   modalActiveTab[projectId] = tab;
   if (tab === 'agent-log') {
     loadAgentLog(projectId);
+    return;
+  }
+  if (tab === 'skills' && !skillsCache[projectId]) {
+    loadProjectSkills(projectId);
+    return;
+  }
+  if (tab === 'memory' && !memoryCache[projectId]) {
+    loadMemory(projectId);
     return;
   }
   refreshModal();
@@ -3953,6 +4344,11 @@ function applyTabFilter(projectId) {
     });
   } else if (activeTab === 'activity') {
     el.querySelectorAll('.log-entry').forEach(item => {
+      const text = item.textContent.toLowerCase();
+      item.style.display = (!query || text.includes(query)) ? '' : 'none';
+    });
+  } else if (activeTab === 'skills') {
+    el.querySelectorAll('.skill-card').forEach(item => {
       const text = item.textContent.toLowerCase();
       item.style.display = (!query || text.includes(query)) ? '' : 'none';
     });
@@ -4147,6 +4543,89 @@ async function saveSharedRulesGlobal() {
     }
     flashSaved('shared-rules-global-saved');
   } catch(e) { alert('Failed to save shared rules'); }
+}
+
+// ── Global Skills Manager ────────────────────────────────────────────────────
+
+async function openSkillsManager() {
+  const modalId = '__skills_manager';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  content.style.width = '700px';
+  content.innerHTML = `
+    <div class="modal-window-controls">
+      <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+      <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+    </div>
+    <div class="skills-section" style="padding:28px;overflow-y:auto;height:calc(100% - 56px)">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text);margin:0 0 6px 0">Global Skills</h2>
+      <div class="memory-hint">Skills shared across all projects. Attach them to individual projects from each project's Skills tab.</div>
+      <div id="skills-manager-list"><div class="skill-empty">Loading...</div></div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  await refreshSkillsManager();
+}
+
+async function refreshSkillsManager() {
+  try {
+    const res = await fetch(API_BASE + '/api/skills/global');
+    globalSkillsCache = await res.json();
+  } catch(e) {
+    globalSkillsCache = [];
+  }
+  const container = document.getElementById('skills-manager-list');
+  if (!container) return;
+  let html = '';
+  if (globalSkillsCache.length) {
+    html += '<div class="skills-list">';
+    for (const s of globalSkillsCache) {
+      html += skillCardHTML(s, '', 'global');
+    }
+    html += '</div>';
+  } else {
+    html += '<div class="skill-empty">No global skills created yet</div>';
+  }
+  const newKey = 'new-global';
+  if (skillEditorState[newKey]) {
+    html += skillEditorFormHTML(newKey, null, '', 'global');
+  } else {
+    html += `<button class="btn-save-rules" style="margin-top:12px" onclick="skillEditorState['new-global']=true;refreshSkillsManager()">+ Create Global Skill</button>`;
+  }
+  container.innerHTML = html;
+}
+
+async function deleteGlobalSkill(skillId) {
+  if (!confirm('Delete this global skill? It will be detached from all projects.')) return;
+  try {
+    await fetch(API_BASE + '/api/skills/global/' + skillId, { method: 'DELETE' });
+    globalSkillsCache = null;
+    // Invalidate all project skills caches
+    for (const k of Object.keys(skillsCache)) delete skillsCache[k];
+    await refreshSkillsManager();
+  } catch(e) { alert('Failed to delete skill'); }
+}
+
+async function saveGlobalSkillFromManager(key, skillId) {
+  await saveSkillFromEditor(key, '', 'global', skillId);
+  await refreshSkillsManager();
 }
 
 // ── Plan Viewer ─────────────────────────────────────────────────────────────

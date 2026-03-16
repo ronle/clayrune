@@ -1,5 +1,30 @@
 # Mission Control — Changelog
 
+## [2026-03-16a] — Skills + Memory system
+
+### Memory system
+- New **Memory tab** in project modals — persistent per-project markdown memory
+- Memory content injected into agent context as `--- PROJECT MEMORY ---`
+- Backend: `GET/PUT /api/project/<pid>/memory` endpoints
+- Storage: `data/memory/<project_id>.md` (one markdown file per project)
+- Lazy-loaded on first tab visit, textarea with save button
+
+### Skills system
+- New **Skills tab** in project modals — manage project-scoped and attached global skills
+- **Global Skills Manager** — header-level "Skills" button opens dedicated modal for managing global skills
+- Skills are reusable prompt templates with name, description, and markdown content
+- Skills injected into agent context as `--- SKILL: <name> ---` sections
+- Two scopes: **project skills** (specific to one project) and **global skills** (shared, attachable to any project)
+- Attach/detach global skills per project from the Skills tab
+- Inline create/edit forms for both project and global skills
+- Filter support in Skills tab via existing search bar
+- Backend: Full CRUD for global skills (`/api/skills/global`), project skills (`/api/project/<pid>/skills`), and attach/detach endpoints
+- Storage: `data/skills/global/*.json`, `data/skills/project/<pid>/*.json`, `data/skills/attachments.json`
+
+### Context injection
+- `_build_agent_context()` now includes project memory and resolved skills in agent system prompt
+- Skills resolved per-project: all project-scoped skills + explicitly attached global skills
+
 ## [2026-03-15d] — Package as standalone Windows .exe
 
 ### Desktop mode (app.py)

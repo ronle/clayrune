@@ -136,6 +136,16 @@ SHARED_RULES_PATH = Path(CONFIG.get('shared_rules_path', ''))
 PROJECTS_BASE = Path(CONFIG.get('projects_base', str(Path.home())))
 SETTINGS_PATH = _DATA_ROOT / 'data' / 'settings.json'
 
+MEMORY_DIR = _DATA_ROOT / 'data' / 'memory'
+MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+
+SKILLS_DIR = _DATA_ROOT / 'data' / 'skills'
+SKILLS_GLOBAL_DIR = SKILLS_DIR / 'global'
+SKILLS_PROJECT_DIR = SKILLS_DIR / 'project'
+SKILLS_ATTACH_PATH = SKILLS_DIR / 'attachments.json'
+SKILLS_GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
+SKILLS_PROJECT_DIR.mkdir(parents=True, exist_ok=True)
+
 DEFAULT_DOMAINS = [
     {'id': 'general', 'label': 'General', 'color': 'var(--text-dim)', 'bg': 'var(--surface3)'},
     {'id': 'trading', 'label': 'Trading', 'color': 'var(--accent)', 'bg': 'var(--accent-dim)'},
@@ -630,6 +640,54 @@ def agent_upload_image():
     return jsonify({'ok': True, 'path': str(dest.resolve())})
 
 
+# ── Skills helpers ───────────────────────────────────────────────────────────
+
+def _load_skills_attachments():
+    if SKILLS_ATTACH_PATH.exists():
+        try:
+            return json.loads(SKILLS_ATTACH_PATH.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+    return {}
+
+def _save_skills_attachments(data):
+    SKILLS_ATTACH_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SKILLS_ATTACH_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+
+def _load_global_skills():
+    skills = []
+    for f in sorted(SKILLS_GLOBAL_DIR.glob('*.json')):
+        try:
+            skills.append(json.loads(f.read_text(encoding='utf-8')))
+        except Exception:
+            pass
+    return skills
+
+def _load_project_skills(project_id):
+    d = SKILLS_PROJECT_DIR / project_id
+    if not d.exists():
+        return []
+    skills = []
+    for f in sorted(d.glob('*.json')):
+        try:
+            skills.append(json.loads(f.read_text(encoding='utf-8')))
+        except Exception:
+            pass
+    return skills
+
+def _resolve_skills_for_project(project_id):
+    """Get all skills that should be injected for a project dispatch."""
+    project_skills = _load_project_skills(project_id)
+    global_skills = _load_global_skills()
+    attachments = _load_skills_attachments()
+    attached_ids = set(attachments.get(project_id, []))
+    result = list(project_skills)
+    for gs in global_skills:
+        if gs['id'] in attached_ids:
+            result.append(gs)
+    return result
+
+
 # ── Agent endpoints ──────────────────────────────────────────────────────────
 
 def _build_agent_context(project):
@@ -653,6 +711,18 @@ def _build_agent_context(project):
             parts.append(f"--- AGENT_RULES.md ---\n{agent_rules_path.read_text(encoding='utf-8')}")
     if SHARED_RULES_PATH.exists():
         parts.append(f"--- SHARED_RULES.md ---\n{SHARED_RULES_PATH.read_text(encoding='utf-8')}")
+
+    # Project memory
+    mem_path = MEMORY_DIR / f'{project["id"]}.md'
+    if mem_path.exists():
+        mem = mem_path.read_text(encoding='utf-8').strip()
+        if mem:
+            parts.append(f"--- PROJECT MEMORY ---\n{mem}")
+
+    # Skills
+    skills = _resolve_skills_for_project(project['id'])
+    for skill in skills:
+        parts.append(f"--- SKILL: {skill['name']} ---\n{skill['content']}")
 
     # Recent activity
     log = project.get('activity_log', [])[:5]
@@ -1288,6 +1358,207 @@ def save_shared_rules():
 
     SHARED_RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
     SHARED_RULES_PATH.write_text(content, encoding='utf-8')
+    return jsonify({'ok': True})
+
+
+# ── Memory endpoints ────────────────────────────────────────────────────────
+
+@app.route('/api/project/<project_id>/memory')
+def get_memory(project_id):
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'not found'}), 404
+    mem_path = MEMORY_DIR / f'{project_id}.md'
+    content = ''
+    if mem_path.exists():
+        content = mem_path.read_text(encoding='utf-8')
+    return jsonify({'content': content})
+
+@app.route('/api/project/<project_id>/memory', methods=['PUT'])
+def save_memory(project_id):
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    content = data.get('content')
+    if content is None:
+        return jsonify({'error': 'content required'}), 400
+    mem_path = MEMORY_DIR / f'{project_id}.md'
+    mem_path.write_text(content, encoding='utf-8')
+    return jsonify({'ok': True})
+
+
+# ── Skills endpoints ───────────────────────────────────────────────────────
+
+@app.route('/api/skills/global')
+def get_global_skills():
+    return jsonify(_load_global_skills())
+
+@app.route('/api/skills/global', methods=['POST'])
+def create_global_skill():
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name required'}), 400
+    skill_id = name.lower().replace(' ', '_')
+    skill_id = ''.join(c for c in skill_id if c.isalnum() or c == '_')
+    if not skill_id:
+        skill_id = uuid.uuid4().hex[:8]
+    # Ensure unique
+    existing = SKILLS_GLOBAL_DIR / f'{skill_id}.json'
+    if existing.exists():
+        skill_id = f'{skill_id}_{uuid.uuid4().hex[:4]}'
+    now = datetime.now(timezone.utc).isoformat()
+    skill = {
+        'id': skill_id,
+        'name': name,
+        'description': (data.get('description') or '').strip(),
+        'content': (data.get('content') or '').strip(),
+        'created_at': now,
+        'updated_at': now,
+    }
+    (SKILLS_GLOBAL_DIR / f'{skill_id}.json').write_text(
+        json.dumps(skill, indent=2, ensure_ascii=False), encoding='utf-8')
+    return jsonify(skill), 201
+
+@app.route('/api/skills/global/<skill_id>', methods=['PUT'])
+def update_global_skill(skill_id):
+    path = SKILLS_GLOBAL_DIR / f'{skill_id}.json'
+    if not path.exists():
+        return jsonify({'error': 'not found'}), 404
+    skill = json.loads(path.read_text(encoding='utf-8'))
+    data = request.get_json() or {}
+    if 'name' in data:
+        skill['name'] = data['name'].strip()
+    if 'description' in data:
+        skill['description'] = data['description'].strip()
+    if 'content' in data:
+        skill['content'] = data['content'].strip()
+    skill['updated_at'] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(skill, indent=2, ensure_ascii=False), encoding='utf-8')
+    return jsonify(skill)
+
+@app.route('/api/skills/global/<skill_id>', methods=['DELETE'])
+def delete_global_skill(skill_id):
+    path = SKILLS_GLOBAL_DIR / f'{skill_id}.json'
+    if not path.exists():
+        return jsonify({'error': 'not found'}), 404
+    path.unlink()
+    # Remove from all project attachments
+    att = _load_skills_attachments()
+    changed = False
+    for pid in list(att.keys()):
+        if skill_id in att[pid]:
+            att[pid].remove(skill_id)
+            changed = True
+    if changed:
+        _save_skills_attachments(att)
+    return jsonify({'ok': True})
+
+@app.route('/api/project/<project_id>/skills')
+def get_project_skills(project_id):
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'not found'}), 404
+    project_skills = _load_project_skills(project_id)
+    global_skills = _load_global_skills()
+    att = _load_skills_attachments()
+    attached_ids = set(att.get(project_id, []))
+    attached = [gs for gs in global_skills if gs['id'] in attached_ids]
+    available = [gs for gs in global_skills if gs['id'] not in attached_ids]
+    return jsonify({
+        'project': project_skills,
+        'attached': attached,
+        'available': available,
+    })
+
+@app.route('/api/project/<project_id>/skills', methods=['POST'])
+def create_project_skill(project_id):
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name required'}), 400
+    skill_id = name.lower().replace(' ', '_')
+    skill_id = ''.join(c for c in skill_id if c.isalnum() or c == '_')
+    if not skill_id:
+        skill_id = uuid.uuid4().hex[:8]
+    skill_dir = SKILLS_PROJECT_DIR / project_id
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    existing = skill_dir / f'{skill_id}.json'
+    if existing.exists():
+        skill_id = f'{skill_id}_{uuid.uuid4().hex[:4]}'
+    now = datetime.now(timezone.utc).isoformat()
+    skill = {
+        'id': skill_id,
+        'name': name,
+        'description': (data.get('description') or '').strip(),
+        'content': (data.get('content') or '').strip(),
+        'created_at': now,
+        'updated_at': now,
+    }
+    (skill_dir / f'{skill_id}.json').write_text(
+        json.dumps(skill, indent=2, ensure_ascii=False), encoding='utf-8')
+    return jsonify(skill), 201
+
+@app.route('/api/project/<project_id>/skills/<skill_id>', methods=['PUT'])
+def update_project_skill(project_id, skill_id):
+    path = SKILLS_PROJECT_DIR / project_id / f'{skill_id}.json'
+    if not path.exists():
+        return jsonify({'error': 'not found'}), 404
+    skill = json.loads(path.read_text(encoding='utf-8'))
+    data = request.get_json() or {}
+    if 'name' in data:
+        skill['name'] = data['name'].strip()
+    if 'description' in data:
+        skill['description'] = data['description'].strip()
+    if 'content' in data:
+        skill['content'] = data['content'].strip()
+    skill['updated_at'] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(skill, indent=2, ensure_ascii=False), encoding='utf-8')
+    return jsonify(skill)
+
+@app.route('/api/project/<project_id>/skills/<skill_id>', methods=['DELETE'])
+def delete_project_skill(project_id, skill_id):
+    path = SKILLS_PROJECT_DIR / project_id / f'{skill_id}.json'
+    if not path.exists():
+        return jsonify({'error': 'not found'}), 404
+    path.unlink()
+    return jsonify({'ok': True})
+
+@app.route('/api/project/<project_id>/skills/attach', methods=['POST'])
+def attach_skill(project_id):
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    skill_id = (data.get('skill_id') or '').strip()
+    if not skill_id:
+        return jsonify({'error': 'skill_id required'}), 400
+    # Verify global skill exists
+    if not (SKILLS_GLOBAL_DIR / f'{skill_id}.json').exists():
+        return jsonify({'error': 'skill not found'}), 404
+    att = _load_skills_attachments()
+    project_att = att.setdefault(project_id, [])
+    if skill_id not in project_att:
+        project_att.append(skill_id)
+        _save_skills_attachments(att)
+    return jsonify({'ok': True})
+
+@app.route('/api/project/<project_id>/skills/detach', methods=['POST'])
+def detach_skill(project_id):
+    data = request.get_json() or {}
+    skill_id = (data.get('skill_id') or '').strip()
+    if not skill_id:
+        return jsonify({'error': 'skill_id required'}), 400
+    att = _load_skills_attachments()
+    project_att = att.get(project_id, [])
+    if skill_id in project_att:
+        project_att.remove(skill_id)
+        att[project_id] = project_att
+        _save_skills_attachments(att)
     return jsonify({'ok': True})
 
 
