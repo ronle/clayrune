@@ -735,15 +735,17 @@ def _build_agent_context(project):
         "that carries across sessions — architecture decisions, gotchas, key learnings. "
         "Reference it to avoid repeating past mistakes or re-discovering known issues.",
         "",
-        "IMPORTANT: You can READ and WRITE project memory directly via the Mission Control API:",
-        f"  - Read memory:  curl http://localhost:{port}/api/project/{pid}/memory",
-        f"  - Write memory: curl -X PUT http://localhost:{port}/api/project/{pid}/memory "
-        f"-H 'Content-Type: application/json' -d '{{\"content\": \"<full markdown content>\"}}'",
+        "You can READ and WRITE project memory via the Mission Control API:",
+        f"  - Read:   curl -s http://localhost:{port}/api/project/{pid}/memory",
+        f"  - Append: curl -s -X POST http://localhost:{port}/api/project/{pid}/memory/append "
+        f"-H 'Content-Type: application/json' -d '{{\"content\": \"your markdown content here\"}}'",
+        f"  - Replace all: curl -s -X PUT http://localhost:{port}/api/project/{pid}/memory "
+        f"-H 'Content-Type: application/json' -d '{{\"content\": \"full markdown content\"}}'",
         "",
         "When you discover important information during a session (architecture decisions, tricky bugs, "
-        "environment gotchas, key patterns, things that worked or failed), proactively save them to "
-        "project memory using the API above. Read the current memory first, then append your new learnings "
-        "to preserve existing content. Keep entries concise and organized with markdown headers.",
+        "environment gotchas, key patterns, things that worked or failed), proactively append them to "
+        "project memory using the append endpoint. Keep entries concise with markdown formatting. "
+        "Session completions are also auto-logged to memory.",
     ]
     if skills:
         skill_names = ', '.join(s['name'] for s in skills)
@@ -927,6 +929,24 @@ def _log_agent_completion(session):
     log = _load_agent_log(project_id)
     log.insert(0, entry)
     _save_agent_log(project_id, log)
+
+    # Auto-append session summary to project memory
+    if session.get('status') == 'completed' and summary:
+        try:
+            task = session.get('task', '').strip()
+            ts = entry['ts'][:10]  # date only
+            brief = summary[:300].replace('\n', ' ').strip()
+            mem_entry = f"- [{ts}] **{task[:80]}** — {brief}"
+            mem_path = MEMORY_DIR / f'{project_id}.md'
+            existing = ''
+            if mem_path.exists():
+                existing = mem_path.read_text(encoding='utf-8').rstrip()
+            header = '## Session Log'
+            if header not in existing:
+                existing = existing + f'\n\n{header}' if existing else header
+            mem_path.write_text(existing + '\n' + mem_entry + '\n', encoding='utf-8')
+        except Exception:
+            pass  # never fail the completion flow for memory
 
 
 def _auto_dispatch_followup(session, message):
@@ -1411,6 +1431,26 @@ def save_memory(project_id):
         return jsonify({'error': 'content required'}), 400
     mem_path = MEMORY_DIR / f'{project_id}.md'
     mem_path.write_text(content, encoding='utf-8')
+    return jsonify({'ok': True})
+
+@app.route('/api/project/<project_id>/memory/append', methods=['POST'])
+def append_memory(project_id):
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    content = (data.get('content') or '').strip()
+    if not content:
+        return jsonify({'error': 'content required'}), 400
+    mem_path = MEMORY_DIR / f'{project_id}.md'
+    existing = ''
+    if mem_path.exists():
+        existing = mem_path.read_text(encoding='utf-8').rstrip()
+    if existing:
+        combined = existing + '\n\n' + content
+    else:
+        combined = content
+    mem_path.write_text(combined, encoding='utf-8')
     return jsonify({'ok': True})
 
 

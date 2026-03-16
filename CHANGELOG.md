@@ -1,5 +1,18 @@
 # Mission Control — Changelog
 
+## [2026-03-16b] — Robust memory: append endpoint + auto-memory
+
+### Memory append endpoint
+- New `POST /api/project/<pid>/memory/append` — safely appends content without overwriting
+- Agents can append to memory in one call instead of read-then-write
+- Agent system prompt updated with all three memory API commands (read, append, replace)
+
+### Auto-memory on session completion
+- `_log_agent_completion()` now auto-appends a `## Session Log` entry to project memory
+- Each entry: date, task name, brief summary (first 300 chars)
+- Fails silently — never blocks the completion flow
+- Memory builds passively even if the agent doesn't explicitly write to it
+
 ## [2026-03-16a] — Skills + Memory system
 
 ### Memory system
