@@ -8,6 +8,7 @@ Mission Control gives you a centralized dashboard to:
 
 - **Manage multiple projects** with status tracking, descriptions, and domains
 - **Dispatch Claude Code agents** to work on tasks across any project
+- **ReUtilize previous chat sessions under same project for reducing overall token usage
 - **Monitor agent activity in real-time** via streaming output
 - **Maintain project backlogs** with priorities, drag-and-drop ordering, and file attachments
 - **Review agent session history** and completed work
