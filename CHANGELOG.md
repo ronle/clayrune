@@ -1,5 +1,16 @@
 # Mission Control — Changelog
 
+## [2026-03-16c] — Use Claude's native MEMORY.md for project memory
+
+### Native memory integration
+- Memory tab now reads/writes Claude Code's native `~/.claude/projects/<encoded-path>/memory/MEMORY.md`
+- Path derived from project's `project_path` — same file the agent writes to with its Edit tool
+- Fallback to `data/memory/<project_id>.md` for projects without a project_path
+- Memory tab shows the resolved file path for transparency
+- Auto-memory on session completion writes to the native location
+- Agent system prompt simplified: tells agent the memory file path, no more curl API instructions
+- Single source of truth — agents and dashboard share the same memory file
+
 ## [2026-03-16b] — Robust memory: append endpoint + auto-memory
 
 ### Memory append endpoint

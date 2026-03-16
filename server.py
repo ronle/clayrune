@@ -136,8 +136,36 @@ SHARED_RULES_PATH = Path(CONFIG.get('shared_rules_path', ''))
 PROJECTS_BASE = Path(CONFIG.get('projects_base', str(Path.home())))
 SETTINGS_PATH = _DATA_ROOT / 'data' / 'settings.json'
 
-MEMORY_DIR = _DATA_ROOT / 'data' / 'memory'
+MEMORY_DIR = _DATA_ROOT / 'data' / 'memory'  # fallback for projects without project_path
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+
+CLAUDE_HOME = Path.home() / '.claude' / 'projects'
+
+
+def _native_memory_path(project_path):
+    """Derive the Claude Code native MEMORY.md path for a project.
+
+    Claude stores memory at ~/.claude/projects/<encoded-path>/memory/MEMORY.md
+    where the path encoding replaces : and path separators with -.
+    """
+    if not project_path:
+        return None
+    resolved = str(Path(project_path).resolve())
+    # Encode: C:\Users\foo\bar → C--Users-foo-bar
+    encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
+    mem_path = CLAUDE_HOME / encoded / 'memory' / 'MEMORY.md'
+    return mem_path
+
+
+def _get_memory_path(project):
+    """Get the memory file path for a project — native Claude path preferred, fallback to MC data dir."""
+    pp = project.get('project_path', '')
+    if pp:
+        native = _native_memory_path(pp)
+        if native:
+            return native
+    return MEMORY_DIR / f'{project["id"]}.md'
+
 
 SKILLS_DIR = _DATA_ROOT / 'data' / 'skills'
 SKILLS_GLOBAL_DIR = SKILLS_DIR / 'global'
@@ -712,8 +740,8 @@ def _build_agent_context(project):
     if SHARED_RULES_PATH.exists():
         parts.append(f"--- SHARED_RULES.md ---\n{SHARED_RULES_PATH.read_text(encoding='utf-8')}")
 
-    # Project memory
-    mem_path = MEMORY_DIR / f'{project["id"]}.md'
+    # Project memory (reads from Claude's native MEMORY.md)
+    mem_path = _get_memory_path(project)
     has_memory = False
     if mem_path.exists():
         mem = mem_path.read_text(encoding='utf-8').strip()
@@ -729,23 +757,18 @@ def _build_agent_context(project):
     # System awareness
     pid = project['id']
     port = PORT
+    mem_file = str(mem_path) if mem_path else 'MEMORY.md'
     awareness = [
         "You are managed by Mission Control, a project dashboard.",
         "The PROJECT MEMORY section above (if present) contains persistent knowledge about this project "
         "that carries across sessions — architecture decisions, gotchas, key learnings. "
         "Reference it to avoid repeating past mistakes or re-discovering known issues.",
         "",
-        "You can READ and WRITE project memory via the Mission Control API:",
-        f"  - Read:   curl -s http://localhost:{port}/api/project/{pid}/memory",
-        f"  - Append: curl -s -X POST http://localhost:{port}/api/project/{pid}/memory/append "
-        f"-H 'Content-Type: application/json' -d '{{\"content\": \"your markdown content here\"}}'",
-        f"  - Replace all: curl -s -X PUT http://localhost:{port}/api/project/{pid}/memory "
-        f"-H 'Content-Type: application/json' -d '{{\"content\": \"full markdown content\"}}'",
-        "",
+        f"Your memory file is at: {mem_file}",
         "When you discover important information during a session (architecture decisions, tricky bugs, "
-        "environment gotchas, key patterns, things that worked or failed), proactively append them to "
-        "project memory using the append endpoint. Keep entries concise with markdown formatting. "
-        "Session completions are also auto-logged to memory.",
+        "environment gotchas, key patterns, things that worked or failed), proactively update your "
+        "memory file using your Edit tool. Keep entries concise and organized with markdown headers. "
+        "Session completions are also auto-logged to memory by Mission Control.",
     ]
     if skills:
         skill_names = ', '.join(s['name'] for s in skills)
@@ -930,21 +953,24 @@ def _log_agent_completion(session):
     log.insert(0, entry)
     _save_agent_log(project_id, log)
 
-    # Auto-append session summary to project memory
+    # Auto-append session summary to project memory (native Claude MEMORY.md)
     if session.get('status') == 'completed' and summary:
         try:
-            task = session.get('task', '').strip()
-            ts = entry['ts'][:10]  # date only
-            brief = summary[:300].replace('\n', ' ').strip()
-            mem_entry = f"- [{ts}] **{task[:80]}** — {brief}"
-            mem_path = MEMORY_DIR / f'{project_id}.md'
-            existing = ''
-            if mem_path.exists():
-                existing = mem_path.read_text(encoding='utf-8').rstrip()
-            header = '## Session Log'
-            if header not in existing:
-                existing = existing + f'\n\n{header}' if existing else header
-            mem_path.write_text(existing + '\n' + mem_entry + '\n', encoding='utf-8')
+            p = load_project(project_id)
+            if p:
+                task = session.get('task', '').strip()
+                ts = entry['ts'][:10]  # date only
+                brief = summary[:300].replace('\n', ' ').strip()
+                mem_entry = f"- [{ts}] **{task[:80]}** — {brief}"
+                mem_path = _get_memory_path(p)
+                mem_path.parent.mkdir(parents=True, exist_ok=True)
+                existing = ''
+                if mem_path.exists():
+                    existing = mem_path.read_text(encoding='utf-8').rstrip()
+                header = '## Session Log'
+                if header not in existing:
+                    existing = existing + f'\n\n{header}' if existing else header
+                mem_path.write_text(existing + '\n' + mem_entry + '\n', encoding='utf-8')
         except Exception:
             pass  # never fail the completion flow for memory
 
@@ -1414,11 +1440,11 @@ def get_memory(project_id):
     p = load_project(project_id)
     if not p:
         return jsonify({'error': 'not found'}), 404
-    mem_path = MEMORY_DIR / f'{project_id}.md'
+    mem_path = _get_memory_path(p)
     content = ''
     if mem_path.exists():
         content = mem_path.read_text(encoding='utf-8')
-    return jsonify({'content': content})
+    return jsonify({'content': content, 'path': str(mem_path)})
 
 @app.route('/api/project/<project_id>/memory', methods=['PUT'])
 def save_memory(project_id):
@@ -1429,7 +1455,8 @@ def save_memory(project_id):
     content = data.get('content')
     if content is None:
         return jsonify({'error': 'content required'}), 400
-    mem_path = MEMORY_DIR / f'{project_id}.md'
+    mem_path = _get_memory_path(p)
+    mem_path.parent.mkdir(parents=True, exist_ok=True)
     mem_path.write_text(content, encoding='utf-8')
     return jsonify({'ok': True})
 
@@ -1442,7 +1469,8 @@ def append_memory(project_id):
     content = (data.get('content') or '').strip()
     if not content:
         return jsonify({'error': 'content required'}), 400
-    mem_path = MEMORY_DIR / f'{project_id}.md'
+    mem_path = _get_memory_path(p)
+    mem_path.parent.mkdir(parents=True, exist_ok=True)
     existing = ''
     if mem_path.exists():
         existing = mem_path.read_text(encoding='utf-8').rstrip()

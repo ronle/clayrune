@@ -4034,8 +4034,9 @@ function memoryTabHTML(p) {
   if (!cached) {
     return `<div class="memory-section"><div class="memory-hint">Loading...</div></div>`;
   }
+  const pathHint = cached.path ? `<br><span style="font-family:'JetBrains Mono',monospace;font-size:10px;opacity:0.6">${esc(cached.path)}</span>` : '';
   return `<div class="memory-section">
-    <div class="memory-hint">Persistent project memory &mdash; injected into every agent session as context. Use markdown.</div>
+    <div class="memory-hint">Claude's native MEMORY.md &mdash; read/written by agents directly, injected into every session as context.${pathHint}</div>
     <textarea class="memory-textarea" id="memory-editor-${esc(p.id)}" rows="16"
       placeholder="# Project Memory\n\n## Architecture Decisions\n- ...\n\n## Gotchas\n- ..."
     >${esc(cached.content || '')}</textarea>
@@ -4050,9 +4051,9 @@ async function loadMemory(projectId) {
   try {
     const res = await fetch(API_BASE + '/api/project/' + projectId + '/memory');
     const data = await res.json();
-    memoryCache[projectId] = { content: data.content || '', loaded: true };
+    memoryCache[projectId] = { content: data.content || '', path: data.path || '', loaded: true };
   } catch(e) {
-    memoryCache[projectId] = { content: '', loaded: true };
+    memoryCache[projectId] = { content: '', path: '', loaded: true };
   }
   refreshModal();
 }
