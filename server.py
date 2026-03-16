@@ -714,15 +714,41 @@ def _build_agent_context(project):
 
     # Project memory
     mem_path = MEMORY_DIR / f'{project["id"]}.md'
+    has_memory = False
     if mem_path.exists():
         mem = mem_path.read_text(encoding='utf-8').strip()
         if mem:
+            has_memory = True
             parts.append(f"--- PROJECT MEMORY ---\n{mem}")
 
     # Skills
     skills = _resolve_skills_for_project(project['id'])
     for skill in skills:
         parts.append(f"--- SKILL: {skill['name']} ---\n{skill['content']}")
+
+    # System awareness
+    pid = project['id']
+    port = PORT
+    awareness = [
+        "You are managed by Mission Control, a project dashboard.",
+        "The PROJECT MEMORY section above (if present) contains persistent knowledge about this project "
+        "that carries across sessions — architecture decisions, gotchas, key learnings. "
+        "Reference it to avoid repeating past mistakes or re-discovering known issues.",
+        "",
+        "IMPORTANT: You can READ and WRITE project memory directly via the Mission Control API:",
+        f"  - Read memory:  curl http://localhost:{port}/api/project/{pid}/memory",
+        f"  - Write memory: curl -X PUT http://localhost:{port}/api/project/{pid}/memory "
+        f"-H 'Content-Type: application/json' -d '{{\"content\": \"<full markdown content>\"}}'",
+        "",
+        "When you discover important information during a session (architecture decisions, tricky bugs, "
+        "environment gotchas, key patterns, things that worked or failed), proactively save them to "
+        "project memory using the API above. Read the current memory first, then append your new learnings "
+        "to preserve existing content. Keep entries concise and organized with markdown headers.",
+    ]
+    if skills:
+        skill_names = ', '.join(s['name'] for s in skills)
+        awareness.append(f"\nActive skills for this session: {skill_names}. Follow their instructions.")
+    parts.append("--- SYSTEM ---\n" + "\n".join(awareness))
 
     # Recent activity
     log = project.get('activity_log', [])[:5]
