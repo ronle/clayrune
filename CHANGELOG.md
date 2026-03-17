@@ -1,5 +1,31 @@
 # Mission Control — Changelog
 
+## [2026-03-17a] — Persistent agent process (Mode B) + mobile touch support
+
+### Persistent agent process (Mode B)
+- New `use_streaming_agent` config toggle (default: false) enables Mode B alongside existing Mode A
+- Mode B uses `--input-format stream-json` to keep a single Claude CLI process alive across turns
+- Follow-ups write directly to stdin — no queuing, no process respawn, faster responses
+- New `_read_agent_stream_b()` reader treats `result` messages as turn boundaries, not process exit
+- New `idle` status: process alive and waiting for input (accent-colored dot with glow)
+- SSE sends `turn_complete` events on idle, keeps stream open between turns
+- `atexit` handler cleans up persistent processes on server shutdown
+- Mode A (spawn-per-turn) unchanged — toggle off to use original behavior
+
+### Mobile touch support
+- Modal drag-to-move now works on touch devices (touchstart/touchmove/touchend)
+- Separator drag (resize input area) works on touch devices
+- Bottom-right corner touch resize for modals (40px hit zone with visual indicator)
+- Pinch-to-resize: two-finger gesture scales modal width and height proportionally
+- CSS `resize: both` disabled on touch devices (replaced by touch handlers)
+
+### UI fixes
+- Send button stays fixed size when expanding textarea (flex align-items: flex-end)
+- Image previews now clear from DOM after sending follow-up
+- Textarea resize handle removed (resize: none) — separator bar is the only resize control
+- Agent output gets `flex: 1; min-height: 0` for proper flex sizing
+- Queued follow-up echo shows yellow border + hint text (Mode A only)
+
 ## [2026-03-16d] — Full-height agent chat + performance overhaul
 
 ### Full-height agent chat

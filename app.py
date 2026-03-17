@@ -55,6 +55,7 @@ def _ensure_data_dirs():
             'desktop_mode': True,
             'user_name': '',
             'agent_name': '',
+            'use_streaming_agent': False,
         }
         config_path.write_text(json.dumps(defaults, indent=2), encoding='utf-8')
 

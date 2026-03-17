@@ -90,6 +90,7 @@ def _load_config():
         'desktop_mode': False,
         'user_name': '',
         'agent_name': '',
+        'use_streaming_agent': False,
     }
     if CONFIG_PATH.exists():
         try:
@@ -198,10 +199,12 @@ def _save_settings(settings):
     SETTINGS_PATH.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
-def _build_claude_flags(project=None):
+def _build_claude_flags(project=None, streaming=False):
     """Build common Claude CLI flags from config, with optional per-project overrides."""
     flags = ['--print', '--verbose', '--output-format', 'stream-json',
              '--dangerously-skip-permissions']
+    if streaming:
+        flags.extend(['--input-format', 'stream-json'])
     # Per-project model takes priority over global config
     model = (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '')
     if model:
@@ -893,6 +896,70 @@ def _read_agent_stream(proc, session):
                 session.pop('_dispatching_followup', None)
 
 
+def _read_agent_stream_b(proc, session):
+    """Reader thread for Mode B: persistent process with stream-json I/O.
+
+    Unlike Mode A, the process does NOT exit after each turn.
+    A 'result' message signals the end of a turn, not the end of the process.
+    """
+    my_proc = proc
+    try:
+        for raw_line in proc.stdout:
+            if session.get('proc') is not my_proc:
+                break
+            line = raw_line.rstrip('\n\r')
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+                msg_type = msg.get('type', '')
+                if 'session_id' in msg:
+                    session['claude_session_id'] = msg['session_id']
+                if msg_type == 'assistant' and 'message' in msg:
+                    for block in msg['message'].get('content', []):
+                        if block.get('type') == 'text':
+                            session['log_lines'].append(block['text'])
+                        elif block.get('type') == 'tool_use':
+                            tool_name = block.get('name', '')
+                            tool_input = block.get('input', {})
+                            activity = _format_tool_activity(tool_name, tool_input)
+                            session['log_lines'].append(activity)
+                            if tool_name in ('Write', 'Edit'):
+                                fp = tool_input.get('file_path', '')
+                                if fp.lower().endswith('.md'):
+                                    session['_last_md_file'] = fp
+                            elif tool_name == 'ExitPlanMode' and session.get('_last_md_file'):
+                                session['plan_file'] = session['_last_md_file']
+                elif msg_type == 'result':
+                    if 'session_id' in msg:
+                        session['claude_session_id'] = msg['session_id']
+                    if 'usage' in msg:
+                        session['usage'] = msg['usage']
+                    if 'cost_usd' in msg:
+                        session['cost_usd'] = msg['cost_usd']
+                    if 'num_turns' in msg:
+                        session['num_turns'] = msg['num_turns']
+                    # Turn boundary — process stays alive
+                    session['status'] = 'idle'
+            except json.JSONDecodeError:
+                session['log_lines'].append(line)
+            # Cap log_lines to prevent unbounded memory growth
+            if len(session['log_lines']) > 2000:
+                session['log_lines'] = session['log_lines'][-1500:]
+    except Exception as e:
+        if session.get('proc') is my_proc:
+            session['log_lines'].append(f"[stream error: {e}]")
+    finally:
+        rc = proc.wait()
+        session['process_alive'] = False
+        if session.get('proc') is my_proc:
+            if session['status'] in ('running', 'idle'):
+                session['status'] = 'completed' if rc == 0 else 'error'
+                if rc != 0:
+                    session['log_lines'].append(f"[exited with code {rc}]")
+            _log_agent_completion(session)
+
+
 def _log_agent_activity(project_id, msg):
     """Add an entry to the project's activity_log."""
     p = load_project(project_id)
@@ -1038,45 +1105,97 @@ def agent_dispatch(project_id):
         return jsonify({'error': 'task required'}), 400
 
     resume_id = data.get('resume_conversation_id', '').strip()
+    use_streaming = CONFIG.get('use_streaming_agent', False)
 
     with agent_lock:
         session_id = uuid.uuid4().hex[:12]
 
-        if resume_id:
-            cmd = ['claude', '-r', resume_id, '-p', task, *_build_claude_flags(p)]
+        if use_streaming:
+            # Mode B: persistent process with stream-json stdin
+            if resume_id:
+                cmd = ['claude', '-r', resume_id, *_build_claude_flags(p, streaming=True)]
+            else:
+                context = _build_agent_context(p)
+                cmd = ['claude', *_build_claude_flags(p, streaming=True),
+                       '--append-system-prompt', context]
+
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=pp,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=_POPEN_FLAGS,
+                startupinfo=_STARTUPINFO,
+            )
+
+            # Send initial message via stdin JSON
+            initial_msg = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": task}
+            }) + '\n'
+            proc.stdin.write(initial_msg)
+            proc.stdin.flush()
+
+            threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+
+            session = {
+                'proc': proc,
+                'status': 'running',
+                'task': task,
+                'log_lines': [],
+                'started_at': now_iso(),
+                'session_id': session_id,
+                'project_id': project_id,
+                'mode': 'B',
+                'stdin_lock': threading.Lock(),
+                'process_alive': True,
+            }
+            agent_sessions[session_id] = session
+
+            t = threading.Thread(target=_read_agent_stream_b, args=(proc, session), daemon=True)
+            t.start()
         else:
-            context = _build_agent_context(p)
-            cmd = ['claude', '-p', task, *_build_claude_flags(p),
-                   '--append-system-prompt', context]
+            # Mode A: spawn-per-turn (existing behavior)
+            if resume_id:
+                cmd = ['claude', '-r', resume_id, '-p', task, *_build_claude_flags(p)]
+            else:
+                context = _build_agent_context(p)
+                cmd = ['claude', '-p', task, *_build_claude_flags(p),
+                       '--append-system-prompt', context]
 
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=pp,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            creationflags=_POPEN_FLAGS,
-            startupinfo=_STARTUPINFO,
-        )
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=pp,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=_POPEN_FLAGS,
+                startupinfo=_STARTUPINFO,
+            )
 
-        threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+            threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
 
-        session = {
-            'proc': proc,
-            'status': 'running',
-            'task': task,
-            'log_lines': [],
-            'started_at': now_iso(),
-            'session_id': session_id,
-            'project_id': project_id,
-        }
-        agent_sessions[session_id] = session
+            session = {
+                'proc': proc,
+                'status': 'running',
+                'task': task,
+                'log_lines': [],
+                'started_at': now_iso(),
+                'session_id': session_id,
+                'project_id': project_id,
+                'mode': 'A',
+            }
+            agent_sessions[session_id] = session
 
-        t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
-        t.start()
+            t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
+            t.start()
 
     resume_label = f" (resuming {resume_id})" if resume_id else ""
     print(f"[dispatch] cmd: {' '.join(cmd)}")
@@ -1096,8 +1215,10 @@ def agent_stream(project_id):
             yield f"data: {json.dumps({'type': 'error', 'msg': 'no active session'})}\n\n"
             return
 
+        is_mode_b = session.get('mode') == 'B'
         sent = int(since) if since.isdigit() else 0
         tick = 0
+        idle_sent = False  # track whether we've sent turn_complete for current idle
         while True:
             lines = session['log_lines']
             if sent < len(lines):
@@ -1105,12 +1226,25 @@ def agent_stream(project_id):
                     yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"
                 sent = len(lines)
 
-            if session['status'] != 'running':
-                # Don't close if follow-ups are pending or being dispatched
-                if not session.get('pending_followups') and not session.get('_dispatching_followup'):
-                    yield f"data: {json.dumps({'type': 'status', 'status': session['status'], 'usage': session.get('usage', {}), 'cost_usd': session.get('cost_usd', 0), 'num_turns': session.get('num_turns', 0)})}\n\n"
+            status = session['status']
+
+            if is_mode_b:
+                if status == 'idle' and not idle_sent:
+                    # Turn finished but process is still alive
+                    yield f"data: {json.dumps({'type': 'turn_complete', 'status': 'idle', 'usage': session.get('usage', {}), 'cost_usd': session.get('cost_usd', 0), 'num_turns': session.get('num_turns', 0)})}\n\n"
+                    idle_sent = True
+                elif status == 'running':
+                    idle_sent = False  # reset for next turn
+                elif status not in ('running', 'idle'):
+                    # Process actually exited — terminal status
+                    yield f"data: {json.dumps({'type': 'status', 'status': status, 'usage': session.get('usage', {}), 'cost_usd': session.get('cost_usd', 0), 'num_turns': session.get('num_turns', 0)})}\n\n"
                     break
-                # Else: wait for follow-up auto-dispatch to restart the session
+            else:
+                # Mode A: existing behavior
+                if status != 'running':
+                    if not session.get('pending_followups') and not session.get('_dispatching_followup'):
+                        yield f"data: {json.dumps({'type': 'status', 'status': status, 'usage': session.get('usage', {}), 'cost_usd': session.get('cost_usd', 0), 'num_turns': session.get('num_turns', 0)})}\n\n"
+                        break
 
             # Heartbeat every ~15s to keep connection alive
             tick += 1
@@ -1146,6 +1280,40 @@ def agent_followup(project_id):
         if not existing or existing['project_id'] != project_id:
             return jsonify({'error': 'session not found'}), 404
 
+        if existing.get('mode') == 'B':
+            # Mode B: write directly to persistent process stdin
+            if not existing.get('process_alive'):
+                return jsonify({'error': 'agent process has exited'}), 400
+
+            user_label = CONFIG.get('user_name') or 'User'
+            existing['log_lines'].append(f"\n> {user_label}: {message}\n")
+            existing['status'] = 'running'
+
+            stdin_msg = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": message}
+            }) + '\n'
+
+            def _write_stdin():
+                lock = existing.get('stdin_lock')
+                if lock:
+                    lock.acquire()
+                try:
+                    existing['proc'].stdin.write(stdin_msg)
+                    existing['proc'].stdin.flush()
+                except Exception as e:
+                    existing['log_lines'].append(f'[stdin write error: {e}]')
+                    existing['status'] = 'error'
+                    existing['process_alive'] = False
+                finally:
+                    if lock:
+                        lock.release()
+
+            threading.Thread(target=_write_stdin, daemon=True).start()
+            _log_agent_activity(project_id, f"Agent follow-up: {message[:100]}")
+            return jsonify({'ok': True, 'session_id': session_id})
+
+        # Mode A: existing behavior
         # If agent is still running, queue the follow-up instead of killing
         if existing['status'] == 'running':
             pending = existing.setdefault('pending_followups', [])
@@ -1201,9 +1369,16 @@ def agent_stop(project_id):
         session = agent_sessions.get(session_id)
         if not session or session['project_id'] != project_id:
             return jsonify({'error': 'session not found'}), 404
-        if session['status'] != 'running':
+        if session['status'] not in ('running', 'idle'):
             return jsonify({'error': 'agent not running'}), 400
         proc = session['proc']
+        # Mode B: close stdin gracefully before killing
+        if session.get('mode') == 'B':
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+            session['process_alive'] = False
         try:
             proc.kill()
         except Exception:
@@ -1235,8 +1410,14 @@ def agent_session_delete(project_id):
         session = agent_sessions.get(session_id)
         if not session or session['project_id'] != project_id:
             return jsonify({'ok': True})  # Already gone — idempotent
-        if session['status'] == 'running':
+        if session['status'] in ('running', 'idle'):
             proc = session['proc']
+            if session.get('mode') == 'B':
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+                session['process_alive'] = False
             try:
                 proc.kill()
             except Exception:
@@ -1296,6 +1477,7 @@ def agent_status(project_id):
                 'usage': s.get('usage', {}),
                 'cost_usd': s.get('cost_usd', 0),
                 'num_turns': s.get('num_turns', 0),
+                'mode': s.get('mode', 'A'),
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (
@@ -1304,7 +1486,7 @@ def agent_status(project_id):
     ), reverse=False)
     # Within each group, newest first
     sessions.sort(key=lambda s: s.get('started_at', ''), reverse=True)
-    sessions.sort(key=lambda s: 0 if s['status'] == 'running' else 1)
+    sessions.sort(key=lambda s: 0 if s['status'] in ('running', 'idle') else 1)
     return jsonify({'sessions': sessions})
 
 
@@ -1789,6 +1971,24 @@ def create_folder():
 @app.route('/')
 def index():
     return send_from_directory(STATIC_DIR, 'index.html')
+
+
+import atexit
+
+def _cleanup_persistent_agents():
+    """Clean up any Mode B persistent processes on server shutdown."""
+    for sid, session in list(agent_sessions.items()):
+        if session.get('mode') == 'B' and session.get('process_alive'):
+            try:
+                session['proc'].stdin.close()
+            except Exception:
+                pass
+            try:
+                session['proc'].kill()
+            except Exception:
+                pass
+
+atexit.register(_cleanup_persistent_agents)
 
 
 if __name__ == '__main__':

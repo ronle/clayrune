@@ -258,6 +258,16 @@
     max-width: 95vw;
     max-height: 95vh;
   }
+  @media (hover: none), (pointer: coarse) {
+    .modal-content { resize: none; }
+    .modal-content::after {
+      content: '⟋'; position: absolute; bottom: 0; right: 0;
+      width: 36px; height: 36px; display: flex; align-items: flex-end;
+      justify-content: flex-end; padding: 2px 6px;
+      font-size: 18px; color: var(--text-faint); line-height: 1;
+      pointer-events: none;
+    }
+  }
 
   .modal-window-controls {
     position: absolute; top: 8px; right: 8px; z-index: 11;
@@ -682,7 +692,7 @@
   .agent-status-dot {
     width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
   }
-  .agent-status-dot.idle       { background: var(--text-faint); }
+  .agent-status-dot.idle       { background: var(--accent); box-shadow: 0 0 4px var(--accent); }
   .agent-status-dot.running    { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
   .agent-status-dot.completed  { background: var(--accent); }
   .agent-status-dot.error      { background: var(--red); }
@@ -690,7 +700,7 @@
   .agent-status-label {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600;
   }
-  .agent-status-label.idle      { color: var(--text-faint); }
+  .agent-status-label.idle      { color: var(--accent); }
   .agent-status-label.running   { color: var(--green-text); }
   .agent-status-label.completed { color: var(--accent); }
   .agent-status-label.error     { color: var(--red-text); }
@@ -837,7 +847,7 @@
   .agent-chat-input {
     flex-shrink: 0; padding: 8px 10px;
   }
-  .agent-chat-input-row { display: flex; gap: 8px; }
+  .agent-chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
   .agent-chat-input-row .agent-task-input {
     background: transparent; border-color: var(--border2);
   }
@@ -855,6 +865,13 @@
     margin: 6px -8px; padding: 8px 10px; border-radius: 5px; border-left: 3px solid var(--accent);
     -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
     white-space: pre-wrap;
+  }
+  .agent-output .agent-echo-queued {
+    border-left-color: var(--yellow, #e5c07b); opacity: 0.7;
+  }
+  .agent-output .agent-echo-queued::after {
+    content: '  ⏳ queued — will send when current response completes';
+    font-size: 10px; font-weight: 400; font-style: italic; color: var(--yellow, #e5c07b);
   }
 
   /* Rich text formatting for agent output */
@@ -1684,7 +1701,7 @@ function renderProjects() {
 // ── Tile HTML (compact grid card) ───────────────────────────────────────────
 
 function hasRunningAgent(projectId) {
-  return agentHistory.some(h => h.projectId === projectId && h.status === 'running');
+  return agentHistory.some(h => h.projectId === projectId && (h.status === 'running' || h.status === 'idle'));
 }
 
 function tileHTML(p) {
@@ -2901,7 +2918,7 @@ function sessionMetricsHTML(session) {
   if (!session) return '';
   const usage = session.usage;
   const total = usage ? ((usage.input_tokens || 0) + (usage.output_tokens || 0)) : 0;
-  if (session.status === 'running') {
+  if (session.status === 'running' || session.status === 'idle') {
     const elapsed = formatElapsed(session.startedAt);
     return elapsed ? `&#x23F1; ${elapsed}` : '';
   }
@@ -3076,11 +3093,11 @@ function agentPanelHTML(p) {
       return result;
     })();
 
-    const stopBtn = isRunning
+    const stopBtn = (isRunning || st === 'idle')
       ? `<button class="btn-stop" onclick="stopAgent('${esc(p.id)}','${esc(activeSessionId)}')">Stop</button>` : '';
 
     const followupPreviews = renderAgentImagePreviews('fu_' + activeSessionId);
-    const chatInput = (st === 'running' || st === 'completed' || st === 'stopped')
+    const chatInput = (st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle')
       ? `<div class="agent-chat-input">
           ${followupPreviews}
           <div class="agent-chat-input-row">
@@ -3337,7 +3354,19 @@ function connectAgentStream(projectId, sessionId) {
             if (el) el.textContent = '';
           }
         }
+      } else if (msg.type === 'turn_complete') {
+        // Mode B: turn finished but process still alive — do NOT close SSE
+        if (agentStatusCache[sessionId]) {
+          agentStatusCache[sessionId].status = 'idle';
+          if (msg.usage) agentStatusCache[sessionId].usage = msg.usage;
+          if (msg.cost_usd !== undefined) agentStatusCache[sessionId].cost_usd = msg.cost_usd;
+        }
+        updateHistoryStatus(sessionId, 'idle');
+        updateAgentStatusUI(sessionId, 'idle');
+        refreshModal();
+        renderAgentConsole();
       } else if (msg.type === 'status') {
+        // Terminal status — close SSE
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = msg.status;
           if (msg.usage) agentStatusCache[sessionId].usage = msg.usage;
@@ -3370,7 +3399,7 @@ function connectAgentStream(projectId, sessionId) {
     es.close();
     delete agentEventSources[sessionId];
     const cached = agentStatusCache[sessionId];
-    if (cached && cached.status === 'running') {
+    if (cached && (cached.status === 'running' || cached.status === 'idle')) {
       const retries = (sseRetryCount[sessionId] || 0) + 1;
       sseRetryCount[sessionId] = retries;
       if (retries <= 3) {
@@ -3667,6 +3696,17 @@ async function sendFollowup(projectId, sessionId) {
     if (!data.ok && !data.queued) {
       console.error('Follow-up failed:', data.error);
     }
+    // If queued, update the echo to show queued status
+    if (data.queued) {
+      const el = document.getElementById(`agent-output-${sessionId}`);
+      if (el) {
+        const echo = el.querySelector('.agent-echo');
+        if (echo) {
+          echo.classList.add('agent-echo-queued');
+          echo.textContent = `> [queued] ${message}`;
+        }
+      }
+    }
     // Reconnect SSE after server confirms (agent process is now started)
     if (!data.queued && !agentEventSources[sessionId]) {
       connectAgentStream(projectId, sessionId);
@@ -3710,13 +3750,13 @@ async function fetchAgentStatus(projectId) {
       if (!agentHistory.find(h => h.sessionId === sid)) {
         agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '' });
       }
-      if (s.status === 'running') {
+      if (s.status === 'running' || s.status === 'idle') {
         connectAgentStream(projectId, sid);
       }
     }
-    // Set active tab to most recent running, or first session
+    // Set active tab to most recent running/idle, or first session
     if (sessions.length > 0 && !activeAgentTab[projectId]) {
-      const running = sessions.find(s => s.status === 'running');
+      const running = sessions.find(s => s.status === 'running' || s.status === 'idle');
       activeAgentTab[projectId] = running ? running.session_id : sessions[0].session_id;
     }
     if (sessions.length > 0) renderAgentConsole();
@@ -4054,7 +4094,7 @@ function renderAgentConsole() {
   el.classList.remove('hidden');
   if (!acExpanded) document.body.classList.add('console-visible');
 
-  const runningCount = agentHistory.filter(h => h.status === 'running').length;
+  const runningCount = agentHistory.filter(h => h.status === 'running' || h.status === 'idle').length;
   countEl.textContent = runningCount > 0 ? `${runningCount} running` : agentHistory.length;
   countEl.classList.toggle('has-running', runningCount > 0);
 
@@ -4094,7 +4134,7 @@ function renderAgentConsole() {
       return result;
     })();
 
-    const stopBtn = h.status === 'running'
+    const stopBtn = (h.status === 'running' || h.status === 'idle')
       ? `<button class="ac-stop-btn" onclick="event.stopPropagation();stopAgent('${esc(h.projectId)}','${esc(h.sessionId)}')" title="Stop agent">Stop</button>`
       : '';
 
@@ -5315,7 +5355,7 @@ startRefresh();
 
 // ── Fallback: poll for missed agent completions every 15s ───────────────────
 setInterval(async () => {
-  const running = agentHistory.filter(h => h.status === 'running');
+  const running = agentHistory.filter(h => h.status === 'running' || h.status === 'idle');
   if (running.length === 0) return;
   const checked = new Set();
   for (const h of running) {
@@ -5340,7 +5380,7 @@ setInterval(async () => {
           }
           continue;
         }
-        if (ss.status !== 'running' && !agentEventSources[rh.sessionId]) {
+        if (ss.status !== 'running' && ss.status !== 'idle' && !agentEventSources[rh.sessionId]) {
           // Server says done but we missed the SSE event
           rh.status = ss.status;
           if (agentStatusCache[rh.sessionId]) agentStatusCache[rh.sessionId].status = ss.status;
@@ -5349,7 +5389,7 @@ setInterval(async () => {
           refreshModal();
           renderAgentConsole();
           refreshSilent();
-        } else if (ss.status === 'running' && !agentEventSources[rh.sessionId]) {
+        } else if ((ss.status === 'running' || ss.status === 'idle') && !agentEventSources[rh.sessionId]) {
           // Still running but SSE dropped — reconnect
           connectAgentStream(h.projectId, rh.sessionId);
         }
@@ -5370,63 +5410,154 @@ window.addEventListener('beforeunload', () => {
 
 let modalDrag = null;
 
-document.getElementById('modal-layer').addEventListener('mousedown', (e) => {
-  const header = e.target.closest('.modal-header');
-  if (!header) return;
-  if (e.target.closest('input, button, select, textarea, [contenteditable]')) return;
-  e.preventDefault();
-  const win = e.target.closest('.modal-window');
-  if (!win) return;
+function modalDragStart(x, y, target) {
+  const header = target.closest('.modal-header');
+  if (!header) return false;
+  if (target.closest('input, button, select, textarea, [contenteditable]')) return false;
+  const win = target.closest('.modal-window');
+  if (!win) return false;
   const rect = win.getBoundingClientRect();
-  modalDrag = { element: win, startX: e.clientX, startY: e.clientY, origLeft: rect.left, origTop: rect.top };
+  modalDrag = { element: win, startX: x, startY: y, origLeft: rect.left, origTop: rect.top };
   header.classList.add('dragging');
-});
+  return true;
+}
 
-document.addEventListener('mousemove', (e) => {
+function modalDragMove(x, y) {
   if (!modalDrag) return;
-  const dx = e.clientX - modalDrag.startX;
-  const dy = e.clientY - modalDrag.startY;
+  const dx = x - modalDrag.startX;
+  const dy = y - modalDrag.startY;
   modalDrag.element.style.left = Math.max(0, Math.min(window.innerWidth - 100, modalDrag.origLeft + dx)) + 'px';
   modalDrag.element.style.top = Math.max(0, Math.min(window.innerHeight - 50, modalDrag.origTop + dy)) + 'px';
-});
+}
 
-document.addEventListener('mouseup', () => {
+function modalDragEnd() {
   if (!modalDrag) return;
   modalDrag.element.querySelector('.modal-header.dragging')?.classList.remove('dragging');
   modalDrag = null;
+}
+
+document.getElementById('modal-layer').addEventListener('mousedown', (e) => {
+  if (modalDragStart(e.clientX, e.clientY, e.target)) e.preventDefault();
 });
+document.addEventListener('mousemove', (e) => modalDragMove(e.clientX, e.clientY));
+document.addEventListener('mouseup', modalDragEnd);
+
+document.getElementById('modal-layer').addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  if (modalDragStart(t.clientX, t.clientY, e.target)) e.preventDefault();
+}, { passive: false });
+document.addEventListener('touchmove', (e) => {
+  if (!modalDrag) return;
+  e.preventDefault();
+  modalDragMove(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: false });
+document.addEventListener('touchend', modalDragEnd);
 
 // ── Agent chat separator drag (resize input area) ───────────────────────────
 
 let chatResize = null;
 
-document.getElementById('modal-layer').addEventListener('mousedown', (e) => {
-  const handle = e.target.closest('.agent-chat-separator');
-  if (!handle) return;
-  e.preventDefault();
+function separatorDragStart(y, target) {
+  const handle = target.closest('.agent-chat-separator');
+  if (!handle) return false;
   const chat = handle.closest('.agent-chat');
   const textarea = handle.nextElementSibling?.querySelector('.agent-task-input');
-  if (!textarea || !chat) return;
+  if (!textarea || !chat) return false;
   const chatH = chat.offsetHeight;
-  chatResize = { textarea, chat, startY: e.clientY, origH: textarea.offsetHeight, chatH };
+  chatResize = { textarea, chat, startY: y, origH: textarea.offsetHeight, chatH };
   document.body.style.cursor = 'ns-resize';
   document.body.style.userSelect = 'none';
-});
+  return true;
+}
 
-document.addEventListener('mousemove', (e) => {
+function separatorDragMove(y) {
   if (!chatResize) return;
-  const dy = chatResize.startY - e.clientY;  // drag up = positive = grow textarea
+  const dy = chatResize.startY - y;  // drag up = positive = grow textarea
   const maxH = chatResize.chatH - 80;  // leave at least 80px for output + separator
   const newH = Math.max(38, Math.min(maxH, chatResize.origH + dy));
   chatResize.textarea.style.height = newH + 'px';
-});
+}
 
-document.addEventListener('mouseup', () => {
-  if (chatResize) {
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-    chatResize = null;
+function separatorDragEnd() {
+  if (!chatResize) return;
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  chatResize = null;
+}
+
+document.getElementById('modal-layer').addEventListener('mousedown', (e) => {
+  if (separatorDragStart(e.clientY, e.target)) e.preventDefault();
+});
+document.addEventListener('mousemove', (e) => separatorDragMove(e.clientY));
+document.addEventListener('mouseup', separatorDragEnd);
+
+document.getElementById('modal-layer').addEventListener('touchstart', (e) => {
+  if (separatorDragStart(e.touches[0].clientY, e.target)) e.preventDefault();
+}, { passive: false });
+document.addEventListener('touchmove', (e) => {
+  if (!chatResize) return;
+  e.preventDefault();
+  separatorDragMove(e.touches[0].clientY);
+}, { passive: false });
+document.addEventListener('touchend', separatorDragEnd);
+
+// ── Touch resize for modal windows (mobile) ─────────────────────────────────
+
+let modalTouchResize = null;
+const RESIZE_ZONE = 40; // px from bottom-right corner
+
+// Corner drag resize (single finger)
+document.getElementById('modal-layer').addEventListener('touchstart', (e) => {
+  if (modalDrag || chatResize) return;
+  const content = e.target.closest('.modal-content');
+  if (!content) return;
+  const t = e.touches[0];
+  const rect = content.getBoundingClientRect();
+  if (t.clientX < rect.right - RESIZE_ZONE || t.clientY < rect.bottom - RESIZE_ZONE) return;
+  e.preventDefault();
+  modalTouchResize = { content, startX: t.clientX, startY: t.clientY, origW: content.offsetWidth, origH: content.offsetHeight };
+}, { passive: false });
+
+// Pinch-to-resize (two fingers anywhere on modal)
+let modalPinch = null;
+
+function pinchDist(e) {
+  const a = e.touches[0], b = e.touches[1];
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+document.getElementById('modal-layer').addEventListener('touchstart', (e) => {
+  if (e.touches.length === 2) {
+    const content = e.target.closest('.modal-content');
+    if (!content) return;
+    e.preventDefault();
+    modalPinch = { content, startDist: pinchDist(e), origW: content.offsetWidth, origH: content.offsetHeight };
   }
+}, { passive: false });
+
+document.addEventListener('touchmove', (e) => {
+  // Corner drag
+  if (modalTouchResize && e.touches.length === 1) {
+    e.preventDefault();
+    const t = e.touches[0];
+    const dx = t.clientX - modalTouchResize.startX;
+    const dy = t.clientY - modalTouchResize.startY;
+    modalTouchResize.content.style.width = Math.max(380, modalTouchResize.origW + dx) + 'px';
+    modalTouchResize.content.style.height = Math.max(300, modalTouchResize.origH + dy) + 'px';
+    return;
+  }
+  // Pinch resize
+  if (modalPinch && e.touches.length === 2) {
+    e.preventDefault();
+    const scale = pinchDist(e) / modalPinch.startDist;
+    modalPinch.content.style.width = Math.max(380, Math.round(modalPinch.origW * scale)) + 'px';
+    modalPinch.content.style.height = Math.max(300, Math.round(modalPinch.origH * scale)) + 'px';
+  }
+}, { passive: false });
+
+document.addEventListener('touchend', (e) => {
+  modalTouchResize = null;
+  if (e.touches.length < 2) modalPinch = null;
 });
 
 // ── Ctrl+Scroll zoom on agent output areas ──────────────────────────────────
