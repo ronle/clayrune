@@ -218,7 +218,8 @@ def _start_flask(port):
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
 
-    from server import app, PORT
+    from server import app, PORT, _start_scheduler
+    _start_scheduler()
     app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
 
 

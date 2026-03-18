@@ -8,7 +8,7 @@ import sys
 import threading
 import time as _time
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, send_from_directory, request, send_file, abort, Response
 
 
@@ -136,6 +136,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SHARED_RULES_PATH = Path(CONFIG.get('shared_rules_path', ''))
 PROJECTS_BASE = Path(CONFIG.get('projects_base', str(Path.home())))
 SETTINGS_PATH = _DATA_ROOT / 'data' / 'settings.json'
+SCHEDULES_PATH = _DATA_ROOT / 'data' / 'schedules.json'
 
 MEMORY_DIR = _DATA_ROOT / 'data' / 'memory'  # fallback for projects without project_path
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
@@ -197,6 +198,19 @@ def _load_settings():
 def _save_settings(settings):
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _load_schedules():
+    if SCHEDULES_PATH.exists():
+        try:
+            return json.loads(SCHEDULES_PATH.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+    return []
+
+def _save_schedules(schedules):
+    SCHEDULES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SCHEDULES_PATH.write_text(json.dumps(schedules, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
 def _build_claude_flags(project=None, streaming=False):
@@ -1015,6 +1029,7 @@ def _log_agent_completion(session):
         'usage': session.get('usage', {}),
         'cost_usd': session.get('cost_usd', 0),
         'num_turns': session.get('num_turns', 0),
+        'plan_file': session.get('plan_file', ''),
     }
     log = _load_agent_log(project_id)
     log.insert(0, entry)
@@ -1089,22 +1104,19 @@ def _auto_dispatch_followup(session, message):
     t.start()
 
 
-@app.route('/api/project/<project_id>/agent/dispatch', methods=['POST'])
-def agent_dispatch(project_id):
+def _dispatch_agent_internal(project_id, task, resume_id=''):
+    """Core dispatch logic shared by HTTP endpoint and scheduler.
+
+    Returns session_id on success, raises ValueError on error.
+    """
     p = load_project(project_id)
     if not p:
-        return jsonify({'error': 'project not found'}), 404
+        raise ValueError('project not found')
 
     pp = p.get('project_path', '')
     if not pp or not Path(pp).is_dir():
-        return jsonify({'error': 'project_path not set or invalid'}), 400
+        raise ValueError('project_path not set or invalid')
 
-    data = request.get_json() or {}
-    task = data.get('task', '').strip()
-    if not task:
-        return jsonify({'error': 'task required'}), 400
-
-    resume_id = data.get('resume_conversation_id', '').strip()
     use_streaming = CONFIG.get('use_streaming_agent', False)
 
     with agent_lock:
@@ -1198,8 +1210,26 @@ def agent_dispatch(project_id):
             t.start()
 
     resume_label = f" (resuming {resume_id})" if resume_id else ""
-    print(f"[dispatch] cmd: {' '.join(cmd)}")
+    try:
+        print(f"[dispatch] cmd: {' '.join(cmd)}")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        print(f"[dispatch] cmd: {' '.join(cmd).encode('ascii', 'replace').decode()}")
     _log_agent_activity(project_id, f"Agent dispatched{resume_label}: {task[:100]}")
+    return session_id
+
+
+@app.route('/api/project/<project_id>/agent/dispatch', methods=['POST'])
+def agent_dispatch(project_id):
+    data = request.get_json() or {}
+    task = data.get('task', '').strip()
+    if not task:
+        return jsonify({'error': 'task required'}), 400
+    resume_id = data.get('resume_conversation_id', '').strip()
+    try:
+        session_id = _dispatch_agent_internal(project_id, task, resume_id)
+    except ValueError as e:
+        code = 404 if 'not found' in str(e) else 400
+        return jsonify({'error': str(e)}), code
     return jsonify({'ok': True, 'session_id': session_id})
 
 
@@ -1283,7 +1313,52 @@ def agent_followup(project_id):
         if existing.get('mode') == 'B':
             # Mode B: write directly to persistent process stdin
             if not existing.get('process_alive'):
-                return jsonify({'error': 'agent process has exited'}), 400
+                # Process died (hard stop or crash) — respawn with claude -r
+                claude_sid = existing.get('claude_session_id')
+                if not claude_sid:
+                    return jsonify({'error': 'no session to resume'}), 400
+
+                user_label = CONFIG.get('user_name') or 'User'
+                existing['log_lines'].append(f"\n> {user_label}: {message}\n")
+                existing['status'] = 'running'
+
+                cmd = ['claude', '-r', claude_sid,
+                       *_build_claude_flags(p, streaming=True)]
+                proc = subprocess.Popen(
+                    cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, cwd=pp,
+                    text=True, encoding='utf-8', errors='replace',
+                    creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+                )
+                threading.Thread(target=_hide_windows_delayed,
+                                 args=(proc.pid,), daemon=True).start()
+
+                existing['proc'] = proc
+                existing['process_alive'] = True
+                existing['stdin_lock'] = threading.Lock()
+
+                threading.Thread(target=_read_agent_stream_b,
+                                 args=(proc, existing), daemon=True).start()
+
+                # Send message to stdin
+                stdin_msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user", "content": message}
+                }) + '\n'
+                def _write_initial():
+                    lock = existing['stdin_lock']
+                    with lock:
+                        try:
+                            proc.stdin.write(stdin_msg)
+                            proc.stdin.flush()
+                        except Exception as e:
+                            existing['log_lines'].append(f'[stdin write error: {e}]')
+                            existing['status'] = 'error'
+                            existing['process_alive'] = False
+                threading.Thread(target=_write_initial, daemon=True).start()
+
+                _log_agent_activity(project_id, f"Agent resumed: {message[:100]}")
+                return jsonify({'ok': True, 'session_id': session_id, 'resumed': True})
 
             user_label = CONFIG.get('user_name') or 'User'
             existing['log_lines'].append(f"\n> {user_label}: {message}\n")
@@ -1372,7 +1447,7 @@ def agent_stop(project_id):
         if session['status'] not in ('running', 'idle'):
             return jsonify({'error': 'agent not running'}), 400
         proc = session['proc']
-        # Mode B: close stdin gracefully before killing
+        # Kill process for both modes
         if session.get('mode') == 'B':
             try:
                 proc.stdin.close()
@@ -1386,7 +1461,7 @@ def agent_stop(project_id):
         session['status'] = 'stopped'
         session['log_lines'].append('[Agent stopped by user]')
 
-    # Wait outside lock so reader thread can update session
+    # Wait for process to exit
     try:
         proc.wait(timeout=5)
     except Exception:
@@ -1461,6 +1536,28 @@ def agent_plan_file(project_id):
     return jsonify({'path': str(p), 'filename': p.name, 'content': content})
 
 
+@app.route('/api/plan-file')
+def read_plan_file():
+    """Read a plan file by path (for plan history viewer)."""
+    plan_path = request.args.get('path', '')
+    if not plan_path:
+        return jsonify({'error': 'path required'}), 400
+    p = Path(plan_path)
+    # Security: only allow reading from ~/.claude/plans/
+    plans_dir = Path.home() / '.claude' / 'plans'
+    try:
+        p.resolve().relative_to(plans_dir.resolve())
+    except ValueError:
+        return jsonify({'error': 'access denied'}), 403
+    if not p.is_file():
+        return jsonify({'error': 'file not found'}), 404
+    try:
+        content = p.read_text(encoding='utf-8')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'path': str(p), 'filename': p.name, 'content': content})
+
+
 @app.route('/api/project/<project_id>/agent/status')
 def agent_status(project_id):
     sessions = []
@@ -1499,6 +1596,40 @@ def get_agent_log(project_id):
         entry['ts_relative'] = time_ago(entry.get('ts'))
         entry['started_relative'] = time_ago(entry.get('started_at'))
     return jsonify(log)
+
+
+@app.route('/api/project/<project_id>/plans')
+def get_project_plans(project_id):
+    """Return all plan files associated with this project from agent log."""
+    import re
+    log = _load_agent_log(project_id)
+    plans = []
+    seen = set()
+    for entry in log:
+        pf = entry.get('plan_file', '')
+        if not pf or pf in seen:
+            continue
+        p = Path(pf)
+        if not p.is_file():
+            continue
+        seen.add(pf)
+        # Extract first heading from file
+        try:
+            content = p.read_text(encoding='utf-8')
+            m = re.match(r'^#\s+(.+)', content, re.MULTILINE)
+            title = m.group(1).strip() if m else p.stem
+        except Exception:
+            title = p.stem
+        plans.append({
+            'plan_file': pf,
+            'filename': p.name,
+            'title': title,
+            'task': entry.get('task', ''),
+            'ts': entry.get('ts', ''),
+            'ts_relative': time_ago(entry.get('ts')),
+            'session_id': entry.get('session_id', ''),
+        })
+    return jsonify(plans)
 
 
 # ── Usage / token tracking ──────────────────────────────────────────────────
@@ -1966,6 +2097,196 @@ def create_folder():
     return jsonify({'ok': True, 'path': str(target)})
 
 
+# ── Scheduled Tasks ──────────────────────────────────────────────────────────
+
+def _compute_next_run(schedule):
+    """Compute the next run time for a schedule. Returns ISO string or None."""
+    stype = schedule.get('schedule_type', 'once')
+    now = datetime.now(timezone.utc)
+
+    if stype == 'once':
+        run_at = schedule.get('run_at', '')
+        if not run_at:
+            return None
+        try:
+            dt = datetime.fromisoformat(run_at.replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.isoformat().replace('+00:00', 'Z') if dt > now else None
+        except Exception:
+            return None
+
+    elif stype == 'daily':
+        time_str = schedule.get('time', '09:00')
+        days = schedule.get('days', [])  # 1=Mon..7=Sun, empty=every day
+        try:
+            h, m = int(time_str.split(':')[0]), int(time_str.split(':')[1])
+        except Exception:
+            h, m = 9, 0
+        # Try today and next 7 days
+        for offset in range(8):
+            candidate = now.replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=offset)
+            if candidate <= now:
+                continue
+            if days:
+                # Python isoweekday: 1=Mon..7=Sun — matches our format
+                if candidate.isoweekday() not in days:
+                    continue
+            return candidate.isoformat().replace('+00:00', 'Z')
+        return None
+
+    elif stype == 'interval':
+        interval_min = schedule.get('interval_minutes', 60)
+        if interval_min <= 0:
+            return None
+        last_run = schedule.get('last_run', '')
+        if last_run:
+            try:
+                last_dt = datetime.fromisoformat(last_run.replace('Z', '+00:00'))
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                nxt = last_dt + timedelta(minutes=interval_min)
+                if nxt <= now:
+                    # Missed window — run now-ish (next tick)
+                    nxt = now + timedelta(seconds=5)
+                return nxt.isoformat().replace('+00:00', 'Z')
+            except Exception:
+                pass
+        # No last_run — run immediately
+        nxt = now + timedelta(seconds=5)
+        return nxt.isoformat().replace('+00:00', 'Z')
+
+    return None
+
+
+_scheduler_stop = threading.Event()
+
+
+def _scheduler_loop():
+    """Background daemon: check schedules every 30s and dispatch due tasks."""
+    while not _scheduler_stop.is_set():
+        try:
+            schedules = _load_schedules()
+            now = datetime.now(timezone.utc)
+            changed = False
+            for sched in schedules:
+                if not sched.get('enabled', True):
+                    continue
+                next_run = sched.get('next_run', '')
+                if not next_run:
+                    # Compute and save next_run
+                    nr = _compute_next_run(sched)
+                    if nr:
+                        sched['next_run'] = nr
+                        changed = True
+                    continue
+                try:
+                    nr_dt = datetime.fromisoformat(next_run.replace('Z', '+00:00'))
+                    if nr_dt.tzinfo is None:
+                        nr_dt = nr_dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+                if now >= nr_dt:
+                    # Time to dispatch
+                    pid = sched.get('project_id', '')
+                    task = sched.get('task', '')
+                    if pid and task:
+                        try:
+                            sid = _dispatch_agent_internal(pid, task)
+                            print(f"[scheduler] Dispatched for {pid}: {task[:60]} -> session {sid}")
+                        except Exception as e:
+                            print(f"[scheduler] Failed to dispatch for {pid}: {e}")
+                    sched['last_run'] = now_iso()
+                    if sched.get('schedule_type') == 'once':
+                        sched['enabled'] = False
+                        sched['next_run'] = None
+                    else:
+                        sched['next_run'] = _compute_next_run(sched)
+                    changed = True
+            if changed:
+                _save_schedules(schedules)
+        except Exception as e:
+            print(f"[scheduler] Error: {e}")
+        _scheduler_stop.wait(30)
+
+
+def _start_scheduler():
+    t = threading.Thread(target=_scheduler_loop, daemon=True, name='scheduler')
+    t.start()
+    return t
+
+
+@app.route('/api/schedules')
+def get_schedules():
+    schedules = _load_schedules()
+    # Enrich with project names
+    projects_map = {p['id']: p.get('name', p['id']) for p in load_projects()}
+    for s in schedules:
+        s['project_name'] = projects_map.get(s.get('project_id', ''), s.get('project_id', ''))
+    return jsonify(schedules)
+
+
+@app.route('/api/schedules', methods=['POST'])
+def create_schedule():
+    data = request.get_json() or {}
+    pid = (data.get('project_id') or '').strip()
+    task = (data.get('task') or '').strip()
+    stype = data.get('schedule_type', 'daily')
+    if not pid or not task:
+        return jsonify({'error': 'project_id and task required'}), 400
+
+    sched = {
+        'id': uuid.uuid4().hex[:8],
+        'enabled': True,
+        'project_id': pid,
+        'task': task,
+        'schedule_type': stype,
+        'time': data.get('time', '09:00'),
+        'days': data.get('days', []),
+        'interval_minutes': data.get('interval_minutes', 60),
+        'run_at': data.get('run_at', ''),
+        'last_run': None,
+        'next_run': None,
+        'created_at': now_iso(),
+    }
+    sched['next_run'] = _compute_next_run(sched)
+
+    schedules = _load_schedules()
+    schedules.append(sched)
+    _save_schedules(schedules)
+    return jsonify(sched), 201
+
+
+@app.route('/api/schedules/<schedule_id>', methods=['PUT'])
+def update_schedule(schedule_id):
+    data = request.get_json() or {}
+    schedules = _load_schedules()
+    sched = next((s for s in schedules if s['id'] == schedule_id), None)
+    if not sched:
+        return jsonify({'error': 'not found'}), 404
+
+    for key in ('project_id', 'task', 'schedule_type', 'time', 'days',
+                'interval_minutes', 'enabled', 'run_at'):
+        if key in data:
+            sched[key] = data[key]
+
+    # Recompute next_run
+    sched['next_run'] = _compute_next_run(sched)
+    _save_schedules(schedules)
+    return jsonify(sched)
+
+
+@app.route('/api/schedules/<schedule_id>', methods=['DELETE'])
+def delete_schedule(schedule_id):
+    schedules = _load_schedules()
+    before = len(schedules)
+    schedules = [s for s in schedules if s['id'] != schedule_id]
+    if len(schedules) == before:
+        return jsonify({'error': 'not found'}), 404
+    _save_schedules(schedules)
+    return jsonify({'ok': True})
+
+
 # ── Static ───────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -1989,8 +2310,10 @@ def _cleanup_persistent_agents():
                 pass
 
 atexit.register(_cleanup_persistent_agents)
+atexit.register(_scheduler_stop.set)
 
 
 if __name__ == '__main__':
+    _start_scheduler()
     print(f"Mission Control running at http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

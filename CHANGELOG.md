@@ -1,5 +1,64 @@
 # Mission Control — Changelog
 
+## [2026-03-17f] — Plan button persistence from agent log
+
+- Plan file button in agent status row now populated from agent log entries
+- After agent log loads, any session with a `plan_file` gets it set in status cache
+- Ensures plan button shows for sessions that generated plans (even if loaded after initial fetch)
+
+## [2026-03-17e] — Textarea preservation + charmap fix
+
+- Textarea content now preserved across tab switches via global `textareaValues` cache
+- Delegated `input` event listener on modal-layer captures values as user types
+- Cache cleared on submit (dispatch, followup, backlog add, continue)
+- Fixed Windows charmap codec error (`\u2192` arrow) crashing agent dispatch
+- Replaced Unicode arrow in scheduler print with ASCII `->` equivalent
+
+## [2026-03-17d] — Resume conversation after stop
+
+- Stop kills the process (both modes), but conversation can be resumed via follow-up
+- Mode B followup handler respawns process with `claude -r` when process is dead
+- Reverted `CREATE_NEW_PROCESS_GROUP` flag that was breaking Mode B on Windows
+- Input placeholder shows "Type to resume conversation..." for stopped sessions
+
+## [2026-03-17c] — Plans History tab + UI polish
+
+### Plans History tab
+- New "Plans" tab in project modal shows all historical plan files generated under the project
+- Backend persists `plan_file` path in agent log entries on session completion
+- `GET /api/project/<id>/plans` endpoint scans agent log for entries with plan files
+- `GET /api/plan-file?path=` endpoint reads plan file content (restricted to `~/.claude/plans/`)
+- Plan cards show title (extracted from `# heading`), task, and relative timestamp
+- Clicking a plan card opens the plan viewer modal with full formatted content
+- Empty state shown when no plans exist for a project
+
+### UI polish
+- Agent chat follow-up input: added bottom padding to avoid clipping at modal edge
+- Default modal tab changed from Backlog to Agent
+- Modal resize corner grip made larger (14px desktop, 18px touch) with border-based indicator
+- Scheduler modal: restructured header layout so "+ Add Schedule" button doesn't overlap window controls
+- Tile dim colors made more vivid/saturated (amber, green, red, purple, accent)
+- Plan button title now lazy-fetches the actual plan file `# heading` instead of showing session task text
+
+## [2026-03-17b] — Scheduled Tasks
+
+### Scheduler
+- New Scheduled Tasks system: automate agent dispatch at configured times
+- Three schedule types: Once (specific datetime), Daily (time + day-of-week), Interval (every N minutes)
+- Background scheduler thread checks every 30 seconds and dispatches due tasks
+- Extracted `_dispatch_agent_internal()` helper from endpoint for shared use by HTTP and scheduler
+- CRUD API: GET/POST/PUT/DELETE `/api/schedules` with `data/schedules.json` storage
+- `_compute_next_run()` calculates next execution time for each schedule type
+- Scheduler auto-starts on server boot, auto-stops on shutdown via atexit
+
+### Frontend
+- "Scheduler" button in header opens modal with schedule list and add/edit form
+- Schedule cards show project name, task, schedule description, last/next run times
+- Enable/disable toggle per schedule, edit and delete actions
+- Add/edit form with project dropdown, task textarea, type selector, day checkboxes (daily), interval input
+- **Upcoming jobs banner**: top-of-page bar showing next 5 scheduled tasks with relative countdown times
+- Banner auto-refreshes every 60 seconds, hidden when no upcoming schedules
+
 ## [2026-03-17a] — Persistent agent process (Mode B) + mobile touch support
 
 ### Persistent agent process (Mode B)

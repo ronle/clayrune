@@ -18,18 +18,18 @@
     --text-dim:    #b8c4d4;
     --text-faint:  #7a8ba0;
     --accent:      #4da6ff;
-    --accent-dim:  #1a3a5c;
+    --accent-dim:  #1e5599;
     --green:       #34d399;
-    --green-dim:   #0d2e1f;
+    --green-dim:   #1f6848;
     --green-text:  #6ee7b7;
     --amber:       #fbbf24;
-    --amber-dim:   #2d2008;
+    --amber-dim:   #5c4a15;
     --amber-text:  #fcd34d;
     --red:         #f87171;
-    --red-dim:     #2d1010;
+    --red-dim:     #5c2222;
     --red-text:    #fca5a5;
     --purple:      #a78bfa;
-    --purple-dim:  #1e1540;
+    --purple-dim:  #3f2e80;
     --purple-text: #c4b5fd;
   }
 
@@ -258,14 +258,18 @@
     max-width: 95vw;
     max-height: 95vh;
   }
+  .modal-content::after {
+    content: ''; position: absolute; bottom: 3px; right: 3px;
+    width: 14px; height: 14px; pointer-events: none;
+    border-right: 2.5px solid var(--text-faint); border-bottom: 2.5px solid var(--text-faint);
+    opacity: 0.5;
+  }
   @media (hover: none), (pointer: coarse) {
     .modal-content { resize: none; }
     .modal-content::after {
-      content: '⟋'; position: absolute; bottom: 0; right: 0;
-      width: 36px; height: 36px; display: flex; align-items: flex-end;
-      justify-content: flex-end; padding: 2px 6px;
-      font-size: 18px; color: var(--text-faint); line-height: 1;
-      pointer-events: none;
+      content: ''; width: 18px; height: 18px; bottom: 4px; right: 4px;
+      border-right: 3px solid var(--text-faint); border-bottom: 3px solid var(--text-faint);
+      opacity: 0.6;
     }
   }
 
@@ -845,7 +849,7 @@
   }
   .agent-output:empty { display: none; }
   .agent-chat-input {
-    flex-shrink: 0; padding: 8px 10px;
+    flex-shrink: 0; padding: 8px 10px 16px;
   }
   .agent-chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
   .agent-chat-input-row .agent-task-input {
@@ -1306,6 +1310,104 @@
   }
   .btn-header-action:hover { border-color: var(--accent); color: var(--accent); }
 
+  /* ── SCHEDULE BANNER ────────────────────────────────────────── */
+  .schedule-banner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 6px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 12px; color: var(--text-dim);
+    overflow-x: auto; white-space: nowrap;
+  }
+  .schedule-banner.hidden { display: none; }
+  .schedule-banner-label {
+    color: var(--text-faint); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0;
+  }
+  .schedule-banner-item {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 10px; border-radius: 4px;
+    background: var(--surface3); border: 1px solid var(--border);
+    cursor: pointer; transition: border-color 0.15s;
+  }
+  .schedule-banner-item:hover { border-color: var(--accent); }
+  .schedule-banner-item .sb-project { color: var(--accent); font-weight: 600; }
+  .schedule-banner-item .sb-task { color: var(--text-dim); max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+  .schedule-banner-item .sb-time { color: var(--text-faint); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+  /* ── SCHEDULER MODAL ─────────────────────────────────────── */
+  .scheduler-section { padding: 40px 28px 28px; overflow-y: auto; height: calc(100% - 56px); }
+  .schedule-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 16px; margin-bottom: 8px; display: flex; align-items: flex-start; gap: 12px;
+  }
+  .schedule-card.disabled { opacity: 0.5; }
+  .schedule-card-body { flex: 1; min-width: 0; }
+  .schedule-card-project { font-size: 11px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; }
+  .schedule-card-task { font-size: 13px; color: var(--text); margin: 2px 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .schedule-card-meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-faint); }
+  .schedule-card-meta span { display: flex; align-items: center; gap: 4px; }
+  .schedule-card-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+  .schedule-toggle {
+    position: relative; width: 34px; height: 18px; background: var(--surface3);
+    border-radius: 9px; border: 1px solid var(--border); cursor: pointer; transition: all 0.2s;
+  }
+  .schedule-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 12px; height: 12px; border-radius: 50%; background: var(--text-faint);
+    transition: all 0.2s;
+  }
+  .schedule-toggle.on { background: var(--accent-dim); border-color: var(--accent); }
+  .schedule-toggle.on::after { left: 18px; background: var(--accent); }
+  .schedule-form {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 16px 16px 24px; margin-bottom: 20px;
+  }
+  .schedule-form label { display: block; font-size: 11px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .schedule-form select, .schedule-form input[type="text"], .schedule-form input[type="time"],
+  .schedule-form input[type="number"], .schedule-form input[type="datetime-local"], .schedule-form textarea {
+    width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    font-family: 'Inter', sans-serif; font-size: 13px; padding: 8px 10px; border-radius: 5px;
+    outline: none; box-sizing: border-box; margin-bottom: 10px;
+  }
+  .schedule-form select:focus, .schedule-form input:focus, .schedule-form textarea:focus { border-color: var(--accent); }
+  .schedule-form textarea { resize: vertical; min-height: 60px; }
+  .schedule-form .sched-type-row { display: flex; gap: 6px; margin-bottom: 10px; }
+  .schedule-form .sched-type-btn {
+    flex: 1; padding: 6px; text-align: center; border: 1px solid var(--border);
+    border-radius: 5px; background: transparent; color: var(--text-faint);
+    font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+  }
+  .schedule-form .sched-type-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .schedule-form .sched-days { display: flex; gap: 4px; margin-bottom: 10px; }
+  .schedule-form .sched-day-btn {
+    width: 32px; height: 28px; border: 1px solid var(--border); border-radius: 4px;
+    background: transparent; color: var(--text-faint); font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .schedule-form .sched-day-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .schedule-form .sched-actions { display: flex; gap: 8px; margin-top: 4px; }
+  .schedule-form .btn-sched-save {
+    padding: 8px 20px; background: var(--accent-dim); border: 1px solid var(--accent);
+    color: var(--accent); font-weight: 600; border-radius: 5px; cursor: pointer; font-size: 12px;
+  }
+  .schedule-form .btn-sched-save:hover { background: var(--accent); color: var(--bg); }
+  .schedule-form .btn-sched-cancel {
+    padding: 8px 20px; background: transparent; border: 1px solid var(--border);
+    color: var(--text-faint); font-weight: 600; border-radius: 5px; cursor: pointer; font-size: 12px;
+  }
+  .schedule-empty { color: var(--text-faint); font-size: 13px; text-align: center; padding: 24px; }
+
+  /* ── PLAN HISTORY CARDS ─────────────────────────────────────── */
+  .plan-history-card {
+    padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 6px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s;
+  }
+  .plan-history-card:hover { border-color: var(--accent); }
+  .plan-history-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .plan-history-meta { font-size: 11px; color: var(--text-faint); display: flex; gap: 12px; }
+  .plan-history-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* ── TOKEN COUNTERS ────────────────────────────────────────── */
   .token-counter-global {
     display: flex; align-items: center; gap: 6px;
@@ -1530,6 +1632,7 @@
     <div class="tc-context-menu" id="tc-context-menu"></div>
     <button class="btn-header-action" onclick="openSharedRulesEditor()">Shared Rules</button>
     <button class="btn-header-action" onclick="openSkillsManager()">Skills</button>
+    <button class="btn-header-action" onclick="openScheduler()">Scheduler</button>
     <button class="btn-new-project" onclick="openNewProjectForm()">+ New</button>
     <button class="btn-header-action" onclick="showDesktop()" title="Minimize all windows">&#x1F5D4;</button>
     <span class="refresh-timer" id="refresh-timer">refresh in 30s</span>
@@ -1538,6 +1641,7 @@
 </div>
 
 <div class="stats-bar" id="stats-bar"></div>
+<div class="schedule-banner hidden" id="schedule-banner"></div>
 
 <div class="filter-row">
   <span class="filter-label">Filter</span>
@@ -1582,6 +1686,7 @@ let openAttPanels = new Set();
 let undoStack = [];  // [{type, projectId, itemId, data, label}]
 let modalActiveTab = {};  // projectId → 'backlog' | 'agent' | 'agent-log' | 'activity'
 let textareaHeights = {}; // textarea id → height string (persists user resize across refreshes)
+let textareaValues = {};  // textarea id → value string (persists content across tab switches)
 let refreshCountdown = 30;
 let refreshInterval, countdownInterval;
 let lastDragEnd = 0;
@@ -1941,6 +2046,7 @@ function modalContentHTML(p) {
       <div class="modal-tab ${activeTab==='agent'?'active':''}" onclick="switchModalTab('${esc(p.id)}','agent')">Agent</div>
       <div class="modal-tab ${activeTab==='backlog'?'active':''}" onclick="switchModalTab('${esc(p.id)}','backlog')">Backlog${openItems.length ? `<span class="tab-badge">${openItems.length}</span>` : ''}</div>
       <div class="modal-tab ${activeTab==='agent-log'?'active':''}" onclick="switchModalTab('${esc(p.id)}','agent-log')">Agent Log</div>
+      <div class="modal-tab ${activeTab==='plans'?'active':''}" onclick="switchModalTab('${esc(p.id)}','plans')">Plans</div>
       <div class="modal-tab ${activeTab==='activity'?'active':''}" onclick="switchModalTab('${esc(p.id)}','activity')">Activity</div>
       <div class="modal-tab ${activeTab==='skills'?'active':''}" onclick="switchModalTab('${esc(p.id)}','skills')">Skills</div>
       <div class="modal-tab ${activeTab==='memory'?'active':''}" onclick="switchModalTab('${esc(p.id)}','memory')">Memory</div>
@@ -1985,6 +2091,12 @@ function modalContentHTML(p) {
       </div>
       <div class="modal-tab-content ${activeTab==='agent-log'?'active':''}" data-tab="agent-log">
         ${agentLogPanelHTML(p)}
+      </div>
+      <div class="modal-tab-content ${activeTab==='plans'?'active':''}" data-tab="plans">
+        <div class="card-section">
+          <div class="section-title">Plans</div>
+          <div id="plans-list-${esc(p.id)}"><div style="color:var(--text-faint);font-style:italic">Loading...</div></div>
+        </div>
       </div>
       <div class="modal-tab-content ${activeTab==='activity'?'active':''}" data-tab="activity">
         <div class="card-section">
@@ -2352,6 +2464,11 @@ function refreshModalById(modalId) {
     const el = document.getElementById(id);
     if (el) el.value = val;
   }
+  // Also restore from global textarea cache (survives tab switches)
+  for (const [id, val] of Object.entries(textareaValues)) {
+    const el = document.getElementById(id);
+    if (el && !saved[id] && val) el.value = val;
+  }
   for (const [id, h] of Object.entries(textareaHeights)) {
     const el = document.getElementById(id);
     if (el) el.style.height = h;
@@ -2543,6 +2660,7 @@ async function addBacklogItem(projectId) {
   if (!text && files.length === 0) return;
   if (!text) { input.focus(); return; }
   input.value = '';
+  if (input.id) delete textareaValues[input.id];
   input.disabled = true;
   try {
     const res = await fetch(API_BASE + `/api/project/${projectId}/backlog`, {
@@ -2954,6 +3072,7 @@ let agentPendingImages = {};   // key (projectId or sessionId) → [{file, objec
 let acOpenSessions = new Set(); // session_id → expanded in console
 let acExpanded = false;
 let planViewerContent = {};    // session_id → string[] of raw plan text lines
+let planFileTitle = {};        // session_id → extracted first heading from plan file
 let pendingResumeId = {};      // project_id → claude_session_id to resume (null = fresh)
 
 function getProjectSessions(projectId) {
@@ -3102,7 +3221,7 @@ function agentPanelHTML(p) {
           ${followupPreviews}
           <div class="agent-chat-input-row">
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
-              placeholder="Send follow-up... (paste screenshots here)"
+              placeholder="${st === 'stopped' ? 'Type to resume conversation...' : 'Send follow-up... (paste screenshots here)'}"
               onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'))"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
@@ -3113,7 +3232,29 @@ function agentPanelHTML(p) {
     const planFileBtn = activeSession && activeSession.planFile
       ? (() => {
           const fname = activeSession.planFile.split(/[/\\]/).pop();
-          const label = planFileLabel(activeSession.task || fname);
+          const label = planFileTitle[activeSessionId] || planFileLabel(activeSession.task || fname);
+          // Lazy-fetch heading if not cached yet
+          if (!planFileTitle[activeSessionId]) {
+            fetch(API_BASE + `/api/project/${esc(p.id)}/agent/plan-file?session=${esc(activeSessionId)}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(d => {
+                if (d && d.content) {
+                  const m = d.content.match(/^#\s+(.+)/m);
+                  if (m) {
+                    let t = m[1].trim();
+                    if (t.length > 40) t = t.slice(0, 37) + '...';
+                    planFileTitle[activeSessionId] = t;
+                    const c = document.getElementById(`plan-file-btn-${activeSessionId}`);
+                    if (c) c.querySelector('.btn-plan-file')?.childNodes?.forEach?.((n, i) => {
+                      if (i > 0) n.textContent = ' ' + t;
+                    });
+                    if (c && c.querySelector('.btn-plan-file')) {
+                      c.querySelector('.btn-plan-file').innerHTML = `&#128196; ${esc(t)}`;
+                    }
+                  }
+                }
+              }).catch(() => {});
+          }
           return `<button class="btn-plan-file" onclick="openPlanFileViewer('${esc(p.id)}','${esc(activeSessionId)}')" title="${esc(fname)}">&#128196; ${esc(label)}</button>`;
         })()
       : '';
@@ -3275,6 +3416,7 @@ async function dispatchAgent(projectId) {
   // Require a prompt for fresh sessions; resume can go without one
   if (!task && !resumeId) { input.focus(); return; }
   input.value = '';
+  if (input.id) delete textareaValues[input.id];
 
   // Upload any pasted images and build final task
   const imagePaths = await uploadAgentImages(projectId);
@@ -3639,12 +3781,33 @@ function appendAgentLine(sessionId, text) {
           const s = (data.sessions || []).find(x => x.session_id === sessionId);
           if (s && s.plan_file) {
             cached.planFile = s.plan_file;
-            const container = document.getElementById(`plan-file-btn-${sessionId}`);
-            if (container && !container.innerHTML.trim()) {
-              const fname = s.plan_file.split(/[/\\]/).pop();
-              const label = planFileLabel(cached.task || fname);
-              container.innerHTML = `<button class="btn-plan-file" onclick="openPlanFileViewer('${esc(cached.projectId)}','${esc(sessionId)}')" title="${esc(fname)}">&#128196; ${esc(label)}</button>`;
-            }
+            // Fetch plan content to extract heading for button label
+            fetch(API_BASE + `/api/project/${cached.projectId}/agent/plan-file?session=${sessionId}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(planData => {
+                const fname = s.plan_file.split(/[/\\]/).pop();
+                let label;
+                if (planData && planData.content) {
+                  const headingMatch = planData.content.match(/^#\s+(.+)/m);
+                  if (headingMatch) {
+                    label = headingMatch[1].trim();
+                    if (label.length > 40) label = label.slice(0, 37) + '...';
+                    planFileTitle[sessionId] = label;
+                  }
+                }
+                if (!label) label = planFileLabel(cached.task || fname);
+                const container = document.getElementById(`plan-file-btn-${sessionId}`);
+                if (container && !container.innerHTML.trim()) {
+                  container.innerHTML = `<button class="btn-plan-file" onclick="openPlanFileViewer('${esc(cached.projectId)}','${esc(sessionId)}')" title="${esc(fname)}">&#128196; ${esc(label)}</button>`;
+                }
+              }).catch(() => {
+                const fname = s.plan_file.split(/[/\\]/).pop();
+                const label = planFileLabel(cached.task || fname);
+                const container = document.getElementById(`plan-file-btn-${sessionId}`);
+                if (container && !container.innerHTML.trim()) {
+                  container.innerHTML = `<button class="btn-plan-file" onclick="openPlanFileViewer('${esc(cached.projectId)}','${esc(sessionId)}')" title="${esc(fname)}">&#128196; ${esc(label)}</button>`;
+                }
+              });
           }
         }).catch(() => {});
     }
@@ -3656,6 +3819,7 @@ async function sendFollowup(projectId, sessionId) {
   const message = input.value.trim();
   if (!message) { input.focus(); return; }
   input.value = '';
+  if (input.id) delete textareaValues[input.id];
 
   // Immediate local echo — show the user's message in DOM only (not buffer)
   // The server will send the real version via SSE which gets added to the buffer
@@ -3767,6 +3931,7 @@ async function fetchAgentStatus(projectId) {
 
 let agentLogCache = {};  // project_id → entries[]
 let agentLogOpen = {};   // project_id → bool
+let continueInputOpen = {};  // entryId → true (tracks which continue input is expanded)
 
 function agentLogPanelHTML(p) {
   if (!p.project_path) return '';
@@ -3788,7 +3953,7 @@ function agentLogPanelHTML(p) {
         <div class="agent-log-summary">${esc(e.summary || '')}</div>
         <div class="agent-log-ts">${esc(e.ts_relative || e.ts || '')} &middot; started ${esc(e.started_relative || e.started_at || '')}${(() => { const u = e.usage || {}; const t = (u.input_tokens||0)+(u.output_tokens||0); return t ? ` &middot; ${formatTokens(t)} tokens` : ''; })()}${e.cost_usd ? ` &middot; <span class="alu-cost">${formatCost(e.cost_usd)}</span>` : ''}</div>
         ${csid ? `<div class="agent-log-session-id">claude -r <code title="Click to copy">${esc(csid)}</code><span class="copy-sid" onclick="navigator.clipboard.writeText('${esc(csid)}');this.textContent='copied!';setTimeout(()=>this.textContent='copy',1200)" title="Copy session ID">copy</span></div>` : ''}
-        ${csid ? `<div class="agent-log-continue-input" id="continue-input-${esc(eid)}">
+        ${csid ? `<div class="agent-log-continue-input${continueInputOpen[eid] ? ' open' : ''}" id="continue-input-${esc(eid)}">
           <textarea id="continue-msg-${esc(eid)}" rows="2" placeholder="What should the agent continue with?" onkeydown="handleInputEnter(event,()=>dispatchContinue('${esc(p.id)}','${esc(eid)}','${esc(csid)}'))"></textarea>
           <button class="btn-send" onclick="dispatchContinue('${esc(p.id)}','${esc(eid)}','${esc(csid)}')">Send</button>
         </div>` : ''}
@@ -3820,12 +3985,119 @@ async function loadAgentLog(projectId) {
   try {
     const res = await fetch(API_BASE + `/api/project/${projectId}/agent/log`);
     agentLogCache[projectId] = await res.json();
+    // Populate planFile in status cache from agent log entries
+    for (const entry of agentLogCache[projectId]) {
+      if (entry.plan_file && entry.session_id) {
+        const cached = agentStatusCache[entry.session_id];
+        if (cached && !cached.planFile) {
+          cached.planFile = entry.plan_file;
+        }
+      }
+    }
     // Auto-set default resume if not explicitly chosen yet
     if (!(projectId in pendingResumeId)) {
       pendingResumeId[projectId] = getDefaultResumeId(projectId);
     }
     refreshModal();
   } catch(e) {}
+}
+
+// ── Plans tab ─────────────────────────────────────────────────────────────────
+
+let plansCache = {};
+
+async function loadProjectPlans(projectId) {
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/plans`);
+    plansCache[projectId] = await res.json();
+  } catch(e) {
+    plansCache[projectId] = [];
+  }
+  refreshModal();
+  // Render after refresh since refreshModal rebuilds DOM
+  setTimeout(() => renderPlansTab(projectId), 50);
+}
+
+function renderPlansTab(projectId) {
+  const container = document.getElementById(`plans-list-${projectId}`);
+  if (!container) return;
+  const plans = plansCache[projectId] || [];
+  if (!plans.length) {
+    container.innerHTML = '<div style="color:var(--text-faint);font-style:italic">No plans yet. Plans are created when an agent uses EnterPlanMode / ExitPlanMode.</div>';
+    return;
+  }
+  container.innerHTML = plans.map(p => `
+    <div class="plan-history-card" onclick="openPlanFromHistory('${esc(p.plan_file.replace(/\\/g,'\\\\'))}','${esc(p.title)}')">
+      <div class="plan-history-title">${esc(p.title)}</div>
+      <div class="plan-history-meta">
+        <span>${esc(p.ts_relative || '')}</span>
+        <span class="plan-history-task">${esc((p.task || '').length > 80 ? p.task.slice(0,77) + '...' : (p.task || ''))}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function openPlanFromHistory(planPath, title) {
+  const modalId = '__planhistory_' + planPath.replace(/[^a-zA-Z0-9]/g, '_').slice(-30);
+  if (openModals.has(modalId)) { focusModal(modalId); return; }
+
+  let content;
+  try {
+    const res = await fetch(API_BASE + `/api/plan-file?path=${encodeURIComponent(planPath)}`);
+    if (!res.ok) throw new Error('Failed to load');
+    const data = await res.json();
+    content = data.content || '';
+  } catch(e) {
+    content = 'Failed to load plan file.';
+  }
+
+  // Render with rich formatting (same as openPlanFileViewer)
+  const lines = content.split('\n');
+  let bodyHTML = '';
+  let tableLines = [];
+  function flushTable() {
+    if (tableLines.length === 0) return;
+    if (isPipeTable(tableLines)) {
+      bodyHTML += `<div class="hl-table">${buildPipeTable(tableLines)}</div>`;
+    } else {
+      bodyHTML += `<div class="hl-table-pre">${tableLines.map(l => formatTableLine(esc(l))).join('\n')}</div>`;
+    }
+    tableLines = [];
+  }
+  for (const line of lines) {
+    if (isTableLine(line)) {
+      tableLines.push(line);
+    } else if (tableLines.length > 0 && line.trim() === '') {
+      tableLines.push(line);
+    } else {
+      flushTable();
+      bodyHTML += `<div class="agent-line">${formatAgentText(line)}</div>`;
+    }
+  }
+  flushTable();
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const contentEl = document.createElement('div');
+  contentEl.className = 'modal-content plan-viewer-content';
+  contentEl.innerHTML = `
+    <div class="modal-window-controls">
+      <button class="modal-minimize" onclick="minimizeModal('${esc(modalId)}')" title="Minimize">&#x2015;</button>
+      <button class="modal-close" onclick="closeModalById('${esc(modalId)}')" title="Close">&#10005;</button>
+    </div>
+    <div class="plan-viewer-header modal-header">
+      <h3 style="color:#c4b5fd;margin:0;font-size:15px">&#128196; ${esc(title)}</h3>
+      <div style="color:var(--text-faint);font-size:12px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(planPath.split(/[/\\]/).pop())}</div>
+    </div>
+    <div class="plan-viewer-body">${bodyHTML}</div>`;
+  win.appendChild(contentEl);
+  document.getElementById('modal-layer').appendChild(win);
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
 }
 
 // ── Agent Log continue ───────────────────────────────────────────────────────
@@ -3835,8 +4107,10 @@ function toggleContinueInput(projectId, entryId, claudeSessionId) {
   if (!el) return;
   const isOpen = el.classList.contains('open');
   document.querySelectorAll('.agent-log-continue-input.open').forEach(x => x.classList.remove('open'));
+  continueInputOpen = {};
   if (!isOpen) {
     el.classList.add('open');
+    continueInputOpen[entryId] = true;
     setTimeout(() => document.getElementById(`continue-msg-${entryId}`)?.focus(), 50);
   }
 }
@@ -3846,6 +4120,8 @@ async function dispatchContinue(projectId, entryId, claudeSessionId) {
   const task = input.value.trim();
   if (!task) { input.focus(); return; }
   input.value = '';
+  if (input.id) delete textareaValues[input.id];
+  continueInputOpen = {};
 
   try {
     const res = await fetch(API_BASE + `/api/project/${projectId}/agent/dispatch`, {
@@ -4524,6 +4800,10 @@ function switchModalTab(projectId, tab) {
     loadRules(projectId).then(() => refreshModal());
     return;
   }
+  if (tab === 'plans') {
+    loadProjectPlans(projectId);
+    return;
+  }
   refreshModal();
 }
 
@@ -4541,7 +4821,7 @@ function applyTabFilter(projectId) {
   const modalId = findModalIdForProject(projectId);
   if (!modalId) return;
   const el = openModals.get(modalId).element;
-  const activeTab = modalActiveTab[projectId] || 'backlog';
+  const activeTab = modalActiveTab[projectId] || 'agent';
 
   if (activeTab === 'backlog') {
     el.querySelectorAll('.backlog-item').forEach(item => {
@@ -4948,6 +5228,7 @@ async function openPlanFileViewer(projectId, sessionId) {
   const cached = agentStatusCache[sessionId];
   const headingMatch = data.content.match(/^#\s+(.+)/m);
   const filename = headingMatch ? headingMatch[1].trim() : planFileLabel(cached?.task || rawFilename);
+  if (headingMatch) planFileTitle[sessionId] = headingMatch[1].trim();
   const lines = data.content.split('\n');
 
   // Render markdown lines with rich formatting
@@ -4998,6 +5279,299 @@ async function openPlanFileViewer(projectId, sessionId) {
   centerModalElement(win);
   focusModal(modalId);
 }
+
+// ── Scheduler ─────────────────────────────────────────────────────────────
+
+let schedulerEditId = null; // null = adding new, string = editing existing
+
+async function openScheduler() {
+  const modalId = '__scheduler';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  content.style.width = '700px';
+  content.innerHTML = `
+    <div class="modal-window-controls">
+      <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+      <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+    </div>
+    <div class="scheduler-section">
+      <h2 style="font-size:16px;font-weight:700;color:var(--text);margin:0 0 4px">Scheduled Tasks</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <span class="memory-hint" style="margin:0">Automatically dispatch agents at scheduled times.</span>
+        <button class="btn-add" style="padding:6px 14px;font-size:12px;flex-shrink:0" onclick="showScheduleForm()">+ Add Schedule</button>
+      </div>
+      <div id="schedule-form-area"></div>
+      <div id="schedule-list"><div class="schedule-empty">Loading...</div></div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  await refreshScheduleList();
+}
+
+async function refreshScheduleList() {
+  const container = document.getElementById('schedule-list');
+  if (!container) return;
+  try {
+    const res = await fetch(API_BASE + '/api/schedules');
+    const schedules = await res.json();
+    if (!schedules.length) {
+      container.innerHTML = '<div class="schedule-empty">No scheduled tasks yet. Click "+ Add Schedule" to create one.</div>';
+      return;
+    }
+    container.innerHTML = schedules.map(s => {
+      const enabledClass = s.enabled ? 'on' : '';
+      const cardClass = s.enabled ? '' : ' disabled';
+      const desc = scheduleDescription(s);
+      const lastRun = s.last_run ? timeAgoShort(s.last_run) : 'never';
+      const nextRun = s.next_run ? formatScheduleTime(s.next_run) : (s.enabled ? 'calculating...' : 'disabled');
+      return `<div class="schedule-card${cardClass}">
+        <div class="schedule-card-body">
+          <div class="schedule-card-project">${esc(s.project_name || s.project_id)}</div>
+          <div class="schedule-card-task" title="${esc(s.task)}">${esc(s.task)}</div>
+          <div class="schedule-card-meta">
+            <span>${desc}</span>
+            <span>Last: ${lastRun}</span>
+            <span>Next: ${nextRun}</span>
+          </div>
+        </div>
+        <div class="schedule-card-actions">
+          <div class="schedule-toggle ${enabledClass}" onclick="toggleScheduleEnabled('${esc(s.id)}', ${!s.enabled})" title="${s.enabled ? 'Disable' : 'Enable'}"></div>
+          <button class="btn-header-action" style="padding:3px 8px;font-size:11px" onclick="editSchedule('${esc(s.id)}')">Edit</button>
+          <button class="btn-header-action" style="padding:3px 8px;font-size:11px;color:var(--red-text);border-color:var(--red)" onclick="deleteSchedule('${esc(s.id)}')">Del</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    container.innerHTML = '<div class="schedule-empty">Failed to load schedules.</div>';
+  }
+}
+
+function scheduleDescription(s) {
+  const type = s.schedule_type;
+  if (type === 'once') {
+    return s.run_at ? 'Once at ' + formatScheduleTime(s.run_at) : 'Once (no time set)';
+  } else if (type === 'daily') {
+    const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const days = (s.days || []).map(d => dayNames[d] || '?').join(', ');
+    return 'Daily at ' + (s.time || '09:00') + (days ? ' (' + days + ')' : '');
+  } else if (type === 'interval') {
+    const mins = s.interval_minutes || 60;
+    if (mins >= 60 && mins % 60 === 0) return `Every ${mins / 60}h`;
+    return `Every ${mins}m`;
+  }
+  return type;
+}
+
+function formatScheduleTime(isoStr) {
+  if (!isoStr) return '—';
+  try {
+    const d = new Date(isoStr);
+    const now = new Date();
+    const diffMs = d - now;
+    const diffMin = Math.round(diffMs / 60000);
+    if (diffMin >= 0 && diffMin < 60) return `in ${diffMin}m`;
+    if (diffMin >= 60 && diffMin < 1440) return `in ${Math.round(diffMin / 60)}h`;
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch(e) { return isoStr.slice(0, 16); }
+}
+
+function timeAgoShort(isoStr) {
+  if (!isoStr) return 'never';
+  try {
+    const d = new Date(isoStr);
+    const secs = Math.round((Date.now() - d) / 1000);
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs/3600)}h ago`;
+    return `${Math.floor(secs/86400)}d ago`;
+  } catch(e) { return isoStr; }
+}
+
+function showScheduleForm(existing) {
+  schedulerEditId = existing ? existing.id : null;
+  const area = document.getElementById('schedule-form-area');
+  if (!area) return;
+  const projects = allProjects.filter(p => p.project_path);
+  const selPid = existing ? existing.project_id : (projects[0]?.id || '');
+  const selType = existing ? existing.schedule_type : 'daily';
+  const selTime = existing ? (existing.time || '09:00') : '09:00';
+  const selDays = existing ? (existing.days || []) : [1,2,3,4,5];
+  const selInterval = existing ? (existing.interval_minutes || 60) : 60;
+  const selTask = existing ? existing.task : '';
+  const selRunAt = existing ? (existing.run_at || '').slice(0, 16) : '';
+
+  area.innerHTML = `<div class="schedule-form">
+    <label>Project</label>
+    <select id="sched-project">${projects.map(p =>
+      `<option value="${esc(p.id)}"${p.id === selPid ? ' selected' : ''}>${esc(p.name)}</option>`
+    ).join('')}</select>
+    <label>Task</label>
+    <textarea id="sched-task" rows="2" placeholder="What should the agent do?">${esc(selTask)}</textarea>
+    <label>Schedule Type</label>
+    <div class="sched-type-row">
+      <button class="sched-type-btn${selType==='daily'?' active':''}" onclick="setSchedType('daily')">Daily</button>
+      <button class="sched-type-btn${selType==='interval'?' active':''}" onclick="setSchedType('interval')">Interval</button>
+      <button class="sched-type-btn${selType==='once'?' active':''}" onclick="setSchedType('once')">Once</button>
+    </div>
+    <div id="sched-type-fields"></div>
+    <div class="sched-actions">
+      <button class="btn-sched-save" onclick="saveSchedule()">${existing ? 'Update' : 'Create'}</button>
+      <button class="btn-sched-cancel" onclick="hideScheduleForm()">Cancel</button>
+    </div>
+  </div>`;
+  renderSchedTypeFields(selType, { time: selTime, days: selDays, interval_minutes: selInterval, run_at: selRunAt });
+}
+
+function hideScheduleForm() {
+  const area = document.getElementById('schedule-form-area');
+  if (area) area.innerHTML = '';
+  schedulerEditId = null;
+}
+
+function setSchedType(type) {
+  document.querySelectorAll('.sched-type-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === type));
+  renderSchedTypeFields(type);
+}
+
+function renderSchedTypeFields(type, vals) {
+  const container = document.getElementById('sched-type-fields');
+  if (!container) return;
+  const time = vals?.time || '09:00';
+  const days = vals?.days || [1,2,3,4,5];
+  const interval = vals?.interval_minutes || 60;
+  const runAt = vals?.run_at || '';
+
+  if (type === 'daily') {
+    const dayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    container.innerHTML = `
+      <label>Time (UTC)</label>
+      <input type="time" id="sched-time" value="${time}">
+      <label>Days</label>
+      <div class="sched-days">
+        ${dayLabels.map((label, i) => {
+          const dayNum = i + 1;
+          return `<button class="sched-day-btn${days.includes(dayNum)?' active':''}" data-day="${dayNum}" onclick="this.classList.toggle('active')">${label}</button>`;
+        }).join('')}
+      </div>`;
+  } else if (type === 'interval') {
+    container.innerHTML = `
+      <label>Interval (minutes)</label>
+      <input type="number" id="sched-interval" value="${interval}" min="1" step="1">`;
+  } else if (type === 'once') {
+    container.innerHTML = `
+      <label>Run At</label>
+      <input type="datetime-local" id="sched-runat" value="${runAt}">`;
+  }
+}
+
+async function saveSchedule() {
+  const pid = document.getElementById('sched-project')?.value;
+  const task = document.getElementById('sched-task')?.value?.trim();
+  if (!pid || !task) { alert('Project and task are required'); return; }
+
+  const activeType = document.querySelector('.sched-type-btn.active')?.textContent?.toLowerCase() || 'daily';
+  const body = { project_id: pid, task, schedule_type: activeType };
+
+  if (activeType === 'daily') {
+    body.time = document.getElementById('sched-time')?.value || '09:00';
+    body.days = [...document.querySelectorAll('.sched-day-btn.active')].map(b => parseInt(b.dataset.day));
+  } else if (activeType === 'interval') {
+    body.interval_minutes = parseInt(document.getElementById('sched-interval')?.value) || 60;
+  } else if (activeType === 'once') {
+    const val = document.getElementById('sched-runat')?.value;
+    if (val) body.run_at = new Date(val).toISOString();
+  }
+
+  try {
+    const url = schedulerEditId ? `${API_BASE}/api/schedules/${schedulerEditId}` : `${API_BASE}/api/schedules`;
+    const method = schedulerEditId ? 'PUT' : 'POST';
+    const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    if (!res.ok) { const d = await res.json(); alert(d.error || 'Failed'); return; }
+    hideScheduleForm();
+    await refreshScheduleList();
+    refreshScheduleBanner();
+  } catch(e) { alert('Failed to save: ' + e.message); }
+}
+
+async function toggleScheduleEnabled(id, enabled) {
+  try {
+    await fetch(`${API_BASE}/api/schedules/${id}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ enabled })
+    });
+    await refreshScheduleList();
+    refreshScheduleBanner();
+  } catch(e) {}
+}
+
+async function editSchedule(id) {
+  try {
+    const res = await fetch(API_BASE + '/api/schedules');
+    const schedules = await res.json();
+    const sched = schedules.find(s => s.id === id);
+    if (sched) showScheduleForm(sched);
+  } catch(e) {}
+}
+
+async function deleteSchedule(id) {
+  if (!confirm('Delete this schedule?')) return;
+  try {
+    await fetch(`${API_BASE}/api/schedules/${id}`, { method: 'DELETE' });
+    await refreshScheduleList();
+    refreshScheduleBanner();
+  } catch(e) {}
+}
+
+// ── Schedule Banner (upcoming jobs at top of page) ────────────────────────
+
+async function refreshScheduleBanner() {
+  const banner = document.getElementById('schedule-banner');
+  if (!banner) return;
+  try {
+    const res = await fetch(API_BASE + '/api/schedules');
+    const schedules = await res.json();
+    const upcoming = schedules
+      .filter(s => s.enabled && s.next_run)
+      .sort((a, b) => (a.next_run || '').localeCompare(b.next_run || ''))
+      .slice(0, 5);
+    if (!upcoming.length) {
+      banner.classList.add('hidden');
+      return;
+    }
+    banner.classList.remove('hidden');
+    banner.innerHTML = '<span class="schedule-banner-label">Upcoming</span>' +
+      upcoming.map(s => {
+        const desc = scheduleDescription(s);
+        return `<span class="schedule-banner-item" onclick="openScheduler()" title="${esc(s.task)}">
+          <span class="sb-project">${esc(s.project_name || s.project_id)}</span>
+          <span class="sb-task">${esc(s.task.length > 40 ? s.task.slice(0, 40) + '...' : s.task)}</span>
+          <span class="sb-time">${formatScheduleTime(s.next_run)}</span>
+        </span>`;
+      }).join('');
+  } catch(e) {
+    banner.classList.add('hidden');
+  }
+}
+
 
 // ── New Project Creation ────────────────────────────────────────────────────
 
@@ -5350,8 +5924,11 @@ fetchProjects().then(async () => {
     if (p.project_path) await fetchAgentStatus(p.id);
   }
   fetchGlobalUsage();
+  refreshScheduleBanner();
 });
 startRefresh();
+// Refresh schedule banner every 60s
+setInterval(refreshScheduleBanner, 60000);
 
 // ── Fallback: poll for missed agent completions every 15s ───────────────────
 setInterval(async () => {
@@ -5397,6 +5974,13 @@ setInterval(async () => {
     } catch(e) {}
   }
 }, 15000);
+
+// ── Preserve textarea values across DOM rebuilds ─────────────────────────────
+document.getElementById('modal-layer').addEventListener('input', e => {
+  if (e.target.tagName === 'TEXTAREA' && e.target.id) {
+    textareaValues[e.target.id] = e.target.value;
+  }
+});
 
 // ── Cleanup running agents on page close ────────────────────────────────────
 window.addEventListener('beforeunload', () => {
