@@ -1,5 +1,90 @@
 # Mission Control — Changelog
 
+## [2026-03-18c] — AskUserQuestion tool support
+
+- Agent questions now appear as interactive forms in the chat (radio buttons, checkboxes, "Other" text input)
+- Server extracts question data from `AskUserQuestion` tool_use blocks in both Mode A and Mode B stream readers
+- New `question` SSE event type delivers structured question data to the frontend
+- `renderAgentQuestion()` builds interactive form with options matching the tool's schema
+- `submitQuestionAnswer()` formats selected answers and sends as follow-up message
+- Single-select (radio) and multi-select (checkbox) modes supported
+- Form greys out after submission with answer summary
+- `_format_tool_activity()` now shows question preview text instead of bare `[tool: AskUserQuestion]`
+
+## [2026-03-18b] — Walkthrough tour improvements
+
+- Header highlight split into two focused steps (logo area + action buttons) instead of one broad highlight
+- Enhanced demoTarget sub-element highlighting with accent outline on tab bar and menu button
+- Added 4 new menu feature steps: Change Status, Color & Domain, Agent Model, GitHub Sync
+- New `wtDemoMenuHTML()` renders virtual modal with menu dropdown open for the menu feature steps
+- Tour now has 18 steps (was 13)
+
+## [2026-03-18a] — Snap-to-grid tile arrangement
+
+- Project tiles can be dragged to any grid cell position (Android home screen style)
+- Dropping a tile onto another tile swaps their positions
+- Empty grid cells (spacers) are invisible but occupy space — creating gaps between tiles
+- Ghost preview follows cursor during drag with drop-target highlight
+- Double-click an empty cell to remove the gap
+- "Compact" button in filter row removes all gaps at once
+- Grid layout persisted to server (`/api/grid-layout`) and localStorage
+- Touch drag support for mobile devices
+- Backlog dispatch triangle now fills current session's input (or +New via textareaValues)
+
+## [2026-03-17i] — Remove Skills system
+
+- Removed Skills tab from project modals (unused — Memory serves the same purpose)
+- Removed global Skills manager (header button + modal)
+- Removed all Skills API endpoints (global CRUD, project CRUD, attach/detach)
+- Removed Skills helper functions and agent context injection from server.py
+- Removed Skills CSS styles and JS functions from index.html
+
+## [2026-03-17h] — First-run walkthrough tour
+
+- Spotlight-style walkthrough highlights UI areas one at a time with dimmed backdrop
+- 13 steps: welcome, header, new button, stats, project tile, modal, tabs, backlog, agent, menu, feed, console, done
+- Sample project created automatically during tour via `POST /api/walkthrough/sample-project` (idempotent)
+- Clip-path cutout on backdrop with pulsing accent-glow highlight ring around target elements
+- Smart card positioning (top/bottom/left/right) with viewport clamping
+- "Don't show again" checkbox on skip — lets users dismiss without completing
+- Auto-triggers on first run (zero projects + no localStorage flag)
+- Re-triggerable anytime via "Tour" button in header
+- Escape key and window resize handling
+- Mobile responsive card layout
+- Virtual demo tile and modal shown during tour steps (not reliant on real DOM elements)
+
+### Bug fixes
+- Plans tab now shows plans from live running sessions, not just completed ones
+- Stuck ExitPlanMode loop detection: after 3 consecutive calls, shows warning banner with recovery instructions
+- `/api/project/<id>/plans` endpoint checks live `agent_sessions` in addition to on-disk agent log
+
+## [2026-03-17g] — GitHub Issues sync (Phase 1)
+
+### New module: `github_sync.py`
+- Bidirectional sync between MC backlog items and GitHub Issues via `gh` CLI
+- `sanitize()` strips HTML tags, `javascript:` URIs, null bytes, control chars from all GitHub text
+- `validate_repo()` checks format + existence via `gh repo view`
+- `gh_run()` safe subprocess wrapper (no shell=True, 30s timeout)
+- `_pull_issues()` fetches GitHub issues, maps labels to priority, creates/updates backlog items
+- `_push_items()` creates GitHub issues for unlinked MC items, syncs open/closed status
+- `sync_project()` orchestrator with 60s rate limit and per-project threading locks
+
+### Backend (`server.py`)
+- 4 new endpoints: `/github/setup`, `/github/disconnect`, `/github/sync`, `/github/status`
+- Scheduler auto-syncs every 5 minutes for projects with GitHub sync enabled
+- All sync events logged to Activity Stream via `_log_agent_activity()`
+
+### Frontend (`static/index.html`)
+- GitHub Sync submenu in three-dot menu: connect (owner/repo input), sync now, disconnect
+- Sync badge in Backlog section header (clickable to trigger sync)
+- `#N` issue link badges on backlog items linked to GitHub issues
+- `githubConnect()`, `githubDisconnect()`, `githubSyncNow()` JS functions
+
+### Security
+- All GitHub text sanitized before storage (HTML strip, dangerous protocol removal, char limit)
+- Repo name validated with strict regex before any subprocess calls
+- Subprocess uses argument list (never shell=True)
+
 ## [2026-03-17f] — Plan button persistence from agent log
 
 - Plan file button in agent status row now populated from agent log entries

@@ -19,6 +19,10 @@ data/uploads/*
 !data/projects/.gitkeep
 !data/uploads/.gitkeep
 config.json
+data/settings.json
+data/grid_layout.json
+data/schedules.json
+data/memory/
 
 # Build artifacts
 build/

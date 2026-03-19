@@ -16,6 +16,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (os.path.join(ROOT, 'server.py'), '.'),
+        (os.path.join(ROOT, 'github_sync.py'), '.'),
         (os.path.join(ROOT, 'static', 'index.html'), 'static'),
     ],
     hiddenimports=[

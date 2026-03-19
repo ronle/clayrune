@@ -152,10 +152,22 @@
   .card.status-parked::before  { background: var(--text-faint); }
   .card:hover { border-color: var(--border2); box-shadow: 0 4px 20px rgba(0,0,0,0.4); transform: translateY(-2px); }
 
+  /* Grid spacer (invisible empty cell) */
+  .grid-spacer { aspect-ratio: 1 / 1; border-radius: 10px; }
+  .grid-spacer.drop-target, .card.drop-target {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+    background: var(--accent-dim);
+  }
+
   /* Drag states */
-  .card.dragging { opacity: 0.4; transform: scale(0.95); pointer-events: none; }
-  .card.drag-over-left { box-shadow: -3px 0 0 0 var(--accent); }
-  .card.drag-over-right { box-shadow: 3px 0 0 0 var(--accent); }
+  .card.dragging { opacity: 0.15; transform: none; pointer-events: none; }
+  .drag-ghost {
+    position: fixed; pointer-events: none; opacity: 0.85;
+    z-index: 10000; transform: scale(0.92);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    border-radius: 10px; overflow: hidden;
+  }
 
   /* TILE HEADER */
   .card-header {
@@ -521,6 +533,19 @@
     font-size: 9px; color: var(--text-faint); padding: 1px 5px;
     border: 1px solid var(--border); border-radius: 3px; font-family: 'JetBrains Mono', monospace;
   }
+  .gh-issue-link {
+    font-size: 9px; color: var(--accent); padding: 1px 5px; cursor: pointer;
+    border: 1px solid var(--accent-dim); border-radius: 3px; font-family: 'JetBrains Mono', monospace;
+    text-decoration: none; white-space: nowrap;
+  }
+  .gh-issue-link:hover { background: var(--accent-dim); }
+  .gh-sync-badge {
+    font-size: 10px; color: var(--accent); cursor: pointer; padding: 2px 6px;
+    border: 1px solid var(--accent-dim); border-radius: 4px; background: transparent;
+    font-family: 'JetBrains Mono', monospace; white-space: nowrap; transition: background 0.15s;
+  }
+  .gh-sync-badge:hover { background: var(--accent-dim); }
+  .gh-sync-badge.syncing { opacity: 0.6; pointer-events: none; }
 
   /* ADD FORM */
   .backlog-add { display: flex; flex-direction: column; gap: 8px; }
@@ -878,6 +903,43 @@
     font-size: 10px; font-weight: 400; font-style: italic; color: var(--yellow, #e5c07b);
   }
 
+  /* AskUserQuestion interactive form */
+  .agent-question {
+    background: var(--surface3); border: 1px solid var(--accent); border-radius: 8px;
+    padding: 14px 16px; margin: 8px 4px;
+  }
+  .agent-question.answered { border-color: var(--border); opacity: 0.7; }
+  .agent-question-header {
+    font-size: 10px; color: var(--accent); font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.6px; margin-bottom: 6px;
+  }
+  .agent-question-text { font-size: 13px; color: var(--text); margin-bottom: 10px; line-height: 1.5; }
+  .agent-question-options { display: flex; flex-direction: column; gap: 2px; }
+  .agent-question-option {
+    display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px;
+    border-radius: 4px; cursor: pointer; transition: background 0.1s;
+  }
+  .agent-question-option:hover { background: var(--accent-dim); }
+  .agent-question-option input[type="radio"],
+  .agent-question-option input[type="checkbox"] { margin-top: 2px; accent-color: var(--accent); cursor: pointer; }
+  .agent-question-option label { font-size: 12.5px; color: var(--text); cursor: pointer; flex: 1; }
+  .agent-question-option .aq-desc { display: block; font-size: 11px; color: var(--text-faint); margin-top: 1px; }
+  .agent-question-other {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 4px; font-size: 12px; font-family: 'Inter', sans-serif;
+    outline: none; margin-top: 6px; display: none; box-sizing: border-box;
+  }
+  .agent-question-other.visible { display: block; }
+  .agent-question-other:focus { border-color: var(--accent); }
+  .agent-question-actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+  .agent-question-actions button {
+    background: var(--accent); color: var(--bg); border: none; padding: 7px 18px;
+    border-radius: 6px; font-weight: 600; font-size: 12px; cursor: pointer; font-family: 'Inter', sans-serif;
+  }
+  .agent-question-actions button:hover { background: #5db3ff; }
+  .agent-question-actions button:disabled { opacity: 0.5; cursor: default; }
+  .agent-question-answer { font-size: 11px; color: var(--green); margin-top: 6px; }
+
   /* Rich text formatting for agent output */
   .agent-output .hl-code {
     background: #1e2233; color: #93c5fd; padding: 1px 5px; border-radius: 3px;
@@ -1137,93 +1199,6 @@
     transition: border-color 0.15s;
   }
   .memory-textarea:focus { border-color: var(--accent); }
-
-  /* ── SKILLS TAB ──────────────────────────────────────────────── */
-  .skills-section { padding: 16px 22px; }
-  .skills-section-title {
-    font-size: 11px; color: var(--text-faint); text-transform: uppercase;
-    letter-spacing: 0.8px; font-weight: 600; margin-bottom: 8px; margin-top: 16px;
-  }
-  .skills-section-title:first-child { margin-top: 0; }
-  .skills-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-  .skill-card {
-    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    padding: 10px 14px; transition: border-color 0.15s;
-  }
-  .skill-card:hover { border-color: var(--border2); }
-  .skill-card-header {
-    display: flex; align-items: center; gap: 8px;
-  }
-  .skill-name {
-    font-size: 13px; font-weight: 600; color: var(--text); flex: 1;
-  }
-  .skill-desc {
-    font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.4;
-  }
-  .skill-scope-badge {
-    font-size: 9px; padding: 2px 6px; border-radius: 3px;
-    letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600;
-  }
-  .skill-scope-global { background: var(--purple-dim); color: var(--purple-text); }
-  .skill-scope-project { background: var(--green-dim); color: var(--green-text); }
-  .skill-actions {
-    display: flex; gap: 6px; flex-shrink: 0;
-  }
-  .skill-btn {
-    background: none; border: none; color: var(--text-faint); cursor: pointer;
-    font-size: 11px; padding: 2px 4px; transition: color 0.15s;
-  }
-  .skill-btn:hover { color: var(--accent); }
-  .skill-btn.danger:hover { color: var(--red-text); }
-  .skill-editor {
-    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
-    display: none;
-  }
-  .skill-editor.open { display: block; }
-  .skill-editor label {
-    display: block; font-size: 11px; color: var(--text-faint); text-transform: uppercase;
-    letter-spacing: 0.6px; font-weight: 600; margin-bottom: 4px; margin-top: 10px;
-  }
-  .skill-editor label:first-child { margin-top: 0; }
-  .skill-editor input[type="text"] {
-    width: 100%; background: var(--bg); border: 1px solid var(--border);
-    color: var(--text); font-family: 'Inter', sans-serif; font-size: 12px;
-    padding: 6px 10px; border-radius: 4px; outline: none; box-sizing: border-box;
-    transition: border-color 0.15s;
-  }
-  .skill-editor input[type="text"]:focus { border-color: var(--accent); }
-  .skill-editor textarea {
-    width: 100%; background: var(--bg); border: 1px solid var(--border);
-    color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px;
-    padding: 8px 10px; border-radius: 4px; outline: none; resize: vertical;
-    min-height: 100px; line-height: 1.5; box-sizing: border-box;
-    transition: border-color 0.15s;
-  }
-  .skill-editor textarea:focus { border-color: var(--accent); }
-  .skill-editor-actions {
-    display: flex; gap: 8px; align-items: center; margin-top: 10px;
-  }
-  .skill-empty {
-    font-size: 12px; color: var(--text-faint); font-style: italic; padding: 8px 0;
-  }
-  .skill-attach-wrap { position: relative; display: inline-block; }
-  .skill-attach-dropdown {
-    position: absolute; bottom: 100%; left: 0; margin-bottom: 4px;
-    background: var(--surface); border: 1px solid var(--border2);
-    border-radius: 6px; min-width: 260px; z-index: 60;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.4); overflow: hidden; display: none;
-  }
-  .skill-attach-dropdown.open { display: block; }
-  .skill-attach-item {
-    display: block; width: 100%; text-align: left; padding: 8px 12px;
-    background: none; border: none; color: var(--text-dim); cursor: pointer;
-    font-family: 'Inter', sans-serif; font-size: 12px; border-radius: 0;
-    transition: background 0.1s;
-  }
-  .skill-attach-item:hover { background: var(--surface3); color: var(--text); }
-  .skill-attach-item .att-desc {
-    display: block; font-size: 10px; color: var(--text-faint); margin-top: 2px;
-  }
 
   /* ── PATH EDITOR ────────────────────────────────────────────── */
   .path-row {
@@ -1612,6 +1587,94 @@
   /* Adjust main content to avoid being hidden behind console */
   body.console-open .main { padding-bottom: 340px; }
   body.console-visible .main { padding-bottom: 50px; }
+
+  /* ── Walkthrough / Tour ──────────────────────────────────────────────────── */
+  .wt-overlay {
+    position: fixed; inset: 0; z-index: 2000;
+    pointer-events: none; /* allow clicks through by default */
+  }
+  .wt-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.72);
+    pointer-events: auto;
+    transition: clip-path 0.35s cubic-bezier(.4,0,.2,1);
+  }
+  .wt-highlight {
+    position: fixed;
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    box-shadow: 0 0 0 4px rgba(77,166,255,0.18), 0 0 24px rgba(77,166,255,0.35);
+    pointer-events: none;
+    animation: wt-pulse 2s ease-in-out infinite;
+    transition: all 0.35s cubic-bezier(.4,0,.2,1);
+  }
+  @keyframes wt-pulse {
+    0%,100% { box-shadow: 0 0 0 4px rgba(77,166,255,0.18), 0 0 24px rgba(77,166,255,0.35); }
+    50%     { box-shadow: 0 0 0 8px rgba(77,166,255,0.28), 0 0 36px rgba(77,166,255,0.5); }
+  }
+  .wt-card {
+    position: fixed;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    box-shadow: 0 12px 48px rgba(0,0,0,0.55);
+    padding: 24px 28px;
+    max-width: 400px; min-width: 280px;
+    pointer-events: auto;
+    z-index: 2001;
+    transition: left 0.3s, top 0.3s;
+  }
+  .wt-card.centered {
+    left: 50% !important; top: 50% !important;
+    transform: translate(-50%, -50%);
+  }
+  .wt-title {
+    font-size: 17px; font-weight: 700; color: var(--accent);
+    margin-bottom: 10px; letter-spacing: 0.3px;
+  }
+  .wt-body {
+    font-size: 13.5px; line-height: 1.65; color: var(--text-dim);
+    margin-bottom: 20px;
+  }
+  .wt-actions {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .wt-progress {
+    flex: 1; font-size: 11px; color: var(--text-faint);
+    letter-spacing: 0.5px;
+  }
+  .wt-btn {
+    background: var(--surface3); border: 1px solid var(--border);
+    color: var(--text); font-family: 'Inter', sans-serif;
+    font-size: 13px; font-weight: 600; padding: 7px 16px;
+    border-radius: 6px; cursor: pointer; transition: all 0.15s;
+  }
+  .wt-btn:hover { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+  .wt-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  .wt-btn-primary:hover { background: #5db3ff; }
+  .wt-btn-skip { background: transparent; border: none; color: var(--text-faint); padding: 7px 10px; }
+  .wt-btn-skip:hover { color: var(--text); }
+  .wt-dismiss {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-faint); cursor: pointer;
+    user-select: none;
+  }
+  .wt-dismiss input[type="checkbox"] {
+    accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer;
+  }
+  .wt-dismiss label { cursor: pointer; }
+  /* Elevate spotlighted element above the backdrop */
+  .wt-elevated { z-index: 2000 !important; position: relative; }
+  /* Virtual demo elements shown during walkthrough */
+  .wt-demo { filter: drop-shadow(0 8px 32px rgba(0,0,0,0.5)); }
+  @media (max-width: 600px) {
+    .wt-card {
+      max-width: calc(100vw - 32px); min-width: 0;
+      left: 16px !important; right: 16px !important;
+    }
+    .wt-card.centered { transform: translateY(-50%) !important; left: 16px !important; right: 16px !important; }
+  }
 </style>
 </head>
 <body>
@@ -1631,10 +1694,10 @@
     </span>
     <div class="tc-context-menu" id="tc-context-menu"></div>
     <button class="btn-header-action" onclick="openSharedRulesEditor()">Shared Rules</button>
-    <button class="btn-header-action" onclick="openSkillsManager()">Skills</button>
     <button class="btn-header-action" onclick="openScheduler()">Scheduler</button>
     <button class="btn-new-project" onclick="openNewProjectForm()">+ New</button>
     <button class="btn-header-action" onclick="showDesktop()" title="Minimize all windows">&#x1F5D4;</button>
+    <button class="btn-header-action" onclick="startWalkthrough()" title="Take a tour">Tour</button>
     <span class="refresh-timer" id="refresh-timer">refresh in 30s</span>
     <div class="live-badge"><div class="live-dot"></div>Live</div>
   </div>
@@ -1651,6 +1714,7 @@
   <button class="filter-btn" data-filter="waiting">Waiting</button>
   <button class="filter-btn" data-filter="parked">Parked</button>
   <span id="domain-filters"></span>
+  <button class="filter-btn" onclick="compactGrid()" title="Remove all gaps between tiles" style="margin-left:auto">Compact</button>
 </div>
 
 <div class="main">
@@ -1734,12 +1798,32 @@ async function fetchProjects() {
 function applyOrder() {
   if (projectOrder.length === 0) return;
   const orderMap = {};
-  projectOrder.forEach((id, i) => orderMap[id] = i);
+  projectOrder.forEach((id, i) => { if (id !== null) orderMap[id] = i; });
   allProjects.sort((a, b) => {
-    const oa = orderMap[a.id] !== undefined ? orderMap[a.id] : 9999;
-    const ob = orderMap[b.id] !== undefined ? orderMap[b.id] : 9999;
+    const oa = orderMap[a.id] !== undefined ? orderMap[a.id] : 99999;
+    const ob = orderMap[b.id] !== undefined ? orderMap[b.id] : 99999;
     return oa - ob;
   });
+}
+
+function buildSlotArray(filteredIds) {
+  const slots = [];
+  const placed = new Set();
+  for (const entry of projectOrder) {
+    if (entry === null) {
+      // Only keep spacer if adjacent visible tiles exist (avoid leading/trailing gaps in filtered views)
+      if (activeFilter === 'all') slots.push(null);
+    } else if (filteredIds.has(entry)) {
+      slots.push(entry);
+      placed.add(entry);
+    }
+    // Filtered-out project IDs are skipped entirely (no gap)
+  }
+  // Append any projects not in projectOrder
+  for (const id of filteredIds) {
+    if (!placed.has(id)) slots.push(id);
+  }
+  return slots;
 }
 
 function render() { renderStats(); renderProjects(); renderFeed(); }
@@ -1792,13 +1876,32 @@ function renderProjects() {
   const filtered = filterProjects();
   const col = document.getElementById('projects-col');
   if (!filtered.length) { col.innerHTML = '<div class="loading">No projects match filter</div>'; return; }
-  col.innerHTML = filtered.map(p => tileHTML(p)).join('');
+  const filteredIds = new Set(filtered.map(p => p.id));
+  const slots = buildSlotArray(filteredIds);
+  col.innerHTML = slots.map((slot, i) => {
+    if (slot === null) return `<div class="grid-spacer" data-slot="${i}"></div>`;
+    const p = allProjects.find(pr => pr.id === slot);
+    if (!p) return `<div class="grid-spacer" data-slot="${i}"></div>`;
+    return tileHTML(p, i);
+  }).join('');
   // Attach click handlers
   col.querySelectorAll('.card').forEach(card => {
     const id = card.dataset.id;
     card.addEventListener('click', (e) => {
       if (e.defaultPrevented || lastDragEnd > Date.now() - 200) return;
       openProjectModal(id);
+    });
+  });
+  // Double-click spacer to remove it
+  col.querySelectorAll('.grid-spacer').forEach(spacer => {
+    spacer.addEventListener('dblclick', () => {
+      const slot = parseInt(spacer.dataset.slot);
+      if (slot >= 0 && slot < projectOrder.length && projectOrder[slot] === null) {
+        projectOrder.splice(slot, 1);
+        trimTrailingNulls();
+        persistGridOrder();
+        renderProjects();
+      }
     });
   });
 }
@@ -1809,7 +1912,7 @@ function hasRunningAgent(projectId) {
   return agentHistory.some(h => h.projectId === projectId && (h.status === 'running' || h.status === 'idle'));
 }
 
-function tileHTML(p) {
+function tileHTML(p, slotIndex) {
   const sc = `status-${p.status||'unknown'}`;
   const domCfg = getDomainConfig(p.domain||'general');
   const backlog = p.backlog || [];
@@ -1828,7 +1931,7 @@ function tileHTML(p) {
   const cardBgStyle = p.modal_color ? ` style="background:${p.modal_color.bg}"` : '';
 
   return `
-  <div class="card ${sc}" data-id="${esc(p.id)}"${cardBgStyle}>
+  <div class="card ${sc}" data-id="${esc(p.id)}" data-slot="${slotIndex !== undefined ? slotIndex : ''}"${cardBgStyle}>
     <div class="card-header">
       <div class="card-title-row">
         <span class="project-name">${esc(p.name||p.id)}</span>
@@ -1887,6 +1990,7 @@ function modalContentHTML(p) {
         <span class="priority-badge priority-${item.priority||'normal'}"
           onclick="cyclePriority(event,'${esc(p.id)}','${esc(item.id)}','${item.priority||'normal'}')"
           title="Click to change priority">${item.priority||'normal'}</span>
+        ${item.github_issue_number ? `<a class="gh-issue-link" href="https://github.com/${esc(p.github_repo||'')}/issues/${item.github_issue_number}" target="_blank" rel="noopener" title="View on GitHub">#${item.github_issue_number}</a>` : ''}
         ${item.source && item.source !== 'dashboard' ? `<span class="backlog-source">${esc(item.source)}</span>` : ''}
         ${p.project_path && item.status !== 'done' ? `<button class="backlog-dispatch" onclick="dispatchBacklogItem(event,'${esc(p.id)}','${esc(item.id)}')" title="Send to agent">▶</button>` : ''}
         <button class="att-btn ${(item.attachments||[]).length > 0 ? 'has-atts' : ''}"
@@ -2003,6 +2107,29 @@ function modalContentHTML(p) {
             <button class="modal-menu-sub-item${enterKeyMode==='enter'?' active':''}" onclick="setEnterMode('enter')">
               Enter sends</button>
           </div>
+          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'gh-sub-${esc(p.id)}')">
+            <span class="menu-icon">&#x1F517;</span> GitHub Sync ${p.github_sync_enabled ? `<span style="margin-left:4px;color:var(--green);font-size:11px">&#x2713; ${esc(p.github_repo)}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+          </button>
+          <div class="modal-menu-sub" id="gh-sub-${esc(p.id)}" style="min-width:220px">
+            ${p.github_sync_enabled ? `
+              <div style="padding:6px 10px;font-size:11px;color:var(--text-dim)">
+                Syncing with <strong style="color:var(--accent)">${esc(p.github_repo)}</strong>
+                ${p.github_last_sync ? `<br><span style="font-size:10px">Last sync: ${esc(timeAgoJS(p.github_last_sync))}</span>` : ''}
+              </div>
+              <button class="modal-menu-sub-item" onclick="githubSyncNow('${esc(p.id)}')">
+                &#x21BB; Sync Now</button>
+              <button class="modal-menu-sub-item" style="color:var(--red-text)" onclick="githubDisconnect('${esc(p.id)}')">
+                &#x2715; Disconnect</button>
+            ` : `
+              <div style="padding:6px 10px">
+                <input type="text" id="gh-repo-${esc(p.id)}" placeholder="owner/repo" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:11px;padding:4px 8px;border-radius:4px;outline:none;box-sizing:border-box"
+                  onclick="event.stopPropagation()"
+                  onkeydown="if(event.key==='Enter'){event.stopPropagation();githubConnect('${esc(p.id)}')}">
+              </div>
+              <button class="modal-menu-sub-item" onclick="githubConnect('${esc(p.id)}')">
+                &#x2713; Connect</button>
+            `}
+          </div>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item danger" onclick="deleteProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F5D1;</span> Delete Project
@@ -2048,7 +2175,6 @@ function modalContentHTML(p) {
       <div class="modal-tab ${activeTab==='agent-log'?'active':''}" onclick="switchModalTab('${esc(p.id)}','agent-log')">Agent Log</div>
       <div class="modal-tab ${activeTab==='plans'?'active':''}" onclick="switchModalTab('${esc(p.id)}','plans')">Plans</div>
       <div class="modal-tab ${activeTab==='activity'?'active':''}" onclick="switchModalTab('${esc(p.id)}','activity')">Activity</div>
-      <div class="modal-tab ${activeTab==='skills'?'active':''}" onclick="switchModalTab('${esc(p.id)}','skills')">Skills</div>
       <div class="modal-tab ${activeTab==='memory'?'active':''}" onclick="switchModalTab('${esc(p.id)}','memory')">Memory</div>
       <div class="modal-tab ${activeTab==='rules'?'active':''}" onclick="switchModalTab('${esc(p.id)}','rules')">Rules</div>
       ${activeTab !== 'agent' ? `<div class="modal-tab-search">
@@ -2063,6 +2189,7 @@ function modalContentHTML(p) {
         <div class="card-section">
           <div class="section-title">
             <span>Backlog ${backlogBadge}</span>
+            ${p.github_sync_enabled && p.github_repo ? `<button class="gh-sync-badge" id="gh-badge-${esc(p.id)}" onclick="githubSyncNow('${esc(p.id)}')" title="Sync with GitHub">&#x21BB; ${esc(p.github_repo)}</button>` : ''}
             ${undoBtn}${doneToggle}
           </div>
           <div class="backlog-list">${backlogItemsHTML}</div>
@@ -2103,9 +2230,6 @@ function modalContentHTML(p) {
           <div class="section-title">Activity Log</div>
           <div class="log-entries">${logHTML || '<div style="color:var(--text-faint);font-style:italic">No activity yet</div>'}</div>
         </div>
-      </div>
-      <div class="modal-tab-content ${activeTab==='skills'?'active':''}" data-tab="skills">
-        ${skillsTabHTML(p)}
       </div>
       <div class="modal-tab-content ${activeTab==='memory'?'active':''}" data-tab="memory">
         ${memoryTabHTML(p)}
@@ -2511,78 +2635,172 @@ document.getElementById('modal-layer').addEventListener('mousedown', (e) => {
   if (win) focusModal(win.dataset.modalId);
 }, true);
 
-// ── Drag-and-drop reordering (mouse events) ─────────────────────────────────
+// ── Drag-and-drop grid reordering ────────────────────────────────────────────
 
 let dragState = null;
 
-document.getElementById('projects-col').addEventListener('mousedown', (e) => {
-  const card = e.target.closest('.card');
-  if (!card) return;
-  // Don't start drag on interactive elements inside the card
-  if (e.target.closest('button, a, input, select, textarea, [contenteditable]')) return;
-  const startX = e.clientX, startY = e.clientY;
-  dragState = { id: card.dataset.id, card, startX, startY, started: false };
-});
+function trimTrailingNulls() {
+  while (projectOrder.length > 0 && projectOrder[projectOrder.length - 1] === null) projectOrder.pop();
+}
 
-document.addEventListener('mousemove', (e) => {
-  if (!dragState) return;
-  const dx = e.clientX - dragState.startX;
-  const dy = e.clientY - dragState.startY;
-  // Require 8px movement to start drag (avoids interfering with clicks)
-  if (!dragState.started) {
-    if (Math.abs(dx) + Math.abs(dy) < 8) return;
-    dragState.started = true;
-    dragState.card.classList.add('dragging');
-  }
-  // Highlight the card we're hovering over
-  const col = document.getElementById('projects-col');
-  col.querySelectorAll('.card').forEach(c => c.classList.remove('drag-over-left', 'drag-over-right'));
-  const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.card');
-  if (target && target.dataset.id !== dragState.id) {
-    const rect = target.getBoundingClientRect();
-    const midX = rect.left + rect.width / 2;
-    target.classList.add(e.clientX < midX ? 'drag-over-left' : 'drag-over-right');
-  }
-});
-
-document.addEventListener('mouseup', (e) => {
-  if (!dragState) return;
-  const { id: srcId, started } = dragState;
-  dragState = null;
-  const col = document.getElementById('projects-col');
-  col.querySelectorAll('.card').forEach(c => c.classList.remove('dragging', 'drag-over-left', 'drag-over-right'));
-  if (!started) return;
-  lastDragEnd = Date.now();
-  // Find drop target
-  const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.card');
-  const targetId = target?.dataset.id;
-  if (targetId && srcId !== targetId) {
-    reorderProjects(srcId, targetId);
-  }
-});
-
-function reorderProjects(srcId, targetId) {
-  const ids = allProjects.map(p => p.id);
-  const srcIdx = ids.indexOf(srcId);
-  const targetIdx = ids.indexOf(targetId);
-  if (srcIdx === -1 || targetIdx === -1) return;
-
-  // Move src to target position
-  const [moved] = allProjects.splice(srcIdx, 1);
-  allProjects.splice(targetIdx, 0, moved);
-
-  // Update order
-  projectOrder = allProjects.map(p => p.id);
+function persistGridOrder() {
   localStorage.setItem('projectOrder', JSON.stringify(projectOrder));
-  renderProjects();
-
-  // Persist to server
   fetch(API_BASE + '/api/projects/order', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({order: projectOrder})
   }).catch(() => {});
 }
+
+function getSlotIndexAtPoint(clientX, clientY) {
+  const col = document.getElementById('projects-col');
+  const colRect = col.getBoundingClientRect();
+  const children = col.children;
+  if (children.length === 0) return -1;
+  const firstRect = children[0].getBoundingClientRect();
+  const cellW = firstRect.width;
+  const cellH = firstRect.height;
+  const gap = parseFloat(getComputedStyle(col).gap) || 16;
+  const numCols = Math.max(1, Math.round((colRect.width + gap) / (cellW + gap)));
+  const relX = clientX - colRect.left;
+  const relY = clientY - colRect.top + col.scrollTop;
+  const colIdx = Math.min(numCols - 1, Math.max(0, Math.floor(relX / (cellW + gap))));
+  const rowIdx = Math.max(0, Math.floor(relY / (cellH + gap)));
+  return rowIdx * numCols + colIdx;
+}
+
+function ensureSlotsUpTo(targetSlot) {
+  const col = document.getElementById('projects-col');
+  while (col.children.length <= targetSlot) {
+    const spacer = document.createElement('div');
+    spacer.className = 'grid-spacer';
+    spacer.dataset.slot = col.children.length;
+    col.appendChild(spacer);
+  }
+}
+
+function startTileDrag(card, clientX, clientY) {
+  const rect = card.getBoundingClientRect();
+  dragState.offsetX = clientX - rect.left;
+  dragState.offsetY = clientY - rect.top;
+  dragState.started = true;
+  card.classList.add('dragging');
+  // Create ghost
+  const ghost = card.cloneNode(true);
+  ghost.classList.remove('dragging');
+  ghost.classList.add('drag-ghost');
+  ghost.style.width = rect.width + 'px';
+  ghost.style.height = rect.height + 'px';
+  ghost.style.left = (clientX - dragState.offsetX) + 'px';
+  ghost.style.top = (clientY - dragState.offsetY) + 'px';
+  document.body.appendChild(ghost);
+  dragState.ghost = ghost;
+}
+
+function updateTileDrag(clientX, clientY) {
+  if (dragState.ghost) {
+    dragState.ghost.style.left = (clientX - dragState.offsetX) + 'px';
+    dragState.ghost.style.top = (clientY - dragState.offsetY) + 'px';
+  }
+  const col = document.getElementById('projects-col');
+  col.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+  const targetSlot = getSlotIndexAtPoint(clientX, clientY);
+  if (targetSlot >= 0) {
+    const maxSlot = Math.min(targetSlot, (allProjects.length * 3));
+    ensureSlotsUpTo(maxSlot);
+    const targetEl = col.children[maxSlot];
+    if (targetEl) targetEl.classList.add('drop-target');
+    dragState.targetSlot = maxSlot;
+  }
+}
+
+function endTileDrag() {
+  if (!dragState) return;
+  const { id: srcId, started, targetSlot, ghost } = dragState;
+  dragState = null;
+  if (ghost) ghost.remove();
+  const col = document.getElementById('projects-col');
+  col.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+  col.querySelectorAll('.card').forEach(c => c.classList.remove('dragging'));
+  if (!started) return;
+  lastDragEnd = Date.now();
+  if (targetSlot === undefined || targetSlot < 0) return;
+  moveProjectToSlot(srcId, targetSlot);
+}
+
+function moveProjectToSlot(srcId, targetSlot) {
+  const srcIdx = projectOrder.indexOf(srcId);
+  if (srcIdx !== -1) projectOrder[srcIdx] = null;
+
+  while (projectOrder.length <= targetSlot) projectOrder.push(null);
+
+  const occupant = projectOrder[targetSlot];
+  if (occupant && occupant !== srcId) {
+    // Swap: put occupant where src was
+    if (srcIdx !== -1) {
+      projectOrder[srcIdx] = occupant;
+    } else {
+      projectOrder.push(occupant);
+    }
+  }
+
+  projectOrder[targetSlot] = srcId;
+  trimTrailingNulls();
+  persistGridOrder();
+  applyOrder();
+  renderProjects();
+}
+
+function compactGrid() {
+  projectOrder = projectOrder.filter(e => e !== null);
+  persistGridOrder();
+  applyOrder();
+  renderProjects();
+}
+
+// Mouse events
+document.getElementById('projects-col').addEventListener('mousedown', (e) => {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  if (e.target.closest('button, a, input, select, textarea, [contenteditable]')) return;
+  dragState = { id: card.dataset.id, card, startX: e.clientX, startY: e.clientY, started: false };
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!dragState) return;
+  if (!dragState.started) {
+    if (Math.abs(e.clientX - dragState.startX) + Math.abs(e.clientY - dragState.startY) < 8) return;
+    startTileDrag(dragState.card, e.clientX, e.clientY);
+  }
+  updateTileDrag(e.clientX, e.clientY);
+});
+
+document.addEventListener('mouseup', () => endTileDrag());
+
+// Touch events
+document.getElementById('projects-col').addEventListener('touchstart', (e) => {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  if (e.target.closest('button, a, input, select, textarea')) return;
+  const t = e.touches[0];
+  dragState = { id: card.dataset.id, card, startX: t.clientX, startY: t.clientY, started: false, isTouch: true };
+}, { passive: true });
+
+document.addEventListener('touchmove', (e) => {
+  if (!dragState || !dragState.isTouch) return;
+  const t = e.touches[0];
+  if (!dragState.started) {
+    if (Math.abs(t.clientX - dragState.startX) + Math.abs(t.clientY - dragState.startY) < 12) return;
+    e.preventDefault();
+    startTileDrag(dragState.card, t.clientX, t.clientY);
+  }
+  if (dragState.started) {
+    e.preventDefault();
+    updateTileDrag(t.clientX, t.clientY);
+  }
+}, { passive: false });
+
+document.addEventListener('touchend', () => endTileDrag());
 
 // ── Create-form attachment handling ──────────────────────────────────────────
 
@@ -2717,19 +2935,49 @@ async function deleteBacklogItem(e, projectId, itemId) {
   await refreshSilent();
 }
 
-function dispatchBacklogItem(e, projectId, itemId) {
+async function dispatchBacklogItem(e, projectId, itemId) {
   e.stopPropagation();
   const p = allProjects.find(x => x.id === projectId);
   if (!p) return;
   const item = (p.backlog || []).find(i => i.id === itemId);
   if (!item) return;
-  // Fill agent input and dispatch
-  const input = document.getElementById(`agent-task-${projectId}`);
-  if (input) {
-    input.value = item.text;
-    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    input.focus();
+
+  // Load image attachments into agentPendingImages so they transfer with dispatch
+  const imageAtts = (item.attachments || []).filter(a => a.type === 'image');
+  if (imageAtts.length > 0) {
+    const sid = activeAgentTab[projectId];
+    const fetched = [];
+    for (const a of imageAtts) {
+      try {
+        const res = await fetch(API_BASE + `/api/attachments/${a.stored_name}`);
+        const blob = await res.blob();
+        const file = new File([blob], a.original_name, { type: blob.type });
+        fetched.push({ file, objectUrl: URL.createObjectURL(blob), serverPath: null });
+      } catch(err) {}
+    }
+    // Populate both keys so images survive switching between session and +New
+    agentPendingImages[projectId] = [...(agentPendingImages[projectId] || []), ...fetched];
+    if (sid) {
+      const copies = fetched.map(f => ({ file: f.file, objectUrl: f.objectUrl, serverPath: null }));
+      agentPendingImages[`fu_${sid}`] = [...(agentPendingImages[`fu_${sid}`] || []), ...copies];
+    }
   }
+
+  // Switch to agent tab, keep current session tab, pre-fill the text input
+  // Also store in textareaValues for both input IDs so text survives switching to +New
+  textareaValues[`agent-task-${projectId}`] = item.text;
+  modalActiveTab[projectId] = 'agent';
+  refreshModal();
+  setTimeout(() => {
+    const sid = activeAgentTab[projectId];
+    const input = sid
+      ? document.getElementById(`agent-followup-${sid}`)
+      : document.getElementById(`agent-task-${projectId}`);
+    if (input) {
+      input.value = item.text;
+      input.focus();
+    }
+  }, 50);
 }
 
 async function patchItem(projectId, itemId, data, skipUndo) {
@@ -2739,6 +2987,65 @@ async function patchItem(projectId, itemId, data, skipUndo) {
     body: JSON.stringify(data)
   });
   await refreshSilent();
+}
+
+// ── GitHub sync actions ──────────────────────────────────────────────────────
+
+function timeAgoJS(ts) {
+  if (!ts) return 'never';
+  try {
+    const d = new Date(ts);
+    const secs = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs/3600)}h ago`;
+    return `${Math.floor(secs/86400)}d ago`;
+  } catch { return ts; }
+}
+
+async function githubConnect(projectId) {
+  const input = document.getElementById(`gh-repo-${projectId}`);
+  if (!input) return;
+  const repo = input.value.trim();
+  if (!repo) { input.focus(); return; }
+  if (!/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repo)) {
+    alert('Invalid format — use owner/repo');
+    input.focus();
+    return;
+  }
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/github/setup`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({repo})
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    await refreshSilent();
+  } catch (e) { alert('Connection failed: ' + e.message); }
+}
+
+async function githubDisconnect(projectId) {
+  if (!confirm('Disconnect GitHub sync? Existing items will be kept.')) return;
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  await fetch(API_BASE + `/api/project/${projectId}/github/disconnect`, {method: 'POST'});
+  await refreshSilent();
+}
+
+async function githubSyncNow(projectId) {
+  const badge = document.getElementById(`gh-badge-${projectId}`);
+  if (badge) badge.classList.add('syncing');
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/github/sync`, {method: 'POST'});
+    const data = await res.json();
+    if (data.error) alert(data.error);
+    await refreshSilent();
+  } catch (e) { alert('Sync failed: ' + e.message); }
+  finally {
+    if (badge) badge.classList.remove('syncing');
+  }
 }
 
 function toggleShowDone(e, projectId) {
@@ -3053,6 +3360,7 @@ function sessionMetricsHTML(session) {
 let agentEventSources = {};   // session_id → EventSource
 let sseRetryCount = {};       // session_id → number of consecutive reconnect attempts
 let agentOutputBuffers = {};   // session_id → string[]
+let agentServerLines = {};     // session_id → count of lines received from server (for SSE since param)
 let agentStatusCache = {};     // session_id → {status, task, projectId, startedAt}
 let agentHistory = [];         // [{projectId, sessionId, projectName, task, status, startedAt}]
 let activeAgentTab = {};       // project_id → session_id (which tab is active in modal)
@@ -3073,6 +3381,7 @@ let acOpenSessions = new Set(); // session_id → expanded in console
 let acExpanded = false;
 let planViewerContent = {};    // session_id → string[] of raw plan text lines
 let planFileTitle = {};        // session_id → extracted first heading from plan file
+let exitPlanModeCount = {};    // session_id → number of consecutive ExitPlanMode calls
 let pendingResumeId = {};      // project_id → claude_session_id to resume (null = fresh)
 
 function getProjectSessions(projectId) {
@@ -3091,6 +3400,8 @@ function agentPanelHTML(p) {
   }
 
   const sessions = getProjectSessions(p.id);
+  // Sort tabs chronologically so newest appears on the right (next to "+ New")
+  sessions.sort((a, b) => (a.startedAt || '').localeCompare(b.startedAt || ''));
   const activeSessionId = activeAgentTab[p.id];
   const activeSession = activeSessionId ? agentStatusCache[activeSessionId] : null;
   const st = activeSession ? (activeSession.status || 'idle') : 'idle';
@@ -3391,6 +3702,7 @@ function closeAgentTab(projectId, sessionId) {
   // Remove from frontend state
   delete agentStatusCache[sessionId];
   delete agentOutputBuffers[sessionId];
+  delete agentServerLines[sessionId];
   agentHistory = agentHistory.filter(h => h.sessionId !== sessionId);
   acOpenSessions.delete(sessionId);
 
@@ -3457,8 +3769,10 @@ function connectAgentStream(projectId, sessionId) {
     agentEventSources[sessionId].close();
   }
 
-  // Tell server how many lines we already have, so it doesn't replay them
-  const since = (agentOutputBuffers[sessionId] || []).length;
+  // Tell server how many lines we already have, so it doesn't replay them.
+  // Use agentServerLines (actual server-received count) not agentOutputBuffers.length
+  // which includes local echo lines the server doesn't know about.
+  const since = agentServerLines[sessionId] || 0;
   const es = new EventSource(API_BASE + `/api/project/${projectId}/agent/stream?session=${sessionId}&since=${since}`);
   agentEventSources[sessionId] = es;
 
@@ -3469,6 +3783,7 @@ function connectAgentStream(projectId, sessionId) {
         sseRetryCount[sessionId] = 0;  // successful data — reset retry counter
         if (!agentOutputBuffers[sessionId]) agentOutputBuffers[sessionId] = [];
         agentOutputBuffers[sessionId].push(msg.text);
+        agentServerLines[sessionId] = (agentServerLines[sessionId] || 0) + 1;
         // Cap buffer to prevent unbounded memory growth
         if (agentOutputBuffers[sessionId].length > 2000) {
           agentOutputBuffers[sessionId] = agentOutputBuffers[sessionId].slice(-1500);
@@ -3496,6 +3811,8 @@ function connectAgentStream(projectId, sessionId) {
             if (el) el.textContent = '';
           }
         }
+      } else if (msg.type === 'question' && msg.questions) {
+        renderAgentQuestion(sessionId, projectId, msg.questions);
       } else if (msg.type === 'turn_complete') {
         // Mode B: turn finished but process still alive — do NOT close SSE
         if (agentStatusCache[sessionId]) {
@@ -3760,6 +4077,10 @@ function appendAgentLine(sessionId, text) {
   const div = document.createElement('div');
   const cls = agentLineCls(text);
   div.className = cls;
+  // Reset stuck-plan counter only when a non-plan-related tool appears
+  if (cls.includes('agent-line-tool') && !text.includes('ExitPlanMode') && !text.includes('EnterPlanMode')) {
+    exitPlanModeCount[sessionId] = 0;
+  }
   // Use rich formatting for regular text lines, plain for special lines
   if (cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued') || cls.includes('agent-line-prompt')) {
     div.textContent = text;
@@ -3771,7 +4092,40 @@ function appendAgentLine(sessionId, text) {
 
   // Plan detection: [tool: ExitPlanMode] signals end of plan
   if (text.trim() === '[tool: ExitPlanMode]') {
+    exitPlanModeCount[sessionId] = (exitPlanModeCount[sessionId] || 0) + 1;
     collapseIntoPlanButton(sessionId, el);
+
+    // Show "Approve Plan" button on first ExitPlanMode
+    if (exitPlanModeCount[sessionId] === 1) {
+      const cached = agentStatusCache[sessionId];
+      const pid = cached ? cached.projectId : null;
+      if (pid) {
+        const approveRow = document.createElement('div');
+        approveRow.className = 'plan-approve-row';
+        approveRow.id = `plan-approve-${sessionId}`;
+        approveRow.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;margin:6px 0';
+        approveRow.innerHTML = `<span style="color:var(--text-dim);font-size:12px">Agent is waiting for plan approval.</span>
+          <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>`;
+        el.appendChild(approveRow);
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+
+    // Detect stuck ExitPlanMode loop (agent can't exit plan mode via non-interactive dispatch)
+    if (exitPlanModeCount[sessionId] >= 2) {
+      // Remove the approve button if still present (will re-add with warning)
+      const oldApprove = document.getElementById(`plan-approve-${sessionId}`);
+      if (oldApprove) oldApprove.remove();
+      const cached = agentStatusCache[sessionId];
+      const pid = cached ? cached.projectId : null;
+      const warn = document.createElement('div');
+      warn.style.cssText = 'background:var(--amber-dim);border:1px solid var(--amber);color:var(--amber-text);padding:8px 12px;border-radius:6px;margin:6px 0;font-size:12px;line-height:1.5;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+      warn.innerHTML = `&#x26A0; Agent is stuck trying to exit plan mode.${pid ? ` <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>` : ''}`;
+      el.appendChild(warn);
+      el.scrollTop = el.scrollHeight;
+      exitPlanModeCount[sessionId] = 0; // Reset so it doesn't spam
+    }
+
     // Check for plan file and inject button
     const cached = agentStatusCache[sessionId];
     if (cached && cached.projectId) {
@@ -3811,6 +4165,145 @@ function appendAgentLine(sessionId, text) {
           }
         }).catch(() => {});
     }
+  }
+}
+
+function approvePlan(projectId, sessionId) {
+  // Remove the approve button/row
+  const row = document.getElementById(`plan-approve-${sessionId}`);
+  if (row) row.remove();
+  // Send approval as a follow-up
+  const input = document.getElementById(`agent-followup-${sessionId}`);
+  if (input) {
+    input.value = 'Plan approved, please continue.';
+    sendFollowup(projectId, sessionId);
+  } else {
+    // Fallback: send directly via API
+    const echoEl = document.getElementById(`agent-output-${sessionId}`);
+    if (echoEl) {
+      const div = document.createElement('div');
+      div.className = 'agent-line agent-line-prompt agent-echo';
+      div.textContent = '> Plan approved, please continue.';
+      div.style.whiteSpace = 'pre-wrap';
+      echoEl.appendChild(div);
+      echoEl.scrollTop = echoEl.scrollHeight;
+    }
+    fetch(API_BASE + `/api/project/${projectId}/agent/followup`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message: 'Plan approved, please continue.', session_id: sessionId })
+    }).catch(() => {});
+  }
+}
+
+let _aqCounter = 0;
+function renderAgentQuestion(sessionId, projectId, questions) {
+  const el = document.getElementById(`agent-output-${sessionId}`);
+  if (!el || !questions || !questions.length) return;
+  const formId = `aq-${sessionId}-${_aqCounter++}`;
+
+  const container = document.createElement('div');
+  container.className = 'agent-question';
+  container.id = formId;
+
+  let html = '';
+  questions.forEach((q, qi) => {
+    const inputType = q.multiSelect ? 'checkbox' : 'radio';
+    const groupName = `${formId}-q${qi}`;
+    html += `<div class="agent-question-header">${esc(q.header || 'Question')}</div>`;
+    html += `<div class="agent-question-text">${esc(q.question)}</div>`;
+    html += `<div class="agent-question-options" data-qidx="${qi}">`;
+    (q.options || []).forEach((opt, oi) => {
+      html += `<div class="agent-question-option">
+        <input type="${inputType}" name="${groupName}" id="${groupName}-o${oi}" value="${esc(opt.label)}" data-desc="${esc(opt.description || '')}">
+        <label for="${groupName}-o${oi}">${esc(opt.label)}${opt.description ? `<span class="aq-desc">${esc(opt.description)}</span>` : ''}</label>
+      </div>`;
+    });
+    // "Other" option
+    html += `<div class="agent-question-option">
+      <input type="${inputType}" name="${groupName}" id="${groupName}-other" value="__other__" onchange="document.getElementById('${groupName}-other-text').classList.toggle('visible', this.checked || this.selected)">
+      <label for="${groupName}-other">Other</label>
+    </div>`;
+    html += `<input type="text" class="agent-question-other" id="${groupName}-other-text" placeholder="Type your answer...">`;
+    html += `</div>`;
+  });
+  html += `<div class="agent-question-actions">
+    <button onclick="submitQuestionAnswer('${esc(projectId)}','${esc(sessionId)}','${formId}',${questions.length})">Submit Answer</button>
+  </div>`;
+
+  container.innerHTML = html;
+  el.appendChild(container);
+  el.scrollTop = el.scrollHeight;
+
+  // Show/hide "Other" text field on radio change
+  container.querySelectorAll('input[type="radio"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const group = radio.name;
+      const otherText = document.getElementById(group + '-other-text');
+      const otherRadio = document.getElementById(group + '-other');
+      if (otherText) otherText.classList.toggle('visible', otherRadio && otherRadio.checked);
+    });
+  });
+  container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.value === '__other__') {
+        const otherText = document.getElementById(cb.name + '-other-text');
+        if (otherText) otherText.classList.toggle('visible', cb.checked);
+      }
+    });
+  });
+}
+
+function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
+  const container = document.getElementById(formId);
+  if (!container) return;
+
+  const answers = [];
+  for (let qi = 0; qi < questionCount; qi++) {
+    const groupName = `${formId}-q${qi}`;
+    const checked = container.querySelectorAll(`input[name="${groupName}"]:checked`);
+    const parts = [];
+    checked.forEach(input => {
+      if (input.value === '__other__') {
+        const otherText = document.getElementById(groupName + '-other-text');
+        if (otherText && otherText.value.trim()) parts.push(otherText.value.trim());
+      } else {
+        parts.push(input.value);
+      }
+    });
+    if (parts.length === 0) continue;
+    // Find the question text from the header
+    const qTextEl = container.querySelectorAll('.agent-question-text')[qi];
+    const qText = qTextEl ? qTextEl.textContent : '';
+    answers.push({ question: qText, answer: parts.join(', ') });
+  }
+
+  if (answers.length === 0) return;
+
+  // Format answer as a clear text message
+  let message = answers.map(a =>
+    a.question ? `${a.question}\nAnswer: ${a.answer}` : a.answer
+  ).join('\n\n');
+
+  // Mark the form as answered
+  container.classList.add('answered');
+  const actionsEl = container.querySelector('.agent-question-actions');
+  if (actionsEl) actionsEl.innerHTML = `<div class="agent-question-answer">Answered: ${esc(answers.map(a => a.answer).join(', '))}</div>`;
+  // Disable inputs
+  container.querySelectorAll('input').forEach(i => i.disabled = true);
+
+  // Send as follow-up
+  const input = document.getElementById(`agent-followup-${sessionId}`);
+  if (input) {
+    input.value = message;
+    sendFollowup(projectId, sessionId);
+  } else {
+    // Fallback: direct API call
+    fetch(API_BASE + `/api/project/${projectId}/agent/followup`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message, session_id: sessionId })
+    }).catch(() => {});
   }
 }
 
@@ -4555,241 +5048,12 @@ async function saveMemory(projectId) {
   } catch(e) { alert('Failed to save memory'); }
 }
 
-// ── Skills tab ──────────────────────────────────────────────────────────────
-
-const skillsCache = {};       // projectId -> { project, attached, available }
-let skillEditorState = {};    // key -> true (open editors)
-let globalSkillsCache = null; // array of global skills
-
-function skillsTabHTML(p) {
-  const cached = skillsCache[p.id];
-  if (!cached) {
-    return `<div class="skills-section"><div class="skill-empty">Loading...</div></div>`;
-  }
-  let html = '<div class="skills-section">';
-
-  // Project skills
-  html += '<div class="skills-section-title">Project Skills</div>';
-  if (cached.project.length) {
-    html += '<div class="skills-list">';
-    for (const s of cached.project) {
-      html += skillCardHTML(s, p.id, 'project');
-    }
-    html += '</div>';
-  } else {
-    html += '<div class="skill-empty">No project-specific skills yet</div>';
-  }
-
-  // New project skill form
-  const newKey = 'new-proj-' + p.id;
-  if (skillEditorState[newKey]) {
-    html += skillEditorFormHTML(newKey, null, p.id, 'project');
-  } else {
-    html += `<button class="btn-save-rules" style="margin-top:8px" onclick="skillEditorState['${newKey}']=true;refreshModal()">+ Create Project Skill</button>`;
-  }
-
-  // Attached global skills
-  html += '<div class="skills-section-title" style="margin-top:20px">Attached Global Skills</div>';
-  if (cached.attached.length) {
-    html += '<div class="skills-list">';
-    for (const s of cached.attached) {
-      html += skillCardHTML(s, p.id, 'attached');
-    }
-    html += '</div>';
-  } else {
-    html += '<div class="skill-empty">No global skills attached</div>';
-  }
-
-  // Attach dropdown
-  if (cached.available.length) {
-    html += `<div class="skill-attach-wrap">
-      <button class="btn-save-rules" style="margin-top:8px" onclick="toggleAttachDropdown('${esc(p.id)}')">+ Attach Global Skill</button>
-      <div class="skill-attach-dropdown" id="attach-dd-${esc(p.id)}">
-        ${cached.available.map(s => `<button class="skill-attach-item" onclick="attachSkill('${esc(p.id)}','${esc(s.id)}')">
-          <span>${esc(s.name)}</span>
-          ${s.description ? `<span class="att-desc">${esc(s.description)}</span>` : ''}
-        </button>`).join('')}
-      </div>
-    </div>`;
-  }
-
-  html += '</div>';
-  return html;
-}
-
-function skillCardHTML(skill, projectId, type) {
-  const edKey = type + '-' + skill.id;
-  const isEditing = skillEditorState[edKey];
-  let actions = '';
-  if (type === 'project') {
-    actions = `<div class="skill-actions">
-      <button class="skill-btn" onclick="toggleSkillEditor('${edKey}')" title="Edit">&#x270E;</button>
-      <button class="skill-btn danger" onclick="deleteProjectSkill('${esc(projectId)}','${esc(skill.id)}')" title="Delete">&#x2715;</button>
-    </div>`;
-  } else if (type === 'attached') {
-    actions = `<div class="skill-actions">
-      <button class="skill-btn" onclick="detachSkill('${esc(projectId)}','${esc(skill.id)}')" title="Detach">&#x2715;</button>
-    </div>`;
-  } else if (type === 'global') {
-    actions = `<div class="skill-actions">
-      <button class="skill-btn" onclick="toggleSkillEditor('${edKey}')" title="Edit">&#x270E;</button>
-      <button class="skill-btn danger" onclick="deleteGlobalSkill('${esc(skill.id)}')" title="Delete">&#x2715;</button>
-    </div>`;
-  }
-  let html = `<div class="skill-card">
-    <div class="skill-card-header">
-      <span class="skill-name">${esc(skill.name)}</span>
-      <span class="skill-scope-badge ${type === 'project' ? 'skill-scope-project' : 'skill-scope-global'}">${type === 'project' ? 'project' : 'global'}</span>
-      ${actions}
-    </div>
-    ${skill.description ? `<div class="skill-desc">${esc(skill.description)}</div>` : ''}`;
-  if (isEditing) {
-    const scope = type === 'project' ? 'project' : 'global';
-    html += skillEditorFormHTML(edKey, skill, projectId, scope);
-  }
-  html += '</div>';
-  return html;
-}
-
-function skillEditorFormHTML(key, skill, projectId, scope) {
-  const name = skill ? esc(skill.name) : '';
-  const desc = skill ? esc(skill.description || '') : '';
-  const content = skill ? esc(skill.content || '') : '';
-  const skillId = skill ? skill.id : '';
-  return `<div class="skill-editor open">
-    <label>Name</label>
-    <input type="text" id="se-name-${key}" value="${name}" placeholder="Skill name">
-    <label>Description</label>
-    <input type="text" id="se-desc-${key}" value="${desc}" placeholder="When should this skill activate?">
-    <label>Content</label>
-    <textarea id="se-content-${key}" rows="8" placeholder="Markdown instructions for the agent...">${content}</textarea>
-    <div class="skill-editor-actions">
-      <button class="btn-save-rules" onclick="saveSkillFromEditor('${key}','${esc(projectId)}','${scope}','${esc(skillId)}')">Save</button>
-      <button class="skill-btn" onclick="cancelSkillEditor('${key}')">Cancel</button>
-      <span class="rules-saved" id="se-saved-${key}">Saved</span>
-    </div>
-  </div>`;
-}
-
-function toggleSkillEditor(key) {
-  skillEditorState[key] = !skillEditorState[key];
-  if (key.startsWith('global-')) {
-    refreshSkillsManager();
-  } else {
-    refreshModal();
-  }
-}
-
-function cancelSkillEditor(key) {
-  delete skillEditorState[key];
-  if (key.startsWith('new-global') || key.startsWith('global-')) {
-    refreshSkillsManager();
-  } else {
-    refreshModal();
-  }
-}
-
-async function loadProjectSkills(projectId) {
-  try {
-    const res = await fetch(API_BASE + '/api/project/' + projectId + '/skills');
-    const data = await res.json();
-    skillsCache[projectId] = { project: data.project || [], attached: data.attached || [], available: data.available || [] };
-  } catch(e) {
-    skillsCache[projectId] = { project: [], attached: [], available: [] };
-  }
-  refreshModal();
-}
-
-async function saveSkillFromEditor(key, projectId, scope, skillId) {
-  const name = (document.getElementById('se-name-' + key) || {}).value || '';
-  const desc = (document.getElementById('se-desc-' + key) || {}).value || '';
-  const content = (document.getElementById('se-content-' + key) || {}).value || '';
-  if (!name.trim()) { alert('Name is required'); return; }
-  const body = { name: name.trim(), description: desc.trim(), content: content.trim() };
-  try {
-    if (skillId) {
-      // Update
-      const url = scope === 'global'
-        ? API_BASE + '/api/skills/global/' + skillId
-        : API_BASE + '/api/project/' + projectId + '/skills/' + skillId;
-      await fetch(url, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-    } else {
-      // Create
-      const url = scope === 'global'
-        ? API_BASE + '/api/skills/global'
-        : API_BASE + '/api/project/' + projectId + '/skills';
-      await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-    }
-    delete skillEditorState[key];
-    globalSkillsCache = null;
-    if (projectId) {
-      delete skillsCache[projectId];
-      loadProjectSkills(projectId);
-    } else {
-      refreshSkillsManager();
-    }
-    flashSaved('se-saved-' + key);
-  } catch(e) { alert('Failed to save skill'); }
-}
-
-async function deleteProjectSkill(projectId, skillId) {
-  if (!confirm('Delete this project skill?')) return;
-  try {
-    await fetch(API_BASE + '/api/project/' + projectId + '/skills/' + skillId, { method: 'DELETE' });
-    delete skillsCache[projectId];
-    loadProjectSkills(projectId);
-  } catch(e) { alert('Failed to delete skill'); }
-}
-
-async function attachSkill(projectId, skillId) {
-  try {
-    await fetch(API_BASE + '/api/project/' + projectId + '/skills/attach', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ skill_id: skillId })
-    });
-    delete skillsCache[projectId];
-    loadProjectSkills(projectId);
-  } catch(e) { alert('Failed to attach skill'); }
-}
-
-async function detachSkill(projectId, skillId) {
-  try {
-    await fetch(API_BASE + '/api/project/' + projectId + '/skills/detach', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ skill_id: skillId })
-    });
-    delete skillsCache[projectId];
-    loadProjectSkills(projectId);
-  } catch(e) { alert('Failed to detach skill'); }
-}
-
-function toggleAttachDropdown(projectId) {
-  const dd = document.getElementById('attach-dd-' + projectId);
-  if (!dd) return;
-  const isOpen = dd.classList.contains('open');
-  document.querySelectorAll('.skill-attach-dropdown.open').forEach(d => d.classList.remove('open'));
-  if (!isOpen) {
-    dd.classList.add('open');
-    const close = (ev) => {
-      if (!dd.contains(ev.target)) {
-        dd.classList.remove('open');
-        document.removeEventListener('mousedown', close);
-      }
-    };
-    setTimeout(() => document.addEventListener('mousedown', close), 0);
-  }
-}
-
 // ── Tab switch ──────────────────────────────────────────────────────────────
 
 function switchModalTab(projectId, tab) {
   modalActiveTab[projectId] = tab;
   if (tab === 'agent-log') {
     loadAgentLog(projectId);
-    return;
-  }
-  if (tab === 'skills' && !skillsCache[projectId]) {
-    loadProjectSkills(projectId);
     return;
   }
   if (tab === 'memory' && !memoryCache[projectId]) {
@@ -4836,11 +5100,6 @@ function applyTabFilter(projectId) {
     });
   } else if (activeTab === 'activity') {
     el.querySelectorAll('.log-entry').forEach(item => {
-      const text = item.textContent.toLowerCase();
-      item.style.display = (!query || text.includes(query)) ? '' : 'none';
-    });
-  } else if (activeTab === 'skills') {
-    el.querySelectorAll('.skill-card').forEach(item => {
       const text = item.textContent.toLowerCase();
       item.style.display = (!query || text.includes(query)) ? '' : 'none';
     });
@@ -5035,89 +5294,6 @@ async function saveSharedRulesGlobal() {
     }
     flashSaved('shared-rules-global-saved');
   } catch(e) { alert('Failed to save shared rules'); }
-}
-
-// ── Global Skills Manager ────────────────────────────────────────────────────
-
-async function openSkillsManager() {
-  const modalId = '__skills_manager';
-  if (openModals.has(modalId)) {
-    const entry = openModals.get(modalId);
-    if (entry.minimized) restoreModal(modalId);
-    focusModal(modalId);
-    return;
-  }
-
-  const win = document.createElement('div');
-  win.className = 'modal-window';
-  win.dataset.modalId = modalId;
-  const content = document.createElement('div');
-  content.className = 'modal-content';
-  content.style.width = '700px';
-  content.innerHTML = `
-    <div class="modal-window-controls">
-      <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
-      <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
-    </div>
-    <div class="skills-section" style="padding:28px;overflow-y:auto;height:calc(100% - 56px)">
-      <h2 style="font-size:16px;font-weight:700;color:var(--text);margin:0 0 6px 0">Global Skills</h2>
-      <div class="memory-hint">Skills shared across all projects. Attach them to individual projects from each project's Skills tab.</div>
-      <div id="skills-manager-list"><div class="skill-empty">Loading...</div></div>
-    </div>`;
-  win.appendChild(content);
-  document.getElementById('modal-layer').appendChild(win);
-
-  const z = nextModalZ++;
-  win.style.zIndex = z;
-  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
-  centerModalElement(win);
-  focusModal(modalId);
-
-  await refreshSkillsManager();
-}
-
-async function refreshSkillsManager() {
-  try {
-    const res = await fetch(API_BASE + '/api/skills/global');
-    globalSkillsCache = await res.json();
-  } catch(e) {
-    globalSkillsCache = [];
-  }
-  const container = document.getElementById('skills-manager-list');
-  if (!container) return;
-  let html = '';
-  if (globalSkillsCache.length) {
-    html += '<div class="skills-list">';
-    for (const s of globalSkillsCache) {
-      html += skillCardHTML(s, '', 'global');
-    }
-    html += '</div>';
-  } else {
-    html += '<div class="skill-empty">No global skills created yet</div>';
-  }
-  const newKey = 'new-global';
-  if (skillEditorState[newKey]) {
-    html += skillEditorFormHTML(newKey, null, '', 'global');
-  } else {
-    html += `<button class="btn-save-rules" style="margin-top:12px" onclick="skillEditorState['new-global']=true;refreshSkillsManager()">+ Create Global Skill</button>`;
-  }
-  container.innerHTML = html;
-}
-
-async function deleteGlobalSkill(skillId) {
-  if (!confirm('Delete this global skill? It will be detached from all projects.')) return;
-  try {
-    await fetch(API_BASE + '/api/skills/global/' + skillId, { method: 'DELETE' });
-    globalSkillsCache = null;
-    // Invalidate all project skills caches
-    for (const k of Object.keys(skillsCache)) delete skillsCache[k];
-    await refreshSkillsManager();
-  } catch(e) { alert('Failed to delete skill'); }
-}
-
-async function saveGlobalSkillFromManager(key, skillId) {
-  await saveSkillFromEditor(key, '', 'global', skillId);
-  await refreshSkillsManager();
 }
 
 // ── Plan Viewer ─────────────────────────────────────────────────────────────
@@ -5906,6 +6082,494 @@ async function createProject() {
   } catch(e) { alert('Failed to create project: ' + e.message); }
 }
 
+// ── Walkthrough / Tour ────────────────────────────────────────────────────────
+
+let wtActive = false;
+let wtStep = 0;
+let wtDontShow = false;
+
+const WT_STEPS = [
+  {
+    id: 'welcome',
+    title: 'Welcome to Mission Control',
+    body: 'Mission Control helps you manage multiple coding projects with AI-powered agents. Let\u2019s take a quick tour of the interface!',
+    target: null, pos: 'center',
+  },
+  {
+    id: 'header-left',
+    title: 'Navigation Bar',
+    body: 'The Mission Control header. The logo and tagline identify your workspace.',
+    target: '.header-left', pos: 'bottom',
+  },
+  {
+    id: 'header-right',
+    title: 'Header Actions',
+    body: 'Shared Rules lets you set instructions for all agents. Scheduler runs tasks on a timer. The live badge pulses while auto-refresh is active.',
+    target: '.header-right', pos: 'bottom',
+  },
+  {
+    id: 'new-btn',
+    title: 'Create Projects',
+    body: 'Click "+ New" to create a project. Each project tracks its own backlog, agent sessions, and activity.',
+    target: '.btn-new-project', pos: 'bottom',
+  },
+  {
+    id: 'stats',
+    title: 'Project Statistics',
+    body: 'See how many projects are Active, Blocked, Waiting, or Parked at a glance. Click a stat to filter.',
+    target: '#stats-bar', pos: 'bottom',
+  },
+  {
+    id: 'sample-tile',
+    title: 'Project Tiles',
+    body: 'Each tile shows a project\u2019s status, current task, and last activity. We\u2019ve created a sample project for you to explore.',
+    target: null, pos: 'right', demo: 'tile',
+    onEnter: async () => {
+      await fetch(API_BASE + '/api/walkthrough/sample-project', { method: 'POST' });
+      await refreshSilent();
+    },
+  },
+  {
+    id: 'open-modal',
+    title: 'Project Modal',
+    body: 'Click a tile to open its details. You can have multiple project windows open at once, drag them around, and resize them.',
+    target: null, pos: 'left', demo: 'modal',
+  },
+  {
+    id: 'tabs',
+    title: 'Tabs',
+    body: 'Switch between Agent (dispatch AI), Backlog (tasks), Agent Log (history), Plans, Activity, and more.',
+    target: null, pos: 'bottom', demo: 'modal', demoTarget: '.modal-tab-bar',
+  },
+  {
+    id: 'backlog',
+    title: 'Backlog',
+    body: 'Manage your task list here. Set priorities, add attachments, and mark items done. Tasks can also sync with GitHub Issues.',
+    target: null, pos: 'left', demo: 'modal-backlog',
+  },
+  {
+    id: 'agent',
+    title: 'Agent Dispatch',
+    body: 'Type a prompt and dispatch an AI agent to work on your project. Agents run in the background and stream output in real time.',
+    target: null, pos: 'left', demo: 'modal-agent',
+  },
+  {
+    id: 'menu',
+    title: 'Project Menu',
+    body: 'The three-dot menu gives access to status changes, color theming, GitHub sync, and project settings.',
+    target: null, pos: 'bottom', demo: 'modal', demoTarget: '.modal-menu-btn',
+  },
+  {
+    id: 'menu-status',
+    title: 'Change Status',
+    body: 'Set your project to Active, Waiting, Blocked, or Parked. Status determines the tile color and filter grouping.',
+    target: null, pos: 'left', demo: 'modal-menu', demoTarget: '.wt-menu-status',
+  },
+  {
+    id: 'menu-color',
+    title: 'Color & Domain',
+    body: 'Customize the modal accent color and organize projects by domain (e.g. Frontend, Backend, DevOps).',
+    target: null, pos: 'left', demo: 'modal-menu', demoTarget: '.wt-menu-color',
+  },
+  {
+    id: 'menu-model',
+    title: 'Agent Model',
+    body: 'Choose which AI model to use for this project \u2014 Sonnet 4.5, Opus 4.6, or Haiku 4.5.',
+    target: null, pos: 'left', demo: 'modal-menu', demoTarget: '.wt-menu-model',
+  },
+  {
+    id: 'menu-github',
+    title: 'GitHub Sync',
+    body: 'Connect a GitHub repository to sync backlog items with GitHub Issues. Changes flow both ways.',
+    target: null, pos: 'left', demo: 'modal-menu', demoTarget: '.wt-menu-github',
+  },
+  {
+    id: 'feed',
+    title: 'Activity Stream',
+    body: 'Real-time activity across all projects appears here \u2014 agent dispatches, task updates, status changes, and more.',
+    target: '.feed-col', pos: 'left',
+  },
+  {
+    id: 'console',
+    title: 'Agent Console',
+    body: 'Running agent sessions appear in this bottom bar. Expand it to view output, send follow-ups, or stop a session.',
+    target: '#agent-console', pos: 'top',
+  },
+  {
+    id: 'done',
+    title: 'You\u2019re All Set!',
+    body: 'Start by exploring the sample project or create your own. You can re-run this tour anytime using the "Tour" button in the header.',
+    target: null, pos: 'center',
+  },
+];
+
+// Build virtual demo elements for the walkthrough
+function wtDemoTileHTML() {
+  return `<div class="card status-active" style="width:260px;aspect-ratio:1;pointer-events:none">
+    <div class="card-header">
+      <div class="card-title-row">
+        <span class="project-name">Sample Project</span>
+        <span class="domain-tag" style="background:var(--surface3);color:var(--text-dim)">General</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="status-pill status-active">active</span>
+      </div>
+    </div>
+    <div class="tile-body">
+      <div class="tile-task">Learn how to use Mission Control</div>
+    </div>
+    <div class="tile-footer">
+      <span class="backlog-badge">3 open</span>
+      <span class="time-ago">just now</span>
+    </div>
+  </div>`;
+}
+
+function wtDemoModalHTML(activeTab) {
+  const tabs = ['Agent','Backlog','Agent Log','Plans','Activity','Memory','Rules'];
+  const tabBar = tabs.map(t => {
+    const key = t.toLowerCase().replace(' ', '-');
+    const active = (activeTab === key) ? ' active' : '';
+    return `<div class="modal-tab${active}">${t}</div>`;
+  }).join('');
+
+  let bodyContent = '';
+  if (activeTab === 'backlog') {
+    bodyContent = `
+      <div style="padding:16px">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <input type="text" placeholder="Add backlog item..." style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:13px;outline:none" disabled>
+          <button style="background:var(--accent);color:var(--bg);border:none;padding:8px 16px;border-radius:6px;font-weight:600;font-size:13px" disabled>Add</button>
+        </div>
+        <div class="backlog-item priority-normal" style="pointer-events:none">
+          <button class="backlog-check"></button>
+          <span class="backlog-text">Explore the project tabs</span>
+          <div class="backlog-meta"><span class="priority-badge priority-normal">normal</span></div>
+        </div>
+        <div class="backlog-item priority-high" style="pointer-events:none">
+          <button class="backlog-check"></button>
+          <span class="backlog-text">Try dispatching an AI agent</span>
+          <div class="backlog-meta"><span class="priority-badge priority-high">high</span></div>
+        </div>
+        <div class="backlog-item priority-low" style="pointer-events:none">
+          <button class="backlog-check"></button>
+          <span class="backlog-text">Connect a GitHub repo for issue sync</span>
+          <div class="backlog-meta"><span class="priority-badge priority-low">low</span></div>
+        </div>
+      </div>`;
+  } else if (activeTab === 'agent') {
+    bodyContent = `
+      <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:13px;padding:40px 0">
+          No agent session yet. Type a prompt below to dispatch one.
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <textarea style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;resize:none;height:60px;outline:none" placeholder="Describe a task for the AI agent..." disabled></textarea>
+          <button style="background:var(--accent);color:var(--bg);border:none;padding:10px 20px;border-radius:8px;font-weight:600;font-size:13px;height:42px" disabled>Dispatch</button>
+        </div>
+      </div>`;
+  } else {
+    bodyContent = `<div style="padding:40px;text-align:center;color:var(--text-faint);font-size:13px">Tab content appears here</div>`;
+  }
+
+  return `<div class="modal-window focused" style="width:700px;height:520px;pointer-events:none;position:relative;border-radius:12px;overflow:hidden">
+    <div class="modal-content" style="display:flex;flex-direction:column;height:100%">
+      <div class="modal-header">
+        <div class="modal-window-controls">
+          <button class="modal-menu-btn" style="pointer-events:none">&#x22EE;</button>
+          <button class="modal-minimize" style="pointer-events:none">&#x2015;</button>
+          <button class="modal-close" style="pointer-events:none">&#10005;</button>
+        </div>
+        <div class="card-title-row">
+          <input class="name-edit" value="Sample Project" disabled style="pointer-events:none">
+          <span class="domain-tag" style="background:var(--surface3);color:var(--text-dim)">General</span>
+        </div>
+      </div>
+      <div class="card-summary" style="pointer-events:none">
+        <div class="summary-item"><span class="summary-label">Current Task</span><span class="summary-value current-task">Learn how to use Mission Control</span></div>
+        <div class="summary-item"><span class="summary-label">Status</span><span class="status-pill status-active">active</span></div>
+      </div>
+      <div class="modal-tab-bar" style="pointer-events:none">${tabBar}</div>
+      <div class="modal-scroll-body" style="flex:1;overflow:hidden">${bodyContent}</div>
+    </div>
+  </div>`;
+}
+
+function wtDemoMenuHTML() {
+  const tabs = ['Agent','Backlog','Agent Log','Plans','Activity','Memory','Rules'];
+  const tabBar = tabs.map(t => {
+    const key = t.toLowerCase().replace(' ', '-');
+    return `<div class="modal-tab${key === 'agent' ? ' active' : ''}">${t}</div>`;
+  }).join('');
+
+  return `<div class="modal-window focused" style="width:700px;height:520px;pointer-events:none;position:relative;border-radius:12px;overflow:visible">
+    <div class="modal-content" style="display:flex;flex-direction:column;height:100%;overflow:hidden;border-radius:12px;background:var(--surface)">
+      <div class="modal-header" style="position:relative">
+        <div class="modal-window-controls">
+          <button class="modal-menu-btn" style="pointer-events:none;background:var(--accent-dim);color:var(--accent);border-color:var(--accent)">&#x22EE;</button>
+          <button class="modal-minimize" style="pointer-events:none">&#x2015;</button>
+          <button class="modal-close" style="pointer-events:none">&#10005;</button>
+        </div>
+          <div class="modal-menu-dropdown" style="display:block;pointer-events:none;position:absolute;top:44px;right:8px;min-width:220px;z-index:50">
+            <button class="modal-menu-item wt-menu-status" style="pointer-events:none">
+              <span class="menu-icon">&#x25CF;</span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            </button>
+            <button class="modal-menu-item wt-menu-color" style="pointer-events:none">
+              <span class="menu-icon">&#x25CF;</span> Change Color <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            </button>
+            <button class="modal-menu-item" style="pointer-events:none">
+              <span class="menu-icon">&#x25CF;</span> Change Domain <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            </button>
+            <button class="modal-menu-item wt-menu-model" style="pointer-events:none">
+              <span class="menu-icon">&#x2699;</span> Agent Model <span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            </button>
+            <button class="modal-menu-item" style="pointer-events:none">
+              <span class="menu-icon">&#x270E;</span> Add Description
+            </button>
+            <button class="modal-menu-item" style="pointer-events:none">
+              <span class="menu-icon">&#x21B5;</span> Enter Key <span style="margin-left:4px;color:var(--text-faint);font-size:11px">new line</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            </button>
+            <button class="modal-menu-item wt-menu-github" style="pointer-events:none">
+              <span class="menu-icon">&#x1F517;</span> GitHub Sync <span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            </button>
+            <div class="modal-menu-sep"></div>
+            <button class="modal-menu-item danger" style="pointer-events:none">
+              <span class="menu-icon">&#x1F5D1;</span> Delete Project
+            </button>
+          </div>
+        <div class="card-title-row">
+          <input class="name-edit" value="Sample Project" disabled style="pointer-events:none">
+          <span class="domain-tag" style="background:var(--surface3);color:var(--text-dim)">General</span>
+        </div>
+      </div>
+      <div class="card-summary" style="pointer-events:none">
+        <div class="summary-item"><span class="summary-label">Current Task</span><span class="summary-value current-task">Learn how to use Mission Control</span></div>
+        <div class="summary-item"><span class="summary-label">Status</span><span class="status-pill status-active">active</span></div>
+      </div>
+      <div class="modal-tab-bar" style="pointer-events:none">${tabBar}</div>
+      <div class="modal-scroll-body" style="flex:1;overflow:hidden">
+        <div style="padding:40px;text-align:center;color:var(--text-faint);font-size:13px">Tab content appears here</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function startWalkthrough() {
+  wtActive = true;
+  wtStep = 0;
+  wtDontShow = false;
+  showDesktop();
+  wtShow(0);
+}
+
+async function wtShow(idx) {
+  wtStep = idx;
+  const step = WT_STEPS[idx];
+  if (!step) { wtEnd(); return; }
+
+  if (step.onEnter) await step.onEnter();
+
+  // Remove old overlay
+  const old = document.getElementById('wt-overlay');
+  if (old) old.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'wt-overlay';
+  overlay.className = 'wt-overlay';
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'wt-backdrop';
+  backdrop.onclick = () => {}; // block clicks
+  overlay.appendChild(backdrop);
+
+  // Remove previous elevation
+  document.querySelectorAll('.wt-elevated').forEach(el => el.classList.remove('wt-elevated'));
+
+  let targetEl = step.target ? document.querySelector(step.target) : null;
+
+  // Inject virtual demo element if step uses one
+  if (step.demo) {
+    const demo = document.createElement('div');
+    demo.className = 'wt-demo';
+    demo.style.cssText = 'position:fixed;z-index:2001;pointer-events:none;';
+
+    if (step.demo === 'tile') {
+      demo.innerHTML = wtDemoTileHTML();
+      // Center the tile in the upper-left area
+      demo.style.left = '80px';
+      demo.style.top = '180px';
+      overlay.appendChild(demo);
+      targetEl = demo.firstElementChild;
+    } else if (step.demo === 'modal-menu') {
+      demo.innerHTML = wtDemoMenuHTML();
+      demo.style.left = `${Math.max(40, (window.innerWidth - 700) / 2)}px`;
+      demo.style.top = `${Math.max(40, (window.innerHeight - 520) / 2)}px`;
+      overlay.appendChild(demo);
+      if (step.demoTarget) {
+        const subEl = demo.querySelector(step.demoTarget);
+        if (subEl) {
+          subEl.style.outline = '2px solid var(--accent)';
+          subEl.style.outlineOffset = '2px';
+          subEl.style.borderRadius = '4px';
+          subEl.style.background = 'var(--accent-dim)';
+          targetEl = subEl;
+        } else {
+          targetEl = demo.firstElementChild;
+        }
+      } else {
+        targetEl = demo.firstElementChild;
+      }
+    } else if (step.demo.startsWith('modal')) {
+      const tab = step.demo === 'modal-backlog' ? 'backlog'
+                : step.demo === 'modal-agent' ? 'agent'
+                : 'agent';
+      demo.innerHTML = wtDemoModalHTML(tab);
+      demo.style.left = `${Math.max(40, (window.innerWidth - 700) / 2)}px`;
+      demo.style.top = `${Math.max(40, (window.innerHeight - 520) / 2)}px`;
+      overlay.appendChild(demo);
+      if (step.demoTarget) {
+        const subEl = demo.querySelector(step.demoTarget);
+        if (subEl) {
+          subEl.style.outline = '2px solid var(--accent)';
+          subEl.style.outlineOffset = '3px';
+          subEl.style.borderRadius = '6px';
+          targetEl = subEl;
+        } else {
+          targetEl = demo.firstElementChild;
+        }
+      } else {
+        targetEl = demo.firstElementChild;
+      }
+    }
+  }
+
+  // Elevate the target (or its modal-window ancestor) above the backdrop
+  if (targetEl && !step.demo) {
+    const modal = targetEl.closest('.modal-window');
+    (modal || targetEl).classList.add('wt-elevated');
+  }
+
+  // Clip-path cutout around target
+  if (targetEl) {
+    const r = targetEl.getBoundingClientRect();
+    const pad = 10;
+    const x1 = r.left - pad, y1 = r.top - pad;
+    const x2 = r.right + pad, y2 = r.bottom + pad;
+    // polygon: full screen with rectangular hole
+    backdrop.style.clipPath = `polygon(
+      0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%,
+      ${x1}px ${y1}px, ${x1}px ${y2}px, ${x2}px ${y2}px, ${x2}px ${y1}px, ${x1}px ${y1}px
+    )`;
+
+    const hl = document.createElement('div');
+    hl.className = 'wt-highlight';
+    hl.style.left = (r.left - pad) + 'px';
+    hl.style.top = (r.top - pad) + 'px';
+    hl.style.width = (r.width + pad * 2) + 'px';
+    hl.style.height = (r.height + pad * 2) + 'px';
+    overlay.appendChild(hl);
+  }
+
+  // Card
+  const card = document.createElement('div');
+  card.className = 'wt-card' + (step.pos === 'center' ? ' centered' : '');
+
+  const isFirst = idx === 0;
+  const isLast = idx === WT_STEPS.length - 1;
+
+  let btns = '';
+  if (isLast) {
+    btns = `<button class="wt-btn wt-btn-primary" onclick="wtEnd()">Get Started</button>`;
+  } else {
+    if (!isFirst) btns += `<button class="wt-btn" onclick="wtBack()">Back</button>`;
+    btns += `<button class="wt-btn wt-btn-skip" onclick="wtSkip()">Skip</button>`;
+    btns += `<button class="wt-btn wt-btn-primary" onclick="wtNext()">${isFirst ? 'Start Tour' : 'Next'}</button>`;
+  }
+
+  let dismissHTML = '';
+  if (!isLast) {
+    dismissHTML = `<div class="wt-dismiss">
+      <input type="checkbox" id="wt-dontshow" ${wtDontShow ? 'checked' : ''} onchange="wtDontShow=this.checked">
+      <label for="wt-dontshow">Don't show this again</label>
+    </div>`;
+  }
+
+  card.innerHTML = `
+    <div class="wt-title">${esc(step.title)}</div>
+    <div class="wt-body">${esc(step.body)}</div>
+    <div class="wt-actions">
+      <span class="wt-progress">${idx + 1} / ${WT_STEPS.length}</span>
+      ${btns}
+    </div>
+    ${dismissHTML}
+  `;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  // Position card near target
+  if (targetEl && step.pos !== 'center') {
+    wtPositionCard(targetEl, card, step.pos);
+  }
+}
+
+function wtPositionCard(targetEl, cardEl, pos) {
+  const tr = targetEl.getBoundingClientRect();
+  const cr = cardEl.getBoundingClientRect();
+  const gap = 20;
+  let left, top;
+
+  switch (pos) {
+    case 'bottom':
+      left = tr.left + (tr.width - cr.width) / 2;
+      top = tr.bottom + gap;
+      break;
+    case 'top':
+      left = tr.left + (tr.width - cr.width) / 2;
+      top = tr.top - cr.height - gap;
+      break;
+    case 'left':
+      left = tr.left - cr.width - gap;
+      top = tr.top + (tr.height - cr.height) / 2;
+      break;
+    case 'right':
+      left = tr.right + gap;
+      top = tr.top + (tr.height - cr.height) / 2;
+      break;
+    default:
+      return;
+  }
+
+  // Clamp to viewport
+  left = Math.max(16, Math.min(left, window.innerWidth - cr.width - 16));
+  top = Math.max(16, Math.min(top, window.innerHeight - cr.height - 16));
+  cardEl.style.left = left + 'px';
+  cardEl.style.top = top + 'px';
+}
+
+function wtNext() { if (wtStep < WT_STEPS.length - 1) wtShow(wtStep + 1); else wtEnd(); }
+function wtBack() { if (wtStep > 0) wtShow(wtStep - 1); }
+function wtSkip() {
+  if (wtDontShow) localStorage.setItem('walkthrough_done', '1');
+  wtEnd();
+}
+function wtEnd() {
+  wtActive = false;
+  localStorage.setItem('walkthrough_done', '1');
+  document.querySelectorAll('.wt-elevated').forEach(el => el.classList.remove('wt-elevated'));
+  const el = document.getElementById('wt-overlay');
+  if (el) el.remove();
+}
+
+// Reposition on resize
+window.addEventListener('resize', () => { if (wtActive) wtShow(wtStep); });
+// Escape to skip
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && wtActive) {
+    e.stopPropagation();
+    wtSkip();
+  }
+});
+
 function startRefresh() {
   refreshCountdown = 30;
   clearInterval(refreshInterval); clearInterval(countdownInterval);
@@ -5918,6 +6582,13 @@ function startRefresh() {
 
 document.querySelectorAll('.filter-btn').forEach(b => b.addEventListener('click', () => setFilter(b.dataset.filter)));
 fetchDomains().then(() => renderDomainFilters());
+// Fetch grid layout from server (source of truth), fall back to localStorage
+fetch(API_BASE + '/api/grid-layout').then(r => r.json()).then(data => {
+  if (data.order && data.order.length > 0) {
+    projectOrder = data.order;
+    localStorage.setItem('projectOrder', JSON.stringify(projectOrder));
+  }
+}).catch(() => {});
 fetchProjects().then(async () => {
   // Restore any running/completed agent sessions into the console
   for (const p of allProjects) {
@@ -5925,6 +6596,10 @@ fetchProjects().then(async () => {
   }
   fetchGlobalUsage();
   refreshScheduleBanner();
+  // Auto-start walkthrough on first run (zero projects, never completed)
+  if (allProjects.length === 0 && !localStorage.getItem('walkthrough_done')) {
+    setTimeout(() => startWalkthrough(), 600);
+  }
 });
 startRefresh();
 // Refresh schedule banner every 60s

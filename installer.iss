@@ -3,7 +3,7 @@
 ; Requires: dist\MissionControl\ from PyInstaller build
 
 #define MyAppName "Mission Control"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "Mission Control"
 #define MyAppExeName "MissionControl.exe"
 

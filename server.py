@@ -169,13 +169,6 @@ def _get_memory_path(project):
     return MEMORY_DIR / f'{project["id"]}.md'
 
 
-SKILLS_DIR = _DATA_ROOT / 'data' / 'skills'
-SKILLS_GLOBAL_DIR = SKILLS_DIR / 'global'
-SKILLS_PROJECT_DIR = SKILLS_DIR / 'project'
-SKILLS_ATTACH_PATH = SKILLS_DIR / 'attachments.json'
-SKILLS_GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
-SKILLS_PROJECT_DIR.mkdir(parents=True, exist_ok=True)
-
 DEFAULT_DOMAINS = [
     {'id': 'general', 'label': 'General', 'color': 'var(--text-dim)', 'bg': 'var(--surface3)'},
     {'id': 'trading', 'label': 'Trading', 'color': 'var(--accent)', 'bg': 'var(--accent-dim)'},
@@ -477,6 +470,109 @@ def delete_backlog_item(project_id, item_id):
     return jsonify({'ok': True})
 
 
+# ── Walkthrough sample project ────────────────────────────────────────────────
+
+@app.route('/api/walkthrough/sample-project', methods=['POST'])
+def create_sample_project():
+    """Create a sample project for the first-run walkthrough (idempotent)."""
+    pid = 'sample-project'
+    filepath = DATA_DIR / f'{pid}.json'
+    if filepath.exists():
+        return jsonify({'ok': True, 'id': pid, 'existed': True})
+
+    ts = now_iso()
+    project = {
+        'id': pid,
+        'name': 'Sample Project',
+        'domain': 'general',
+        'status': 'active',
+        'description': 'A sample project created during the walkthrough. Feel free to explore, modify, or delete it!',
+        'current_task': 'Learn how to use Mission Control',
+        'next_action': 'Try adding tasks to the backlog',
+        'last_updated': ts,
+        'backlog': [
+            {'id': 'sample01', 'text': 'Explore the project tabs', 'status': 'open', 'priority': 'normal', 'created_at': ts},
+            {'id': 'sample02', 'text': 'Try dispatching an AI agent', 'status': 'open', 'priority': 'high', 'created_at': ts},
+            {'id': 'sample03', 'text': 'Connect a GitHub repo for issue sync', 'status': 'open', 'priority': 'low', 'created_at': ts},
+        ],
+        'activity_log': [
+            {'ts': ts, 'msg': 'Project created during Mission Control walkthrough'}
+        ],
+    }
+    save_project(pid, project)
+    return jsonify({'ok': True, 'id': pid, 'existed': False})
+
+
+# ── GitHub sync endpoints ────────────────────────────────────────────────────
+
+@app.route('/api/project/<project_id>/github/setup', methods=['POST'])
+def github_setup(project_id):
+    """Validate repo, save config, trigger initial sync."""
+    p = load_project(project_id)
+    if p is None:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    repo = (data.get('repo') or '').strip()
+    if not repo:
+        return jsonify({'error': 'repo required'}), 400
+
+    ok, err = _gh_sync.validate_repo(repo)
+    if not ok:
+        return jsonify({'error': err}), 400
+
+    p['github_repo'] = repo
+    p['github_sync_enabled'] = True
+    p['last_updated'] = now_iso()
+    save_project(project_id, p)
+    _log_agent_activity(project_id, f"GitHub: Connected to {repo}")
+
+    # Trigger initial sync in background
+    def _initial():
+        _gh_sync.sync_project(project_id)
+    threading.Thread(target=_initial, daemon=True).start()
+
+    return jsonify({'ok': True, 'repo': repo})
+
+
+@app.route('/api/project/<project_id>/github/disconnect', methods=['POST'])
+def github_disconnect(project_id):
+    p = load_project(project_id)
+    if p is None:
+        return jsonify({'error': 'not found'}), 404
+    repo = p.get('github_repo', '')
+    p['github_sync_enabled'] = False
+    p['github_repo'] = ''
+    p['github_last_sync'] = None
+    p['last_updated'] = now_iso()
+    save_project(project_id, p)
+    if repo:
+        _log_agent_activity(project_id, f"GitHub: Disconnected from {repo}")
+    return jsonify({'ok': True})
+
+
+@app.route('/api/project/<project_id>/github/sync', methods=['POST'])
+def github_sync_now(project_id):
+    p = load_project(project_id)
+    if p is None:
+        return jsonify({'error': 'not found'}), 404
+    ok, summary = _gh_sync.sync_project(project_id)
+    if not ok:
+        return jsonify({'error': summary}), 429 if 'Rate' in summary else 400
+    return jsonify({'ok': True, 'summary': summary})
+
+
+@app.route('/api/project/<project_id>/github/status')
+def github_status(project_id):
+    p = load_project(project_id)
+    if p is None:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify({
+        'repo': p.get('github_repo', ''),
+        'enabled': p.get('github_sync_enabled', False),
+        'last_sync': p.get('github_last_sync'),
+    })
+
+
 # ── Attachment endpoints ─────────────────────────────────────────────────────
 
 @app.route('/api/project/<project_id>/backlog/<item_id>/attachments', methods=['POST'])
@@ -685,53 +781,6 @@ def agent_upload_image():
     return jsonify({'ok': True, 'path': str(dest.resolve())})
 
 
-# ── Skills helpers ───────────────────────────────────────────────────────────
-
-def _load_skills_attachments():
-    if SKILLS_ATTACH_PATH.exists():
-        try:
-            return json.loads(SKILLS_ATTACH_PATH.read_text(encoding='utf-8'))
-        except Exception:
-            pass
-    return {}
-
-def _save_skills_attachments(data):
-    SKILLS_ATTACH_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SKILLS_ATTACH_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
-
-def _load_global_skills():
-    skills = []
-    for f in sorted(SKILLS_GLOBAL_DIR.glob('*.json')):
-        try:
-            skills.append(json.loads(f.read_text(encoding='utf-8')))
-        except Exception:
-            pass
-    return skills
-
-def _load_project_skills(project_id):
-    d = SKILLS_PROJECT_DIR / project_id
-    if not d.exists():
-        return []
-    skills = []
-    for f in sorted(d.glob('*.json')):
-        try:
-            skills.append(json.loads(f.read_text(encoding='utf-8')))
-        except Exception:
-            pass
-    return skills
-
-def _resolve_skills_for_project(project_id):
-    """Get all skills that should be injected for a project dispatch."""
-    project_skills = _load_project_skills(project_id)
-    global_skills = _load_global_skills()
-    attachments = _load_skills_attachments()
-    attached_ids = set(attachments.get(project_id, []))
-    result = list(project_skills)
-    for gs in global_skills:
-        if gs['id'] in attached_ids:
-            result.append(gs)
-    return result
-
 
 # ── Agent endpoints ──────────────────────────────────────────────────────────
 
@@ -766,11 +815,6 @@ def _build_agent_context(project):
             has_memory = True
             parts.append(f"--- PROJECT MEMORY ---\n{mem}")
 
-    # Skills
-    skills = _resolve_skills_for_project(project['id'])
-    for skill in skills:
-        parts.append(f"--- SKILL: {skill['name']} ---\n{skill['content']}")
-
     # System awareness
     pid = project['id']
     port = PORT
@@ -787,9 +831,6 @@ def _build_agent_context(project):
         "memory file using your Edit tool. Keep entries concise and organized with markdown headers. "
         "Session completions are also auto-logged to memory by Mission Control.",
     ]
-    if skills:
-        skill_names = ', '.join(s['name'] for s in skills)
-        awareness.append(f"\nActive skills for this session: {skill_names}. Follow their instructions.")
     parts.append("--- SYSTEM ---\n" + "\n".join(awareness))
 
     # Recent activity
@@ -833,6 +874,10 @@ def _format_tool_activity(name, inp):
     elif name == 'WebSearch':
         q = (inp.get('query', '') or '')[:60]
         return f'[tool: WebSearch] {q}'
+    elif name == 'AskUserQuestion':
+        qs = inp.get('questions', [])
+        preview = qs[0].get('question', '')[:60] if qs else ''
+        return f'[tool: AskUserQuestion] {preview}'
     else:
         return f'[tool: {name}]'
 
@@ -873,6 +918,8 @@ def _read_agent_stream(proc, session):
                                     session['_last_md_file'] = fp
                             elif tool_name == 'ExitPlanMode' and session.get('_last_md_file'):
                                 session['plan_file'] = session['_last_md_file']
+                            elif tool_name == 'AskUserQuestion':
+                                session.setdefault('pending_questions', []).append(tool_input)
                 elif msg_type == 'result':
                     # Capture session_id from result as fallback
                     if 'session_id' in msg:
@@ -944,6 +991,8 @@ def _read_agent_stream_b(proc, session):
                                     session['_last_md_file'] = fp
                             elif tool_name == 'ExitPlanMode' and session.get('_last_md_file'):
                                 session['plan_file'] = session['_last_md_file']
+                            elif tool_name == 'AskUserQuestion':
+                                session.setdefault('pending_questions', []).append(tool_input)
                 elif msg_type == 'result':
                     if 'session_id' in msg:
                         session['claude_session_id'] = msg['session_id']
@@ -984,6 +1033,12 @@ def _log_agent_activity(project_id, msg):
     p['activity_log'] = log[:20]
     p['last_updated'] = now_iso()
     save_project(project_id, p)
+
+
+# ── GitHub sync module ───────────────────────────────────────────────────────
+import github_sync as _gh_sync
+_gh_sync.register(_POPEN_FLAGS, _STARTUPINFO,
+                   _log_agent_activity, load_project, save_project, now_iso)
 
 
 def _load_agent_log(project_id):
@@ -1255,6 +1310,13 @@ def agent_stream(project_id):
                 for line in lines[sent:]:
                     yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"
                 sent = len(lines)
+
+            # Send pending AskUserQuestion data
+            pqs = session.get('pending_questions')
+            if pqs:
+                for pq in pqs:
+                    yield f"data: {json.dumps({'type': 'question', 'questions': pq.get('questions', [])})}\n\n"
+                session['pending_questions'] = []
 
             status = session['status']
 
@@ -1600,11 +1662,39 @@ def get_agent_log(project_id):
 
 @app.route('/api/project/<project_id>/plans')
 def get_project_plans(project_id):
-    """Return all plan files associated with this project from agent log."""
+    """Return all plan files associated with this project from agent log + live sessions."""
     import re
     log = _load_agent_log(project_id)
     plans = []
     seen = set()
+
+    # Include plans from currently running/idle sessions (not yet in log)
+    for sid, s in agent_sessions.items():
+        if s['project_id'] != project_id:
+            continue
+        pf = s.get('plan_file', '')
+        if not pf or pf in seen:
+            continue
+        p = Path(pf)
+        if not p.is_file():
+            continue
+        seen.add(pf)
+        try:
+            content = p.read_text(encoding='utf-8')
+            m = re.match(r'^#\s+(.+)', content, re.MULTILINE)
+            title = m.group(1).strip() if m else p.stem
+        except Exception:
+            title = p.stem
+        plans.append({
+            'plan_file': pf,
+            'filename': p.name,
+            'title': title,
+            'task': s.get('task', ''),
+            'ts': s.get('started_at', ''),
+            'ts_relative': time_ago(s.get('started_at')),
+            'session_id': s.get('session_id', ''),
+        })
+
     for entry in log:
         pf = entry.get('plan_file', '')
         if not pf or pf in seen:
@@ -1795,179 +1885,6 @@ def append_memory(project_id):
     return jsonify({'ok': True})
 
 
-# ── Skills endpoints ───────────────────────────────────────────────────────
-
-@app.route('/api/skills/global')
-def get_global_skills():
-    return jsonify(_load_global_skills())
-
-@app.route('/api/skills/global', methods=['POST'])
-def create_global_skill():
-    data = request.get_json() or {}
-    name = (data.get('name') or '').strip()
-    if not name:
-        return jsonify({'error': 'name required'}), 400
-    skill_id = name.lower().replace(' ', '_')
-    skill_id = ''.join(c for c in skill_id if c.isalnum() or c == '_')
-    if not skill_id:
-        skill_id = uuid.uuid4().hex[:8]
-    # Ensure unique
-    existing = SKILLS_GLOBAL_DIR / f'{skill_id}.json'
-    if existing.exists():
-        skill_id = f'{skill_id}_{uuid.uuid4().hex[:4]}'
-    now = datetime.now(timezone.utc).isoformat()
-    skill = {
-        'id': skill_id,
-        'name': name,
-        'description': (data.get('description') or '').strip(),
-        'content': (data.get('content') or '').strip(),
-        'created_at': now,
-        'updated_at': now,
-    }
-    (SKILLS_GLOBAL_DIR / f'{skill_id}.json').write_text(
-        json.dumps(skill, indent=2, ensure_ascii=False), encoding='utf-8')
-    return jsonify(skill), 201
-
-@app.route('/api/skills/global/<skill_id>', methods=['PUT'])
-def update_global_skill(skill_id):
-    path = SKILLS_GLOBAL_DIR / f'{skill_id}.json'
-    if not path.exists():
-        return jsonify({'error': 'not found'}), 404
-    skill = json.loads(path.read_text(encoding='utf-8'))
-    data = request.get_json() or {}
-    if 'name' in data:
-        skill['name'] = data['name'].strip()
-    if 'description' in data:
-        skill['description'] = data['description'].strip()
-    if 'content' in data:
-        skill['content'] = data['content'].strip()
-    skill['updated_at'] = datetime.now(timezone.utc).isoformat()
-    path.write_text(json.dumps(skill, indent=2, ensure_ascii=False), encoding='utf-8')
-    return jsonify(skill)
-
-@app.route('/api/skills/global/<skill_id>', methods=['DELETE'])
-def delete_global_skill(skill_id):
-    path = SKILLS_GLOBAL_DIR / f'{skill_id}.json'
-    if not path.exists():
-        return jsonify({'error': 'not found'}), 404
-    path.unlink()
-    # Remove from all project attachments
-    att = _load_skills_attachments()
-    changed = False
-    for pid in list(att.keys()):
-        if skill_id in att[pid]:
-            att[pid].remove(skill_id)
-            changed = True
-    if changed:
-        _save_skills_attachments(att)
-    return jsonify({'ok': True})
-
-@app.route('/api/project/<project_id>/skills')
-def get_project_skills(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'not found'}), 404
-    project_skills = _load_project_skills(project_id)
-    global_skills = _load_global_skills()
-    att = _load_skills_attachments()
-    attached_ids = set(att.get(project_id, []))
-    attached = [gs for gs in global_skills if gs['id'] in attached_ids]
-    available = [gs for gs in global_skills if gs['id'] not in attached_ids]
-    return jsonify({
-        'project': project_skills,
-        'attached': attached,
-        'available': available,
-    })
-
-@app.route('/api/project/<project_id>/skills', methods=['POST'])
-def create_project_skill(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'not found'}), 404
-    data = request.get_json() or {}
-    name = (data.get('name') or '').strip()
-    if not name:
-        return jsonify({'error': 'name required'}), 400
-    skill_id = name.lower().replace(' ', '_')
-    skill_id = ''.join(c for c in skill_id if c.isalnum() or c == '_')
-    if not skill_id:
-        skill_id = uuid.uuid4().hex[:8]
-    skill_dir = SKILLS_PROJECT_DIR / project_id
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    existing = skill_dir / f'{skill_id}.json'
-    if existing.exists():
-        skill_id = f'{skill_id}_{uuid.uuid4().hex[:4]}'
-    now = datetime.now(timezone.utc).isoformat()
-    skill = {
-        'id': skill_id,
-        'name': name,
-        'description': (data.get('description') or '').strip(),
-        'content': (data.get('content') or '').strip(),
-        'created_at': now,
-        'updated_at': now,
-    }
-    (skill_dir / f'{skill_id}.json').write_text(
-        json.dumps(skill, indent=2, ensure_ascii=False), encoding='utf-8')
-    return jsonify(skill), 201
-
-@app.route('/api/project/<project_id>/skills/<skill_id>', methods=['PUT'])
-def update_project_skill(project_id, skill_id):
-    path = SKILLS_PROJECT_DIR / project_id / f'{skill_id}.json'
-    if not path.exists():
-        return jsonify({'error': 'not found'}), 404
-    skill = json.loads(path.read_text(encoding='utf-8'))
-    data = request.get_json() or {}
-    if 'name' in data:
-        skill['name'] = data['name'].strip()
-    if 'description' in data:
-        skill['description'] = data['description'].strip()
-    if 'content' in data:
-        skill['content'] = data['content'].strip()
-    skill['updated_at'] = datetime.now(timezone.utc).isoformat()
-    path.write_text(json.dumps(skill, indent=2, ensure_ascii=False), encoding='utf-8')
-    return jsonify(skill)
-
-@app.route('/api/project/<project_id>/skills/<skill_id>', methods=['DELETE'])
-def delete_project_skill(project_id, skill_id):
-    path = SKILLS_PROJECT_DIR / project_id / f'{skill_id}.json'
-    if not path.exists():
-        return jsonify({'error': 'not found'}), 404
-    path.unlink()
-    return jsonify({'ok': True})
-
-@app.route('/api/project/<project_id>/skills/attach', methods=['POST'])
-def attach_skill(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'not found'}), 404
-    data = request.get_json() or {}
-    skill_id = (data.get('skill_id') or '').strip()
-    if not skill_id:
-        return jsonify({'error': 'skill_id required'}), 400
-    # Verify global skill exists
-    if not (SKILLS_GLOBAL_DIR / f'{skill_id}.json').exists():
-        return jsonify({'error': 'skill not found'}), 404
-    att = _load_skills_attachments()
-    project_att = att.setdefault(project_id, [])
-    if skill_id not in project_att:
-        project_att.append(skill_id)
-        _save_skills_attachments(att)
-    return jsonify({'ok': True})
-
-@app.route('/api/project/<project_id>/skills/detach', methods=['POST'])
-def detach_skill(project_id):
-    data = request.get_json() or {}
-    skill_id = (data.get('skill_id') or '').strip()
-    if not skill_id:
-        return jsonify({'error': 'skill_id required'}), 400
-    att = _load_skills_attachments()
-    project_att = att.get(project_id, [])
-    if skill_id in project_att:
-        project_att.remove(skill_id)
-        att[project_id] = project_att
-        _save_skills_attachments(att)
-    return jsonify({'ok': True})
-
 
 # ── Domain settings ─────────────────────────────────────────────────────────
 
@@ -2038,12 +1955,28 @@ def save_project_order():
     if not data or 'order' not in data:
         return jsonify({'error': 'order array required'}), 400
     order = data['order']
+    # Save full grid layout (with nulls for spacers)
+    layout_path = DATA_DIR.parent / 'grid_layout.json'
+    layout_path.write_text(json.dumps({'order': order}, indent=2, ensure_ascii=False), encoding='utf-8')
+    # Update display_order on each project
     for i, project_id in enumerate(order):
+        if project_id is None:
+            continue
         p = load_project(project_id)
         if p:
             p['display_order'] = i
             save_project(project_id, p)
     return jsonify({'ok': True})
+
+@app.route('/api/grid-layout')
+def get_grid_layout():
+    layout_path = DATA_DIR.parent / 'grid_layout.json'
+    if layout_path.exists():
+        try:
+            return jsonify(json.loads(layout_path.read_text(encoding='utf-8')))
+        except Exception:
+            pass
+    return jsonify({'order': []})
 
 
 @app.route('/api/list-directory', methods=['POST'])
@@ -2207,6 +2140,28 @@ def _scheduler_loop():
                 _save_schedules(schedules)
         except Exception as e:
             print(f"[scheduler] Error: {e}")
+
+        # ── GitHub auto-sync (every 5 minutes) ──
+        try:
+            for proj in load_projects():
+                if proj.get('github_sync_enabled') and proj.get('github_repo'):
+                    last = proj.get('github_last_sync', '')
+                    if last:
+                        try:
+                            last_dt = datetime.fromisoformat(last.replace('Z', '+00:00'))
+                            if last_dt.tzinfo is None:
+                                last_dt = last_dt.replace(tzinfo=timezone.utc)
+                            if (now - last_dt).total_seconds() < 300:
+                                continue
+                        except Exception:
+                            pass
+                    try:
+                        _gh_sync.sync_project(proj['id'])
+                    except Exception as e:
+                        print(f"[scheduler] GitHub sync error for {proj['id']}: {e}")
+        except Exception as e:
+            print(f"[scheduler] GitHub sync loop error: {e}")
+
         _scheduler_stop.wait(30)
 
 
