@@ -6,6 +6,9 @@
 <title>Mission Control</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <style>
   :root {
     --bg:          #0f1117;
@@ -1377,11 +1380,33 @@
   .plan-history-card {
     padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--accent);
     border-radius: 6px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s;
+    display: flex; align-items: flex-start; gap: 10px;
   }
   .plan-history-card:hover { border-color: var(--accent); }
+  .plan-history-card .plan-cb { flex-shrink: 0; margin-top: 2px; cursor: pointer; accent-color: var(--accent); }
+  .plan-card-body { flex: 1; min-width: 0; }
   .plan-history-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
   .plan-history-meta { font-size: 11px; color: var(--text-faint); display: flex; gap: 12px; }
   .plan-history-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .plan-history-filename { color: var(--text-faint); font-size: 10px; opacity: 0.7; }
+  .plan-card-delete {
+    flex-shrink: 0; background: none; border: none; color: var(--text-faint); cursor: pointer;
+    font-size: 14px; padding: 2px 4px; border-radius: 4px; opacity: 0.5; transition: opacity 0.15s, color 0.15s;
+  }
+  .plan-card-delete:hover { opacity: 1; color: #e55; }
+  .plans-toolbar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 6px 0;
+    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .plans-toolbar label { font-size: 12px; color: var(--text-faint); cursor: pointer; display: flex; align-items: center; gap: 4px; }
+  .plans-toolbar label input { accent-color: var(--accent); }
+  .plans-toolbar .btn-plans-action {
+    font-size: 11px; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); cursor: pointer; transition: background 0.15s;
+  }
+  .plans-toolbar .btn-plans-action:hover { background: var(--border); }
+  .plans-toolbar .btn-plans-delete { color: #e55; border-color: #e55; }
+  .plans-toolbar .btn-plans-delete:hover { background: #e55; color: #fff; }
 
   /* ── TOKEN COUNTERS ────────────────────────────────────────── */
   .token-counter-global {
@@ -1675,6 +1700,37 @@
     }
     .wt-card.centered { transform: translateY(-50%) !important; left: 16px !important; right: 16px !important; }
   }
+
+  /* ── TERMINAL POP-OUT ────────────────────────────────────────────── */
+  .terminal-popout { display:flex; flex-direction:column; height:100%; background:#0a0c10; }
+  .terminal-header {
+    display:flex; align-items:center; gap:8px; padding:10px 16px;
+    background:var(--surface); border-bottom:1px solid var(--border); flex-shrink:0;
+  }
+  .terminal-header .terminal-cmd { color:var(--text-faint); font-family:'JetBrains Mono',monospace; font-size:12px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .terminal-header .terminal-status-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .terminal-header .terminal-status-dot.running { background:var(--accent); box-shadow:0 0 6px var(--accent); }
+  .terminal-header .terminal-status-dot.completed { background:#34d399; }
+  .terminal-header .terminal-status-dot.error { background:#f87171; }
+  .terminal-header .terminal-status-dot.stopped { background:var(--text-faint); }
+  .terminal-container { flex:1; min-height:200px; overflow:hidden; padding:8px 12px; box-sizing:border-box; }
+  .terminal-container .xterm { padding-left:8px; }
+  .terminal-stdin-row {
+    display:flex; gap:8px; padding:8px 12px; background:var(--surface);
+    border-top:1px solid var(--border); flex-shrink:0;
+  }
+  .terminal-stdin-input {
+    flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text);
+    font-family:'JetBrains Mono',monospace; font-size:13px; padding:6px 10px;
+    border-radius:4px; outline:none; transition:border-color 0.15s;
+  }
+  .terminal-stdin-input:focus { border-color:var(--accent); }
+  .terminal-stdin-input::placeholder { color:var(--text-faint); }
+  .btn-terminal-stop {
+    background:transparent; border:1px solid #f87171; color:#f87171; padding:4px 10px;
+    border-radius:4px; cursor:pointer; font-size:12px; font-weight:500; flex-shrink:0;
+  }
+  .btn-terminal-stop:hover { background:#f8717120; }
 </style>
 </head>
 <body>
@@ -2222,6 +2278,7 @@ function modalContentHTML(p) {
       <div class="modal-tab-content ${activeTab==='plans'?'active':''}" data-tab="plans">
         <div class="card-section">
           <div class="section-title">Plans</div>
+          <div id="plans-toolbar-${esc(p.id)}" style="display:none"></div>
           <div id="plans-list-${esc(p.id)}"><div style="color:var(--text-faint);font-style:italic">Loading...</div></div>
         </div>
       </div>
@@ -2302,7 +2359,8 @@ function openProjectModal(projectId) {
 
   centerModalElement(win);
   focusModal(projectId);
-  fetchAgentStatus(projectId).then(() => refreshModalById(projectId));
+  Promise.all([fetchAgentStatus(projectId), fetchTerminalStatus(projectId)])
+    .then(() => refreshModalById(projectId));
 
   // Re-size agent chat when modal is resized
   new ResizeObserver(() => {
@@ -2318,6 +2376,8 @@ function openProjectModal(projectId) {
 function closeModalById(modalId) {
   const entry = openModals.get(modalId);
   if (!entry) return;
+  // Clean up terminal pop-out resources
+  cleanupTerminalModal(modalId);
   entry.element.remove();
   const chip = document.getElementById('chip-' + CSS.escape(modalId));
   if (chip) chip.remove();
@@ -3384,6 +3444,13 @@ let planFileTitle = {};        // session_id → extracted first heading from pl
 let exitPlanModeCount = {};    // session_id → number of consecutive ExitPlanMode calls
 let pendingResumeId = {};      // project_id → claude_session_id to resume (null = fresh)
 
+// ── Terminal pop-out state ─────────────────────────────────────────────────
+let terminalInstances = {};      // session_id → Terminal (xterm.js)
+let terminalEventSources = {};   // session_id → EventSource
+let terminalOutputBuffers = {};  // session_id → string[]
+let terminalOutputCount = {};    // session_id → int
+let terminalDismissed = new Set(); // session IDs closed by user — don't reopen from replayed markers
+
 function getProjectSessions(projectId) {
   return agentHistory.filter(h => h.projectId === projectId);
 }
@@ -3787,6 +3854,22 @@ function connectAgentStream(projectId, sessionId) {
         // Cap buffer to prevent unbounded memory growth
         if (agentOutputBuffers[sessionId].length > 2000) {
           agentOutputBuffers[sessionId] = agentOutputBuffers[sessionId].slice(-1500);
+        }
+        // Detect terminal launch marker from agent
+        const termMatch = msg.text && msg.text.match(/^\[terminal:([^:]+):(.+)\]$/);
+        if (termMatch) {
+          const [, termSessionId, termCommand] = termMatch;
+          if (!terminalDismissed.has(termSessionId) && !openModals.has(`__terminal_${termSessionId}`)) {
+            // Verify session still exists on server before opening pop-out
+            fetch(API_BASE + `/api/project/${projectId}/terminal/status`)
+              .then(r => r.json())
+              .then(data => {
+                const exists = (data.sessions || []).some(s => s.session_id === termSessionId);
+                if (exists) openTerminalPopout(projectId, termSessionId, termCommand);
+                else terminalDismissed.add(termSessionId);
+              }).catch(() => terminalDismissed.add(termSessionId));
+          }
+          return; // don't render this line in agent chat
         }
         // Remove local echo if server sends the real user prompt
         if (msg.text && msg.text.trimStart().startsWith('> ')) {
@@ -4498,6 +4581,7 @@ async function loadAgentLog(projectId) {
 // ── Plans tab ─────────────────────────────────────────────────────────────────
 
 let plansCache = {};
+let planSelections = {};  // projectId → Set of plan_file paths
 
 async function loadProjectPlans(projectId) {
   try {
@@ -4507,27 +4591,114 @@ async function loadProjectPlans(projectId) {
     plansCache[projectId] = [];
   }
   refreshModal();
-  // Render after refresh since refreshModal rebuilds DOM
   setTimeout(() => renderPlansTab(projectId), 50);
 }
 
 function renderPlansTab(projectId) {
   const container = document.getElementById(`plans-list-${projectId}`);
+  const toolbar = document.getElementById(`plans-toolbar-${projectId}`);
   if (!container) return;
   const plans = plansCache[projectId] || [];
+  if (!planSelections[projectId]) planSelections[projectId] = new Set();
+  const sel = planSelections[projectId];
+
   if (!plans.length) {
+    if (toolbar) toolbar.style.display = 'none';
     container.innerHTML = '<div style="color:var(--text-faint);font-style:italic">No plans yet. Plans are created when an agent uses EnterPlanMode / ExitPlanMode.</div>';
     return;
   }
-  container.innerHTML = plans.map(p => `
-    <div class="plan-history-card" onclick="openPlanFromHistory('${esc(p.plan_file.replace(/\\/g,'\\\\'))}','${esc(p.title)}')">
-      <div class="plan-history-title">${esc(p.title)}</div>
-      <div class="plan-history-meta">
-        <span>${esc(p.ts_relative || '')}</span>
-        <span class="plan-history-task">${esc((p.task || '').length > 80 ? p.task.slice(0,77) + '...' : (p.task || ''))}</span>
+
+  // Toolbar
+  if (toolbar) {
+    const selCount = sel.size;
+    const allChecked = selCount === plans.length && plans.length > 0;
+    toolbar.style.display = 'flex';
+    toolbar.className = 'plans-toolbar';
+    toolbar.innerHTML = `
+      <label><input type="checkbox" ${allChecked ? 'checked' : ''} onchange="toggleAllPlans('${esc(projectId)}', this.checked)"> Select All</label>
+      ${selCount > 0 ? `<button class="btn-plans-action btn-plans-delete" onclick="deleteSelectedPlans('${esc(projectId)}')">Delete Selected (${selCount})</button>` : ''}
+      ${selCount > 0 ? `<button class="btn-plans-action" onclick="exportSelectedPlans('${esc(projectId)}')">Export (${selCount})</button>` : ''}
+    `;
+  }
+
+  container.innerHTML = plans.map(p => {
+    const pathEsc = esc(p.plan_file.replace(/\\/g,'\\\\'));
+    const checked = sel.has(p.plan_file) ? 'checked' : '';
+    return `
+    <div class="plan-history-card">
+      <input type="checkbox" class="plan-cb" ${checked} onchange="togglePlanSelection('${esc(projectId)}','${pathEsc}',this.checked)" onclick="event.stopPropagation()">
+      <div class="plan-card-body" onclick="openPlanFromHistory('${pathEsc}','${esc(p.title)}')">
+        <div class="plan-history-title">${esc(p.title)}</div>
+        <div class="plan-history-meta">
+          <span>${esc(p.ts_relative || '')}</span>
+          <span class="plan-history-task">${esc((p.task || '').length > 80 ? p.task.slice(0,77) + '...' : (p.task || ''))}</span>
+        </div>
+        <div class="plan-history-filename">${esc(p.filename || '')}</div>
       </div>
-    </div>
-  `).join('');
+      <button class="plan-card-delete" onclick="event.stopPropagation();deleteSinglePlan('${esc(projectId)}','${pathEsc}','${esc(p.title)}')" title="Delete plan">&times;</button>
+    </div>`;
+  }).join('');
+}
+
+function togglePlanSelection(projectId, planPath, checked) {
+  if (!planSelections[projectId]) planSelections[projectId] = new Set();
+  const decoded = planPath.replace(/\\\\/g, '\\');
+  if (checked) planSelections[projectId].add(decoded);
+  else planSelections[projectId].delete(decoded);
+  renderPlansTab(projectId);
+}
+
+function toggleAllPlans(projectId, checked) {
+  const plans = plansCache[projectId] || [];
+  if (!planSelections[projectId]) planSelections[projectId] = new Set();
+  if (checked) plans.forEach(p => planSelections[projectId].add(p.plan_file));
+  else planSelections[projectId].clear();
+  renderPlansTab(projectId);
+}
+
+async function deleteSinglePlan(projectId, planPath, title) {
+  const decoded = planPath.replace(/\\\\/g, '\\');
+  if (!confirm(`Delete plan "${title}"? This cannot be undone.`)) return;
+  try {
+    await fetch(API_BASE + '/api/plans/delete', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({paths: [decoded]})
+    });
+  } catch(e) {}
+  if (planSelections[projectId]) planSelections[projectId].delete(decoded);
+  loadProjectPlans(projectId);
+}
+
+async function deleteSelectedPlans(projectId) {
+  const sel = planSelections[projectId];
+  if (!sel || !sel.size) return;
+  if (!confirm(`Delete ${sel.size} plan(s)? This cannot be undone.`)) return;
+  try {
+    await fetch(API_BASE + '/api/plans/delete', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({paths: Array.from(sel)})
+    });
+  } catch(e) {}
+  planSelections[projectId] = new Set();
+  loadProjectPlans(projectId);
+}
+
+async function exportSelectedPlans(projectId) {
+  const sel = planSelections[projectId];
+  if (!sel || !sel.size) return;
+  for (const planPath of sel) {
+    try {
+      const res = await fetch(API_BASE + `/api/plan-file?path=${encodeURIComponent(planPath)}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const blob = new Blob([data.content || ''], {type: 'text/markdown'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = data.filename || 'plan.md';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch(e) {}
+  }
 }
 
 async function openPlanFromHistory(planPath, title) {
@@ -5248,15 +5419,17 @@ async function openSharedRulesEditor() {
   const content = document.createElement('div');
   content.className = 'modal-content';
   content.innerHTML = `
-    <div class="modal-window-controls">
-      <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
-      <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+    <div class="modal-header" style="padding:16px 24px 12px 28px">
+      <div class="modal-window-controls">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+      <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Shared Baseline Rules</h2>
+      <div class="rules-hint" style="margin:4px 0 0">SHARED_RULES.md &mdash; applies to all projects</div>
     </div>
-    <div class="shared-rules-editor">
-      <h2>Shared Baseline Rules</h2>
-      <div class="rules-hint">SHARED_RULES.md &mdash; applies to all projects</div>
+    <div class="shared-rules-editor" style="padding:0 24px 16px">
       <textarea spellcheck="true" class="rules-textarea" id="shared-rules-global" rows="16"
-        placeholder="Loading..."></textarea>
+        placeholder="Enter shared rules that apply to all projects..."></textarea>
       <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-shrink:0">
         <button class="btn-save-rules" onclick="saveSharedRulesGlobal()">Save</button>
         <span class="rules-saved" id="shared-rules-global-saved">Saved</span>
@@ -5454,6 +5627,239 @@ async function openPlanFileViewer(projectId, sessionId) {
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
   centerModalElement(win);
   focusModal(modalId);
+}
+
+// ── Terminal Pop-Out ──────────────────────────────────────────────────────
+
+function openTerminalPopout(projectId, sessionId, command) {
+  const modalId = `__terminal_${sessionId}`;
+
+  // If already open, focus it
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    return;
+  }
+
+  const cmdLabel = (command || 'Terminal').substring(0, 60);
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  content.style.cssText = 'padding:0;display:flex;flex-direction:column;height:100%';
+  content.innerHTML = `
+    <div class="terminal-header modal-header">
+      <span class="terminal-status-dot running" id="term-dot-${esc(sessionId)}"></span>
+      <span class="terminal-cmd">$ ${esc(cmdLabel)}</span>
+      <button class="btn-terminal-stop" id="term-stop-${esc(sessionId)}" onclick="stopTerminal('${esc(sessionId)}')">Stop</button>
+      <div class="modal-window-controls" style="position:static;margin:0;margin-left:auto">
+        <button class="modal-minimize" onclick="minimizeModal('${esc(modalId)}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${esc(modalId)}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div class="terminal-container" id="terminal-container-${esc(sessionId)}"></div>
+    <div class="terminal-stdin-row">
+      <input type="text" class="terminal-stdin-input" id="terminal-stdin-${esc(sessionId)}"
+        placeholder="Send input to process..."
+        onkeydown="if(event.key==='Enter'){sendTerminalInput('${esc(sessionId)}');event.preventDefault()}"
+      >
+      <button class="btn-dispatch" style="padding:6px 14px" onclick="sendTerminalInput('${esc(sessionId)}')">Send</button>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  // Size and position
+  win.style.width = '900px';
+  win.style.height = '600px';
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z, terminalSessionId: sessionId });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  // Initialize xterm.js after DOM is ready
+  setTimeout(() => {
+    initTerminalXterm(sessionId);
+    connectTerminalStream(projectId, sessionId);
+  }, 50);
+}
+
+function initTerminalXterm(sessionId) {
+  const container = document.getElementById(`terminal-container-${sessionId}`);
+  if (!container || terminalInstances[sessionId]) return;
+
+  const term = new Terminal({
+    theme: {
+      background: '#0a0c10',
+      foreground: '#e2e8f0',
+      cursor: '#4da6ff',
+      selectionBackground: '#3d4460',
+      black: '#0f1117',
+      red: '#f87171',
+      green: '#34d399',
+      yellow: '#fbbf24',
+      blue: '#4da6ff',
+      magenta: '#a78bfa',
+      cyan: '#22d3ee',
+      white: '#f1f5f9',
+    },
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: 12,
+    lineHeight: 1.4,
+    cursorBlink: false,
+    disableStdin: true,
+    convertEol: false,
+    scrollback: 5000,
+  });
+
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(container);
+  fitAddon.fit();
+
+  terminalInstances[sessionId] = term;
+  terminalInstances[sessionId]._fitAddon = fitAddon;
+
+  // Re-fit on container resize
+  new ResizeObserver(() => {
+    try { fitAddon.fit(); } catch {}
+  }).observe(container);
+
+  // Write any buffered output
+  const buf = terminalOutputBuffers[sessionId] || [];
+  for (const line of buf) {
+    term.write(line);
+  }
+}
+
+function connectTerminalStream(projectId, sessionId) {
+  if (terminalEventSources[sessionId]) {
+    terminalEventSources[sessionId].close();
+  }
+
+  const since = terminalOutputCount[sessionId] || 0;
+  const es = new EventSource(API_BASE + `/api/terminal/stream?session=${sessionId}&since=${since}`);
+  terminalEventSources[sessionId] = es;
+
+  es.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'output') {
+        if (!terminalOutputBuffers[sessionId]) terminalOutputBuffers[sessionId] = [];
+        terminalOutputBuffers[sessionId].push(msg.text);
+        terminalOutputCount[sessionId] = (terminalOutputCount[sessionId] || 0) + 1;
+        // Cap buffer
+        if (terminalOutputBuffers[sessionId].length > 5000) {
+          terminalOutputBuffers[sessionId] = terminalOutputBuffers[sessionId].slice(-3000);
+        }
+        const term = terminalInstances[sessionId];
+        if (term) term.write(msg.text);
+      } else if (msg.type === 'status') {
+        const term = terminalInstances[sessionId];
+        if (term) {
+          term.writeln(`\r\n\x1b[90m[Process ${msg.status} — exit code ${msg.exit_code}]\x1b[0m`);
+        }
+        // Update status dot and hide stop button
+        const dot = document.getElementById(`term-dot-${sessionId}`);
+        if (dot) { dot.className = `terminal-status-dot ${msg.status}`; }
+        const stopBtn = document.getElementById(`term-stop-${sessionId}`);
+        if (stopBtn) stopBtn.style.display = 'none';
+        es.close();
+        delete terminalEventSources[sessionId];
+      } else if (msg.type === 'error') {
+        // Session doesn't exist on server — close the pop-out
+        es.close();
+        delete terminalEventSources[sessionId];
+        terminalDismissed.add(sessionId);
+        const modalId = `__terminal_${sessionId}`;
+        if (openModals.has(modalId)) closeModalById(modalId);
+      }
+    } catch {}
+  };
+
+  es.onerror = () => {
+    es.close();
+    delete terminalEventSources[sessionId];
+  };
+}
+
+async function sendTerminalInput(sessionId) {
+  const input = document.getElementById(`terminal-stdin-${sessionId}`);
+  if (!input) return;
+  const text = input.value;
+  input.value = '';
+
+  // Echo the input in cyan
+  const term = terminalInstances[sessionId];
+  if (term) term.writeln(`\x1b[36m${text}\x1b[0m`);
+
+  await fetch(API_BASE + `/api/terminal/stdin`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ session_id: sessionId, text: text + '\n' })
+  }).catch(() => {});
+}
+
+async function stopTerminal(sessionId) {
+  await fetch(API_BASE + `/api/terminal/stop`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ session_id: sessionId })
+  }).catch(() => {});
+
+  if (terminalEventSources[sessionId]) {
+    terminalEventSources[sessionId].close();
+    delete terminalEventSources[sessionId];
+  }
+  const dot = document.getElementById(`term-dot-${sessionId}`);
+  if (dot) dot.className = 'terminal-status-dot stopped';
+  const stopBtn = document.getElementById(`term-stop-${sessionId}`);
+  if (stopBtn) stopBtn.style.display = 'none';
+}
+
+async function fetchTerminalStatus(projectId) {
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/terminal/status`);
+    const data = await res.json();
+    const sessions = data.sessions || [];
+    for (const s of sessions) {
+      const modalId = `__terminal_${s.session_id}`;
+      if (s.status === 'running' && !openModals.has(modalId)) {
+        // Restore buffer and open pop-out
+        terminalOutputBuffers[s.session_id] = s.output_lines || [];
+        terminalOutputCount[s.session_id] = (s.output_lines || []).length;
+        openTerminalPopout(projectId, s.session_id, s.command);
+      }
+    }
+  } catch {}
+}
+
+// Clean up xterm instance when terminal modal is closed
+function cleanupTerminalModal(modalId) {
+  const match = modalId.match(/^__terminal_(.+)$/);
+  if (!match) return;
+  const sessionId = match[1];
+  // Mark as dismissed so replayed markers don't reopen it
+  terminalDismissed.add(sessionId);
+  // Close SSE
+  if (terminalEventSources[sessionId]) {
+    terminalEventSources[sessionId].close();
+    delete terminalEventSources[sessionId];
+  }
+  if (terminalInstances[sessionId]) {
+    terminalInstances[sessionId].dispose();
+    delete terminalInstances[sessionId];
+  }
+  delete terminalOutputBuffers[sessionId];
+  delete terminalOutputCount[sessionId];
+  // Tell server to remove the session entirely (kills process if still running)
+  fetch(API_BASE + `/api/terminal/delete`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ session_id: sessionId })
+  }).catch(() => {});
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────
@@ -6662,6 +7068,9 @@ window.addEventListener('beforeunload', () => {
   // Close all SSE connections — processes keep running server-side
   for (const sid in agentEventSources) {
     try { agentEventSources[sid].close(); } catch {}
+  }
+  for (const sid in terminalEventSources) {
+    try { terminalEventSources[sid].close(); } catch {}
   }
 });
 

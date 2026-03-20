@@ -91,6 +91,9 @@ def _load_config():
         'user_name': '',
         'agent_name': '',
         'use_streaming_agent': False,
+        'condense_threshold_kb': 15,
+        'condense_model': '',
+        'condense_enabled': True,
     }
     if CONFIG_PATH.exists():
         try:
@@ -169,6 +172,12 @@ def _get_memory_path(project):
     return MEMORY_DIR / f'{project["id"]}.md'
 
 
+def _get_archive_path(project):
+    """Get the MEMORY_ARCHIVE.md path — sibling to the project's MEMORY.md."""
+    mem_path = _get_memory_path(project)
+    return mem_path.parent / 'MEMORY_ARCHIVE.md'
+
+
 DEFAULT_DOMAINS = [
     {'id': 'general', 'label': 'General', 'color': 'var(--text-dim)', 'bg': 'var(--surface3)'},
     {'id': 'trading', 'label': 'Trading', 'color': 'var(--accent)', 'bg': 'var(--accent-dim)'},
@@ -229,6 +238,47 @@ def _build_claude_flags(project=None, streaming=False):
 # session_id → {proc, status, task, log_lines, started_at, session_id, project_id}
 agent_sessions = {}
 agent_lock = threading.Lock()  # single global lock for session creation
+
+# ── Memory condensation state ────────────────────────────────────────────────
+_condensing_projects = set()
+_condense_lock = threading.Lock()
+
+
+def _has_running_agent(project_id):
+    """Return True if any non-housekeeping agent is running or idle for this project."""
+    for s in agent_sessions.values():
+        if s.get('project_id') == project_id and not s.get('housekeeping'):
+            if s.get('status') in ('running', 'idle'):
+                return True
+    return False
+
+
+def _should_condense(project):
+    """Check whether memory condensation should be triggered for this project."""
+    if not CONFIG.get('condense_enabled', True):
+        return False
+    pid = project['id']
+    with _condense_lock:
+        if pid in _condensing_projects:
+            return False
+    if _has_running_agent(pid):
+        return False
+    mem_path = _get_memory_path(project)
+    archive_path = _get_archive_path(project)
+    combined = 0
+    if mem_path.exists():
+        combined += mem_path.stat().st_size
+    if archive_path.exists():
+        combined += archive_path.stat().st_size
+    threshold = CONFIG.get('condense_threshold_kb', 15) * 1024
+    return combined > threshold
+
+
+# ── Terminal session tracking ────────────────────────────────────────────────
+# session_id → {proc, status, command, output_lines, started_at, session_id, project_id, exit_code}
+# TTY shim: mc_tty_shim/sitecustomize.py patches isatty() + Rich for ANSI colors
+terminal_sessions = {}
+terminal_lock = threading.Lock()
 
 
 def load_project(project_id):
@@ -371,6 +421,15 @@ def delete_project(project_id):
                 except Exception:
                     pass
             agent_sessions.pop(sid, None)
+
+    # Kill any running terminal sessions for this project
+    with terminal_lock:
+        to_remove = [sid for sid, s in terminal_sessions.items() if s['project_id'] == project_id]
+        for sid in to_remove:
+            session = terminal_sessions[sid]
+            if session['status'] == 'running':
+                _kill_terminal_session(session)
+            terminal_sessions.pop(sid, None)
 
     # Delete project file
     filepath.unlink()
@@ -806,47 +865,51 @@ def _build_agent_context(project):
     if SHARED_RULES_PATH.exists():
         parts.append(f"--- SHARED_RULES.md ---\n{SHARED_RULES_PATH.read_text(encoding='utf-8')}")
 
-    # Project memory (reads from Claude's native MEMORY.md)
+    # NOTE: Project memory (MEMORY.md) is NOT injected here — the Claude CLI
+    # already reads ~/.claude/projects/<path>/memory/MEMORY.md natively.
+    # Injecting it via --append-system-prompt would duplicate it in every API call.
     mem_path = _get_memory_path(project)
-    has_memory = False
-    if mem_path.exists():
-        mem = mem_path.read_text(encoding='utf-8').strip()
-        if mem:
-            has_memory = True
-            parts.append(f"--- PROJECT MEMORY ---\n{mem}")
 
     # System awareness
     pid = project['id']
     port = PORT
     mem_file = str(mem_path) if mem_path else 'MEMORY.md'
+    archive_path = _get_archive_path(project)
+    archive_file = str(archive_path)
     awareness = [
-        "You are managed by Mission Control, a project dashboard.",
-        "The PROJECT MEMORY section above (if present) contains persistent knowledge about this project "
-        "that carries across sessions — architecture decisions, gotchas, key learnings. "
-        "Reference it to avoid repeating past mistakes or re-discovering known issues.",
-        "",
-        f"Your memory file is at: {mem_file}",
-        "When you discover important information during a session (architecture decisions, tricky bugs, "
-        "environment gotchas, key patterns, things that worked or failed), proactively update your "
-        "memory file using your Edit tool. Keep entries concise and organized with markdown headers. "
-        "Session completions are also auto-logged to memory by Mission Control.",
+        "You are managed by Mission Control.",
+        f"Memory: {mem_file} (auto-loaded). Update it when you learn important project info.",
+        f"Archive: {archive_file} — older session logs, read if needed.",
     ]
+    if pp:
+        rules_file = str(Path(pp) / 'AGENT_RULES.md')
+        awareness.append(f"Rules: {rules_file} — add critical constraints here.")
+    awareness.extend([
+        f"Terminal: curl -s -X POST http://localhost:{port}/api/terminal/launch "
+        f'-H "Content-Type: application/json" '
+        f"-d '{{\"project_id\":\"{pid}\",\"command\":\"<CMD>\"}}'",
+        "IMPORTANT — Plan Mode: Do NOT use EnterPlanMode or ExitPlanMode. "
+        "You are running headless without an interactive terminal, so plan mode approval "
+        "will hang indefinitely. Instead, just describe your plan in a text message and "
+        "proceed directly with implementation. If the user asks you to plan, write your "
+        "plan as a text response, then start coding immediately.",
+    ])
     parts.append("--- SYSTEM ---\n" + "\n".join(awareness))
 
     # Recent activity
-    log = project.get('activity_log', [])[:5]
+    log = project.get('activity_log', [])[:3]
     if log:
         lines = [f"  - {e.get('ts','')}: {e.get('msg','')}" for e in log]
         parts.append("Recent activity:\n" + "\n".join(lines))
 
     # Recent agent sessions (for continuity if prior conversation hung)
-    agent_log = _load_agent_log(project['id'])[:5]
+    agent_log = _load_agent_log(project['id'])[:3]
     if agent_log:
         sess_lines = []
         for e in agent_log:
             csid = e.get('claude_session_id', '')
             sid_part = f" | claude -r {csid}" if csid else ''
-            sess_lines.append(f"  - [{e.get('status','')}] {e.get('task','')[:80]}{sid_part}")
+            sess_lines.append(f"  - [{e.get('status','')}] {e.get('task','')[:60]}{sid_part}")
         parts.append("Recent agent sessions (use 'claude -r <id>' to resume a prior conversation):\n" + "\n".join(sess_lines))
 
     ct = project.get('current_task', '')
@@ -916,8 +979,14 @@ def _read_agent_stream(proc, session):
                                 fp = tool_input.get('file_path', '')
                                 if fp.lower().endswith('.md'):
                                     session['_last_md_file'] = fp
-                            elif tool_name == 'ExitPlanMode' and session.get('_last_md_file'):
-                                session['plan_file'] = session['_last_md_file']
+                            elif tool_name == 'ExitPlanMode':
+                                if session.get('_last_md_file'):
+                                    session['plan_file'] = session['_last_md_file']
+                                session['log_lines'].append('[Plan mode exit detected — Mode A cannot approve, queueing follow-up]')
+                                # Queue a follow-up to resume without plan mode
+                                session.setdefault('pending_followups', []).append(
+                                    'Plan approved. Proceed with implementation immediately. '
+                                    'Do NOT call EnterPlanMode or ExitPlanMode again.')
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
                 elif msg_type == 'result':
@@ -957,6 +1026,27 @@ def _read_agent_stream(proc, session):
                 session.pop('_dispatching_followup', None)
 
 
+def _auto_approve_plan_b(session):
+    """For Mode B: send a follow-up message via stdin to break out of plan mode."""
+    proc = session.get('proc')
+    if not proc or not session.get('process_alive'):
+        return
+    approval_msg = (
+        'Plan approved. Proceed with implementation immediately. '
+        'Do NOT call EnterPlanMode or ExitPlanMode again.'
+    )
+    try:
+        payload = json.dumps({
+            'type': 'user',
+            'message': {'role': 'user', 'content': approval_msg}
+        }) + '\n'
+        with session.get('stdin_lock', threading.Lock()):
+            proc.stdin.write(payload)
+            proc.stdin.flush()
+    except Exception:
+        pass
+
+
 def _read_agent_stream_b(proc, session):
     """Reader thread for Mode B: persistent process with stream-json I/O.
 
@@ -989,8 +1079,12 @@ def _read_agent_stream_b(proc, session):
                                 fp = tool_input.get('file_path', '')
                                 if fp.lower().endswith('.md'):
                                     session['_last_md_file'] = fp
-                            elif tool_name == 'ExitPlanMode' and session.get('_last_md_file'):
-                                session['plan_file'] = session['_last_md_file']
+                            elif tool_name == 'ExitPlanMode':
+                                if session.get('_last_md_file'):
+                                    session['plan_file'] = session['_last_md_file']
+                                # Auto-approve: send follow-up so agent isn't stuck
+                                session['log_lines'].append('[Plan mode exit detected — auto-approving]')
+                                _auto_approve_plan_b(session)
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
                 elif msg_type == 'result':
@@ -1062,6 +1156,10 @@ def _log_agent_completion(session):
     project_id = session.get('project_id')
     if not project_id:
         return
+
+    # Skip memory append and condense for housekeeping sessions (prevents circular triggers)
+    is_housekeeping = session.get('housekeeping', False)
+
     # Take the last non-empty text block as the summary
     lines = session.get('log_lines', [])
     # Find the last substantial text (skip tool/status markers)
@@ -1090,6 +1188,9 @@ def _log_agent_completion(session):
     log.insert(0, entry)
     _save_agent_log(project_id, log)
 
+    if is_housekeeping:
+        return
+
     # Auto-append session summary to project memory (native Claude MEMORY.md)
     if session.get('status') == 'completed' and summary:
         try:
@@ -1107,7 +1208,43 @@ def _log_agent_completion(session):
                 header = '## Session Log'
                 if header not in existing:
                     existing = existing + f'\n\n{header}' if existing else header
-                mem_path.write_text(existing + '\n' + mem_entry + '\n', encoding='utf-8')
+                new_content = existing + '\n' + mem_entry + '\n'
+                mem_path.write_text(new_content, encoding='utf-8')
+
+                # Archive overflow: if file exceeds 10KB, keep last 20 entries, archive the rest
+                if len(new_content.encode('utf-8')) > 10 * 1024:
+                    marker = '## Session Log'
+                    idx = new_content.find(marker)
+                    if idx >= 0:
+                        before = new_content[:idx]
+                        log_section = new_content[idx + len(marker):]
+                        entries = [l for l in log_section.strip().splitlines() if l.startswith('- [')]
+                        if len(entries) > 20:
+                            overflow = entries[:-20]
+                            kept = entries[-20:]
+                            # Append overflow to archive
+                            archive_path = _get_archive_path(p)
+                            archive_path.parent.mkdir(parents=True, exist_ok=True)
+                            archive_existing = ''
+                            if archive_path.exists():
+                                archive_existing = archive_path.read_text(encoding='utf-8').rstrip()
+                            archive_header = '## Archived Session Log'
+                            if archive_header not in archive_existing:
+                                archive_existing = (archive_existing + f'\n\n{archive_header}'
+                                                    if archive_existing else archive_header)
+                            archive_path.write_text(
+                                archive_existing + '\n' + '\n'.join(overflow) + '\n',
+                                encoding='utf-8',
+                            )
+                            # Rewrite MEMORY.md with only kept entries
+                            mem_path.write_text(
+                                before.rstrip() + '\n\n' + marker + '\n' + '\n'.join(kept) + '\n',
+                                encoding='utf-8',
+                            )
+
+                # Trigger condensation if thresholds met
+                if _should_condense(p):
+                    _dispatch_condense(p)
         except Exception:
             pass  # never fail the completion flow for memory
 
@@ -1157,6 +1294,108 @@ def _auto_dispatch_followup(session, message):
 
     t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
     t.start()
+
+
+def _check_context_budget(project, appended_prompt):
+    """Measure context files and return a warning string if total exceeds 20KB."""
+    sizes = {}
+    pp = project.get('project_path', '')
+    # CLAUDE.md in project root
+    if pp:
+        claude_md = Path(pp) / 'CLAUDE.md'
+        if claude_md.exists():
+            try:
+                sizes['CLAUDE.md'] = claude_md.stat().st_size
+            except OSError:
+                pass
+    # MEMORY.md (native path)
+    mem_path = _get_memory_path(project)
+    if mem_path and mem_path.exists():
+        try:
+            sizes['MEMORY.md'] = mem_path.stat().st_size
+        except OSError:
+            pass
+    sizes['prompt'] = len(appended_prompt.encode('utf-8'))
+    total = sum(sizes.values())
+    if total > 20 * 1024:
+        parts = ', '.join(f'{k}: {v/1024:.1f}k' for k, v in sizes.items())
+        tokens_est = total / 4  # rough char-to-token ratio
+        return f'[context warning] Total context: ~{tokens_est/1000:.1f}k tokens ({parts}). Consider trimming large files.'
+    return None
+
+
+def _dispatch_condense(project):
+    """Launch a housekeeping agent to condense memory for a project."""
+    pid = project['id']
+    with _condense_lock:
+        if pid in _condensing_projects:
+            return
+        _condensing_projects.add(pid)
+
+    mem_path = _get_memory_path(project)
+    archive_path = _get_archive_path(project)
+    pp = project.get('project_path', '')
+
+    prompt = (
+        "You are a memory housekeeping agent. Your ONLY job is to condense the project memory files.\n\n"
+        f"1. Read {mem_path}\n"
+        f"2. Read {archive_path} (if it exists)\n"
+        "3. Preserve ALL curated/manually-written sections (anything NOT under '## Session Log') verbatim.\n"
+        "4. Extract useful insights from session log entries and fold them into organized knowledge sections "
+        "(e.g., ## Architecture, ## Patterns, ## Gotchas). Merge with existing sections if present.\n"
+        "5. Keep only the last 5 session log entries in the Session Log section.\n"
+        f"6. Write the condensed result back to {mem_path}. Target: under 8KB total.\n"
+        f"7. Delete {archive_path} when done (if it exists).\n"
+        "8. Do NOT create any other files. Do NOT modify any code. Only touch the two memory files above."
+    )
+
+    model = CONFIG.get('condense_model', '') or 'sonnet'
+    cmd = ['claude', '-p', prompt, '--model', model, '--max-turns', '5',
+           '--print', '--verbose', '--output-format', 'stream-json',
+           '--dangerously-skip-permissions']
+
+    cwd = pp if pp and Path(pp).is_dir() else str(Path.home())
+
+    def _run():
+        session_id = f'condense_{uuid.uuid4().hex[:8]}'
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=cwd,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=_POPEN_FLAGS,
+                startupinfo=_STARTUPINFO,
+            )
+            threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+
+            session = {
+                'proc': proc,
+                'status': 'running',
+                'task': 'Memory condensation',
+                'log_lines': [],
+                'started_at': now_iso(),
+                'session_id': session_id,
+                'project_id': pid,
+                'mode': 'A',
+                'housekeeping': True,
+            }
+            with agent_lock:
+                agent_sessions[session_id] = session
+
+            # Reuse existing stream reader
+            _read_agent_stream(proc, session)
+        except Exception as e:
+            print(f"[condense] error for {pid}: {e}")
+        finally:
+            with _condense_lock:
+                _condensing_projects.discard(pid)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _dispatch_agent_internal(project_id, task, resume_id=''):
@@ -1263,6 +1502,12 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
 
             t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
             t.start()
+
+        # Context budget warning (only for new sessions, not resumes)
+        if not resume_id:
+            warning = _check_context_budget(p, context)
+            if warning:
+                session['log_lines'].append(warning)
 
     resume_label = f" (resuming {resume_id})" if resume_id else ""
     try:
@@ -1620,6 +1865,48 @@ def read_plan_file():
     return jsonify({'path': str(p), 'filename': p.name, 'content': content})
 
 
+@app.route('/api/plans/delete', methods=['POST'])
+def delete_plans():
+    """Delete plan files from disk and scrub references from agent logs."""
+    data = request.get_json(force=True) or {}
+    paths = data.get('paths', [])
+    if not paths or not isinstance(paths, list):
+        return jsonify({'error': 'paths array required'}), 400
+    plans_dir = Path.home() / '.claude' / 'plans'
+    resolved_plans_dir = plans_dir.resolve()
+    deleted = 0
+    deleted_paths = set()
+    for plan_path in paths:
+        p = Path(plan_path)
+        try:
+            if not p.resolve().is_relative_to(resolved_plans_dir):
+                continue
+        except Exception:
+            continue
+        if p.is_file():
+            try:
+                p.unlink()
+                deleted += 1
+            except Exception:
+                pass
+        deleted_paths.add(str(p))
+    # Scrub plan_file references from all agent logs
+    if deleted_paths:
+        for log_file in DATA_DIR.glob('*_agent_log.json'):
+            try:
+                log = json.loads(log_file.read_text(encoding='utf-8'))
+                changed = False
+                for entry in log:
+                    if entry.get('plan_file', '') in deleted_paths:
+                        entry['plan_file'] = ''
+                        changed = True
+                if changed:
+                    log_file.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding='utf-8')
+            except Exception:
+                pass
+    return jsonify({'ok': True, 'deleted': deleted})
+
+
 @app.route('/api/project/<project_id>/agent/status')
 def agent_status(project_id):
     sessions = []
@@ -1630,7 +1917,9 @@ def agent_status(project_id):
                 'claude_session_id': s.get('claude_session_id', ''),
                 'status': s['status'],
                 'task': s['task'],
-                'log_lines': s['log_lines'],
+                'log_lines': [l for l in s['log_lines']
+                              if not l.startswith('[terminal:')
+                              or l.split(':')[1] in terminal_sessions],
                 'started_at': s['started_at'],
                 'plan_file': s.get('plan_file', ''),
                 'usage': s.get('usage', {}),
@@ -1647,6 +1936,259 @@ def agent_status(project_id):
     sessions.sort(key=lambda s: s.get('started_at', ''), reverse=True)
     sessions.sort(key=lambda s: 0 if s['status'] in ('running', 'idle') else 1)
     return jsonify({'sessions': sessions})
+
+
+# ── Terminal session management ───────────────────────────────────────────────
+
+def _read_terminal_stream(proc, session):
+    """Reader thread: captures stdout chunks into terminal session output_lines.
+
+    Uses raw chunk reads (not line-by-line) to preserve ANSI escape sequences
+    like cursor movement, screen clearing, and Rich Live display updates.
+    """
+    my_proc = proc
+    fd = proc.stdout.fileno()
+    try:
+        while True:
+            if session.get('proc') is not my_proc:
+                break
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            text = chunk.decode('utf-8', errors='replace')
+            session['output_lines'].append(text)
+            # Cap to prevent unbounded memory growth
+            if len(session['output_lines']) > 5000:
+                session['output_lines'] = session['output_lines'][-3000:]
+    except Exception as e:
+        if session.get('proc') is my_proc:
+            session['output_lines'].append(f'[stream error: {e}]')
+    finally:
+        rc = proc.wait()
+        if session.get('proc') is my_proc:
+            session['exit_code'] = rc
+            if session['status'] == 'running':
+                session['status'] = 'completed' if rc == 0 else 'error'
+                session['output_lines'].append(f'\r\n[Process exited with code {rc}]')
+
+
+def _kill_terminal_session(session):
+    """Kill a terminal session's subprocess."""
+    proc = session.get('proc')
+    if not proc:
+        return
+    try:
+        proc.stdin.close()
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+
+
+# Resolve path to mc_tty_shim directory (contains sitecustomize.py)
+_TTY_SHIM_DIR = str(_APP_DIR / 'mc_tty_shim')
+
+
+@app.route('/api/terminal/launch', methods=['POST'])
+def terminal_launch():
+    """Launch a command in a terminal session.  Called by agents via curl."""
+    data = request.get_json() or {}
+    project_id = data.get('project_id', '').strip()
+    command = data.get('command', '').strip()
+    if not project_id or not command:
+        return jsonify({'error': 'project_id and command required'}), 400
+
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+
+    pp = p.get('project_path', '')
+    cwd = pp if pp and Path(pp).is_dir() else None
+
+    session_id = uuid.uuid4().hex[:12]
+    # TTY shim: inject sitecustomize.py via PYTHONPATH so child Python
+    # processes see isatty()=True and Rich emits ANSI color codes
+    existing_pypath = os.environ.get('PYTHONPATH', '')
+    shim_pypath = _TTY_SHIM_DIR + os.pathsep + existing_pypath if existing_pypath else _TTY_SHIM_DIR
+    env = {
+        **os.environ,
+        'PYTHONIOENCODING': 'utf-8',
+        'PYTHONUNBUFFERED': '1',
+        'MC_FORCE_TTY': '1',
+        'PYTHONPATH': shim_pypath,
+        'TERM': 'xterm-256color',
+        'COLUMNS': '120',
+        'LINES': '30',
+    }
+
+    try:
+        proc = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=cwd,
+            shell=True,
+            creationflags=_POPEN_FLAGS,
+            startupinfo=_STARTUPINFO,
+            env=env,
+        )
+    except Exception as e:
+        return jsonify({'error': f'Failed to launch: {e}'}), 500
+
+    session = {
+        'proc': proc,
+        'status': 'running',
+        'command': command,
+        'output_lines': [],
+        'started_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'session_id': session_id,
+        'project_id': project_id,
+        'exit_code': None,
+    }
+
+    with terminal_lock:
+        terminal_sessions[session_id] = session
+
+    threading.Thread(target=_read_terminal_stream, args=(proc, session), daemon=True).start()
+
+    # Notify any active agent SSE streams for this project
+    with agent_lock:
+        for sid, asess in agent_sessions.items():
+            if asess['project_id'] == project_id and asess['status'] in ('running', 'idle'):
+                cmd_label = command.replace('\n', ' ').replace('\r', '')[:60]
+                asess['log_lines'].append(f'[terminal:{session_id}:{cmd_label}]')
+
+    return jsonify({'ok': True, 'session_id': session_id})
+
+
+@app.route('/api/terminal/stream')
+def terminal_stream():
+    """SSE endpoint streaming terminal output for a specific session."""
+    session_id = request.args.get('session', '')
+    since = request.args.get('since', '0')
+
+    def generate():
+        session = terminal_sessions.get(session_id)
+        if not session:
+            yield f"data: {json.dumps({'type': 'error', 'msg': 'no active session'})}\n\n"
+            return
+
+        sent = int(since) if since.isdigit() else 0
+        tick = 0
+        while True:
+            lines = session['output_lines']
+            if sent < len(lines):
+                for line in lines[sent:]:
+                    yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"
+                sent = len(lines)
+
+            status = session['status']
+            if status != 'running':
+                yield f"data: {json.dumps({'type': 'status', 'status': status, 'exit_code': session.get('exit_code')})}\n\n"
+                break
+
+            tick += 1
+            if tick % 50 == 0:
+                yield ": heartbeat\n\n"
+
+            _time.sleep(0.3)
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@app.route('/api/terminal/stdin', methods=['POST'])
+def terminal_stdin():
+    """Write text to a terminal session's stdin."""
+    data = request.get_json() or {}
+    session_id = data.get('session_id', '').strip()
+    text = data.get('text', '')
+    if not session_id:
+        return jsonify({'error': 'session_id required'}), 400
+
+    session = terminal_sessions.get(session_id)
+    if not session or session['status'] != 'running':
+        return jsonify({'error': 'session not running'}), 400
+
+    try:
+        session['proc'].stdin.write(text.encode('utf-8'))
+        session['proc'].stdin.flush()
+    except (BrokenPipeError, OSError):
+        pass
+
+    return jsonify({'ok': True})
+
+
+@app.route('/api/terminal/stop', methods=['POST'])
+def terminal_stop():
+    """Stop (kill) a running terminal session."""
+    data = request.get_json() or {}
+    session_id = data.get('session_id', '').strip()
+    if not session_id:
+        return jsonify({'error': 'session_id required'}), 400
+
+    with terminal_lock:
+        session = terminal_sessions.get(session_id)
+        if not session:
+            return jsonify({'error': 'session not found'}), 404
+        if session['status'] != 'running':
+            return jsonify({'error': 'not running'}), 400
+        _kill_terminal_session(session)
+        session['status'] = 'stopped'
+        session['output_lines'].append('\r\n[Process stopped by user]')
+
+    return jsonify({'ok': True})
+
+
+@app.route('/api/project/<project_id>/terminal/status')
+def terminal_status(project_id):
+    """Return running terminal sessions for a project (for reconnection after refresh)."""
+    sessions = []
+    for sid, s in list(terminal_sessions.items()):
+        if s['project_id'] != project_id:
+            continue
+        # Only return running sessions — completed/stopped are disposable
+        if s['status'] == 'running':
+            sessions.append({
+                'session_id': s['session_id'],
+                'status': s['status'],
+                'command': s['command'],
+                'output_lines': s['output_lines'],
+                'started_at': s['started_at'],
+                'exit_code': s.get('exit_code'),
+            })
+        else:
+            # Purge non-running sessions from memory
+            terminal_sessions.pop(sid, None)
+    return jsonify({'sessions': sessions})
+
+
+@app.route('/api/terminal/delete', methods=['POST'])
+def terminal_delete():
+    """Kill process (if running) and remove session from memory entirely."""
+    data = request.get_json() or {}
+    session_id = data.get('session_id', '').strip()
+    if not session_id:
+        return jsonify({'error': 'session_id required'}), 400
+
+    with terminal_lock:
+        session = terminal_sessions.pop(session_id, None)
+        if not session:
+            return jsonify({'ok': True})  # already gone
+        if session['status'] == 'running':
+            _kill_terminal_session(session)
+
+    return jsonify({'ok': True})
 
 
 # ── Agent log endpoint ────────────────────────────────────────────────────────
@@ -2162,6 +2704,35 @@ def _scheduler_loop():
         except Exception as e:
             print(f"[scheduler] GitHub sync loop error: {e}")
 
+        # ── Purge stale sessions from memory ──────────────────────────────
+        try:
+            cutoff = now - timedelta(minutes=30)
+            with agent_lock:
+                stale = []
+                for sid, s in agent_sessions.items():
+                    if s['status'] not in ('running', 'idle'):
+                        try:
+                            ts = datetime.fromisoformat(s['started_at'].replace('Z', '+00:00'))
+                            if ts.tzinfo is None:
+                                ts = ts.replace(tzinfo=timezone.utc)
+                            if ts < cutoff:
+                                stale.append(sid)
+                        except Exception:
+                            stale.append(sid)
+                for sid in stale:
+                    agent_sessions.pop(sid, None)
+                if stale:
+                    print(f"[scheduler] Purged {len(stale)} stale agent session(s)")
+            with terminal_lock:
+                stale_t = []
+                for sid, s in terminal_sessions.items():
+                    if s['status'] != 'running':
+                        stale_t.append(sid)
+                for sid in stale_t:
+                    terminal_sessions.pop(sid, None)
+        except Exception as e:
+            print(f"[scheduler] Session purge error: {e}")
+
         _scheduler_stop.wait(30)
 
 
@@ -2264,7 +2835,13 @@ def _cleanup_persistent_agents():
             except Exception:
                 pass
 
+def _cleanup_terminals():
+    for sid, session in list(terminal_sessions.items()):
+        if session['status'] == 'running':
+            _kill_terminal_session(session)
+
 atexit.register(_cleanup_persistent_agents)
+atexit.register(_cleanup_terminals)
 atexit.register(_scheduler_stop.set)
 
 

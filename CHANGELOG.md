@@ -1,5 +1,68 @@
 # Mission Control — Changelog
 
+## [2026-03-20a] — Fix ExitPlanMode infinite loop in agents
+
+- Agents spawned by Mission Control could get stuck calling ExitPlanMode in an infinite loop
+  (known Claude CLI bug: `--dangerously-skip-permissions` does not auto-approve ExitPlanMode)
+- System prompt now instructs agents to NEVER use EnterPlanMode or ExitPlanMode
+- Mode A: if ExitPlanMode is detected in tool_use output, a follow-up message is queued
+  telling the agent to proceed directly with implementation
+- Mode B: `_auto_approve_plan_b()` sends an approval message via stdin immediately when
+  ExitPlanMode is detected, breaking the loop
+
+## [2026-03-19e] — TTY shim for Rich color support in terminal pop-outs
+
+- `mc_tty_shim/sitecustomize.py` auto-injected via `PYTHONPATH` into terminal processes
+- Child Python processes see `isatty()=True` via monkey-patched stdout/stderr
+- Rich's legacy Windows detection patched — emits ANSI escape codes instead of Console API calls
+- Full Rich table colors (truecolor), Live display, and styled output now render in xterm.js
+- Terminal launch sets `MC_FORCE_TTY=1`, `TERM=xterm-256color`, `COLUMNS=120`, `LINES=30`
+- Centralized `_kill_terminal_session()` helper for cleanup
+
+## [2026-03-19d] — Two-tier memory with auto-condensation
+
+- Session log overflow now archived to `MEMORY_ARCHIVE.md` instead of being deleted
+- Archive is a sibling file to `MEMORY.md` — agents are told about it in system awareness
+- Auto-condensation: when combined memory + archive exceeds threshold (default 15KB), a housekeeping agent runs to fold session insights into organized knowledge sections, keep last 5 session entries, and delete the archive
+- Condensation uses a separate `claude -p` process with `--max-turns 5` and configurable model (default: sonnet)
+- Housekeeping sessions visible in agent log but marked `housekeeping: True` — their completion does NOT trigger further memory appends or condensation (prevents circular triggers)
+- New config options: `condense_threshold_kb` (default 15), `condense_model` (default sonnet), `condense_enabled` (default true)
+- `_condensing_projects` set prevents double-dispatch of condensation for the same project
+- Condensation skipped if any non-housekeeping agent is running/idle for the project
+
+## [2026-03-19c] — Context budget auto-reduction
+
+- MEMORY.md session log auto-pruned to last 20 entries when file exceeds 10KB
+- Agent system awareness text compressed (~60% shorter) — removed instructional paragraphs
+- Recent activity and agent session history reduced from 5 → 3 entries in appended context
+- Session task truncation tightened from 80 → 60 chars in context
+- Pre-dispatch context budget warning when CLAUDE.md + MEMORY.md + prompt exceeds 20KB
+
+## [2026-03-19b] — Enhanced Plans tab with management tools
+
+- Plans tab now shows checkboxes for multi-select, toolbar with Select All / Delete / Export
+- Individual delete button (×) on each plan card
+- Bulk delete with confirmation prompt — removes files from disk and scrubs agent log references
+- Export selected plans as .md file downloads
+- Plan cards show filename in faint text below the metadata
+- New `POST /api/plans/delete` server endpoint with path security validation
+
+## [2026-03-19a] — Embedded terminal pop-out windows
+
+- Agents can launch CLI processes in visual pop-out terminal windows inside Mission Control
+- Full ANSI color support via xterm.js (loaded from CDN) — dashboards, colored output, box-drawing all render correctly
+- Agent uses `curl` to POST `/api/terminal/launch` — system prompt teaches this automatically
+- Terminal appears as a draggable pop-out window (same pattern as Plan Viewer)
+- Stdin input bar below terminal for sending input to running processes
+- Stop button to kill processes, status dot shows running/completed/error/stopped
+- Terminal sessions survive page refresh — only running sessions reconnect
+- SSE streaming for real-time output (same 0.3s poll pattern as agent output)
+- Server-side cleanup: atexit kills all terminal processes, delete_project cleans up sessions
+- `[terminal:sessionId:command]` marker injected into agent SSE stream triggers auto-open on frontend
+- Closing pop-out with X deletes session from server (won't reappear on refresh)
+- Minimize/close controls positioned on right side of header bar
+- Fixed: newlines in commands no longer break the terminal marker detection
+
 ## [2026-03-18c] — AskUserQuestion tool support
 
 - Agent questions now appear as interactive forms in the chat (radio buttons, checkboxes, "Other" text input)
