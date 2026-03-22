@@ -6,14 +6,45 @@ to a real terminal. Activated by MC_FORCE_TTY=1 environment variable.
 import os, sys
 
 if os.environ.get('MC_FORCE_TTY') == '1':
+    class _FakeBuffer:
+        """Wraps a raw buffer so isatty() returns True.
+
+        This prevents code like ``io.TextIOWrapper(sys.stdout.buffer)``
+        from losing the TTY override.  Also forces write-through so
+        Rich Live display (which uses \\r without \\n) isn't buffered.
+        """
+        __slots__ = ('_buf',)
+
+        def __init__(self, buf):
+            object.__setattr__(self, '_buf', buf)
+
+        def __getattr__(self, name):
+            return getattr(self._buf, name)
+
+        def isatty(self):
+            return True
+
+        def write(self, data):
+            n = self._buf.write(data)
+            try:
+                self._buf.flush()
+            except Exception:
+                pass
+            return n
+
     class _FakeTTY:
         """Wraps a stream so isatty() returns True."""
-        __slots__ = ('_stream',)
+        __slots__ = ('_stream', '_fake_buffer')
 
         def __init__(self, stream):
             object.__setattr__(self, '_stream', stream)
+            raw_buf = getattr(stream, 'buffer', None)
+            object.__setattr__(self, '_fake_buffer',
+                               _FakeBuffer(raw_buf) if raw_buf is not None else None)
 
         def __getattr__(self, name):
+            if name == 'buffer' and self._fake_buffer is not None:
+                return self._fake_buffer
             return getattr(self._stream, name)
 
         def isatty(self):

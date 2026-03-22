@@ -550,6 +550,27 @@
   .gh-sync-badge:hover { background: var(--accent-dim); }
   .gh-sync-badge.syncing { opacity: 0.6; pointer-events: none; }
 
+  /* TOAST NOTIFICATIONS */
+  #toast-container {
+    position: fixed; top: 16px; right: 16px; z-index: 100000;
+    display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    background: var(--surface); border: 1px solid var(--accent-dim);
+    border-left: 3px solid var(--accent); border-radius: 6px;
+    padding: 10px 14px; max-width: 360px;
+    font-size: 12px; color: var(--text-primary);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    animation: toastIn 0.3s ease-out;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .toast.toast-out { animation: toastOut 0.3s ease-in forwards; }
+  .toast-icon { font-size: 14px; flex-shrink: 0; }
+  .toast-msg { flex: 1; line-height: 1.4; }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40px); } }
+
   /* ADD FORM */
   .backlog-add { display: flex; flex-direction: column; gap: 8px; }
   .backlog-input {
@@ -1783,6 +1804,7 @@
 
 <div class="modal-layer" id="modal-layer"></div>
 <div class="minimized-tray" id="minimized-tray"></div>
+<div id="toast-container"></div>
 
 <div class="agent-console hidden collapsed" id="agent-console">
   <div class="agent-console-bar" onclick="toggleAgentConsole()">
@@ -1798,7 +1820,10 @@
 const API_BASE = window.__TAURI_INTERNALS__ ? 'http://localhost:5199' : '';
 
 let allProjects = [];
-let projectOrder = JSON.parse(localStorage.getItem('projectOrder') || '[]');
+const _isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
+const _orderKey = _isMobileDevice ? 'projectOrder_mobile' : 'projectOrder';
+let projectOrder = JSON.parse(localStorage.getItem(_orderKey) || '[]');
 let activeFilter = 'all';
 let showDoneMap = {};
 let modalSearchQuery = {};  // projectId → search filter string
@@ -2704,12 +2729,15 @@ function trimTrailingNulls() {
 }
 
 function persistGridOrder() {
-  localStorage.setItem('projectOrder', JSON.stringify(projectOrder));
-  fetch(API_BASE + '/api/projects/order', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({order: projectOrder})
-  }).catch(() => {});
+  localStorage.setItem(_orderKey, JSON.stringify(projectOrder));
+  // Only persist to server from desktop — mobile layout is local-only
+  if (!_isMobileDevice) {
+    fetch(API_BASE + '/api/projects/order', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({order: projectOrder})
+    }).catch(() => {});
+  }
 }
 
 function getSlotIndexAtPoint(clientX, clientY) {
@@ -2789,22 +2817,15 @@ function endTileDrag() {
 }
 
 function moveProjectToSlot(srcId, targetSlot) {
+  // Remove src from current position
   const srcIdx = projectOrder.indexOf(srcId);
-  if (srcIdx !== -1) projectOrder[srcIdx] = null;
+  if (srcIdx !== -1) projectOrder.splice(srcIdx, 1);
 
-  while (projectOrder.length <= targetSlot) projectOrder.push(null);
+  // Remove nulls (compact) then insert at target position, pushing others right
+  projectOrder = projectOrder.filter(e => e !== null);
+  const insertAt = Math.min(targetSlot, projectOrder.length);
+  projectOrder.splice(insertAt, 0, srcId);
 
-  const occupant = projectOrder[targetSlot];
-  if (occupant && occupant !== srcId) {
-    // Swap: put occupant where src was
-    if (srcIdx !== -1) {
-      projectOrder[srcIdx] = occupant;
-    } else {
-      projectOrder.push(occupant);
-    }
-  }
-
-  projectOrder[targetSlot] = srcId;
   trimTrailingNulls();
   persistGridOrder();
   applyOrder();
@@ -2837,16 +2858,39 @@ document.addEventListener('mousemove', (e) => {
 
 document.addEventListener('mouseup', () => endTileDrag());
 
-// Touch events
+// Touch events — long-press (300ms) required to start tile drag
+// This prevents conflicts with scroll, pinch-to-zoom, and swipe gestures
+let tileLongPressTimer = null;
+
+function cancelTileLongPress() {
+  if (tileLongPressTimer) { clearTimeout(tileLongPressTimer); tileLongPressTimer = null; }
+}
+
 document.getElementById('projects-col').addEventListener('touchstart', (e) => {
+  cancelTileLongPress();
+  if (e.touches.length > 1) return;  // multi-finger = pinch, ignore
   const card = e.target.closest('.card');
   if (!card) return;
   if (e.target.closest('button, a, input, select, textarea')) return;
   const t = e.touches[0];
-  dragState = { id: card.dataset.id, card, startX: t.clientX, startY: t.clientY, started: false, isTouch: true };
+  const startX = t.clientX, startY = t.clientY;
+  tileLongPressTimer = setTimeout(() => {
+    tileLongPressTimer = null;
+    dragState = { id: card.dataset.id, card, startX, startY, started: false, isTouch: true };
+    // Visual feedback: slight scale
+    card.style.transform = 'scale(0.97)';
+    card.style.transition = 'transform 0.1s';
+    setTimeout(() => { card.style.transform = ''; card.style.transition = ''; }, 200);
+  }, 300);
 }, { passive: true });
 
 document.addEventListener('touchmove', (e) => {
+  // Cancel long-press if finger moves before timer fires
+  if (tileLongPressTimer) {
+    const t = e.touches[0];
+    cancelTileLongPress();  // any movement cancels — let browser handle scroll/pinch
+    return;
+  }
   if (!dragState || !dragState.isTouch) return;
   const t = e.touches[0];
   if (!dragState.started) {
@@ -2860,7 +2904,7 @@ document.addEventListener('touchmove', (e) => {
   }
 }, { passive: false });
 
-document.addEventListener('touchend', () => endTileDrag());
+document.addEventListener('touchend', () => { cancelTileLongPress(); endTileDrag(); });
 
 // ── Create-form attachment handling ──────────────────────────────────────────
 
@@ -3050,6 +3094,19 @@ async function patchItem(projectId, itemId, data, skipUndo) {
 }
 
 // ── GitHub sync actions ──────────────────────────────────────────────────────
+
+function showToast(message, durationMs = 5000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = `<span class="toast-icon">i</span><span class="toast-msg">${esc(message)}</span>`;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('toast-out');
+    el.addEventListener('animationend', () => el.remove());
+  }, durationMs);
+}
 
 function timeAgoJS(ts) {
   if (!ts) return 'never';
@@ -3870,6 +3927,11 @@ function connectAgentStream(projectId, sessionId) {
               }).catch(() => terminalDismissed.add(termSessionId));
           }
           return; // don't render this line in agent chat
+        }
+        // Show toast for auto-fresh session notification
+        if (msg.text && msg.text.startsWith('[Session transcript too large')) {
+          const pName = (allProjects.find(p => p.id === projectId) || {}).name || projectId;
+          showToast(`Session restarted fresh for "${pName}" — previous transcript was too large`);
         }
         // Remove local echo if server sends the real user prompt
         if (msg.text && msg.text.trimStart().startsWith('> ')) {
@@ -6988,13 +7050,15 @@ function startRefresh() {
 
 document.querySelectorAll('.filter-btn').forEach(b => b.addEventListener('click', () => setFilter(b.dataset.filter)));
 fetchDomains().then(() => renderDomainFilters());
-// Fetch grid layout from server (source of truth), fall back to localStorage
-fetch(API_BASE + '/api/grid-layout').then(r => r.json()).then(data => {
-  if (data.order && data.order.length > 0) {
-    projectOrder = data.order;
-    localStorage.setItem('projectOrder', JSON.stringify(projectOrder));
-  }
-}).catch(() => {});
+// Fetch grid layout from server (source of truth for desktop), fall back to localStorage
+if (!_isMobileDevice) {
+  fetch(API_BASE + '/api/grid-layout').then(r => r.json()).then(data => {
+    if (data.order && data.order.length > 0) {
+      projectOrder = data.order;
+      localStorage.setItem(_orderKey, JSON.stringify(projectOrder));
+    }
+  }).catch(() => {});
+}
 fetchProjects().then(async () => {
   // Restore any running/completed agent sessions into the console
   for (const p of allProjects) {

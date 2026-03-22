@@ -18,6 +18,7 @@ a = Analysis(
         (os.path.join(ROOT, 'server.py'), '.'),
         (os.path.join(ROOT, 'github_sync.py'), '.'),
         (os.path.join(ROOT, 'static', 'index.html'), 'static'),
+        (os.path.join(ROOT, 'mc_tty_shim', 'sitecustomize.py'), 'mc_tty_shim'),
     ],
     hiddenimports=[
         'flask',

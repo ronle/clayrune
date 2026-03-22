@@ -1,5 +1,46 @@
 # Mission Control — Changelog
 
+## [2026-03-21a] — Mobile touch fix, auto-fresh sessions, TTY shim, toast notifications
+
+### Mobile tile drag fix
+- Tile reordering now requires a 300ms long-press before drag starts
+- Scroll, swipe, and pinch-to-zoom gestures pass through to browser normally
+- Multi-finger touches (pinch) are ignored by the drag handler entirely
+- Visual scale feedback on long-press activation
+- Separate tile order for mobile vs desktop (mobile is local-only, desktop is source of truth)
+- Insert-and-shift tile reorder: dragging a tile between others pushes them right instead of swapping
+
+### Auto-fresh large sessions
+- Sessions with transcripts > 5 MB are auto-started fresh instead of resumed
+- Prevents slow startup from loading massive conversation history
+- Context note injected so agent knows it's continuing from a prior session
+- Covers all resume paths: main dispatch, Mode A followup, Mode B respawn
+- Activity log entry notifies user of auto-fresh with size info
+- Toast notification shown in UI when auto-fresh triggers
+
+### Toast notification system
+- Lightweight toast notifications slide in from top-right corner
+- Auto-dismiss after 5 seconds with fade-out animation
+- Used for auto-fresh session alerts; available for future notifications via `showToast()`
+
+### TTY shim improvements (`mc_tty_shim/sitecustomize.py`)
+- Added `_FakeBuffer` wrapper — preserves `isatty()=True` through `TextIOWrapper` re-wrapping
+- Auto-flush on buffer write — fixes Rich `Live` display buffering with `line_buffering=True`
+- Patched `os.get_terminal_size()` and `shutil.get_terminal_size()` to read `COLUMNS`/`LINES` env vars when pipe fd fails
+- Root cause: dashboard's `sys.stdout = io.TextIOWrapper(sys.stdout.buffer)` was overwriting the TTY shim
+
+### Agent tab ordering
+- New agent tabs now appear on the right side of existing tabs (chronological order)
+- Sessions sorted by `startedAt` ascending in the tab bar
+
+### GitHub Issues sync (Phase 1) — `github_sync.py`
+- Bidirectional sync between MC backlog items and GitHub Issues via `gh` CLI
+- Security: `sanitize()` strips HTML, dangerous protocols, control chars from all GitHub text
+- 4 new API endpoints: setup, disconnect, sync, status
+- Auto-sync every 5 minutes via scheduler
+- Sync badge in backlog header, `#N` issue links on items, three-dot menu integration
+- Activity Stream integration for all sync events
+
 ## [2026-03-20a] — Fix ExitPlanMode infinite loop in agents
 
 - Agents spawned by Mission Control could get stuck calling ExitPlanMode in an infinite loop

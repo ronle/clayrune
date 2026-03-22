@@ -145,6 +145,28 @@ MEMORY_DIR = _DATA_ROOT / 'data' / 'memory'  # fallback for projects without pro
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
 CLAUDE_HOME = Path.home() / '.claude' / 'projects'
+_SESSION_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB — resume becomes too slow above this
+
+
+def _session_transcript_path(project_path, claude_session_id):
+    """Return the .jsonl transcript path for a Claude session."""
+    if not project_path or not claude_session_id:
+        return None
+    resolved = str(Path(project_path).resolve())
+    encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
+    return CLAUDE_HOME / encoded / f'{claude_session_id}.jsonl'
+
+
+def _session_too_large(project_path, claude_session_id):
+    """Check if a session transcript exceeds the size limit."""
+    p = _session_transcript_path(project_path, claude_session_id)
+    if p and p.exists():
+        try:
+            size = p.stat().st_size
+            return size > _SESSION_SIZE_LIMIT, size
+        except OSError:
+            pass
+    return False, 0
 
 
 def _native_memory_path(project_path):
@@ -1413,6 +1435,20 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
 
     use_streaming = CONFIG.get('use_streaming_agent', False)
 
+    # Check session transcript size — auto-start fresh if too large
+    original_resume = resume_id
+    if resume_id:
+        too_large, size_bytes = _session_too_large(pp, resume_id)
+        if too_large:
+            size_mb = size_bytes / (1024 * 1024)
+            print(f"[dispatch] Session {resume_id} transcript is {size_mb:.1f} MB — starting fresh")
+            _log_agent_activity(project_id,
+                                f"Auto-fresh: previous session too large ({size_mb:.0f} MB)")
+            # Prepend context about the previous session
+            task = (f"[Continuing from a previous conversation (session {resume_id}) that grew too large "
+                    f"to resume ({size_mb:.0f} MB). Start fresh but continue the user's request below.]\n\n{task}")
+            resume_id = ''
+
     with agent_lock:
         session_id = uuid.uuid4().hex[:12]
 
@@ -1508,6 +1544,11 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
             warning = _check_context_budget(p, context)
             if warning:
                 session['log_lines'].append(warning)
+
+        # Notify user if session was auto-started fresh due to transcript size
+        if original_resume and not resume_id:
+            session['log_lines'].append(
+                f'[Session transcript too large ({size_mb:.0f} MB) — starting fresh]')
 
     resume_label = f" (resuming {resume_id})" if resume_id else ""
     try:
@@ -1625,12 +1666,29 @@ def agent_followup(project_id):
                 if not claude_sid:
                     return jsonify({'error': 'no session to resume'}), 400
 
+                # Check transcript size before resuming
+                too_large, size_bytes = _session_too_large(pp, claude_sid)
+                resume_flags = ['-r', claude_sid]
+                if too_large:
+                    size_mb = size_bytes / (1024 * 1024)
+                    print(f"[followup] Session {claude_sid} is {size_mb:.1f} MB — starting fresh")
+                    _log_agent_activity(project_id,
+                                        f"Auto-fresh: session too large ({size_mb:.0f} MB)")
+                    existing['log_lines'].append(
+                        f'[Session transcript too large ({size_mb:.0f} MB) — starting fresh]')
+                    resume_flags = []
+                    context = _build_agent_context(p)
+                    message = (f"[Continuing from a previous conversation that grew too large "
+                               f"to resume ({size_mb:.0f} MB). Start fresh.]\n\n{message}")
+
                 user_label = CONFIG.get('user_name') or 'User'
                 existing['log_lines'].append(f"\n> {user_label}: {message}\n")
                 existing['status'] = 'running'
 
-                cmd = ['claude', '-r', claude_sid,
+                cmd = ['claude', *resume_flags,
                        *_build_claude_flags(p, streaming=True)]
+                if not resume_flags:
+                    cmd.extend(['--append-system-prompt', context])
                 proc = subprocess.Popen(
                     cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, cwd=pp,
@@ -1713,11 +1771,28 @@ def agent_followup(project_id):
 
     # Spawn process outside the lock to avoid blocking other requests
     def _start_followup():
+        followup_msg = message
         if claude_sid:
-            resume_flags = ['-r', claude_sid]
+            too_large, size_bytes = _session_too_large(pp, claude_sid)
+            if too_large:
+                size_mb = size_bytes / (1024 * 1024)
+                print(f"[followup-A] Session {claude_sid} is {size_mb:.1f} MB — starting fresh")
+                _log_agent_activity(project_id,
+                                    f"Auto-fresh: session too large ({size_mb:.0f} MB)")
+                with agent_lock:
+                    existing['log_lines'].append(
+                        f'[Session transcript too large ({size_mb:.0f} MB) — starting fresh]')
+                context = _build_agent_context(p)
+                followup_msg = (f"[Continuing from a previous conversation that grew too large "
+                                f"to resume ({size_mb:.0f} MB). Start fresh.]\n\n{message}")
+                resume_flags = []
+            else:
+                resume_flags = ['-r', claude_sid]
         else:
             resume_flags = ['--continue']
-        cmd = ['claude', *resume_flags, '-p', message, *_build_claude_flags(p)]
+        cmd = ['claude', *resume_flags, '-p', followup_msg, *_build_claude_flags(p)]
+        if not resume_flags:
+            cmd.extend(['--append-system-prompt', context])
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
