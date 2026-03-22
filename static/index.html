@@ -571,6 +571,45 @@
   @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40px); } }
 
+  /* PROCESS MANAGER */
+  .process-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .process-table th {
+    text-align: left; padding: 8px 10px; font-size: 11px;
+    color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border); font-weight: 600;
+  }
+  .process-table td {
+    padding: 7px 10px; border-bottom: 1px solid var(--border);
+    color: var(--text-dim); white-space: nowrap;
+  }
+  .process-table tr:hover td { background: var(--surface3); }
+  .process-status-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .process-status-dot.alive { background: var(--green); box-shadow: 0 0 4px var(--green); }
+  .process-status-dot.dead { background: var(--red); }
+  .process-status-dot.exited { background: var(--text-faint); }
+  .btn-kill-process {
+    background: none; border: 1px solid var(--red); color: var(--red-text);
+    font-size: 11px; padding: 2px 8px; border-radius: 4px; cursor: pointer;
+    font-family: 'Inter', sans-serif; transition: all 0.15s;
+  }
+  .btn-kill-process:hover { background: var(--red); color: #fff; }
+  .process-empty {
+    padding: 24px; text-align: center; color: var(--text-faint); font-size: 13px;
+  }
+  .process-toolbar {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+  }
+  .process-count { font-size: 12px; color: var(--text-faint); }
+  .btn-cleanup {
+    background: none; border: 1px solid var(--amber); color: var(--amber-text);
+    font-size: 11px; padding: 4px 12px; border-radius: 4px; cursor: pointer;
+    font-family: 'Inter', sans-serif;
+  }
+  .btn-cleanup:hover { background: var(--amber-dim); }
+
   /* ADD FORM */
   .backlog-add { display: flex; flex-direction: column; gap: 8px; }
   .backlog-input {
@@ -1772,6 +1811,7 @@
     <div class="tc-context-menu" id="tc-context-menu"></div>
     <button class="btn-header-action" onclick="openSharedRulesEditor()">Shared Rules</button>
     <button class="btn-header-action" onclick="openScheduler()">Scheduler</button>
+    <button class="btn-header-action" onclick="openProcessManager()">Processes</button>
     <button class="btn-new-project" onclick="openNewProjectForm()">+ New</button>
     <button class="btn-header-action" onclick="showDesktop()" title="Minimize all windows">&#x1F5D4;</button>
     <button class="btn-header-action" onclick="startWalkthrough()" title="Take a tour">Tour</button>
@@ -3458,16 +3498,36 @@ function formatElapsed(startedAt) {
 
 function sessionMetricsHTML(session) {
   if (!session) return '';
-  const usage = session.usage;
-  const total = usage ? ((usage.input_tokens || 0) + (usage.output_tokens || 0)) : 0;
-  if (session.status === 'running' || session.status === 'idle') {
+  const usage = session.usage || {};
+  const inp = usage.input_tokens || 0;
+  const out = usage.output_tokens || 0;
+  const cache_read = usage.cache_read_input_tokens || 0;
+  const cache_create = usage.cache_creation_input_tokens || 0;
+  const total = inp + out;
+  const turns = session.num_turns || 0;
+  const cost = formatCost(session.cost_usd);
+  const isRunning = session.status === 'running' || session.status === 'idle';
+
+  if (isRunning) {
     const elapsed = formatElapsed(session.startedAt);
-    return elapsed ? `&#x23F1; ${elapsed}` : '';
+    const parts = [];
+    if (elapsed) parts.push(`&#x23F1; ${elapsed}`);
+    if (total) {
+      let tokenDetail = `${formatTokens(total)} tokens`;
+      if (cache_read) tokenDetail += ` (${formatTokens(cache_read)} cached)`;
+      parts.push(tokenDetail);
+    }
+    if (turns) parts.push(`${turns} turn${turns !== 1 ? 's' : ''}`);
+    if (cost) parts.push(`<span class="tb-cost">${cost}</span>`);
+    return parts.join(' &middot; ');
   }
-  // Completed/stopped/error — show tokens if available
+  // Completed/stopped/error
   if (total) {
-    const cost = formatCost(session.cost_usd);
-    return `${formatTokens(total)} tokens${cost ? ` <span class="tb-cost">${cost}</span>` : ''}`;
+    const parts = [`${formatTokens(total)} tokens`];
+    if (cache_read) parts[0] += ` (${formatTokens(cache_read)} cached)`;
+    if (turns) parts.push(`${turns} turn${turns !== 1 ? 's' : ''}`);
+    if (cost) parts.push(`<span class="tb-cost">${cost}</span>`);
+    return parts.join(' &middot; ');
   }
   return '';
 }
@@ -3482,15 +3542,12 @@ let agentStatusCache = {};     // session_id → {status, task, projectId, start
 let agentHistory = [];         // [{projectId, sessionId, projectName, task, status, startedAt}]
 let activeAgentTab = {};       // project_id → session_id (which tab is active in modal)
 
-// Update elapsed timers for running sessions every second
+// Update elapsed timers + metrics for running sessions every second
 setInterval(() => {
   for (const [sid, cached] of Object.entries(agentStatusCache)) {
-    if (cached.status !== 'running') continue;
+    if (cached.status !== 'running' && cached.status !== 'idle') continue;
     const el = document.getElementById(`session-metrics-${sid}`);
-    if (el) {
-      const elapsed = formatElapsed(cached.startedAt);
-      if (elapsed) el.innerHTML = `&#x23F1; ${elapsed}`;
-    }
+    if (el) el.innerHTML = sessionMetricsHTML(cached);
   }
 }, 1000);
 let agentPendingImages = {};   // key (projectId or sessionId) → [{file, objectUrl, serverPath}]
@@ -3964,6 +4021,7 @@ function connectAgentStream(projectId, sessionId) {
           agentStatusCache[sessionId].status = 'idle';
           if (msg.usage) agentStatusCache[sessionId].usage = msg.usage;
           if (msg.cost_usd !== undefined) agentStatusCache[sessionId].cost_usd = msg.cost_usd;
+          if (msg.num_turns !== undefined) agentStatusCache[sessionId].num_turns = msg.num_turns;
         }
         updateHistoryStatus(sessionId, 'idle');
         updateAgentStatusUI(sessionId, 'idle');
@@ -3975,6 +4033,7 @@ function connectAgentStream(projectId, sessionId) {
           agentStatusCache[sessionId].status = msg.status;
           if (msg.usage) agentStatusCache[sessionId].usage = msg.usage;
           if (msg.cost_usd !== undefined) agentStatusCache[sessionId].cost_usd = msg.cost_usd;
+          if (msg.num_turns !== undefined) agentStatusCache[sessionId].num_turns = msg.num_turns;
         }
         updateHistoryStatus(sessionId, msg.status);
         es.close();
@@ -4545,7 +4604,7 @@ async function fetchAgentStatus(projectId) {
 
     for (const s of sessions) {
       const sid = s.session_id;
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0 };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0 };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
       }
@@ -4589,7 +4648,7 @@ function agentLogPanelHTML(p) {
           ${csid ? `<button class="agent-log-continue-btn" onclick="toggleContinueInput('${esc(p.id)}','${esc(eid)}','${esc(csid)}')">Continue</button>` : ''}
         </div>
         <div class="agent-log-summary">${esc(e.summary || '')}</div>
-        <div class="agent-log-ts">${esc(e.ts_relative || e.ts || '')} &middot; started ${esc(e.started_relative || e.started_at || '')}${(() => { const u = e.usage || {}; const t = (u.input_tokens||0)+(u.output_tokens||0); return t ? ` &middot; ${formatTokens(t)} tokens` : ''; })()}${e.cost_usd ? ` &middot; <span class="alu-cost">${formatCost(e.cost_usd)}</span>` : ''}</div>
+        <div class="agent-log-ts">${esc(e.ts_relative || e.ts || '')} &middot; started ${esc(e.started_relative || e.started_at || '')}${(() => { const u = e.usage || {}; const t = (u.input_tokens||0)+(u.output_tokens||0); const cr = u.cache_read_input_tokens||0; let s = t ? ` &middot; ${formatTokens(t)} tokens` : ''; if (cr) s += ` (${formatTokens(cr)} cached)`; if (e.num_turns) s += ` &middot; ${e.num_turns} turn${e.num_turns!==1?'s':''}`; return s; })()}${e.cost_usd ? ` &middot; <span class="alu-cost">${formatCost(e.cost_usd)}</span>` : ''}</div>
         ${csid ? `<div class="agent-log-session-id">claude -r <code title="Click to copy">${esc(csid)}</code><span class="copy-sid" onclick="navigator.clipboard.writeText('${esc(csid)}');this.textContent='copied!';setTimeout(()=>this.textContent='copy',1200)" title="Copy session ID">copy</span></div>` : ''}
         ${csid ? `<div class="agent-log-continue-input${continueInputOpen[eid] ? ' open' : ''}" id="continue-input-${esc(eid)}">
           <textarea id="continue-msg-${esc(eid)}" rows="2" placeholder="What should the agent continue with?" onkeydown="handleInputEnter(event,()=>dispatchContinue('${esc(p.id)}','${esc(eid)}','${esc(csid)}'))"></textarea>
@@ -5944,12 +6003,14 @@ async function openScheduler() {
   content.className = 'modal-content';
   content.style.width = '700px';
   content.innerHTML = `
-    <div class="modal-window-controls">
-      <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
-      <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">Scheduled Tasks</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
     </div>
-    <div class="scheduler-section">
-      <h2 style="font-size:16px;font-weight:700;color:var(--text);margin:0 0 4px">Scheduled Tasks</h2>
+    <div class="scheduler-section" style="padding-top:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <span class="memory-hint" style="margin:0">Automatically dispatch agents at scheduled times.</span>
         <button class="btn-add" style="padding:6px 14px;font-size:12px;flex-shrink:0" onclick="showScheduleForm()">+ Add Schedule</button>
@@ -6019,6 +6080,8 @@ function scheduleDescription(s) {
     const mins = s.interval_minutes || 60;
     if (mins >= 60 && mins % 60 === 0) return `Every ${mins / 60}h`;
     return `Every ${mins}m`;
+  } else if (type === 'cron') {
+    return 'Cron: ' + (s.cron_expr || '?');
   }
   return type;
 }
@@ -6061,6 +6124,7 @@ function showScheduleForm(existing) {
   const selInterval = existing ? (existing.interval_minutes || 60) : 60;
   const selTask = existing ? existing.task : '';
   const selRunAt = existing ? (existing.run_at || '').slice(0, 16) : '';
+  const selCron = existing ? (existing.cron_expr || '') : '';
 
   area.innerHTML = `<div class="schedule-form">
     <label>Project</label>
@@ -6074,6 +6138,7 @@ function showScheduleForm(existing) {
       <button class="sched-type-btn${selType==='daily'?' active':''}" onclick="setSchedType('daily')">Daily</button>
       <button class="sched-type-btn${selType==='interval'?' active':''}" onclick="setSchedType('interval')">Interval</button>
       <button class="sched-type-btn${selType==='once'?' active':''}" onclick="setSchedType('once')">Once</button>
+      <button class="sched-type-btn${selType==='cron'?' active':''}" onclick="setSchedType('cron')">Cron</button>
     </div>
     <div id="sched-type-fields"></div>
     <div class="sched-actions">
@@ -6081,7 +6146,7 @@ function showScheduleForm(existing) {
       <button class="btn-sched-cancel" onclick="hideScheduleForm()">Cancel</button>
     </div>
   </div>`;
-  renderSchedTypeFields(selType, { time: selTime, days: selDays, interval_minutes: selInterval, run_at: selRunAt });
+  renderSchedTypeFields(selType, { time: selTime, days: selDays, interval_minutes: selInterval, run_at: selRunAt, cron_expr: selCron });
 }
 
 function hideScheduleForm() {
@@ -6102,6 +6167,7 @@ function renderSchedTypeFields(type, vals) {
   const days = vals?.days || [1,2,3,4,5];
   const interval = vals?.interval_minutes || 60;
   const runAt = vals?.run_at || '';
+  const cronExpr = vals?.cron_expr || '';
 
   if (type === 'daily') {
     const dayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -6123,6 +6189,11 @@ function renderSchedTypeFields(type, vals) {
     container.innerHTML = `
       <label>Run At</label>
       <input type="datetime-local" id="sched-runat" value="${runAt}">`;
+  } else if (type === 'cron') {
+    container.innerHTML = `
+      <label>Cron Expression (UTC)</label>
+      <input type="text" id="sched-cron" value="${esc(cronExpr)}" placeholder="*/15 * * * *" spellcheck="false" style="font-family:var(--mono)">
+      <span class="memory-hint" style="margin:4px 0 0;font-size:10px">5 fields: minute hour day-of-month month day-of-week &mdash; e.g. <code>0 9 * * 1-5</code> = weekdays 9am UTC</span>`;
   }
 }
 
@@ -6142,6 +6213,10 @@ async function saveSchedule() {
   } else if (activeType === 'once') {
     const val = document.getElementById('sched-runat')?.value;
     if (val) body.run_at = new Date(val).toISOString();
+  } else if (activeType === 'cron') {
+    const expr = document.getElementById('sched-cron')?.value?.trim();
+    if (!expr || expr.split(/\s+/).length !== 5) { alert('Cron expression must have exactly 5 fields'); return; }
+    body.cron_expr = expr;
   }
 
   try {
@@ -6548,6 +6623,130 @@ async function createProject() {
     await refreshSilent();
     openProjectModal(id);
   } catch(e) { alert('Failed to create project: ' + e.message); }
+}
+
+// ── Process Manager ──────────────────────────────────────────────────────────
+
+async function openProcessManager() {
+  const modalId = '__processes';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    refreshProcessList();
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  content.style.width = '800px';
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">Process Manager</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:12px 24px 20px 28px">
+      <div class="process-toolbar">
+        <span id="process-count" class="memory-hint" style="margin:0">Loading...</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn-header-action" style="padding:5px 12px;font-size:11px" onclick="refreshProcessList()">Refresh</button>
+          <button class="btn-cleanup" onclick="cleanupOrphanedProcesses()">Cleanup Orphaned</button>
+        </div>
+      </div>
+      <div id="process-list"></div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  await refreshProcessList();
+}
+
+function _formatDuration(startedAt) {
+  const ms = Date.now() - new Date(startedAt).getTime();
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return secs + 's';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ' + (secs % 60) + 's';
+  const hrs = Math.floor(mins / 60);
+  return hrs + 'h ' + (mins % 60) + 'm';
+}
+
+async function refreshProcessList() {
+  const container = document.getElementById('process-list');
+  const countEl = document.getElementById('process-count');
+  if (!container) return;
+  try {
+    const res = await fetch(API_BASE + '/api/processes');
+    const processes = await res.json();
+    const alive = processes.filter(p => p.alive).length;
+    if (countEl) countEl.textContent = `${alive} running / ${processes.length} tracked`;
+    if (!processes.length) {
+      container.innerHTML = '<div class="process-empty">No tracked processes.</div>';
+      return;
+    }
+    container.innerHTML = `<table class="process-table">
+      <thead><tr>
+        <th style="width:24px"></th>
+        <th>PID</th>
+        <th>Name</th>
+        <th>Project</th>
+        <th>Task / Command</th>
+        <th>Duration</th>
+        <th style="width:50px"></th>
+      </tr></thead>
+      <tbody>${processes.map(p => {
+        const dotClass = p.alive ? 'alive' : (p.exit_code === 0 ? 'exited' : 'dead');
+        const dur = _formatDuration(p.started_at);
+        return `<tr>
+          <td><span class="process-status-dot ${dotClass}" title="${p.alive ? 'Running' : 'Exited (' + p.exit_code + ')'}"></span></td>
+          <td style="font-family:var(--mono);font-size:11px">${p.pid}</td>
+          <td>${esc(p.name)}</td>
+          <td>${esc(p.project_name || p.project_id || '\u2014')}</td>
+          <td title="${esc(p.command_preview || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.command_preview || '\u2014')}</td>
+          <td>${dur}</td>
+          <td>${p.alive ? `<button class="btn-kill-process" onclick="killTrackedProcess(${p.pid})">Kill</button>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  } catch(e) {
+    container.innerHTML = '<div class="process-empty">Failed to load processes.</div>';
+  }
+}
+
+async function killTrackedProcess(pid) {
+  if (!confirm('Kill process ' + pid + '?')) return;
+  try {
+    const res = await fetch(API_BASE + '/api/processes/' + pid + '/kill', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) showToast(data.error, 4000);
+    else showToast('Process ' + pid + ' killed');
+  } catch(e) {
+    showToast('Failed to kill process: ' + e.message, 4000);
+  }
+  refreshProcessList();
+}
+
+async function cleanupOrphanedProcesses() {
+  try {
+    const res = await fetch(API_BASE + '/api/processes/cleanup', { method: 'POST' });
+    const data = await res.json();
+    showToast('Cleaned up ' + (data.killed || 0) + ' orphaned process(es)');
+  } catch(e) {
+    showToast('Cleanup failed: ' + e.message, 4000);
+  }
+  refreshProcessList();
 }
 
 // ── Walkthrough / Tour ────────────────────────────────────────────────────────

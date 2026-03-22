@@ -1,5 +1,54 @@
 # Mission Control — Changelog
 
+## [2026-03-22b] — .NET fallback, Process Manager
+
+### .NET runtime fallback
+- Desktop app now gracefully handles missing .NET Desktop Runtime on target machines
+- Shows a Windows MessageBox explaining the issue instead of crashing with a raw traceback
+- Falls back to opening Mission Control in the default browser so the app is still usable
+- Provides download link for .NET Desktop Runtime
+
+## [2026-03-22] — Process Manager (PID Tracker)
+
+### Process Manager
+- Centralized PID tracker for all subprocess spawns (agents, terminals, housekeeping)
+- Each process registered with human-readable name, type, project, session ID, and task preview
+- Header "Processes" button opens 800px modal with live process table
+- Table shows: status dot (green=alive, red=dead, gray=exited), PID, name, project, task/command, duration, kill button
+- Toolbar displays running/total count with Refresh and "Cleanup Orphaned" buttons
+- Kill button terminates individual processes and updates corresponding agent/terminal session status
+- "Cleanup Orphaned" kills all processes that are alive but whose sessions are gone or completed
+- Scheduler liveness sweep auto-removes dead processes every 30 seconds
+- API endpoints: `GET /api/processes`, `POST /api/processes/<pid>/kill`, `POST /api/processes/cleanup`
+- All 7 Popen call sites instrumented: Mode A/B agents, followups, respawns, housekeeping, terminals
+- Process unregistered at all kill/cleanup/completion points (stream reader finally blocks, stop, delete, atexit)
+
+## [2026-03-22a] — Claude Code channels, remote control, cron schedules, token display
+
+### Claude Code Channels support
+- New `agent_channels` config option (global or per-project)
+- Appends `--channels <value>` to agent spawn command
+- Supports Telegram, Discord, and custom MCP channel plugins
+
+### Remote Control flag
+- New `agent_remote_control` config option (global or per-project)
+- When enabled, appends `--remote-control` to agent spawn
+- Allows controlling MC-managed agent sessions from claude.ai or mobile app
+
+### Cron expression support for scheduler
+- New "Cron" schedule type alongside Daily/Interval/Once
+- Standard 5-field cron expressions: minute hour day-of-month month day-of-week
+- Supports wildcards, ranges, steps, comma-separated lists
+- Vixie-cron semantics for day matching
+
+### Scheduler modal now draggable
+- Added `.modal-header` to scheduler window for grab-and-drag
+
+### Enhanced token/context usage display
+- Status bar shows token breakdown with cache read info during and after runs
+- Turn count shown in status bar and agent log entries
+- Metrics update live every second during running sessions
+
 ## [2026-03-21a] — Mobile touch fix, auto-fresh sessions, TTY shim, toast notifications
 
 ### Mobile tile drag fix

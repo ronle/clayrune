@@ -224,6 +224,40 @@ def _start_flask(port):
 
 
 # ---------------------------------------------------------------------------
+# .NET fallback
+# ---------------------------------------------------------------------------
+
+def _dotnet_error_fallback(port):
+    """Show a friendly error + open browser when .NET runtime is missing."""
+    import webbrowser
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            'Mission Control requires the .NET Desktop Runtime to display its native window.\n\n'
+            'The app will now open in your default browser instead.\n\n'
+            'To fix this permanently, install the .NET Desktop Runtime from:\n'
+            'https://dotnet.microsoft.com/download/dotnet\n\n'
+            'Then restart Mission Control.',
+            'Mission Control — .NET Runtime Missing',
+            0x40,  # MB_ICONINFORMATION
+        )
+    except Exception:
+        print('WARNING: .NET Desktop Runtime not found.')
+        print('Opening Mission Control in your default browser instead.')
+        print('Install .NET Desktop Runtime from: https://dotnet.microsoft.com/download/dotnet')
+
+    webbrowser.open(f'http://127.0.0.1:{port}')
+
+    # Keep the process alive so Flask stays running
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -261,7 +295,14 @@ def main():
     print(f'Flask server running on http://127.0.0.1:{port}')
 
     # --- Open pywebview window ---
-    import webview
+    try:
+        import webview
+    except Exception as e:
+        err_str = str(e)
+        if 'Python.Runtime' in err_str or 'clr_loader' in err_str or 'pythonnet' in err_str:
+            _dotnet_error_fallback(port)
+            return
+        raise
 
     window = webview.create_window(
         'Mission Control',

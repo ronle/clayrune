@@ -94,6 +94,8 @@ def _load_config():
         'condense_threshold_kb': 15,
         'condense_model': '',
         'condense_enabled': True,
+        'agent_channels': '',
+        'agent_remote_control': False,
     }
     if CONFIG_PATH.exists():
         try:
@@ -253,6 +255,14 @@ def _build_claude_flags(project=None, streaming=False):
     perm_mode = CONFIG.get('agent_permission_mode', '')
     if perm_mode:
         flags.extend(['--permission-mode', perm_mode])
+    # Channels (e.g. "plugin:telegram@claude-plugins-official")
+    channels = (project or {}).get('agent_channels', '') or CONFIG.get('agent_channels', '')
+    if channels:
+        flags.extend(['--channels', channels])
+    # Remote control
+    rc = (project or {}).get('agent_remote_control', False) or CONFIG.get('agent_remote_control', False)
+    if rc:
+        flags.append('--remote-control')
     return flags
 
 
@@ -301,6 +311,41 @@ def _should_condense(project):
 # TTY shim: mc_tty_shim/sitecustomize.py patches isatty() + Rich for ANSI colors
 terminal_sessions = {}
 terminal_lock = threading.Lock()
+
+# ── Process tracker (PID registry) ────────────────────────────────────────────
+# pid (int) → {pid, name, type, session_id, project_id, project_name,
+#              command_preview, started_at, proc}
+tracked_processes = {}
+process_tracker_lock = threading.Lock()
+
+
+def _register_process(proc, name, proc_type, session_id, project_id, command_preview=''):
+    """Register a spawned process in the PID tracker."""
+    project_name = project_id
+    try:
+        p = load_project(project_id)
+        if p:
+            project_name = p.get('name', project_id)
+    except Exception:
+        pass
+    with process_tracker_lock:
+        tracked_processes[proc.pid] = {
+            'pid': proc.pid,
+            'name': name,
+            'type': proc_type,
+            'session_id': session_id,
+            'project_id': project_id,
+            'project_name': project_name,
+            'command_preview': (command_preview or '')[:80],
+            'started_at': now_iso(),
+            'proc': proc,
+        }
+
+
+def _unregister_process(pid):
+    """Remove a process from the PID tracker."""
+    with process_tracker_lock:
+        tracked_processes.pop(pid, None)
 
 
 def load_project(project_id):
@@ -442,6 +487,7 @@ def delete_project(project_id):
                     session['proc'].kill()
                 except Exception:
                     pass
+                _unregister_process(session['proc'].pid)
             agent_sessions.pop(sid, None)
 
     # Kill any running terminal sessions for this project
@@ -1030,6 +1076,7 @@ def _read_agent_stream(proc, session):
             session['log_lines'].append(f"[stream error: {e}]")
     finally:
         rc = proc.wait()
+        _unregister_process(proc.pid)
         # Only update session status if we're still the active reader.
         # If a follow-up replaced us, the new reader owns status updates.
         if session.get('proc') is my_proc:
@@ -1130,6 +1177,7 @@ def _read_agent_stream_b(proc, session):
             session['log_lines'].append(f"[stream error: {e}]")
     finally:
         rc = proc.wait()
+        _unregister_process(proc.pid)
         session['process_alive'] = False
         if session.get('proc') is my_proc:
             if session['status'] in ('running', 'idle'):
@@ -1309,8 +1357,13 @@ def _auto_dispatch_followup(session, message):
         return
 
     threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+    old_proc = session.get('proc')
+    if old_proc:
+        _unregister_process(old_proc.pid)
     session['proc'] = proc
     session['status'] = 'running'
+    _register_process(proc, 'Agent followup (A)', 'agent',
+                      session['session_id'], session['project_id'], message[:80])
     user_label = CONFIG.get('user_name') or 'User'
     session['log_lines'].append(f"> {user_label}: {message}")
 
@@ -1394,6 +1447,8 @@ def _dispatch_condense(project):
                 startupinfo=_STARTUPINFO,
             )
             threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+            _register_process(proc, 'Housekeeping (condense)', 'housekeeping',
+                              session_id, pid, 'Memory condensation')
 
             session = {
                 'proc': proc,
@@ -1483,6 +1538,8 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
             proc.stdin.flush()
 
             threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+            _register_process(proc, 'Agent (Mode B)', 'agent',
+                              session_id, project_id, task[:80])
 
             session = {
                 'proc': proc,
@@ -1523,6 +1580,8 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
             )
 
             threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+            _register_process(proc, 'Agent (Mode A)', 'agent',
+                              session_id, project_id, task[:80])
 
             session = {
                 'proc': proc,
@@ -1697,6 +1756,11 @@ def agent_followup(project_id):
                 )
                 threading.Thread(target=_hide_windows_delayed,
                                  args=(proc.pid,), daemon=True).start()
+                old_proc = existing.get('proc')
+                if old_proc:
+                    _unregister_process(old_proc.pid)
+                _register_process(proc, 'Agent respawn (B)', 'agent',
+                                  session_id, project_id, message[:80])
 
                 existing['proc'] = proc
                 existing['process_alive'] = True
@@ -1806,7 +1870,12 @@ def agent_followup(project_id):
             startupinfo=_STARTUPINFO,
         )
         threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+        old_proc = existing.get('proc')
+        if old_proc:
+            _unregister_process(old_proc.pid)
         existing['proc'] = proc
+        _register_process(proc, 'Agent followup (A)', 'agent',
+                          session_id, project_id, followup_msg[:80])
         threading.Thread(target=_read_agent_stream, args=(proc, existing), daemon=True).start()
 
     threading.Thread(target=_start_followup, daemon=True).start()
@@ -1840,6 +1909,7 @@ def agent_stop(project_id):
             proc.kill()
         except Exception:
             pass
+        _unregister_process(proc.pid)
         session['status'] = 'stopped'
         session['log_lines'].append('[Agent stopped by user]')
 
@@ -1879,6 +1949,7 @@ def agent_session_delete(project_id):
                 proc.kill()
             except Exception:
                 pass
+            _unregister_process(proc.pid)
             session['status'] = 'stopped'
             session['log_lines'].append('[Agent stopped — tab closed]')
 
@@ -2043,6 +2114,7 @@ def _read_terminal_stream(proc, session):
             session['output_lines'].append(f'[stream error: {e}]')
     finally:
         rc = proc.wait()
+        _unregister_process(proc.pid)
         if session.get('proc') is my_proc:
             session['exit_code'] = rc
             if session['status'] == 'running':
@@ -2063,6 +2135,7 @@ def _kill_terminal_session(session):
         proc.kill()
     except Exception:
         pass
+    _unregister_process(proc.pid)
     try:
         proc.wait(timeout=5)
     except Exception:
@@ -2130,6 +2203,9 @@ def terminal_launch():
         'project_id': project_id,
         'exit_code': None,
     }
+
+    _register_process(proc, 'Terminal', 'terminal',
+                      session_id, project_id, command[:80])
 
     with terminal_lock:
         terminal_sessions[session_id] = session
@@ -2264,6 +2340,104 @@ def terminal_delete():
             _kill_terminal_session(session)
 
     return jsonify({'ok': True})
+
+
+# ── Process Tracker endpoints ─────────────────────────────────────────────────
+
+@app.route('/api/processes')
+def list_processes():
+    """Return all tracked processes with live status."""
+    result = []
+    with process_tracker_lock:
+        for pid, entry in tracked_processes.items():
+            proc = entry.get('proc')
+            alive = proc is not None and proc.poll() is None
+            result.append({
+                'pid': entry['pid'],
+                'name': entry['name'],
+                'type': entry['type'],
+                'session_id': entry['session_id'],
+                'project_id': entry['project_id'],
+                'project_name': entry['project_name'],
+                'command_preview': entry['command_preview'],
+                'started_at': entry['started_at'],
+                'alive': alive,
+                'exit_code': proc.poll() if proc else None,
+            })
+    result.sort(key=lambda x: (0 if x['alive'] else 1, x.get('started_at', '')))
+    return jsonify({'processes': result})
+
+
+@app.route('/api/processes/<int:pid>/kill', methods=['POST'])
+def kill_tracked_process(pid):
+    """Kill a specific tracked process by PID."""
+    with process_tracker_lock:
+        entry = tracked_processes.get(pid)
+        if not entry:
+            return jsonify({'error': 'process not found in tracker'}), 404
+        proc = entry.get('proc')
+        if not proc:
+            return jsonify({'error': 'no process handle'}), 400
+        if proc.poll() is not None:
+            tracked_processes.pop(pid, None)
+            return jsonify({'ok': True, 'already_dead': True})
+        try:
+            proc.kill()
+        except Exception as e:
+            return jsonify({'error': f'kill failed: {e}'}), 500
+        tracked_processes.pop(pid, None)
+        session_id = entry.get('session_id', '')
+        entry_type = entry.get('type', '')
+
+    # Update corresponding session status (outside tracker lock)
+    if entry_type in ('agent', 'housekeeping'):
+        with agent_lock:
+            session = agent_sessions.get(session_id)
+            if session and session['status'] in ('running', 'idle'):
+                session['status'] = 'stopped'
+                session['log_lines'].append('[Process killed via Process Manager]')
+                if session.get('mode') == 'B':
+                    session['process_alive'] = False
+    elif entry_type == 'terminal':
+        with terminal_lock:
+            session = terminal_sessions.get(session_id)
+            if session and session['status'] == 'running':
+                session['status'] = 'stopped'
+                session['output_lines'].append('\r\n[Process killed via Process Manager]')
+
+    return jsonify({'ok': True})
+
+
+@app.route('/api/processes/cleanup', methods=['POST'])
+def cleanup_processes():
+    """Kill all orphaned processes (alive but session gone or completed)."""
+    killed = 0
+    with process_tracker_lock:
+        to_kill = []
+        for pid, entry in tracked_processes.items():
+            proc = entry.get('proc')
+            if not proc or proc.poll() is not None:
+                continue
+            sid = entry.get('session_id', '')
+            orphaned = False
+            if entry['type'] in ('agent', 'housekeeping'):
+                session = agent_sessions.get(sid)
+                if not session or session['status'] not in ('running', 'idle'):
+                    orphaned = True
+            elif entry['type'] == 'terminal':
+                session = terminal_sessions.get(sid)
+                if not session or session['status'] != 'running':
+                    orphaned = True
+            if orphaned:
+                to_kill.append((pid, proc))
+        for pid, proc in to_kill:
+            try:
+                proc.kill()
+                killed += 1
+            except Exception:
+                pass
+            tracked_processes.pop(pid, None)
+    return jsonify({'ok': True, 'killed': killed})
 
 
 # ── Agent log endpoint ────────────────────────────────────────────────────────
@@ -2649,6 +2823,86 @@ def create_folder():
 
 # ── Scheduled Tasks ──────────────────────────────────────────────────────────
 
+
+def _parse_cron_field(field, min_val, max_val):
+    """Parse a single cron field into a set of valid integers."""
+    values = set()
+    for part in field.split(','):
+        part = part.strip()
+        if '/' in part:
+            base, step = part.split('/', 1)
+            step = int(step)
+            if base == '*':
+                start, end = min_val, max_val
+            elif '-' in base:
+                start, end = (int(x) for x in base.split('-', 1))
+            else:
+                start, end = int(base), max_val
+            for v in range(start, end + 1, step):
+                if min_val <= v <= max_val:
+                    values.add(v)
+        elif part == '*':
+            values.update(range(min_val, max_val + 1))
+        elif '-' in part:
+            lo, hi = (int(x) for x in part.split('-', 1))
+            values.update(range(lo, hi + 1))
+        else:
+            v = int(part)
+            if min_val <= v <= max_val:
+                values.add(v)
+    return values
+
+
+def _next_cron_match(cron_expr, after_dt):
+    """Find the next datetime matching a 5-field cron expression after after_dt.
+    Fields: minute hour day-of-month month day-of-week (0/7=Sun)."""
+    fields = cron_expr.strip().split()
+    if len(fields) != 5:
+        return None
+    try:
+        minutes = _parse_cron_field(fields[0], 0, 59)
+        hours = _parse_cron_field(fields[1], 0, 23)
+        doms = _parse_cron_field(fields[2], 1, 31)
+        months = _parse_cron_field(fields[3], 1, 12)
+        dows_raw = _parse_cron_field(fields[4], 0, 7)
+        dows = {d % 7 for d in dows_raw}  # Normalize 7 -> 0 (both = Sunday)
+    except Exception:
+        return None
+    dom_any = fields[2] == '*'
+    dow_any = fields[4] == '*'
+    candidate = after_dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    end = after_dt + timedelta(days=366)
+    while candidate <= end:
+        if candidate.month not in months:
+            if candidate.month == 12:
+                candidate = candidate.replace(year=candidate.year + 1, month=1, day=1, hour=0, minute=0)
+            else:
+                candidate = candidate.replace(month=candidate.month + 1, day=1, hour=0, minute=0)
+            continue
+        # cron dow: 0=Sun,1=Mon..6=Sat; Python weekday(): 0=Mon..6=Sun
+        py_dow = (candidate.weekday() + 1) % 7
+        if dom_any and dow_any:
+            day_ok = True
+        elif dom_any:
+            day_ok = py_dow in dows
+        elif dow_any:
+            day_ok = candidate.day in doms
+        else:
+            day_ok = candidate.day in doms or py_dow in dows
+        if not day_ok:
+            candidate = candidate.replace(hour=0, minute=0) + timedelta(days=1)
+            continue
+        if candidate.hour not in hours:
+            candidate += timedelta(hours=1)
+            candidate = candidate.replace(minute=0)
+            continue
+        if candidate.minute not in minutes:
+            candidate += timedelta(minutes=1)
+            continue
+        return candidate
+    return None
+
+
 def _compute_next_run(schedule):
     """Compute the next run time for a schedule. Returns ISO string or None."""
     stype = schedule.get('schedule_type', 'once')
@@ -2705,6 +2959,17 @@ def _compute_next_run(schedule):
         # No last_run — run immediately
         nxt = now + timedelta(seconds=5)
         return nxt.isoformat().replace('+00:00', 'Z')
+
+    elif stype == 'cron':
+        expr = schedule.get('cron_expr', '')
+        if not expr:
+            return None
+        nxt = _next_cron_match(expr, now)
+        if nxt:
+            if nxt.tzinfo is None:
+                nxt = nxt.replace(tzinfo=timezone.utc)
+            return nxt.isoformat().replace('+00:00', 'Z')
+        return None
 
     return None
 
@@ -2808,6 +3073,18 @@ def _scheduler_loop():
         except Exception as e:
             print(f"[scheduler] Session purge error: {e}")
 
+        # ── Process tracker: liveness sweep ───────────────────────────────
+        try:
+            with process_tracker_lock:
+                dead_pids = [pid for pid, entry in tracked_processes.items()
+                             if entry.get('proc') and entry['proc'].poll() is not None]
+                for pid in dead_pids:
+                    tracked_processes.pop(pid, None)
+                if dead_pids:
+                    print(f"[scheduler] Cleaned {len(dead_pids)} dead process(es) from tracker")
+        except Exception as e:
+            print(f"[scheduler] Process tracker sweep error: {e}")
+
         _scheduler_stop.wait(30)
 
 
@@ -2846,6 +3123,7 @@ def create_schedule():
         'days': data.get('days', []),
         'interval_minutes': data.get('interval_minutes', 60),
         'run_at': data.get('run_at', ''),
+        'cron_expr': data.get('cron_expr', ''),
         'last_run': None,
         'next_run': None,
         'created_at': now_iso(),
@@ -2867,7 +3145,7 @@ def update_schedule(schedule_id):
         return jsonify({'error': 'not found'}), 404
 
     for key in ('project_id', 'task', 'schedule_type', 'time', 'days',
-                'interval_minutes', 'enabled', 'run_at'):
+                'interval_minutes', 'enabled', 'run_at', 'cron_expr'):
         if key in data:
             sched[key] = data[key]
 
@@ -2909,6 +3187,7 @@ def _cleanup_persistent_agents():
                 session['proc'].kill()
             except Exception:
                 pass
+            _unregister_process(session['proc'].pid)
 
 def _cleanup_terminals():
     for sid, session in list(terminal_sessions.items()):
