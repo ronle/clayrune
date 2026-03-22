@@ -297,35 +297,35 @@ def main():
     # --- Open pywebview window ---
     try:
         import webview
+
+        window = webview.create_window(
+            'Mission Control',
+            url=f'http://127.0.0.1:{port}',
+            width=1400,
+            height=900,
+            min_size=(900, 600),
+        )
+
+        # Show CLI warning after window loads (non-blocking)
+        if cli_warning:
+            def _show_warning():
+                time.sleep(2)  # let page render
+                try:
+                    window.evaluate_js(
+                        f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
+                    )
+                except Exception:
+                    pass
+            threading.Thread(target=_show_warning, daemon=True).start()
+
+        # Blocking — runs the native window event loop
+        webview.start()
     except Exception as e:
         err_str = str(e)
         if 'Python.Runtime' in err_str or 'clr_loader' in err_str or 'pythonnet' in err_str:
             _dotnet_error_fallback(port)
             return
         raise
-
-    window = webview.create_window(
-        'Mission Control',
-        url=f'http://127.0.0.1:{port}',
-        width=1400,
-        height=900,
-        min_size=(900, 600),
-    )
-
-    # Show CLI warning after window loads (non-blocking)
-    if cli_warning:
-        def _show_warning():
-            time.sleep(2)  # let page render
-            try:
-                window.evaluate_js(
-                    f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
-                )
-            except Exception:
-                pass
-        threading.Thread(target=_show_warning, daemon=True).start()
-
-    # Blocking — runs the native window event loop
-    webview.start()
 
 
 if __name__ == '__main__':
