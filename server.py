@@ -956,6 +956,12 @@ def _build_agent_context(project):
         f"Terminal: curl -s -X POST http://localhost:{port}/api/terminal/launch "
         f'-H "Content-Type: application/json" '
         f"-d '{{\"project_id\":\"{pid}\",\"command\":\"<CMD>\"}}'",
+        f"Process tracking: When you spawn a background process (e.g. a server, bot, script), "
+        f"register it so the user can monitor/kill it from the Process Manager: "
+        f"curl -s -X POST http://localhost:{port}/api/processes/register "
+        f'-H "Content-Type: application/json" '
+        f"-d '{{\"pid\":PID_NUMBER,\"name\":\"Short description\",\"project_id\":\"{pid}\","
+        f"\"command\":\"the command that was run\"}}'",
         "IMPORTANT — Plan Mode: Do NOT use EnterPlanMode or ExitPlanMode. "
         "You are running headless without an interactive terminal, so plan mode approval "
         "will hang indefinitely. Instead, just describe your plan in a text message and "
@@ -2355,7 +2361,17 @@ def list_processes():
     with process_tracker_lock:
         for pid, entry in tracked_processes.items():
             proc = entry.get('proc')
-            alive = proc is not None and proc.poll() is None
+            if proc is not None:
+                alive = proc.poll() is None
+                exit_code = proc.poll()
+            else:
+                # External process — check via OS
+                try:
+                    os.kill(entry['pid'], 0)
+                    alive = True
+                except OSError:
+                    alive = False
+                exit_code = None
             result.append({
                 'pid': entry['pid'],
                 'name': entry['name'],
@@ -2366,7 +2382,7 @@ def list_processes():
                 'command_preview': entry['command_preview'],
                 'started_at': entry['started_at'],
                 'alive': alive,
-                'exit_code': proc.poll() if proc else None,
+                'exit_code': exit_code,
             })
     result.sort(key=lambda x: (0 if x['alive'] else 1, x.get('started_at', '')))
     return jsonify(result)
@@ -2380,15 +2396,21 @@ def kill_tracked_process(pid):
         if not entry:
             return jsonify({'error': 'process not found in tracker'}), 404
         proc = entry.get('proc')
-        if not proc:
-            return jsonify({'error': 'no process handle'}), 400
-        if proc.poll() is not None:
-            tracked_processes.pop(pid, None)
-            return jsonify({'ok': True, 'already_dead': True})
-        try:
-            proc.kill()
-        except Exception as e:
-            return jsonify({'error': f'kill failed: {e}'}), 500
+        if proc:
+            if proc.poll() is not None:
+                tracked_processes.pop(pid, None)
+                return jsonify({'ok': True, 'already_dead': True})
+            try:
+                proc.kill()
+            except Exception as e:
+                return jsonify({'error': f'kill failed: {e}'}), 500
+        else:
+            # External process — kill via OS
+            try:
+                os.kill(pid, 9)  # SIGKILL
+            except OSError as e:
+                tracked_processes.pop(pid, None)
+                return jsonify({'ok': True, 'already_dead': True})
         tracked_processes.pop(pid, None)
         session_id = entry.get('session_id', '')
         entry_type = entry.get('type', '')
@@ -2410,6 +2432,43 @@ def kill_tracked_process(pid):
                 session['output_lines'].append('\r\n[Process killed via Process Manager]')
 
     return jsonify({'ok': True})
+
+
+@app.route('/api/processes/register', methods=['POST'])
+def register_external_process():
+    """Register an externally-spawned process (e.g. from an agent)."""
+    data = request.get_json() or {}
+    pid = data.get('pid')
+    name = data.get('name', 'External process')
+    project_id = data.get('project_id', '')
+    command_preview = data.get('command', '')
+    if not pid or not isinstance(pid, int):
+        return jsonify({'error': 'pid (integer) required'}), 400
+    # Verify PID is actually running
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return jsonify({'error': f'PID {pid} is not running'}), 400
+    project_name = project_id
+    try:
+        p = load_project(project_id)
+        if p:
+            project_name = p.get('name', project_id)
+    except Exception:
+        pass
+    with process_tracker_lock:
+        tracked_processes[pid] = {
+            'pid': pid,
+            'name': name,
+            'type': 'external',
+            'session_id': '',
+            'project_id': project_id,
+            'project_name': project_name,
+            'command_preview': (command_preview or '')[:80],
+            'started_at': now_iso(),
+            'proc': None,
+        }
+    return jsonify({'ok': True, 'pid': pid})
 
 
 @app.route('/api/processes/cleanup', methods=['POST'])
