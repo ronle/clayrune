@@ -6689,7 +6689,8 @@ async function refreshProcessList() {
   if (!container) return;
   try {
     const res = await fetch(API_BASE + '/api/processes');
-    const processes = await res.json();
+    const data = await res.json();
+    const processes = Array.isArray(data) ? data : (data.processes || []);
     const alive = processes.filter(p => p.alive).length;
     if (countEl) countEl.textContent = `${alive} running / ${processes.length} tracked`;
     if (!processes.length) {

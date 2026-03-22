@@ -2365,7 +2365,7 @@ def list_processes():
                 'exit_code': proc.poll() if proc else None,
             })
     result.sort(key=lambda x: (0 if x['alive'] else 1, x.get('started_at', '')))
-    return jsonify({'processes': result})
+    return jsonify(result)
 
 
 @app.route('/api/processes/<int:pid>/kill', methods=['POST'])
