@@ -295,38 +295,75 @@ def main():
     print(f'Flask server running on http://127.0.0.1:{port}')
 
     # --- Open pywebview window ---
+    # Pre-check: can pythonnet/clr actually initialize?
+    # webview.start() crashes at the native level if .NET is missing,
+    # which PyInstaller's runw bootloader shows as an unhandled exception
+    # dialog before Python's try/except can catch it.
+    dotnet_ok = True
     try:
-        import webview
+        from clr_loader import get_coreclr
+        get_coreclr()
+    except Exception:
+        dotnet_ok = False
 
-        window = webview.create_window(
-            'Mission Control',
-            url=f'http://127.0.0.1:{port}',
-            width=1400,
-            height=900,
-            min_size=(900, 600),
-        )
+    if not dotnet_ok:
+        _dotnet_error_fallback(port)
+        return
 
-        # Show CLI warning after window loads (non-blocking)
-        if cli_warning:
-            def _show_warning():
-                time.sleep(2)  # let page render
-                try:
-                    window.evaluate_js(
-                        f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
-                    )
-                except Exception:
-                    pass
-            threading.Thread(target=_show_warning, daemon=True).start()
+    import webview
 
-        # Blocking — runs the native window event loop
-        webview.start()
-    except Exception as e:
-        err_str = str(e)
-        if 'Python.Runtime' in err_str or 'clr_loader' in err_str or 'pythonnet' in err_str:
-            _dotnet_error_fallback(port)
-            return
-        raise
+    window = webview.create_window(
+        'Mission Control',
+        url=f'http://127.0.0.1:{port}',
+        width=1400,
+        height=900,
+        min_size=(900, 600),
+    )
+
+    # Show CLI warning after window loads (non-blocking)
+    if cli_warning:
+        def _show_warning():
+            time.sleep(2)  # let page render
+            try:
+                window.evaluate_js(
+                    f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
+                )
+            except Exception:
+                pass
+        threading.Thread(target=_show_warning, daemon=True).start()
+
+    # Blocking — runs the native window event loop
+    webview.start()
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        err_str = str(e)
+        if 'Python.Runtime' in err_str or 'clr_loader' in err_str or 'pythonnet' in err_str or '.NET' in err_str:
+            # Last-resort fallback — dotnet error escaped inner handler
+            import webbrowser
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    'Mission Control requires the .NET Desktop Runtime to display its native window.\n\n'
+                    'The app will now open in your default browser instead.\n\n'
+                    'To fix this permanently, install the .NET Desktop Runtime from:\n'
+                    'https://dotnet.microsoft.com/download/dotnet\n\n'
+                    'Then restart Mission Control.',
+                    'Mission Control — .NET Runtime Missing',
+                    0x40,
+                )
+            except Exception:
+                pass
+            webbrowser.open('http://127.0.0.1:5199')
+            import time
+            try:
+                while True:
+                    time.sleep(60)
+            except KeyboardInterrupt:
+                pass
+        else:
+            raise
