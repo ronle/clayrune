@@ -1630,6 +1630,10 @@ def agent_dispatch(project_id):
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code
+    except FileNotFoundError:
+        return jsonify({'error': 'Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code'}), 500
+    except Exception as e:
+        return jsonify({'error': f'dispatch failed: {e}'}), 500
     return jsonify({'ok': True, 'session_id': session_id})
 
 
