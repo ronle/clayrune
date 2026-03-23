@@ -40,16 +40,23 @@ def fix_winforms_dll():
 
         print("[pre-build] WinForms DLL targets .NETFramework (wrong) — replacing...")
 
-        # Try NuGet cache first
-        nuget_pattern = os.path.expanduser(
+        # Try NuGet cache first — prefer net6.0-windows, fall back to netcoreapp3.0
+        nuget_base = os.path.expanduser(
             r'~\.nuget\packages\microsoft.web.webview2'
         )
         netcore_dll = None
-        if os.path.isdir(nuget_pattern):
-            for root, dirs, files in os.walk(nuget_pattern):
-                if 'netcoreapp' in root and 'Microsoft.Web.WebView2.WinForms.dll' in files:
+        if os.path.isdir(nuget_base):
+            # First pass: net6.0-windows (preferred)
+            for root, dirs, files in os.walk(nuget_base):
+                if 'net6.0-windows' in root and 'Microsoft.Web.WebView2.WinForms.dll' in files:
                     netcore_dll = os.path.join(root, 'Microsoft.Web.WebView2.WinForms.dll')
                     break
+            # Second pass: netcoreapp3.0 (also compatible)
+            if not netcore_dll:
+                for root, dirs, files in os.walk(nuget_base):
+                    if 'netcoreapp' in root and 'Microsoft.Web.WebView2.WinForms.dll' in files:
+                        netcore_dll = os.path.join(root, 'Microsoft.Web.WebView2.WinForms.dll')
+                        break
 
         if not netcore_dll:
             # Download from NuGet
@@ -62,12 +69,16 @@ def fix_winforms_dll():
                 pkg_data = urllib.request.urlopen(req, timeout=30).read()
                 z = zipfile.ZipFile(io.BytesIO(pkg_data))
 
-                for name in z.namelist():
-                    if 'netcoreapp' in name and 'WinForms.dll' in name:
-                        tmp_dir = os.path.join(os.environ.get('TEMP', '/tmp'), 'webview2_fix')
-                        os.makedirs(tmp_dir, exist_ok=True)
-                        z.extract(name, tmp_dir)
-                        netcore_dll = os.path.join(tmp_dir, name)
+                # Prefer net6.0-windows, fall back to netcoreapp3.0
+                for prefix in ('net6.0-windows', 'netcoreapp'):
+                    for name in z.namelist():
+                        if prefix in name and 'WinForms.dll' in name:
+                            tmp_dir = os.path.join(os.environ.get('TEMP', '/tmp'), 'webview2_fix')
+                            os.makedirs(tmp_dir, exist_ok=True)
+                            z.extract(name, tmp_dir)
+                            netcore_dll = os.path.join(tmp_dir, name)
+                            break
+                    if netcore_dll:
                         break
             except Exception as e:
                 print(f"[pre-build] Download failed: {e}")
@@ -103,7 +114,7 @@ def write_runtimeconfig():
 
         config = {
             "runtimeOptions": {
-                "tfm": "net6.0",
+                "tfm": "net6.0-windows",
                 "rollForward": "LatestMajor",
                 "framework": {
                     "name": "Microsoft.WindowsDesktop.App",
