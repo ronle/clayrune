@@ -5005,15 +5005,25 @@ async function dispatchContinue(projectId, entryId, claudeSessionId) {
 
 function handleAgentPaste(e, key) {
   const items = Array.from(e.clipboardData?.items || []);
+  const files = Array.from(e.clipboardData?.files || []);
+  // Try items first (screenshots, image blobs)
   const imageItems = items.filter(i => i.type.startsWith('image/'));
-  if (imageItems.length === 0) return;
+  // Also accept files pasted from Explorer (Ctrl+C a file, then Ctrl+V)
+  const allFiles = imageItems.length > 0
+    ? imageItems.map(i => i.getAsFile()).filter(Boolean)
+    : files.length > 0 ? files : [];
+  if (allFiles.length === 0) return;
   e.preventDefault();
   const list = agentPendingImages[key] || [];
-  for (const item of imageItems) {
-    const blob = item.getAsFile();
-    if (blob) {
-      list.push({ file: blob, objectUrl: URL.createObjectURL(blob), serverPath: null });
-    }
+  for (const file of allFiles) {
+    const isImage = file.type.startsWith('image/');
+    list.push({
+      file,
+      objectUrl: isImage ? URL.createObjectURL(file) : null,
+      serverPath: null,
+      isDocument: !isImage,
+      fileName: file.name
+    });
   }
   agentPendingImages[key] = list;
   refreshModal();
