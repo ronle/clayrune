@@ -1,9 +1,11 @@
 """
 pre_build_fix.py — Run before PyInstaller to fix .NET compatibility issues.
 
-Fixes two build bugs that cause pywebview to crash on target machines:
+Fixes three build bugs that cause pywebview to crash on target machines:
 1. Replaces net462 WinForms DLL with netcoreapp3.0 variant (compatible with .NET 6+)
 2. Writes Python.Runtime.runtimeconfig.json with LatestMajor roll-forward policy
+3. Patches winforms.py to add clr.AddReference('Microsoft.Win32.SystemEvents')
+   (split from WinForms assembly in .NET 6)
 
 Usage:  python pre_build_fix.py && pyinstaller build.spec --noconfirm
 """
@@ -132,13 +134,53 @@ def write_runtimeconfig():
     return False
 
 
+# ── Part 3: Patch winforms.py for .NET 6 SystemEvents assembly split ─────────
+
+def patch_winforms_systemevents():
+    """Add clr.AddReference('Microsoft.Win32.SystemEvents') before the import.
+
+    In .NET 6, SystemEvents was split from System.Windows.Forms into its own
+    assembly. pywebview's winforms.py doesn't reference it, so the import fails
+    under CoreCLR.
+    """
+    for sp in site_packages:
+        wf = os.path.join(sp, 'webview', 'platforms', 'winforms.py')
+        if not os.path.exists(wf):
+            continue
+
+        with open(wf, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        marker = "clr.AddReference('Microsoft.Win32.SystemEvents')"
+        if marker in content:
+            print("[pre-build] winforms.py already patched for SystemEvents — OK")
+            return True
+
+        old = "from Microsoft.Win32 import SystemEvents"
+        if old not in content:
+            print("[pre-build] WARNING: could not find SystemEvents import in winforms.py")
+            return False
+
+        new = f"{marker}  # split from WinForms in .NET 6\n{old}"
+        content = content.replace(old, new, 1)
+
+        with open(wf, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"[pre-build] Patched {wf} — added SystemEvents assembly reference")
+        return True
+
+    print("[pre-build] ERROR: Could not find webview/platforms/winforms.py")
+    return False
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     ok1 = fix_winforms_dll()
     ok2 = write_runtimeconfig()
+    ok3 = patch_winforms_systemevents()
 
-    if ok1 and ok2:
+    if ok1 and ok2 and ok3:
         print("[pre-build] All fixes applied. Safe to run PyInstaller.")
     else:
         print("[pre-build] Some fixes failed — build may not work on all machines.")
