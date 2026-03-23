@@ -1,5 +1,9 @@
 # Mission Control — Changelog
 
+## [2026-03-23] — Fix drag-and-drop in Tauri window
+- Disable Tauri's native drag-drop interception (`dragDropEnabled: false`) so JS drop events fire
+- Add document-level `dragover`/`drop` preventers to stop browser file-open on missed drops
+
 ## [2026-03-23] — Drag-and-drop file attachments in agent chat
 
 ### Drag-and-drop files into agent chat

@@ -5029,6 +5029,10 @@ function handleAgentPaste(e, key) {
   refreshModal();
 }
 
+// Prevent browser default file-open behavior for drops outside target zones
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => e.preventDefault());
+
 function handleAgentDragOver(e, el) {
   e.preventDefault();
   e.stopPropagation();
