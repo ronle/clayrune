@@ -475,9 +475,11 @@ if __name__ == '__main__':
                         pass
                 threading.Thread(target=_show_warning, daemon=True).start()
 
-            # BLOCKS here — runs Win32 message loop on main thread
-            # Returns only when the window is closed
+            # start() may return immediately (GUI on background thread)
+            # so keep main thread alive until all windows are closed
             webview.start()
+            while webview.windows:
+                time.sleep(0.5)
         except Exception as _e:
             print(f'[MissionControl] Window creation failed ({_e}), opening browser.')
             _open_browser_and_wait(_port)
