@@ -419,10 +419,40 @@ if __name__ == '__main__':
     # --- Native window via pywebview ---
     # webview.start() MUST be the last blocking call on the main thread.
     # It runs the Win32 message loop — returns only when the window is closed.
+
+    # Force pythonnet to use CoreCLR (.NET Core / .NET 5+) instead of .NET Framework.
+    # Without this, pythonnet defaults to .NET Framework 4.8, but the bundled
+    # WebView2 WinForms DLL targets .NETCoreApp — types fail to resolve silently.
+    if sys.platform == 'win32':
+        _rc_candidates = []
+        if getattr(sys, 'frozen', False):
+            _rc_candidates.append(os.path.join(
+                sys._MEIPASS, 'pythonnet', 'runtime',
+                'Python.Runtime.runtimeconfig.json'))
+        _rc_candidates.append(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'pythonnet', 'runtime', 'Python.Runtime.runtimeconfig.json'))
+        # Also check site-packages (dev mode)
+        try:
+            import site as _site
+            for _sp in _site.getsitepackages():
+                _rc_candidates.append(os.path.join(
+                    _sp, 'pythonnet', 'runtime',
+                    'Python.Runtime.runtimeconfig.json'))
+        except Exception:
+            pass
+
+        for _rc_path in _rc_candidates:
+            if os.path.exists(_rc_path):
+                os.environ.setdefault('PYTHONNET_RUNTIME', 'coreclr')
+                os.environ.setdefault('PYTHONNET_CORECLR_RUNTIME_CONFIG', _rc_path)
+                print(f'[MissionControl] Using CoreCLR with {_rc_path}')
+                break
+
     _webview_ok = False
     try:
         import webview
-        import clr  # triggers hostfxr + .NET CLR load — fail fast if broken
+        import clr  # triggers CoreCLR + .NET load — fail fast if broken
         _webview_ok = True
     except Exception as _e:
         print(f'[MissionControl] Native window unavailable ({type(_e).__name__}: {_e})')
