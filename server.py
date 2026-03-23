@@ -2503,6 +2503,907 @@ def cleanup_processes():
     return jsonify({'ok': True, 'killed': killed})
 
 
+# ── Hivemind: Persistent Multi-Agent Collaborative Intelligence ──────────────
+# Phase 1 — data model, CRUD, message bus, findings, knowledge base, SSE events,
+#            server orchestrator (dependency resolver + worker scheduler)
+
+HIVEMIND_DIR = _DATA_ROOT / 'data' / 'hiveminds'
+HIVEMIND_DIR.mkdir(parents=True, exist_ok=True)
+
+# Global state
+_hivemind_sessions = {}           # hivemind_id → {status, worker_sessions, ...}
+_hivemind_lock = threading.Lock()
+_hivemind_sse_queues = {}         # hivemind_id → [queue, queue, ...] for SSE fan-out
+_hivemind_sse_lock = threading.Lock()
+
+
+def _hm_dir(hivemind_id):
+    """Return the directory for a hivemind, creating subdirs if needed."""
+    d = HIVEMIND_DIR / hivemind_id
+    return d
+
+
+def _hm_ensure_dirs(hivemind_id):
+    """Ensure all subdirectories exist for a hivemind."""
+    d = HIVEMIND_DIR / hivemind_id
+    (d / 'workstreams').mkdir(parents=True, exist_ok=True)
+    (d / 'knowledge').mkdir(parents=True, exist_ok=True)
+    (d / 'bus').mkdir(parents=True, exist_ok=True)
+    (d / 'sessions').mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _hm_load_manifest(hivemind_id):
+    """Load a hivemind manifest, or None if not found."""
+    p = _hm_dir(hivemind_id) / 'manifest.json'
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def _hm_save_manifest(hivemind_id, manifest):
+    """Save a hivemind manifest."""
+    p = _hm_dir(hivemind_id) / 'manifest.json'
+    p.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _hm_load_workstream(hivemind_id, ws_id):
+    """Load a workstream definition."""
+    p = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}.json'
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def _hm_save_workstream(hivemind_id, ws_id, ws):
+    """Save a workstream definition."""
+    p = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}.json'
+    p.write_text(json.dumps(ws, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _hm_list_workstreams(hivemind_id):
+    """List all workstreams for a hivemind."""
+    ws_dir = _hm_dir(hivemind_id) / 'workstreams'
+    if not ws_dir.exists():
+        return []
+    result = []
+    for f in sorted(ws_dir.glob('*.json')):
+        try:
+            ws = json.loads(f.read_text(encoding='utf-8'))
+            result.append(ws)
+        except Exception:
+            pass
+    return result
+
+
+def _hm_append_finding(hivemind_id, ws_id, finding):
+    """Append a finding to the workstream's JSONL file."""
+    p = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}_findings.jsonl'
+    with open(p, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(finding, ensure_ascii=False) + '\n')
+    # Increment findings_count on workstream
+    ws = _hm_load_workstream(hivemind_id, ws_id)
+    if ws:
+        ws['findings_count'] = ws.get('findings_count', 0) + 1
+        _hm_save_workstream(hivemind_id, ws_id, ws)
+
+
+def _hm_read_findings(hivemind_id, ws_id, last_n=20):
+    """Read last N findings from a workstream's JSONL file."""
+    p = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}_findings.jsonl'
+    if not p.exists():
+        return []
+    lines = []
+    try:
+        with open(p, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    lines.append(line)
+    except Exception:
+        return []
+    # Return last N
+    result = []
+    for line in lines[-last_n:]:
+        try:
+            result.append(json.loads(line))
+        except Exception:
+            pass
+    return result
+
+
+def _hm_read_all_findings(hivemind_id):
+    """Read all findings across all workstreams."""
+    ws_dir = _hm_dir(hivemind_id) / 'workstreams'
+    if not ws_dir.exists():
+        return []
+    all_findings = []
+    for f in ws_dir.glob('*_findings.jsonl'):
+        try:
+            with open(f, encoding='utf-8') as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        all_findings.append(json.loads(line))
+        except Exception:
+            pass
+    all_findings.sort(key=lambda x: x.get('timestamp', ''))
+    return all_findings
+
+
+def _hm_append_bus_message(hivemind_id, message):
+    """Append a message to the bus JSONL file."""
+    p = _hm_dir(hivemind_id) / 'bus' / 'messages.jsonl'
+    with open(p, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(message, ensure_ascii=False) + '\n')
+
+
+def _hm_read_bus_messages(hivemind_id, last_n=50, ws_filter=None):
+    """Read bus messages, optionally filtered to a workstream."""
+    p = _hm_dir(hivemind_id) / 'bus' / 'messages.jsonl'
+    if not p.exists():
+        return []
+    lines = []
+    try:
+        with open(p, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    lines.append(line)
+    except Exception:
+        return []
+    result = []
+    for line in lines:
+        try:
+            msg = json.loads(line)
+            if ws_filter:
+                if msg.get('to') != ws_filter and msg.get('from') != ws_filter:
+                    continue
+            result.append(msg)
+        except Exception:
+            pass
+    return result[-last_n:] if last_n else result
+
+
+def _hm_append_decision(hivemind_id, decision):
+    """Append a decision to the decisions JSONL file."""
+    p = _hm_dir(hivemind_id) / 'knowledge' / 'decisions.jsonl'
+    with open(p, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(decision, ensure_ascii=False) + '\n')
+
+
+def _hm_read_decisions(hivemind_id, last_n=None):
+    """Read decisions from the JSONL file."""
+    p = _hm_dir(hivemind_id) / 'knowledge' / 'decisions.jsonl'
+    if not p.exists():
+        return []
+    result = []
+    try:
+        with open(p, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    result.append(json.loads(line))
+    except Exception:
+        pass
+    return result[-last_n:] if last_n else result
+
+
+def _hm_read_open_questions(hivemind_id):
+    """Read open questions from the JSONL file."""
+    p = _hm_dir(hivemind_id) / 'knowledge' / 'open_questions.jsonl'
+    if not p.exists():
+        return []
+    result = []
+    try:
+        with open(p, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    result.append(json.loads(line))
+    except Exception:
+        pass
+    return result
+
+
+def _hm_append_open_question(hivemind_id, question):
+    """Append an open question."""
+    p = _hm_dir(hivemind_id) / 'knowledge' / 'open_questions.jsonl'
+    with open(p, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(question, ensure_ascii=False) + '\n')
+
+
+def _hm_read_synthesis(hivemind_id):
+    """Read the synthesis markdown file."""
+    p = _hm_dir(hivemind_id) / 'knowledge' / 'synthesis.md'
+    if not p.exists():
+        return ''
+    return p.read_text(encoding='utf-8')
+
+
+def _hm_write_synthesis(hivemind_id, content):
+    """Write the synthesis markdown file."""
+    p = _hm_dir(hivemind_id) / 'knowledge' / 'synthesis.md'
+    p.write_text(content, encoding='utf-8')
+
+
+def _hm_read_context(hivemind_id, ws_id):
+    """Read the workstream context markdown file."""
+    p = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}_context.md'
+    if not p.exists():
+        return ''
+    return p.read_text(encoding='utf-8')
+
+
+def _hm_write_context(hivemind_id, ws_id, content):
+    """Write the workstream context markdown file."""
+    p = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}_context.md'
+    p.write_text(content, encoding='utf-8')
+
+
+def _hm_push_sse(hivemind_id, event):
+    """Push an SSE event to all listeners for this hivemind."""
+    with _hivemind_sse_lock:
+        queues = _hivemind_sse_queues.get(hivemind_id, [])
+        for q in queues:
+            try:
+                q.append(event)
+            except Exception:
+                pass
+
+
+def _hm_resolve_dependencies(workstreams):
+    """Determine which workstreams are ready to run (all deps completed)."""
+    completed = {ws['id'] for ws in workstreams if ws.get('status') == 'completed'}
+    ready = []
+    for ws in workstreams:
+        if ws.get('status') != 'pending':
+            continue
+        deps = ws.get('dependencies', [])
+        if all(d in completed for d in deps):
+            ready.append(ws)
+    # Sort by priority (lower = higher priority)
+    ready.sort(key=lambda ws: ws.get('priority', 5))
+    return ready
+
+
+def _hm_list_all():
+    """List all hiveminds."""
+    result = []
+    if not HIVEMIND_DIR.exists():
+        return result
+    for d in sorted(HIVEMIND_DIR.iterdir()):
+        if d.is_dir():
+            manifest = _hm_load_manifest(d.name)
+            if manifest:
+                result.append(manifest)
+    return result
+
+
+# ── Hivemind API: Management ─────────────────────────────────────────────────
+
+@app.route('/api/hivemind/create', methods=['POST'])
+def hivemind_create():
+    """Create a new hivemind."""
+    data = request.get_json()
+    if not data or not data.get('goal', '').strip():
+        return jsonify({'error': 'goal required'}), 400
+
+    project_id = data.get('project_id', '').strip()
+    if not project_id:
+        return jsonify({'error': 'project_id required'}), 400
+
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+
+    hivemind_id = 'hm_' + str(uuid.uuid4())[:8]
+    _hm_ensure_dirs(hivemind_id)
+
+    manifest = {
+        'id': hivemind_id,
+        'project_id': project_id,
+        'title': data.get('title', data['goal'][:80]).strip(),
+        'goal': data['goal'].strip(),
+        'status': 'active',
+        'created_at': now_iso(),
+        'updated_at': now_iso(),
+        'session_count': 0,
+        'config': {
+            'max_concurrent_workers': data.get('max_concurrent_workers', 3),
+            'auto_synthesize': data.get('auto_synthesize', True),
+            'synthesize_interval_turns': data.get('synthesize_interval_turns', 10),
+            'require_user_approval_for_decisions': data.get('require_user_approval', False),
+            'orchestrator_model': data.get('orchestrator_model', 'sonnet'),
+            'worker_model': data.get('worker_model', 'sonnet'),
+            'max_retries_per_workstream': data.get('max_retries', 2),
+        },
+    }
+    _hm_save_manifest(hivemind_id, manifest)
+
+    # Initialize empty synthesis
+    _hm_write_synthesis(hivemind_id, f"# {manifest['title']} — Synthesis\n\nNo findings yet.\n")
+
+    return jsonify({'ok': True, 'hivemind': manifest})
+
+
+@app.route('/api/hivemind/list')
+def hivemind_list():
+    """List all hiveminds, optionally filtered by project_id."""
+    project_id = request.args.get('project_id', '')
+    all_hm = _hm_list_all()
+    if project_id:
+        all_hm = [h for h in all_hm if h.get('project_id') == project_id]
+    # Add workstream summary
+    for h in all_hm:
+        workstreams = _hm_list_workstreams(h['id'])
+        h['workstream_count'] = len(workstreams)
+        h['workstreams_completed'] = sum(1 for ws in workstreams if ws.get('status') == 'completed')
+        h['workstreams_active'] = sum(1 for ws in workstreams if ws.get('status') == 'active')
+        h['total_findings'] = sum(ws.get('findings_count', 0) for ws in workstreams)
+        h['updated_relative'] = time_ago(h.get('updated_at'))
+    return jsonify(all_hm)
+
+
+@app.route('/api/hivemind/<hivemind_id>')
+def hivemind_get(hivemind_id):
+    """Get full hivemind state including workstreams."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    workstreams = _hm_list_workstreams(hivemind_id)
+    recent_messages = _hm_read_bus_messages(hivemind_id, last_n=20)
+    decisions = _hm_read_decisions(hivemind_id, last_n=10)
+    open_questions = _hm_read_open_questions(hivemind_id)
+    return jsonify({
+        'manifest': manifest,
+        'workstreams': workstreams,
+        'recent_messages': recent_messages,
+        'decisions': decisions,
+        'open_questions': open_questions,
+    })
+
+
+@app.route('/api/hivemind/<hivemind_id>', methods=['PUT'])
+def hivemind_update(hivemind_id):
+    """Update hivemind config."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    # Update allowed fields
+    for key in ('title', 'goal', 'status'):
+        if key in data:
+            manifest[key] = data[key]
+    if 'config' in data and isinstance(data['config'], dict):
+        manifest['config'].update(data['config'])
+    manifest['updated_at'] = now_iso()
+    _hm_save_manifest(hivemind_id, manifest)
+    return jsonify({'ok': True, 'manifest': manifest})
+
+
+@app.route('/api/hivemind/<hivemind_id>/start', methods=['POST'])
+def hivemind_start(hivemind_id):
+    """Start or resume a hivemind — re-evaluate state and spawn ready workers."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    manifest['status'] = 'active'
+    manifest['session_count'] = manifest.get('session_count', 0) + 1
+    manifest['updated_at'] = now_iso()
+    _hm_save_manifest(hivemind_id, manifest)
+    _hm_push_sse(hivemind_id, {'type': 'hivemind_status', 'hivemind_id': hivemind_id, 'status': 'active'})
+    return jsonify({'ok': True, 'status': 'active'})
+
+
+@app.route('/api/hivemind/<hivemind_id>/pause', methods=['POST'])
+def hivemind_pause(hivemind_id):
+    """Pause a hivemind."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    manifest['status'] = 'paused'
+    manifest['updated_at'] = now_iso()
+    _hm_save_manifest(hivemind_id, manifest)
+    # Set all active workstreams to paused
+    for ws in _hm_list_workstreams(hivemind_id):
+        if ws.get('status') == 'active':
+            ws['status'] = 'paused'
+            _hm_save_workstream(hivemind_id, ws['id'], ws)
+    _hm_push_sse(hivemind_id, {'type': 'hivemind_status', 'hivemind_id': hivemind_id, 'status': 'paused'})
+    return jsonify({'ok': True, 'status': 'paused'})
+
+
+@app.route('/api/hivemind/<hivemind_id>/stop', methods=['POST'])
+def hivemind_stop(hivemind_id):
+    """Stop a hivemind — hard stop all agents."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    manifest['status'] = 'stopped'
+    manifest['updated_at'] = now_iso()
+    _hm_save_manifest(hivemind_id, manifest)
+    # Set all non-completed workstreams to paused
+    for ws in _hm_list_workstreams(hivemind_id):
+        if ws.get('status') in ('active', 'pending', 'blocked'):
+            ws['status'] = 'paused'
+            _hm_save_workstream(hivemind_id, ws['id'], ws)
+    _hm_push_sse(hivemind_id, {'type': 'hivemind_status', 'hivemind_id': hivemind_id, 'status': 'stopped'})
+    return jsonify({'ok': True, 'status': 'stopped'})
+
+
+@app.route('/api/hivemind/<hivemind_id>', methods=['DELETE'])
+def hivemind_delete(hivemind_id):
+    """Archive/delete a hivemind."""
+    d = _hm_dir(hivemind_id)
+    if not d.exists():
+        return jsonify({'error': 'not found'}), 404
+    import shutil
+    archive_dir = HIVEMIND_DIR / '_archived'
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(d), str(archive_dir / hivemind_id))
+    return jsonify({'ok': True})
+
+
+# ── Hivemind API: Workstream Management ──────────────────────────────────────
+
+@app.route('/api/hivemind/<hivemind_id>/workstreams')
+def hivemind_workstreams_list(hivemind_id):
+    """List all workstreams for a hivemind."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    workstreams = _hm_list_workstreams(hivemind_id)
+    return jsonify(workstreams)
+
+
+@app.route('/api/hivemind/<hivemind_id>/workstreams/create', methods=['POST'])
+def hivemind_workstream_create(hivemind_id):
+    """Create a new workstream."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json()
+    if not data or not data.get('title', '').strip():
+        return jsonify({'error': 'title required'}), 400
+
+    ws_id = data.get('id', 'ws_' + str(uuid.uuid4())[:6])
+    ws = {
+        'id': ws_id,
+        'title': data['title'].strip(),
+        'description': data.get('description', '').strip(),
+        'status': 'pending',
+        'dependencies': data.get('dependencies', []),
+        'priority': data.get('priority', 5),
+        'model': data.get('model', ''),
+        'created_at': now_iso(),
+        'completed_at': None,
+        'findings_count': 0,
+        'sessions_used': 0,
+        'retry_count': 0,
+        'current_agent_session_id': None,
+        'last_agent_session_id': None,
+    }
+    _hm_save_workstream(hivemind_id, ws_id, ws)
+    manifest['updated_at'] = now_iso()
+    _hm_save_manifest(hivemind_id, manifest)
+
+    _hm_push_sse(hivemind_id, {
+        'type': 'hivemind_workstream',
+        'hivemind_id': hivemind_id,
+        'ws_id': ws_id,
+        'status': 'pending',
+        'workstream': ws,
+    })
+    return jsonify({'ok': True, 'workstream': ws})
+
+
+@app.route('/api/hivemind/<hivemind_id>/workstreams/<ws_id>', methods=['PUT'])
+def hivemind_workstream_update(hivemind_id, ws_id):
+    """Update a workstream definition."""
+    ws = _hm_load_workstream(hivemind_id, ws_id)
+    if not ws:
+        return jsonify({'error': 'workstream not found'}), 404
+    data = request.get_json() or {}
+    for key in ('title', 'description', 'dependencies', 'priority', 'model', 'status'):
+        if key in data:
+            ws[key] = data[key]
+    if data.get('status') == 'completed' and not ws.get('completed_at'):
+        ws['completed_at'] = now_iso()
+    _hm_save_workstream(hivemind_id, ws_id, ws)
+
+    manifest = _hm_load_manifest(hivemind_id)
+    if manifest:
+        manifest['updated_at'] = now_iso()
+        _hm_save_manifest(hivemind_id, manifest)
+
+    _hm_push_sse(hivemind_id, {
+        'type': 'hivemind_workstream',
+        'hivemind_id': hivemind_id,
+        'ws_id': ws_id,
+        'status': ws['status'],
+        'workstream': ws,
+    })
+    return jsonify({'ok': True, 'workstream': ws})
+
+
+@app.route('/api/hivemind/<hivemind_id>/workstreams/<ws_id>/status', methods=['POST'])
+def hivemind_workstream_status(hivemind_id, ws_id):
+    """Update workstream status (convenience endpoint for workers)."""
+    ws = _hm_load_workstream(hivemind_id, ws_id)
+    if not ws:
+        return jsonify({'error': 'workstream not found'}), 404
+    data = request.get_json() or {}
+    new_status = data.get('status', '').strip()
+    if new_status not in ('pending', 'active', 'blocked', 'completed', 'paused', 'failed'):
+        return jsonify({'error': 'invalid status'}), 400
+    ws['status'] = new_status
+    if new_status == 'completed' and not ws.get('completed_at'):
+        ws['completed_at'] = now_iso()
+    _hm_save_workstream(hivemind_id, ws_id, ws)
+
+    _hm_push_sse(hivemind_id, {
+        'type': 'hivemind_workstream',
+        'hivemind_id': hivemind_id,
+        'ws_id': ws_id,
+        'status': new_status,
+    })
+    return jsonify({'ok': True, 'status': new_status})
+
+
+# ── Hivemind API: Message Bus ────────────────────────────────────────────────
+
+@app.route('/api/hivemind/<hivemind_id>/bus/post', methods=['POST'])
+def hivemind_bus_post(hivemind_id):
+    """Post a message to the hivemind message bus."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json()
+    if not data or not data.get('type', '').strip():
+        return jsonify({'error': 'type required'}), 400
+
+    msg_type = data['type'].strip()
+    msg = {
+        'id': 'msg_' + str(uuid.uuid4())[:8],
+        'timestamp': now_iso(),
+        'from': data.get('from', 'unknown'),
+        'to': data.get('to', 'orchestrator'),
+        'type': msg_type,
+        'content': data.get('content', ''),
+        'title': data.get('title', ''),
+        'references': data.get('references', []),
+    }
+    _hm_append_bus_message(hivemind_id, msg)
+
+    # If this is a finding_report, also append to the workstream findings
+    if msg_type == 'finding_report' and data.get('from', '').startswith('ws_'):
+        ws_id = data['from']
+        finding = {
+            'id': 'f_' + str(uuid.uuid4())[:8],
+            'timestamp': msg['timestamp'],
+            'session_id': data.get('session_id', ''),
+            'type': 'finding',
+            'title': data.get('title', ''),
+            'content': data.get('content', ''),
+            'confidence': data.get('confidence', 'medium'),
+            'evidence': data.get('evidence', ''),
+            'tags': data.get('tags', []),
+            'user_reviewed': False,
+        }
+        _hm_append_finding(hivemind_id, ws_id, finding)
+        _hm_push_sse(hivemind_id, {
+            'type': 'hivemind_finding',
+            'hivemind_id': hivemind_id,
+            'ws_id': ws_id,
+            'finding': finding,
+        })
+
+    # If this is an escalation, push escalation SSE event
+    if msg_type == 'escalation':
+        _hm_push_sse(hivemind_id, {
+            'type': 'hivemind_escalation',
+            'hivemind_id': hivemind_id,
+            'ws_id': data.get('from', ''),
+            'message': data.get('content', ''),
+            'escalation_id': msg['id'],
+        })
+
+    # Push general message event
+    _hm_push_sse(hivemind_id, {
+        'type': 'hivemind_message',
+        'hivemind_id': hivemind_id,
+        'message': msg,
+    })
+
+    return jsonify({'ok': True, 'message': msg})
+
+
+@app.route('/api/hivemind/<hivemind_id>/bus/poll/<ws_id>')
+def hivemind_bus_poll(hivemind_id, ws_id):
+    """Poll messages directed at a specific workstream."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    since = request.args.get('since', '')
+    messages = _hm_read_bus_messages(hivemind_id, last_n=50, ws_filter=ws_id)
+    if since:
+        messages = [m for m in messages if m.get('timestamp', '') > since]
+    return jsonify(messages)
+
+
+@app.route('/api/hivemind/<hivemind_id>/bus/history')
+def hivemind_bus_history(hivemind_id):
+    """Get full message bus history (paginated)."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    limit = int(request.args.get('limit', 100))
+    messages = _hm_read_bus_messages(hivemind_id, last_n=limit)
+    return jsonify(messages)
+
+
+@app.route('/api/hivemind/<hivemind_id>/bus/stream')
+def hivemind_bus_stream(hivemind_id):
+    """SSE stream of all hivemind bus activity."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+
+    queue = []
+    with _hivemind_sse_lock:
+        if hivemind_id not in _hivemind_sse_queues:
+            _hivemind_sse_queues[hivemind_id] = []
+        _hivemind_sse_queues[hivemind_id].append(queue)
+
+    def generate():
+        try:
+            tick = 0
+            while True:
+                while queue:
+                    event = queue.pop(0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                tick += 1
+                if tick % 50 == 0:
+                    yield ": heartbeat\n\n"
+                _time.sleep(0.3)
+        finally:
+            with _hivemind_sse_lock:
+                queues = _hivemind_sse_queues.get(hivemind_id, [])
+                if queue in queues:
+                    queues.remove(queue)
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+# ── Hivemind API: Knowledge Base ─────────────────────────────────────────────
+
+@app.route('/api/hivemind/<hivemind_id>/knowledge/synthesis')
+def hivemind_knowledge_synthesis_get(hivemind_id):
+    """Get the current synthesis document."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    content = _hm_read_synthesis(hivemind_id)
+    return jsonify({'content': content, 'updated_at': manifest.get('updated_at')})
+
+
+@app.route('/api/hivemind/<hivemind_id>/knowledge/synthesis', methods=['PUT'])
+def hivemind_knowledge_synthesis_put(hivemind_id):
+    """Update the synthesis document (called by orchestrator CLI sessions)."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    content = data.get('content', '')
+    if not content:
+        # Try raw body
+        content = request.get_data(as_text=True)
+    _hm_write_synthesis(hivemind_id, content)
+    manifest['updated_at'] = now_iso()
+    _hm_save_manifest(hivemind_id, manifest)
+    _hm_push_sse(hivemind_id, {
+        'type': 'hivemind_synthesis',
+        'hivemind_id': hivemind_id,
+        'updated_at': manifest['updated_at'],
+    })
+    return jsonify({'ok': True})
+
+
+@app.route('/api/hivemind/<hivemind_id>/knowledge/decisions')
+def hivemind_knowledge_decisions(hivemind_id):
+    """Get all decisions."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify(_hm_read_decisions(hivemind_id))
+
+
+@app.route('/api/hivemind/<hivemind_id>/knowledge/findings')
+def hivemind_knowledge_findings(hivemind_id):
+    """Get all findings across all workstreams."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    ws_id = request.args.get('ws_id', '')
+    if ws_id:
+        last_n = int(request.args.get('limit', 50))
+        return jsonify(_hm_read_findings(hivemind_id, ws_id, last_n))
+    return jsonify(_hm_read_all_findings(hivemind_id))
+
+
+# ── Hivemind API: Escalation & User Intervention ────────────────────────────
+
+@app.route('/api/hivemind/<hivemind_id>/escalate', methods=['POST'])
+def hivemind_escalate(hivemind_id):
+    """Post an escalation (called by workers or orchestrator CLI sessions)."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    msg = {
+        'id': 'esc_' + str(uuid.uuid4())[:8],
+        'timestamp': now_iso(),
+        'from': data.get('from', 'orchestrator'),
+        'to': 'user',
+        'type': 'escalation',
+        'content': data.get('content', data.get('message', '')),
+        'workstream_id': data.get('workstream_id', data.get('from', '')),
+        'requires_response': data.get('requires_response', True),
+        'resolved': False,
+    }
+    _hm_append_bus_message(hivemind_id, msg)
+    _hm_push_sse(hivemind_id, {
+        'type': 'hivemind_escalation',
+        'hivemind_id': hivemind_id,
+        'ws_id': msg['workstream_id'],
+        'message': msg['content'],
+        'escalation_id': msg['id'],
+    })
+    return jsonify({'ok': True, 'escalation': msg})
+
+
+@app.route('/api/hivemind/<hivemind_id>/intervene', methods=['POST'])
+def hivemind_intervene(hivemind_id):
+    """User sends directive to orchestrator or specific workstream."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    message = data.get('message', '').strip()
+    if not message:
+        return jsonify({'error': 'message required'}), 400
+
+    target = data.get('target', 'orchestrator')  # workstream id or 'orchestrator'
+    msg = {
+        'id': 'msg_' + str(uuid.uuid4())[:8],
+        'timestamp': now_iso(),
+        'from': 'user',
+        'to': target,
+        'type': 'directive',
+        'content': message,
+    }
+    _hm_append_bus_message(hivemind_id, msg)
+    _hm_push_sse(hivemind_id, {
+        'type': 'hivemind_message',
+        'hivemind_id': hivemind_id,
+        'message': msg,
+    })
+    return jsonify({'ok': True, 'message': msg})
+
+
+@app.route('/api/hivemind/<hivemind_id>/findings/<finding_id>/review', methods=['POST'])
+def hivemind_finding_review(hivemind_id, finding_id):
+    """User approves/rejects a finding."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    approved = data.get('approved', True)
+    # Record as a decision
+    decision = {
+        'id': 'd_' + str(uuid.uuid4())[:8],
+        'timestamp': now_iso(),
+        'type': 'finding_review',
+        'finding_id': finding_id,
+        'approved': approved,
+        'comment': data.get('comment', ''),
+        'decided_by': 'user',
+        'user_approved': True,
+    }
+    _hm_append_decision(hivemind_id, decision)
+    return jsonify({'ok': True, 'decision': decision})
+
+
+@app.route('/api/hivemind/<hivemind_id>/decisions/<decision_id>/approve', methods=['POST'])
+def hivemind_decision_approve(hivemind_id, decision_id):
+    """User approves/rejects a decision."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    review = {
+        'id': 'd_' + str(uuid.uuid4())[:8],
+        'timestamp': now_iso(),
+        'type': 'decision_review',
+        'original_decision_id': decision_id,
+        'approved': data.get('approved', True),
+        'comment': data.get('comment', ''),
+        'decided_by': 'user',
+        'user_approved': True,
+    }
+    _hm_append_decision(hivemind_id, review)
+    return jsonify({'ok': True, 'review': review})
+
+
+# ── Hivemind: Server Orchestrator (background thread) ────────────────────────
+
+_hivemind_orchestrator_stop = threading.Event()
+
+
+def _hivemind_orchestrator_loop():
+    """Background daemon: evaluate hivemind states, resolve dependencies,
+    and schedule worker spawns. Runs every 10 seconds."""
+    while not _hivemind_orchestrator_stop.is_set():
+        try:
+            for d in HIVEMIND_DIR.iterdir():
+                if not d.is_dir() or d.name.startswith('_'):
+                    continue
+                manifest = _hm_load_manifest(d.name)
+                if not manifest or manifest.get('status') != 'active':
+                    continue
+
+                hivemind_id = manifest['id']
+                workstreams = _hm_list_workstreams(hivemind_id)
+                if not workstreams:
+                    continue
+
+                # Check for blocked workstreams that are now unblocked
+                completed_ids = {ws['id'] for ws in workstreams if ws.get('status') == 'completed'}
+                for ws in workstreams:
+                    if ws.get('status') == 'blocked':
+                        deps = ws.get('dependencies', [])
+                        if all(dep in completed_ids for dep in deps):
+                            ws['status'] = 'pending'
+                            _hm_save_workstream(hivemind_id, ws['id'], ws)
+                            _hm_push_sse(hivemind_id, {
+                                'type': 'hivemind_workstream',
+                                'hivemind_id': hivemind_id,
+                                'ws_id': ws['id'],
+                                'status': 'pending',
+                            })
+
+                # Check if all workstreams are completed
+                all_completed = all(ws.get('status') in ('completed', 'failed') for ws in workstreams)
+                if all_completed:
+                    manifest['status'] = 'completed'
+                    manifest['updated_at'] = now_iso()
+                    _hm_save_manifest(hivemind_id, manifest)
+                    _hm_push_sse(hivemind_id, {
+                        'type': 'hivemind_status',
+                        'hivemind_id': hivemind_id,
+                        'status': 'completed',
+                    })
+
+        except Exception as e:
+            print(f"[hivemind-orchestrator] Error: {e}")
+
+        _hivemind_orchestrator_stop.wait(10)
+
+
+def _start_hivemind_orchestrator():
+    """Start the hivemind orchestrator background thread."""
+    t = threading.Thread(target=_hivemind_orchestrator_loop, daemon=True)
+    t.start()
+
+
 # ── Agent log endpoint ────────────────────────────────────────────────────────
 
 @app.route('/api/project/<project_id>/agent/log')
@@ -3292,9 +4193,11 @@ def _cleanup_terminals():
 atexit.register(_cleanup_persistent_agents)
 atexit.register(_cleanup_terminals)
 atexit.register(_scheduler_stop.set)
+atexit.register(_hivemind_orchestrator_stop.set)
 
 
 if __name__ == '__main__':
     _start_scheduler()
+    _start_hivemind_orchestrator()
     print(f"Mission Control running at http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
