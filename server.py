@@ -2903,6 +2903,12 @@ def hivemind_start(hivemind_id):
     manifest['updated_at'] = now_iso()
     _hm_save_manifest(hivemind_id, manifest)
     _hm_push_sse(hivemind_id, {'type': 'hivemind_status', 'hivemind_id': hivemind_id, 'status': 'active'})
+
+    # If no workstreams exist, trigger goal decomposition
+    workstreams = _hm_list_workstreams(hivemind_id)
+    if not workstreams:
+        _hm_dispatch_orchestrator(hivemind_id, 'decompose')
+
     return jsonify({'ok': True, 'status': 'active'})
 
 

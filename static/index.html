@@ -5624,8 +5624,10 @@ async function openHivemindDashboard(hivemindId, selectedWsId) {
   const layer = document.getElementById('modal-layer');
   const win = document.createElement('div');
   win.className = 'modal-window focused';
+  win.dataset.modalId = modalId;
   win.style.width = '900px';
   win.style.height = '600px';
+  win.style.position = 'fixed';
   const z = nextModalZ++;
   win.style.zIndex = z;
 
@@ -5663,14 +5665,14 @@ function buildHivemindDashboardHTML(hivemindId, manifest, workstreams, fullData)
        <button onclick="hivemindAction('${esc(hivemindId)}','stop')" title="Stop" style="background:transparent;border:1px solid #ef444480;color:#ef4444;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px">&#x23F9; Stop</button>`
     : `<button onclick="hivemindAction('${esc(hivemindId)}','start')" style="background:transparent;border:1px solid var(--border);color:var(--text-faint);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px">&#x25B6; Start</button>`;
 
-  return `
-    <div class="modal-header" style="cursor:move;display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface)">
+  return `<div class="modal-content" style="width:100%;height:100%;display:flex;flex-direction:column">
+    <div class="modal-header" style="cursor:move;display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0">
       <h3 style="margin:0;font-size:14px;flex:1">${esc(manifest.title || 'Hivemind Dashboard')}</h3>
       <span class="hm-status-badge ${esc(manifest.status)}">${esc(manifest.status)}</span>
       ${controlsHTML}
       <button onclick="closeModalById('__hivemind_${esc(hivemindId)}')" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:16px;padding:4px 8px">&#x2715;</button>
     </div>
-    <div class="hm-dashboard" id="hm-dash-body-${esc(hivemindId)}">
+    <div class="hm-dashboard" id="hm-dash-body-${esc(hivemindId)}" style="flex:1;min-height:0">
       <div class="hm-dash-sidebar">
         <div class="hm-dash-sidebar-item ${!selectedWs ? 'active' : ''}"
              onclick="selectDashboardWs('${esc(hivemindId)}',null)">
@@ -5681,7 +5683,8 @@ function buildHivemindDashboardHTML(hivemindId, manifest, workstreams, fullData)
       <div class="hm-dash-main" id="hm-dash-main-${esc(hivemindId)}">
         ${mainContent}
       </div>
-    </div>`;
+    </div>
+  </div>`;
 }
 
 function buildHmOverviewHTML(hivemindId, manifest, workstreams, fullData) {
@@ -5875,7 +5878,7 @@ async function sendHivemindDirective(hivemindId) {
     await fetch(API_BASE + `/api/hivemind/${hivemindId}/intervene`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: msg, to: 'orchestrator' }),
+      body: JSON.stringify({ message: msg, target: 'orchestrator' }),
     });
     refreshHivemindDashboard(hivemindId);
   } catch(e) {}
@@ -5891,7 +5894,7 @@ async function sendWsDirective(hivemindId, wsId) {
     await fetch(API_BASE + `/api/hivemind/${hivemindId}/intervene`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: msg, to: wsId }),
+      body: JSON.stringify({ message: msg, target: wsId }),
     });
     refreshHivemindDashboard(hivemindId);
   } catch(e) {}
