@@ -1,9 +1,10 @@
 # Hivemind — Persistent Multi-Agent Collaborative Intelligence
 
-## Feature Specification v1.0
+## Feature Specification v1.1
 **Project:** Mission Control
 **Author:** Ron + Claude
 **Date:** 2026-03-23
+**Revised:** 2026-03-23 (v1.1 — architecture corrections and gap-fills)
 **Status:** Draft — open for review
 
 ---
@@ -21,6 +22,7 @@ Unlike ephemeral multi-agent systems (including Claude Code's built-in Agent Tea
 3. **User sovereignty** — The user sees everything, controls everything, can intervene at any point
 4. **Cross-pollination** — Agents share discoveries; insights from one workstream inform all others
 5. **Resumability** — Any hivemind can be paused and continued later with full context preservation
+6. **CLI-native** — All Claude intelligence is invoked through the same `claude` CLI subprocess infrastructure used everywhere in Mission Control; no direct API calls
 
 ---
 
@@ -30,11 +32,12 @@ Unlike ephemeral multi-agent systems (including Claude Code's built-in Agent Tea
 |------|-----------|
 | **Hivemind** | A persistent collaborative effort with a shared goal, containing multiple workstreams |
 | **Workstream** | A focused area of investigation/work within the hivemind, owned by one agent at a time |
-| **Orchestrator** | A special agent that decomposes goals, coordinates workstreams, synthesizes findings, and escalates to the user |
-| **Worker** | An agent assigned to a specific workstream — disposable, replaceable, but inherits all prior knowledge |
+| **Server orchestrator** | A Python state machine in `server.py` that tracks workstream statuses, resolves dependencies, schedules worker spawns, and routes findings — deterministic logic, no Claude involved |
+| **Orchestrator CLI session** | A short-lived `claude -p` subprocess (same pattern as memory condensation) invoked at intelligence moments: goal decomposition, synthesis, adaptive re-planning |
+| **Worker** | A standard MC agent session (Mode A or B) assigned to a specific workstream — disposable, replaceable, but inherits all prior knowledge on spawn |
 | **Knowledge Base** | The persistent store of findings, decisions, messages, and synthesis — the hivemind's long-term memory |
 | **Message Bus** | The communication channel between agents — all messages are persisted |
-| **Synthesis** | A periodically-updated human-readable summary of everything the hivemind has learned |
+| **Synthesis** | A periodically-updated human-readable summary of everything the hivemind has learned, produced by an orchestrator CLI session |
 | **Escalation** | When an agent surfaces a decision or blocker to the user for input |
 
 ---
@@ -48,10 +51,10 @@ data/hiveminds/{hivemind_id}/
   manifest.json                    # Core metadata and configuration
   workstreams/
     {ws_id}.json                   # Workstream definition and status
-    {ws_id}_findings.jsonl         # Append-only findings log
-    {ws_id}_context.md             # Accumulated context injected on resume
+    {ws_id}_findings.jsonl         # Append-only findings log (source of truth)
+    {ws_id}_context.md             # Derived working summary — updated by orchestrator CLI sessions
   knowledge/
-    synthesis.md                   # Running synthesis (auto-updated by orchestrator)
+    synthesis.md                   # Running synthesis (produced by orchestrator CLI sessions)
     decisions.jsonl                # Decisions made + rationale
     open_questions.jsonl           # Unresolved questions for future sessions
   bus/
@@ -59,6 +62,12 @@ data/hiveminds/{hivemind_id}/
   sessions/
     {session_timestamp}.json       # Per-session snapshot (who ran, what changed)
 ```
+
+**Key distinction — findings vs. context:**
+- `{ws_id}_findings.jsonl` is the **source of truth** — append-only, never edited, full record of every finding
+- `{ws_id}_context.md` is the **derived working summary** — mutable, updated by orchestrator CLI sessions or condensation; this is what gets injected into workers at spawn time
+- On worker spawn, only `_context.md` + the last N findings (default: 20) are injected — the full JSONL is never read at spawn time (could be thousands of lines)
+
 
 ### 3.2 Manifest (`manifest.json`)
 
@@ -77,11 +86,14 @@ data/hiveminds/{hivemind_id}/
     "auto_synthesize": true,
     "synthesize_interval_turns": 10,
     "require_user_approval_for_decisions": false,
-    "model": "opus",
-    "worker_model": "sonnet"
+    "orchestrator_model": "sonnet",
+    "worker_model": "sonnet",
+    "max_retries_per_workstream": 2
   }
 }
 ```
+
+Status values: `pending` | `active` | `paused` | `stopped` | `completed`
 
 ### 3.3 Workstream (`workstreams/{ws_id}.json`)
 
@@ -92,16 +104,24 @@ data/hiveminds/{hivemind_id}/
   "description": "Identify and categorize false positive engulfing patterns. Build a taxonomy of unreliable signals and determine filtering criteria.",
   "status": "completed",
   "dependencies": ["ws_001"],
+  "priority": 1,
+  "model": "sonnet",
   "created_at": "2026-03-23T14:05:00Z",
   "completed_at": "2026-03-24T16:20:00Z",
   "findings_count": 14,
   "sessions_used": 3,
+  "retry_count": 0,
   "current_agent_session_id": null,
   "last_agent_session_id": "abc-123-def"
 }
 ```
 
 Status values: `pending` | `active` | `blocked` | `completed` | `paused` | `failed`
+
+**New fields vs. v1.0:**
+- `priority` — integer, lower = higher priority. Used by the server orchestrator when more workstreams are ready than there are worker slots. Default: 5.
+- `model` — overrides `manifest.config.worker_model` for this specific workstream. Allows high-complexity workstreams to use Opus while data-processing ones use Haiku.
+- `retry_count` — tracks how many times this workstream has been retried after failure.
 
 ### 3.4 Findings (`workstreams/{ws_id}_findings.jsonl`)
 
@@ -146,68 +166,89 @@ Message types: `finding_report` | `question` | `answer` | `status_update` | `esc
   "timestamp": "2026-03-24T12:00:00Z",
   "workstream": "ws_002",
   "decision": "Use close-to-close measurement for pattern size, not wick-to-wick",
-  "rationale": "Wick-to-wick includes noise from liquidity grabs and produces inconsistent measurements across timeframes. Close-to-close aligns with actual body engulfment which is the core signal.",
+  "rationale": "Wick-to-wick includes noise from liquidity grabs and produces inconsistent measurements across timeframes.",
   "decided_by": "orchestrator",
   "user_approved": true,
   "impacts": ["ws_003", "ws_005"]
 }
 ```
 
+
 ---
 
 ## 4. Agent Architecture
 
-### 4.1 Orchestrator Agent
+### 4.1 Server Orchestrator (Python state machine)
 
-The orchestrator is a Claude agent with a specialized system prompt. It is responsible for:
+The server orchestrator is **pure Python logic in `server.py`** — no Claude session. It runs as part of the existing Flask server and is responsible for all deterministic coordination:
 
-1. **Decomposition** — Breaking the goal into workstreams with dependencies
-2. **Coordination** — Managing workstream lifecycle, spawning workers
-3. **Synthesis** — Periodically updating `knowledge/synthesis.md` with cross-workstream insights
-4. **Routing** — Forwarding relevant findings between workstreams
-5. **Escalation** — Surfacing decisions, blockers, and key findings to the user
-6. **Adaptation** — Adding/modifying workstreams based on emergent findings
+1. **Dependency resolution** — determines which workstreams are ready to run based on their `dependencies` and current statuses
+2. **Worker scheduling** — selects which ready workstreams to spawn next, respecting `max_concurrent_workers` and `priority` ordering
+3. **Finding routing** — when a finding is posted to the bus, identifies dependent workstreams and queues the finding for injection into their next worker spawn
+4. **Escalation delivery** — when an escalation message arrives on the bus, triggers a toast notification, updates the project activity log, and sets a persistent badge on the hivemind
+5. **Liveness monitoring** — detects stalled or failed workers (similar to the scheduler's liveness sweep); triggers retry or escalation as appropriate
 
-The orchestrator communicates with MC via the message bus API. It does NOT directly spawn worker agents — it requests them from the server, which manages process lifecycle.
+The server orchestrator does NOT decompose goals, write synthesis, or make adaptive decisions — those require intelligence and are delegated to orchestrator CLI sessions.
 
-**Orchestrator system prompt structure:**
+**Precedent:** The existing scheduler background thread in `server.py` is a direct model for the server orchestrator — a background thread that fires on a timer, checks state, and spawns subprocesses.
+
+### 4.2 Orchestrator CLI Sessions
+
+Orchestrator CLI sessions are **short-lived `claude -p` subprocesses** invoked by the server orchestrator at specific intelligence moments. They follow exactly the same pattern as the existing memory condensation housekeeping agent:
+
+- Spawned via `subprocess.Popen` with `claude -p <prompt> --max-turns 5 --model <orchestrator_model>`
+- Marked with `housekeeping: True` in the agent log so their completion does not trigger memory appends or further condensation
+- Registered in the Process Manager like all other subprocesses
+- Visible in the agent log but clearly labelled as orchestrator sessions
+
+**When orchestrator CLI sessions are invoked:**
+
+| Trigger | Task | Output |
+|---------|------|--------|
+| Hivemind creation | Decompose goal into initial workstreams | Creates `workstreams/{ws_id}.json` files via bus API |
+| Every N worker turns (configurable) | Synthesize all findings into `knowledge/synthesis.md` | Writes via `PUT /api/hivemind/{id}/knowledge/synthesis` |
+| Worker escalation received | Assess escalation, decide response or surface to user | Posts directive or escalation to bus |
+| Workstream stall detected | Re-plan: adjust workstream scope, add/merge workstreams | Updates workstream definitions via API |
+| User explicit request | On-demand synthesis or re-planning | Same as periodic paths |
+
+**Orchestrator CLI session system prompt structure:**
+
 ```
-You are the Orchestrator of a Hivemind analysis.
+You are the orchestrator of a Hivemind analysis. You will be given a specific task.
+Complete only that task and exit.
 
 GOAL: {manifest.goal}
 
-CURRENT STATE:
-{workstream statuses, loaded from workstream JSONs}
+CURRENT WORKSTREAM STATE:
+{workstream statuses and finding counts, loaded from workstream JSONs}
 
 KNOWLEDGE BASE SUMMARY:
 {loaded from knowledge/synthesis.md}
 
 RECENT DECISIONS:
-{loaded from knowledge/decisions.jsonl, last N}
+{loaded from knowledge/decisions.jsonl, last 10}
 
 OPEN QUESTIONS:
 {loaded from knowledge/open_questions.jsonl}
 
-YOUR CAPABILITIES:
-- Post findings/decisions/messages: curl POST /api/hivemind/{id}/bus/post
-- Request new workstream: curl POST /api/hivemind/{id}/workstreams/create
-- Update workstream status: curl POST /api/hivemind/{id}/workstreams/{ws_id}/status
-- Request worker spawn: curl POST /api/hivemind/{id}/workstreams/{ws_id}/spawn
-- Escalate to user: curl POST /api/hivemind/{id}/escalate
-- Update synthesis: curl PUT /api/hivemind/{id}/knowledge/synthesis
+YOUR TASK: {specific task — decompose / synthesize / re-plan / respond to escalation}
 
-YOUR RESPONSIBILITIES:
-1. Review any new findings from workers since last session
-2. Update synthesis if new information warrants it
-3. Identify which workstreams to advance next
-4. Request worker spawns for active workstreams
-5. Route relevant findings to dependent workstreams
-6. Escalate blockers or important decisions to the user
+YOUR CAPABILITIES (use curl to call these):
+- Post to message bus: curl -X POST http://localhost:5199/api/hivemind/{id}/bus/post -d '{...}'
+- Create workstream: curl -X POST http://localhost:5199/api/hivemind/{id}/workstreams/create -d '{...}'
+- Update workstream: curl -X PUT http://localhost:5199/api/hivemind/{id}/workstreams/{ws_id} -d '{...}'
+- Update synthesis: curl -X PUT http://localhost:5199/api/hivemind/{id}/knowledge/synthesis -d '{...}'
+- Escalate to user: curl -X POST http://localhost:5199/api/hivemind/{id}/escalate -d '{...}'
+
+Complete your task, call the appropriate API endpoints, then stop. Do not start new tasks.
 ```
 
-### 4.2 Worker Agents
+The `_hivemind_orchestrating` set (analogous to `_condensing_projects`) prevents double-dispatch of orchestrator sessions for the same hivemind.
 
-Each worker is a standard Claude agent session (using MC's existing Mode A or Mode B infrastructure). Workers receive a workstream-specific system prompt:
+
+### 4.3 Worker Agents
+
+Each worker is a standard MC agent session (Mode A or Mode B), spawned by the server orchestrator. Workers receive a workstream-specific system prompt injected via `--append-system-prompt`:
 
 ```
 You are a specialist agent in a Hivemind analysis.
@@ -215,43 +256,61 @@ You are a specialist agent in a Hivemind analysis.
 YOUR WORKSTREAM: {ws.title}
 YOUR BRIEF: {ws.description}
 
-ACCUMULATED KNOWLEDGE (from previous sessions on this workstream):
+ACCUMULATED CONTEXT (from previous sessions on this workstream):
 {loaded from workstreams/{ws_id}_context.md}
 
-KEY FINDINGS SO FAR:
-{loaded from workstreams/{ws_id}_findings.jsonl}
+RECENT FINDINGS FROM THIS WORKSTREAM (last 20):
+{loaded from workstreams/{ws_id}_findings.jsonl, last 20 entries}
 
 RELEVANT FINDINGS FROM OTHER WORKSTREAMS:
-{filtered from bus/messages.jsonl — only findings tagged as relevant to this ws}
+{filtered from bus/messages.jsonl — only findings tagged as relevant to this workstream}
 
 DECISIONS THAT AFFECT YOUR WORK:
 {filtered from knowledge/decisions.jsonl by ws.impacts}
 
-YOUR CAPABILITIES:
-- Report a finding: curl POST /api/hivemind/{id}/bus/post -d '{"from":"{ws_id}","type":"finding_report",...}'
-- Ask a question: curl POST /api/hivemind/{id}/bus/post -d '{"from":"{ws_id}","type":"question","to":"ws_xxx",...}'
-- Report blocker: curl POST /api/hivemind/{id}/bus/post -d '{"from":"{ws_id}","type":"escalation",...}'
-- Mark complete: curl POST /api/hivemind/{id}/workstreams/{ws_id}/status -d '{"status":"completed"}'
+YOUR CAPABILITIES (use curl to call these):
+- Report a finding: curl -X POST http://localhost:5199/api/hivemind/{id}/bus/post \
+    -d '{"from":"{ws_id}","type":"finding_report","title":"...","content":"..."}'
+- Ask a question: curl -X POST http://localhost:5199/api/hivemind/{id}/bus/post \
+    -d '{"from":"{ws_id}","type":"question","to":"ws_xxx","content":"..."}'
+- Report a blocker: curl -X POST http://localhost:5199/api/hivemind/{id}/bus/post \
+    -d '{"from":"{ws_id}","type":"escalation","content":"..."}'
+- Mark complete: curl -X POST http://localhost:5199/api/hivemind/{id}/workstreams/{ws_id}/status \
+    -d '{"status":"completed"}'
 
 RULES:
-1. Build on accumulated knowledge — do NOT repeat analysis already done
-2. Report findings as you discover them (don't batch)
+1. Build on accumulated context — do NOT repeat analysis already completed
+2. Report findings as you discover them (do not batch at the end)
 3. Reference evidence and data for all findings
 4. If you need information from another workstream, ask via the bus
-5. If you hit a decision that affects other workstreams, escalate
+5. If you encounter a decision point that affects other workstreams, escalate
+6. Do NOT write to the project MEMORY.md — your findings go to the bus only
 ```
 
-### 4.3 Context Injection on Resume
+**Memory policy for workers:** Workers must not write to the project `MEMORY.md`. Their knowledge goes exclusively to the hivemind knowledge base via the bus API. The server orchestrator may optionally write a top-level summary to project `MEMORY.md` at synthesis time (one-way bridge: knowledge base → project memory). Project `MEMORY.md` content is also excluded from worker context injection to prevent cross-contamination.
 
-When a worker is spawned for a workstream that has prior history, the server builds the context injection by:
+### 4.4 Context Injection Budget
 
-1. Loading `{ws_id}_context.md` (human-curated or orchestrator-maintained summary)
-2. Loading last N findings from `{ws_id}_findings.jsonl`
-3. Loading relevant cross-workstream findings from `bus/messages.jsonl`
-4. Loading applicable decisions from `knowledge/decisions.jsonl`
-5. Assembling into the system prompt (with size budgeting to stay within limits)
+When building the worker system prompt, the server applies the same context budget logic as the main agent dispatch:
 
-If accumulated context exceeds a threshold, the orchestrator is asked to **condense** the context file — summarizing older findings while preserving key insights (similar to MC's existing two-tier memory condensation).
+1. Load `{ws_id}_context.md`
+2. Load last 20 findings from `{ws_id}_findings.jsonl`
+3. Load relevant bus messages (cross-workstream findings tagged for this workstream)
+4. Load applicable decisions from `knowledge/decisions.jsonl`
+5. Check combined size — if over threshold (default 20KB), trigger context condensation before spawning
+
+Context condensation for hivemind workstreams follows the same pattern as the existing `_auto_condense_memory()` flow: a short-lived `claude -p` housekeeping session reads the full findings and context, produces a condensed `{ws_id}_context.md`, and then the worker is spawned with the condensed context.
+
+### 4.5 Error Recovery
+
+Worker failures are expected in long-running hiveminds (context overflow, timeout, bad data). The server orchestrator handles these explicitly:
+
+- **Transient failures** (context overflow, timeout, unexpected exit): auto-retry up to `manifest.config.max_retries_per_workstream`. Each retry spawns a fresh worker that inherits all findings posted before the failure. `workstream.retry_count` is incremented on each attempt.
+- **Unrecoverable failures** (repeated failures after max retries, or agent posts an escalation of type `blocker`): workstream status set to `failed`; server orchestrator escalates to user with a summary of what was attempted and what failed.
+- **Stall detection**: if a worker session has been running for > N minutes with no new findings posted to the bus, the server orchestrator flags it as potentially stalled and escalates to user.
+
+The `_condensing_projects` guard pattern is reused: a `_retrying_workstreams` set prevents double-spawn on retry.
+
 
 ---
 
@@ -261,13 +320,13 @@ If accumulated context exceeds a threshold, the orchestrator is asked to **conde
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/hivemind/create` | Create a new hivemind from goal + project |
+| `POST` | `/api/hivemind/create` | Create hivemind from goal + project; triggers orchestrator CLI session for goal decomposition |
 | `GET` | `/api/hivemind/{id}` | Get full hivemind state |
 | `GET` | `/api/hivemind/list` | List all hiveminds (optionally by project) |
 | `PUT` | `/api/hivemind/{id}` | Update hivemind config |
-| `POST` | `/api/hivemind/{id}/start` | Start/resume the hivemind (spawn orchestrator) |
-| `POST` | `/api/hivemind/{id}/pause` | Pause all agents, preserve state |
-| `POST` | `/api/hivemind/{id}/stop` | Stop all agents, mark inactive |
+| `POST` | `/api/hivemind/{id}/start` | Start/resume the hivemind — server orchestrator re-evaluates state and spawns ready workers |
+| `POST` | `/api/hivemind/{id}/pause` | Graceful pause: send checkpoint directive to all active workers, wait for acknowledgment, then set status to `paused`. Use `?force=true` for hard stop (kills all worker processes immediately via Process Manager kill API). |
+| `POST` | `/api/hivemind/{id}/stop` | Hard stop all agents, mark inactive |
 | `DELETE` | `/api/hivemind/{id}` | Archive a hivemind |
 
 ### 5.2 Workstream Management
@@ -294,10 +353,10 @@ If accumulated context exceeds a threshold, the orchestrator is asked to **conde
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/hivemind/{id}/knowledge/synthesis` | Current synthesis document |
-| `PUT` | `/api/hivemind/{id}/knowledge/synthesis` | Update synthesis (orchestrator) |
+| `PUT` | `/api/hivemind/{id}/knowledge/synthesis` | Update synthesis (called by orchestrator CLI session) |
 | `GET` | `/api/hivemind/{id}/knowledge/decisions` | All decisions |
 | `GET` | `/api/hivemind/{id}/knowledge/findings` | All findings across workstreams |
-| `POST` | `/api/hivemind/{id}/escalate` | Escalate to user |
+| `POST` | `/api/hivemind/{id}/escalate` | Post an escalation (called by workers or orchestrator CLI sessions) |
 
 ### 5.5 User Intervention
 
@@ -307,15 +366,32 @@ If accumulated context exceeds a threshold, the orchestrator is asked to **conde
 | `POST` | `/api/hivemind/{id}/findings/{f_id}/review` | User approves/rejects a finding |
 | `POST` | `/api/hivemind/{id}/decisions/{d_id}/approve` | User approves/rejects a decision |
 
+### 5.6 SSE Event Types
+
+Hivemind events flow through the existing SSE infrastructure. New event types (prefixed `hivemind_`) are added alongside existing agent event types:
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `hivemind_finding` | `{hivemind_id, ws_id, finding}` | New finding posted to bus |
+| `hivemind_workstream` | `{hivemind_id, ws_id, status}` | Workstream status changed |
+| `hivemind_escalation` | `{hivemind_id, ws_id, message, escalation_id}` | User action required |
+| `hivemind_synthesis` | `{hivemind_id, updated_at}` | `synthesis.md` updated |
+| `hivemind_worker_spawned` | `{hivemind_id, ws_id, session_id}` | Worker agent started |
+| `hivemind_worker_done` | `{hivemind_id, ws_id, session_id, status}` | Worker completed or failed |
+| `hivemind_message` | `{hivemind_id, message}` | General bus message |
+
+These events are pushed to the project's SSE stream and consumed by the frontend's existing `connectAgentStream()` handler, extended to route `hivemind_*` events to the Hivemind tab.
+
+
 ---
 
 ## 6. Frontend Design
 
 ### 6.1 Entry Points
 
-- **Project tile badge** — Shows active hivemind indicator (e.g., honeycomb icon with agent count)
+- **Project tile badge** — Shows active hivemind indicator (honeycomb icon with worker count). Red badge overlay when there is an unresolved escalation.
 - **Project modal** — New "Hivemind" tab alongside Backlog, Agent, Agent Log, Activity
-- **Standalone hivemind modal** — Full-width view for detailed monitoring (similar to plan viewer)
+- **Standalone hivemind modal** — Full-width view for detailed monitoring (same draggable/resizable pattern as Plan Viewer)
 
 ### 6.2 Hivemind Tab (in project modal)
 
@@ -324,28 +400,31 @@ If accumulated context exceeds a threshold, the orchestrator is asked to **conde
 │  Hivemind: Engulfing Pattern Deep Analysis          [⏸] [⏹] │
 │  Session 5 · 14 findings · 3 decisions · 2hr 34min total    │
 ├──────────────────────────────────────────────────────────────┤
-│                                                              │
 │  Goal: Comprehensive analysis of engulfing pattern data...   │
 │                                                              │
 │  Workstreams:                                                │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │ ✅ ws_001  Historical Frequency Analysis    [3 findings]│  │
-│  │ ✅ ws_002  False Positive Classification   [14 findings]│  │
-│  │ 🔄 ws_003  Multi-Timeframe Correlation      [5 findings]│  │
-│  │ ⏳ ws_004  Optimal Entry/Exit Parameters    [blocked]   │  │
-│  │ ⏳ ws_005  Combined Scoring Model           [blocked]   │  │
-│  └────────────────────────────────────────────────────────┘  │
+│  ✅ ws_001  Historical Frequency Analysis    [3 findings]    │
+│  ✅ ws_002  False Positive Classification   [14 findings]    │
+│  🔄 ws_003  Multi-Timeframe Correlation      [5 findings]    │
+│  ⏳ ws_004  Optimal Entry/Exit Parameters    [blocked]       │
+│  ⏳ ws_005  Combined Scoring Model           [blocked]       │
 │                                                              │
 │  Latest Activity:                                            │
 │  [14:32] ws_003 finding: H4+D1 alignment shows 67% WR       │
-│  [14:28] orchestrator → ws_003: Check correlation with...    │
-│  [14:15] ws_003 finding: Sample size sufficient (n=128)      │
+│  [14:28] orchestrator → ws_003: Check correlation with...   │
 │  [14:01] ⚠ ESCALATION: Should we include crypto-specific... │
 │          [Respond]                                           │
 │                                                              │
-│  [View Full Dashboard]  [View Synthesis]  [Export Report]    │
+│  [View Full Dashboard]  [View Synthesis]  [Export Report]   │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+**Escalation notification path:**
+1. `hivemind_escalation` SSE event received → `showToast()` with escalation summary
+2. Persistent badge (red dot) added to project tile — not dismissed until user responds
+3. Escalation entry added to project Activity log
+4. "Respond" button inline in Hivemind tab activity feed
+5. Unresolved escalations listed at top of Hivemind tab with prominent styling
 
 ### 6.3 Full Dashboard (standalone modal)
 
@@ -353,44 +432,32 @@ If accumulated context exceeds a threshold, the orchestrator is asked to **conde
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Hivemind Dashboard: Engulfing Pattern Deep Analysis       [⏸] [⏹] [×]│
 ├───────────────┬─────────────────────────────────────────────────────────┤
-│               │                                                         │
 │  Workstreams  │  ws_003: Multi-Timeframe Correlation            [⏸][↗] │
-│               │  ──────────────────────────────────────────────────────  │
-│  ✅ Frequency │  Status: active · Session 2 · 5 findings               │
-│  ✅ False Pos │                                                         │
-│  🔄 Multi-TF  │  Findings:                                              │
-│  ⏳ Entry/Exit│  • H4 engulfing + D1 bullish trend = 67% WR (n=128)    │
-│  ⏳ Scoring   │  • H1 engulfing alone = 51% WR (no edge)               │
-│               │  • Volume confirmation adds +8% to filtered WR          │
-│  ──────────── │  • Asian session: insufficient sample (n=23)            │
-│  [+ Add]      │  • Crypto pairs show higher correlation than forex      │
+│               │  Status: active · Session 2 · 5 findings               │
+│  ✅ Frequency │                                                         │
+│  ✅ False Pos │  Findings:                                              │
+│  🔄 Multi-TF  │  • H4 engulfing + D1 bullish trend = 67% WR (n=128)   │
+│  ⏳ Entry/Exit│  • H1 engulfing alone = 51% WR (no edge)               │
+│  ⏳ Scoring   │  • Volume confirmation adds +8% to filtered WR          │
 │               │                                                         │
-│               │  Agent Output (live):                                    │
-│               │  ┌─────────────────────────────────────────────────────┐ │
-│               │  │ > Analyzing EUR/USD 4H data for comparison...      │ │
-│               │  │ > Found 67 engulfing patterns in 2-year range      │ │
-│               │  │ > Cross-referencing with D1 trend direction...     │ │
-│               │  └─────────────────────────────────────────────────────┘ │
+│  [+ Add]      │  Agent Output (live):                                   │
+│               │  > Analyzing EUR/USD 4H data for comparison...         │
+│               │  > Found 67 engulfing patterns in 2-year range         │
 │               │                                                         │
 │               │  [Send directive to this workstream...]                 │
 ├───────────────┴─────────────────────────────────────────────────────────┤
 │  Message Bus                                            [Filter ▼]      │
-│  ─────────────────────────────────────────────────────────────────────── │
 │  14:32  ws_003 → orchestrator  Finding: H4+D1 alignment 67% WR         │
 │  14:30  orchestrator → ws_003  Check if pattern holds for EUR/USD       │
-│  14:28  ws_002 → ws_003        FYI: exclude wick-ratio < 0.4 patterns  │
-│  14:15  ⚠ orchestrator → user  ESCALATION: Include crypto-only data?   │
-│         [Respond to escalation...]                                      │
+│  ⚠ 14:01  orchestrator → user  ESCALATION: Include crypto-only data?   │
+│           [Respond to escalation...]                                    │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 6.4 Synthesis Viewer
 
-Accessible via "View Synthesis" button. Renders `knowledge/synthesis.md` in a modal with:
-- Markdown rendering
-- Last-updated timestamp
-- Option to manually trigger re-synthesis
-- Export as standalone document
+Accessible via "View Synthesis" button. Renders `knowledge/synthesis.md` in a modal with markdown rendering, last-updated timestamp, manual re-synthesis trigger, and export as standalone document.
+
 
 ---
 
@@ -399,19 +466,18 @@ Accessible via "View Synthesis" button. Renders `knowledge/synthesis.md` in a mo
 ### 7.1 Create Hivemind
 
 ```
-User clicks "New Hivemind" in project modal
-  → Enters goal description
+User clicks "New Hivemind" in project modal → enters goal description
   → POST /api/hivemind/create
-  → Server creates directory structure + manifest
-  → Server spawns orchestrator agent
-  → Orchestrator decomposes goal into workstreams
-  → Orchestrator posts workstream definitions via bus
-  → Server creates workstream JSON files
+  → Server creates directory structure + manifest.json
+  → Server spawns orchestrator CLI session (claude -p, task: goal decomposition)
+  → Orchestrator CLI session posts workstream definitions via bus API
+  → Server creates workstream JSON files from bus messages
   → Frontend renders workstream list
-  → Orchestrator requests first batch of worker spawns
-  → Server spawns workers (up to max_concurrent)
+  → Orchestrator CLI session exits
+  → Server orchestrator evaluates dependency graph, identifies ready workstreams
+  → Server orchestrator spawns workers (up to max_concurrent_workers, by priority)
   → Workers begin analysis, post findings to bus
-  → Frontend updates in real-time via SSE
+  → Frontend updates in real-time via SSE (hivemind_* events)
 ```
 
 ### 7.2 Resume Hivemind
@@ -419,113 +485,157 @@ User clicks "New Hivemind" in project modal
 ```
 User clicks "Resume" on paused hivemind
   → POST /api/hivemind/{id}/start
-  → Server loads manifest, checks last state
-  → Server spawns orchestrator with full context injection:
-      - manifest.goal
-      - All workstream statuses
-      - knowledge/synthesis.md
-      - Recent decisions and open questions
-  → Orchestrator reviews state, determines next actions
-  → Orchestrator requests worker spawns for active workstreams
-  → Workers spawn with workstream-specific context injection:
-      - Their findings history
-      - Relevant cross-workstream findings
-      - Applicable decisions
+  → Server orchestrator loads manifest, re-evaluates workstream statuses
+  → Server orchestrator spawns orchestrator CLI session (task: review state, identify next actions)
+  → Orchestrator CLI session reads synthesis.md + recent decisions, may update open_questions.jsonl
+  → Orchestrator CLI session exits
+  → Server orchestrator identifies ready workstreams (pending/paused with deps met)
+  → Workers spawn with context injection:
+      - {ws_id}_context.md (condensed prior knowledge)
+      - Last 20 findings from {ws_id}_findings.jsonl
+      - Relevant cross-workstream bus messages
+      - Applicable decisions from decisions.jsonl
+      - NOTE: project MEMORY.md is NOT included
   → Work continues from where it left off
 ```
 
-### 7.3 User Intervention
+### 7.3 Pause Hivemind
+
+**Graceful pause (default):**
+```
+User clicks Pause (or POST /api/hivemind/{id}/pause)
+  → Server sends follow-up directive to all active workers:
+    "Please stop at a clean checkpoint. Post any in-progress findings to the bus,
+     mark yourself complete or paused, then stop. Do not start new work."
+  → Server waits up to 60 seconds for workers to acknowledge
+  → After timeout or acknowledgment, sets all active workstream statuses to "paused"
+  → Sets hivemind status to "paused"
+```
+
+**Hard stop (`?force=true`):**
+```
+  → Server calls Process Manager kill API for all registered worker PIDs
+  → All active workstream statuses set to "paused" immediately
+  → Findings posted before kill are preserved in JSONL
+  → In-flight work since last finding post is lost
+  → Hivemind status set to "paused"
+```
+
+### 7.4 Worker Error Recovery
+
+```
+Worker session ends with error (or no new findings for > stall_threshold minutes)
+  → Server orchestrator detects via process liveness check
+  → If workstream.retry_count < max_retries_per_workstream:
+      → Increment retry_count
+      → Re-spawn worker with same context injection (findings before failure are preserved)
+      → Log retry event to activity feed
+  → Else (retries exhausted):
+      → Set workstream status to "failed"
+      → Spawn orchestrator CLI session (task: assess failure, decide to re-scope or escalate)
+      → Orchestrator CLI session either updates workstream scope and resets retry_count,
+        or posts escalation to user
+```
+
+### 7.5 User Intervention
 
 ```
 User types message in workstream directive input
   → POST /api/hivemind/{id}/intervene
   → Message posted to bus with type "directive"
-  → If directed at specific workstream: delivered to worker as follow-up
-  → If directed at orchestrator: orchestrator processes and may redirect workers
+  → If directed at specific workstream: delivered as follow-up to active worker session
+  → If directed at orchestrator: spawns orchestrator CLI session (task: process directive)
   → Bus message persisted for future context
 ```
 
-### 7.4 Escalation Flow
+### 7.6 Escalation Flow
 
 ```
-Worker encounters decision point
-  → Posts escalation to bus
-  → Server creates notification
-  → SSE pushes notification to frontend
-  → Frontend shows alert with "Respond" button
-  → User types response
-  → Response posted to bus, delivered to requesting agent
+Worker or orchestrator CLI session calls POST /api/hivemind/{id}/escalate
+  → Server persists escalation in bus/messages.jsonl
+  → SSE pushes hivemind_escalation event to frontend
+  → Frontend: showToast(), adds persistent red badge to project tile,
+    adds entry to activity log, shows "Respond" button in Hivemind tab
+  → User types response via Respond UI
+  → Response posted to bus as "directive", delivered to originating workstream
   → Decision recorded in knowledge/decisions.jsonl
+  → Badge cleared after user responds
 ```
 
-### 7.5 Synthesis Cycle
+### 7.7 Synthesis Cycle
 
 ```
-Every N turns (configurable) OR on orchestrator request:
-  → Orchestrator reads all workstream findings
-  → Orchestrator reads current synthesis.md
-  → Orchestrator produces updated synthesis
-  → PUT /api/hivemind/{id}/knowledge/synthesis
-  → Server writes synthesis.md
-  → Frontend notified of update via SSE
+Every N worker turns (configurable) OR on user request:
+  → Server orchestrator spawns orchestrator CLI session (task: synthesize)
+  → CLI session reads all workstream findings and current synthesis.md
+  → CLI session produces updated synthesis via PUT /api/hivemind/{id}/knowledge/synthesis
+  → SSE pushes hivemind_synthesis event
+  → Frontend notifies user of synthesis update
+  → CLI session exits
 ```
 
-### 7.6 Context Condensation
+### 7.8 Context Condensation
 
 ```
-When workstream context exceeds size threshold:
-  → Server detects during context injection build
-  → Server spawns condensation agent (similar to existing MC memory condense)
-  → Condensation agent reads full findings + context
+When workstream context exceeds size threshold (during spawn context build):
+  → Server detects context + findings exceed budget
+  → Spawns condensation CLI session (claude -p, same pattern as memory condensation)
+  → Condensation session reads full findings + context
   → Produces condensed {ws_id}_context.md
-  → Older findings remain in JSONL (append-only) but active context is trimmed
-  → Next worker spawn uses condensed context
+  → Older findings remain in JSONL (append-only) — source of truth preserved
+  → Worker then spawned with condensed context
 ```
+
 
 ---
 
 ## 8. Implementation Phases
 
-### Phase 1: Foundation (Data + API)
+The phases are deliberately ordered so that real agent behavior validates the API design early, before the full API surface is built.
+
+### Phase 1 — Minimal Foundation (unblocks Phase 2 immediately)
 - Directory structure and data model
 - Manifest CRUD
-- Workstream CRUD
-- Message bus (post + poll + history)
-- Knowledge base endpoints (synthesis, decisions, findings)
-- SSE stream for hivemind events
+- Workstream CRUD (including `priority` and `model` fields)
+- Findings post + last-N read
+- Minimal SSE (hivemind_finding, hivemind_workstream, hivemind_worker_spawned, hivemind_worker_done)
+- Basic server orchestrator (dependency resolver + worker scheduler background thread)
 
-### Phase 2: Agent Integration
-- Orchestrator system prompt builder
+### Phase 2 — Agent Integration (starts before Phase 1 is complete)
+- Orchestrator CLI session infrastructure (goal decomposition on create)
 - Worker system prompt builder with context injection
-- Orchestrator spawn + lifecycle management
 - Worker spawn + lifecycle management
-- Follow-up/directive routing to agents
-- Integration with existing MC agent infrastructure (Mode A/B)
+- Follow-up / directive routing to active workers
+- Error recovery (retry logic, stall detection)
+- Integration with Process Manager for all spawned processes
 
-### Phase 3: Frontend — Basic
+*Phase 1 remainder runs in parallel:* full message bus (poll + history), full knowledge base endpoints, complete SSE event set, escalation delivery
+
+### Phase 3 — Frontend (Basic)
 - Hivemind tab in project modal
-- Workstream list with status indicators
-- Activity feed (message bus viewer)
-- Escalation alerts with response UI
-- Create hivemind dialog
-- Resume/pause/stop controls
+- Workstream list with status indicators (pending/active/blocked/completed/failed)
+- Activity feed (recent bus messages)
+- Escalation alerts: toast + badge + Respond UI
+- Create hivemind dialog (goal input)
+- Resume / pause / stop controls
 
-### Phase 4: Frontend — Full Dashboard
+### Phase 4 — Frontend (Full Dashboard)
 - Standalone hivemind dashboard modal
-- Workstream detail view with findings
+- Per-workstream detail view with findings list
 - Live agent output per workstream
 - Synthesis viewer
 - Message bus with filtering
 - Directive input per workstream
+- Per-workstream model + priority editing
 
-### Phase 5: Intelligence & Polish
-- Context condensation for long-running hiveminds
-- Auto-synthesis cycle
-- Dependency graph visualization
-- Cost tracking per hivemind (aggregate token usage)
+### Phase 5 — Intelligence & Polish
+- Auto-synthesis cycle (every N turns)
+- Adaptive re-planning on stall/escalation (orchestrator CLI session)
+- Context condensation for long-running workstreams
+- Cost tracking per hivemind (aggregate token usage across all worker + orchestrator sessions)
 - Export synthesis as standalone report
-- Hivemind templates (pre-built decomposition patterns)
-- Fork/branch a hivemind for alternative hypotheses
+- Hivemind templates (pre-built decomposition patterns for common analysis types)
+- Optional one-way bridge: orchestrator writes top-level summary to project MEMORY.md at synthesis time
 
 ---
 
@@ -533,33 +643,34 @@ When workstream context exceeds size threshold:
 
 | MC System | Integration |
 |-----------|------------|
-| **Agent sessions** | Workers are standard MC agent sessions; reuse Mode A/B infrastructure |
-| **SSE streaming** | Hivemind events flow through existing SSE; new event types added |
-| **Memory system** | Hivemind knowledge base is separate from project memory; orchestrator can write key findings to project memory too |
-| **Terminal pop-out** | Workers can launch terminals as usual for data processing |
-| **GitHub sync** | Hivemind findings could optionally sync as GitHub issues/discussions |
-| **Scheduler** | Scheduled hivemind sessions (e.g., "run analysis nightly with new data") |
-| **Process manager** | All hivemind agent processes registered and visible |
+| **Agent sessions (Mode A/B)** | Workers are standard MC agent sessions; full reuse of spawn, SSE streaming, follow-up, stop infrastructure |
+| **Orchestrator CLI sessions** | Same pattern as existing memory condensation housekeeping agent (`claude -p`, `housekeeping: True`, `--max-turns 5`) |
+| **Process Manager** | All hivemind worker and orchestrator processes registered at spawn, visible in Process Manager modal |
+| **SSE streaming** | Hivemind events use new `hivemind_*` event types flowing through existing SSE infrastructure |
+| **Memory system** | Hivemind knowledge base is separate from project MEMORY.md. Workers do NOT write to MEMORY.md. Orchestrator may optionally write a synthesis summary to MEMORY.md (Phase 5). |
+| **Scheduler** | Scheduled hivemind sessions — e.g. "run analysis nightly with new data" |
+| **Terminal pop-out** | Workers can launch terminal windows as usual for data processing tasks |
+| **Token tracking** | All worker + orchestrator sessions contribute to per-project and global token counters |
+| **GitHub sync** | Hivemind findings could optionally sync as GitHub Issues/Discussions (Phase 5) |
+| **Context budget system** | Same 20KB pre-dispatch warning and auto-condensation logic applied to worker context builds |
 
 ---
 
-## 10. Open Questions
+## 10. Open Questions (resolved and remaining)
 
-1. **Orchestrator as agent vs. server logic?** Current spec uses a real Claude agent as orchestrator. Alternative: server-side orchestration with rule-based coordination. Agent approach is more flexible but costs more tokens.
+**Resolved in v1.1:**
+- ~~Should the orchestrator be a Claude agent or server logic?~~ → **Hybrid: server state machine for deterministic coordination + short-lived orchestrator CLI sessions for intelligence moments** (same pattern as memory condensation)
+- ~~Should different workstreams use different models?~~ → **Yes** — `model` field on workstream JSON, overrides manifest `worker_model`
+- ~~How to handle concurrent hivemind + limited worker slots?~~ → `priority` field on workstream, server orchestrator schedules by priority when `max_concurrent_workers` is reached
 
-2. **Worker model selection** — Should different workstreams be able to use different models? (e.g., Opus for complex analysis, Sonnet for data processing)
+**Still open:**
+1. **Concurrent hiveminds** — Should a project support multiple active hiveminds simultaneously?
+2. **Cross-project hiveminds** — Should a hivemind span multiple MC projects?
+3. **Human-in-the-loop granularity** — Should every finding require user approval, or only decisions/escalations? Configurable per-hivemind?
+4. **Real-time inter-agent communication** — Should workers message each other directly, or route everything through the bus? Direct is faster but harder to audit.
+5. **External data integration** — Workers ingest files/APIs and store processed results in the knowledge base?
+6. **Versioning** — Should synthesis/findings support versioning to track how understanding evolved?
 
-3. **Concurrent hiveminds** — Should a project support multiple active hiveminds? (e.g., one for pattern analysis, one for portfolio optimization)
-
-4. **Cross-project hiveminds** — Should a hivemind be able to span multiple MC projects?
-
-5. **Human-in-the-loop granularity** — Should every finding require user approval, or only decisions/escalations? Configurable per-hivemind?
-
-6. **Real-time inter-agent communication** — Should workers be able to message each other directly, or should everything route through the orchestrator? Direct messaging is faster but harder to track.
-
-7. **External data integration** — Should workers be able to ingest external data (files, APIs) and store processed results in the knowledge base?
-
-8. **Versioning** — Should synthesis/findings support versioning so you can see how understanding evolved over time?
 
 ---
 
@@ -567,46 +678,45 @@ When workstream context exceeds size threshold:
 
 **Goal:** Deep analysis of all aspects of engulfing pattern data — detection methods, classification, statistical edge, multi-timeframe correlation, optimal trade parameters, and combined scoring model.
 
-**Orchestrator decomposes into:**
+**Orchestrator CLI session decomposes into:**
 
-| # | Workstream | Dependencies | Description |
-|---|-----------|-------------|-------------|
-| 1 | Historical Frequency Analysis | — | Scan dataset, identify all engulfing patterns, establish baseline statistics |
-| 2 | False Positive Classification | 1 | Categorize unreliable patterns, build filter taxonomy |
-| 3 | Multi-Timeframe Correlation | 1 | Test pattern reliability across timeframe combinations |
-| 4 | Volume & Momentum Confirmation | 1, 2 | Analyze volume, RSI, and momentum at pattern formation |
-| 5 | Session & Timing Analysis | 1, 2 | Compare pattern reliability across trading sessions |
-| 6 | Support/Resistance Proximity | 1, 2 | Measure pattern reliability near key price levels |
-| 7 | Optimal Entry/Exit Parameters | 2, 3, 4 | Determine best stop-loss, take-profit, and R:R ratios |
-| 8 | Combined Scoring Model | ALL | Build composite score from all factors, backtest |
+| # | Workstream | Priority | Model | Dependencies | Description |
+|---|-----------|----------|-------|-------------|-------------|
+| 1 | Historical Frequency Analysis | 1 | Sonnet | — | Scan dataset, identify all engulfing patterns, establish baseline statistics |
+| 2 | False Positive Classification | 1 | Sonnet | 1 | Categorize unreliable patterns, build filter taxonomy |
+| 3 | Multi-Timeframe Correlation | 2 | Sonnet | 1 | Test pattern reliability across timeframe combinations |
+| 4 | Volume & Momentum Confirmation | 2 | Haiku | 1, 2 | Analyze volume, RSI, and momentum at pattern formation |
+| 5 | Session & Timing Analysis | 2 | Haiku | 1, 2 | Compare pattern reliability across trading sessions |
+| 6 | Support/Resistance Proximity | 3 | Haiku | 1, 2 | Measure pattern reliability near key price levels |
+| 7 | Optimal Entry/Exit Parameters | 3 | Sonnet | 2, 3, 4 | Determine best stop-loss, take-profit, and R:R ratios |
+| 8 | Combined Scoring Model | 4 | Opus | ALL | Build composite score from all factors, backtest |
 
-**After 3 sessions, synthesis.md might contain:**
+Note the model assignments: data-processing workstreams (4, 5, 6) use Haiku for cost efficiency; analysis workstreams use Sonnet; the final synthesis workstream uses Opus for the highest-quality combined output.
+
+**After 3 sessions, `knowledge/synthesis.md` might contain:**
 
 ```markdown
 # Engulfing Pattern Analysis — Synthesis
 Last updated: 2026-03-25T09:30:00Z | Session 3 of ongoing
 
 ## Executive Summary
-Engulfing patterns show statistically significant predictive power ONLY
-when filtered by multiple confirmation factors. Raw engulfing signals have
-no edge (52% win rate). Filtered signals show 67-72% win rate depending
-on filter combination.
+Engulfing patterns show statistically significant predictive power ONLY when filtered
+by multiple confirmation factors. Raw signals have no edge (52% win rate). Filtered
+signals show 67-72% win rate depending on filter combination.
 
 ## Key Findings (14 total across 3 workstreams)
 ### Pattern Frequency
-- 847 engulfing patterns identified in 2-year BTC/USDT 4H dataset
-- 412 bullish, 435 bearish (roughly balanced)
-- Average: 1.6 patterns per day
+- 847 engulfing patterns in 2-year BTC/USDT 4H dataset (1.6 per day average)
 
-### False Positive Taxonomy (14 categories identified)
-- Strongest filter: wick-to-body ratio threshold of 0.4 (reduces FP by 38%)
-- Volume below 0.7x average correlates with 73% false positive rate
-- Asian session patterns have 2.1x higher FP rate
+### False Positive Taxonomy
+- Strongest filter: wick-to-body ratio < 0.4 reduces FP by 38%
+- Volume below 0.7x average → 73% false positive rate
+- Asian session patterns: 2.1x higher FP rate
 
 ### Multi-Timeframe Correlation (in progress)
-- H4 engulfing + D1 trend alignment = 67% win rate (n=128)
-- H1 engulfing alone = 51% win rate (no edge, n=342)
-- Preliminary: volume confirmation adds +8% to filtered WR
+- H4 + D1 trend alignment = 67% WR (n=128)
+- H1 alone = 51% WR (no edge, n=342)
+- Volume confirmation adds +8% to filtered WR
 
 ## Decisions Made
 1. Using close-to-close measurement for pattern size (not wick-to-wick)
@@ -615,13 +725,12 @@ on filter combination.
 
 ## Open Questions
 - Does the edge persist in forex pairs or is it crypto-specific?
-- Should we incorporate order flow data where available?
 - How does the pattern interact with market regime (trending vs ranging)?
 
 ## Next Steps
-- Complete multi-timeframe correlation analysis (ws_003)
-- Begin volume/momentum confirmation study (ws_004)
-- Start session timing analysis (ws_005)
+- Complete multi-timeframe correlation (ws_003)
+- Begin volume/momentum confirmation (ws_004)
+- Begin session timing analysis (ws_005)
 ```
 
 ---
@@ -636,7 +745,10 @@ on filter combination.
 | Cumulative expertise | No | No | **Yes** |
 | Visual dashboard | Terminal only | Terminal only | **Full web UI** |
 | User intervention | Direct terminal | Limited | **Inline escalations + directives** |
-| Cross-session synthesis | No | No | **Auto-synthesis** |
+| Cross-session synthesis | No | No | **Auto-synthesis (CLI-native)** |
 | Context condensation | No | No | **Yes (leverages MC memory system)** |
 | Cost tracking | Per-session | No | **Per-hivemind aggregate** |
 | Dependency management | Task-level | No | **Workstream-level with blocking** |
+| Per-workstream model | No | No | **Yes (Haiku/Sonnet/Opus per workstream)** |
+| Error recovery | None | None | **Retry policy + stall detection** |
+| All Claude via CLI | Yes | Yes | **Yes — no direct API calls** |
