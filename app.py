@@ -271,6 +271,11 @@ def main():
                 ctypes.windll.kernel32.GetConsoleWindow(), 0)  # SW_HIDE
         except Exception:
             pass
+        # Fix pythonnet DLL resolution in frozen builds
+        base = Path(sys.executable).parent / '_internal'
+        pydll = base / f'python{sys.version_info.major}{sys.version_info.minor}.dll'
+        if pydll.exists():
+            os.environ['PYTHONNET_PYDLL'] = str(pydll)
 
     # Ensure UTF-8 output (Windows console fix)
     if sys.platform == 'win32':

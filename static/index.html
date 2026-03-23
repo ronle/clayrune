@@ -2681,6 +2681,7 @@ function sizeAgentChat(win, sessionId) {
   if (!scrollBody || !chat) return;
   scrollBody.style.overflow = 'hidden';
   const available = scrollBody.clientHeight;
+  scrollBody.style.overflow = '';
   const panel = chat.parentElement;
   let used = 0;
   for (const child of panel.children) {
