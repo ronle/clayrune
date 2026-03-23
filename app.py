@@ -3,16 +3,17 @@
 
 Starts the Flask server in a daemon thread and opens a native pywebview window.
 Works in both dev mode (python app.py) and frozen mode (PyInstaller exe).
+Pre-detects .NET Desktop Runtime and guides user through setup if missing.
 """
 
 import os
 import sys
 import json
-import shutil
 import subprocess
 import threading
 import time
 import socket
+import webbrowser
 from pathlib import Path
 
 
@@ -73,7 +74,7 @@ def _load_port():
 
 
 # ---------------------------------------------------------------------------
-# Claude CLI check + auto-install
+# Subprocess helpers (silent on Windows)
 # ---------------------------------------------------------------------------
 
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
@@ -92,6 +93,10 @@ def _run_silent(cmd, **kwargs):
         **kwargs,
     )
 
+
+# ---------------------------------------------------------------------------
+# Claude CLI check + auto-install
+# ---------------------------------------------------------------------------
 
 def _check_claude_cli():
     """Return True if `claude --version` succeeds."""
@@ -140,7 +145,6 @@ def _install_claude_cli(status_callback=None):
         if status_callback:
             status_callback(msg)
 
-    # Step 1: check npm
     if not _check_npm():
         _status('Installing Node.js via winget...')
         try:
@@ -168,7 +172,6 @@ def _install_claude_cli(status_callback=None):
                 'Please restart your computer, then relaunch Mission Control.'
             )
 
-    # Step 2: install Claude CLI via npm
     _status('Installing Claude CLI via npm...')
     try:
         r = _run_silent(
@@ -192,6 +195,140 @@ def _install_claude_cli(status_callback=None):
 
 
 # ---------------------------------------------------------------------------
+# .NET Desktop Runtime detection + guided install
+# ---------------------------------------------------------------------------
+
+def _msgbox(text, title='Mission Control', style=0x40):
+    """Show a Windows MessageBox. Returns button ID."""
+    try:
+        import ctypes
+        return ctypes.windll.user32.MessageBoxW(0, text, title, style)
+    except Exception:
+        print(f'{title}: {text}')
+        return 0
+
+
+def _check_dotnet_desktop_runtime():
+    """Check if .NET Desktop Runtime is installed (required by pywebview).
+
+    Returns True if Microsoft.WindowsDesktop.App is found via `dotnet --list-runtimes`.
+    Also returns True on non-Windows (not needed) or if dotnet isn't installed
+    but the runtime DLLs exist in system paths.
+    """
+    if sys.platform != 'win32':
+        return True
+
+    try:
+        r = _run_silent(['dotnet', '--list-runtimes'], timeout=10)
+        if r.returncode == 0 and 'Microsoft.WindowsDesktop.App' in r.stdout:
+            return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: check registry for .NET Desktop Runtime
+    try:
+        import winreg
+        base = r'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App'
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as key:
+            # Any subkey = a version is installed
+            if winreg.EnumValue(key, 0):
+                return True
+    except (OSError, ImportError):
+        pass
+
+    return False
+
+
+def _install_dotnet_desktop_runtime():
+    """Try to install .NET Desktop Runtime via winget. Returns (success, message)."""
+    try:
+        r = _run_silent([
+            'winget', 'install', 'Microsoft.DotNet.DesktopRuntime.8',
+            '--accept-package-agreements', '--accept-source-agreements',
+        ], timeout=300)
+        if r.returncode == 0:
+            _refresh_path()
+            return True, '.NET Desktop Runtime installed successfully.'
+        else:
+            stderr = r.stderr or r.stdout or ''
+            return False, f'winget install failed:\n{stderr[:500]}'
+    except FileNotFoundError:
+        return False, 'winget not found.'
+    except subprocess.TimeoutExpired:
+        return False, 'Installation timed out.'
+
+
+def _ensure_dotnet_runtime():
+    """Check for .NET Desktop Runtime and guide user through install if missing.
+
+    Returns True if runtime is available (or user chose browser fallback).
+    Returns False to signal 'use browser mode instead'.
+    """
+    if _check_dotnet_desktop_runtime():
+        return True
+
+    if sys.platform != 'win32':
+        return False
+
+    # MB_YESNOCANCEL | MB_ICONWARNING = 0x03 | 0x30 = 0x33
+    # Yes=6, No=7, Cancel=2
+    result = _msgbox(
+        'Mission Control requires the .NET Desktop Runtime to display its native window.\n\n'
+        'Would you like to install it now?\n\n'
+        '  Yes  = Auto-install via winget (recommended)\n'
+        '  No   = Open download page in browser\n'
+        '  Cancel = Skip and use browser mode instead\n',
+        'Mission Control - Setup Required',
+        0x33,  # MB_YESNOCANCEL | MB_ICONWARNING
+    )
+
+    if result == 6:  # Yes — auto-install
+        _msgbox(
+            'Installing .NET Desktop Runtime...\n\n'
+            'This may take a minute. Click OK to begin.',
+            'Mission Control - Installing',
+            0x40,
+        )
+        success, message = _install_dotnet_desktop_runtime()
+        if success:
+            _msgbox(
+                '.NET Desktop Runtime installed successfully!\n\n'
+                'Mission Control will now open.',
+                'Mission Control - Setup Complete',
+                0x40,
+            )
+            return True
+        else:
+            _msgbox(
+                f'Auto-install failed: {message}\n\n'
+                'Please install manually:\n'
+                '1. Open https://dotnet.microsoft.com/download/dotnet/8.0\n'
+                '2. Download ".NET Desktop Runtime" (not just Runtime)\n'
+                '3. Run the installer\n'
+                '4. Restart Mission Control\n\n'
+                'For now, opening in browser mode.',
+                'Mission Control - Install Failed',
+                0x30,
+            )
+            return False
+
+    elif result == 7:  # No — open download page
+        webbrowser.open('https://dotnet.microsoft.com/download/dotnet/8.0')
+        _msgbox(
+            'Download page opened in your browser.\n\n'
+            'Please install the ".NET Desktop Runtime" (not just Runtime).\n'
+            'Then restart Mission Control.\n\n'
+            'For now, opening in browser mode.',
+            'Mission Control - Manual Install',
+            0x40,
+        )
+        return False
+
+    else:  # Cancel — browser mode
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Flask server (daemon thread)
 # ---------------------------------------------------------------------------
 
@@ -209,11 +346,9 @@ def _wait_for_port(port, timeout=15):
 
 def _start_flask(port):
     """Import and start the Flask server. Runs in a daemon thread."""
-    # Set MC_DATA_DIR so server.py picks up the same data root
     os.environ['MC_DATA_DIR'] = str(DATA_ROOT)
     os.environ['MC_PORT'] = str(port)
 
-    # Ensure server.py can be imported
     repo_root = str(Path(__file__).parent)
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
@@ -224,32 +359,12 @@ def _start_flask(port):
 
 
 # ---------------------------------------------------------------------------
-# .NET fallback
+# Browser mode
 # ---------------------------------------------------------------------------
 
-def _dotnet_error_fallback(port):
-    """Show a friendly error + open browser when .NET runtime is missing."""
-    import webbrowser
-    try:
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(
-            0,
-            'Mission Control requires the .NET Desktop Runtime to display its native window.\n\n'
-            'The app will now open in your default browser instead.\n\n'
-            'To fix this permanently, install the .NET Desktop Runtime from:\n'
-            'https://dotnet.microsoft.com/download/dotnet\n\n'
-            'Then restart Mission Control.',
-            'Mission Control — .NET Runtime Missing',
-            0x40,  # MB_ICONINFORMATION
-        )
-    except Exception:
-        print('WARNING: .NET Desktop Runtime not found.')
-        print('Opening Mission Control in your default browser instead.')
-        print('Install .NET Desktop Runtime from: https://dotnet.microsoft.com/download/dotnet')
-
+def _open_browser(port):
+    """Open the default browser and keep the process alive for Flask."""
     webbrowser.open(f'http://127.0.0.1:{port}')
-
-    # Keep the process alive so Flask stays running
     try:
         while True:
             time.sleep(60)
@@ -262,20 +377,16 @@ def _dotnet_error_fallback(port):
 # ---------------------------------------------------------------------------
 
 def main():
-    # Hide console window (we use console=True in PyInstaller so Python
-    # exception handling works, but hide the window for clean UX)
-    if sys.platform == 'win32' and getattr(sys, 'frozen', False):
+    is_frozen = getattr(sys, 'frozen', False)
+
+    # Hide console window in frozen builds
+    if sys.platform == 'win32' and is_frozen:
         try:
             import ctypes
             ctypes.windll.user32.ShowWindow(
                 ctypes.windll.kernel32.GetConsoleWindow(), 0)  # SW_HIDE
         except Exception:
             pass
-        # Fix pythonnet DLL resolution in frozen builds
-        base = Path(sys.executable).parent / '_internal'
-        pydll = base / f'python{sys.version_info.major}{sys.version_info.minor}.dll'
-        if pydll.exists():
-            os.environ['PYTHONNET_PYDLL'] = str(pydll)
 
     # Ensure UTF-8 output (Windows console fix)
     if sys.platform == 'win32':
@@ -284,12 +395,14 @@ def main():
     _ensure_data_dirs()
     port = _load_port()
 
+    # --- .NET Desktop Runtime pre-check ---
+    use_webview = _ensure_dotnet_runtime()
+
     # --- Claude CLI check + auto-install ---
     claude_available = _check_claude_cli()
     cli_warning = None
 
     if not claude_available:
-        # Try auto-install
         print('Claude CLI not found — attempting auto-install...')
         success, message = _install_claude_cli(status_callback=print)
         if success:
@@ -309,68 +422,49 @@ def main():
 
     print(f'Flask server running on http://127.0.0.1:{port}')
 
-    # --- Open pywebview window ---
+    # --- Browser mode (user chose skip, or .NET missing) ---
+    if not use_webview:
+        _open_browser(port)
+        return
+
+    # --- Native window via pywebview ---
+    _webview_ok = False
     try:
         import webview
-
-        window = webview.create_window(
-            'Mission Control',
-            url=f'http://127.0.0.1:{port}',
-            width=1400,
-            height=900,
-            min_size=(900, 600),
-        )
-
-        # Show CLI warning after window loads (non-blocking)
-        if cli_warning:
-            def _show_warning():
-                time.sleep(2)  # let page render
-                try:
-                    window.evaluate_js(
-                        f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
-                    )
-                except Exception:
-                    pass
-            threading.Thread(target=_show_warning, daemon=True).start()
-
-        # Blocking — runs the native window event loop
-        webview.start()
+        import clr  # triggers hostfxr + .NET CLR load — fail fast if broken
+        _webview_ok = True
     except Exception as e:
-        err_str = str(e).lower()
-        if any(k in err_str for k in ('python.runtime', 'clr_loader', 'pythonnet', '.net', 'coreclr')):
-            _dotnet_error_fallback(port)
-        else:
-            raise
+        print(f'[MissionControl] Native window unavailable ({type(e).__name__}: {e})')
+        print('[MissionControl] Falling back to browser.')
+
+    if _webview_ok:
+        try:
+            window = webview.create_window(
+                'Mission Control',
+                url=f'http://127.0.0.1:{port}',
+                width=1400,
+                height=900,
+                min_size=(900, 600),
+            )
+
+            if cli_warning:
+                def _show_warning():
+                    time.sleep(2)
+                    try:
+                        window.evaluate_js(
+                            f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
+                        )
+                    except Exception:
+                        pass
+                threading.Thread(target=_show_warning, daemon=True).start()
+
+            webview.start()
+        except Exception as e:
+            print(f'[MissionControl] Window creation failed ({e}), opening browser.')
+            _open_browser(port)
+    else:
+        _open_browser(port)
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception as e:
-        err_str = str(e)
-        if 'Python.Runtime' in err_str or 'clr_loader' in err_str or 'pythonnet' in err_str or '.NET' in err_str:
-            # Last-resort fallback — dotnet error escaped inner handler
-            import webbrowser
-            try:
-                import ctypes
-                ctypes.windll.user32.MessageBoxW(
-                    0,
-                    'Mission Control requires the .NET Desktop Runtime to display its native window.\n\n'
-                    'The app will now open in your default browser instead.\n\n'
-                    'To fix this permanently, install the .NET Desktop Runtime from:\n'
-                    'https://dotnet.microsoft.com/download/dotnet\n\n'
-                    'Then restart Mission Control.',
-                    'Mission Control — .NET Runtime Missing',
-                    0x40,
-                )
-            except Exception:
-                pass
-            webbrowser.open('http://127.0.0.1:5199')
-            import time
-            try:
-                while True:
-                    time.sleep(60)
-            except KeyboardInterrupt:
-                pass
-        else:
-            raise
+    main()

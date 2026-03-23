@@ -9,15 +9,23 @@
 - Files uploaded via existing upload pipeline, referenced as `[Attachment: path]` (or `[Screenshot: path]` for images)
 - Works alongside existing paste-to-attach functionality
 
-## [2026-03-23] — Browser-mode bundled app + .NET guided setup
+## [2026-03-23b] — Fix native window in bundled app (root cause .NET fix)
 
-### Bundled app uses browser mode
-- Frozen (PyInstaller) builds now open Mission Control in the default browser
-- Avoids the pythonnet `Python.Runtime.Loader.Initialize` crash in PyInstaller bundles
-- Dev mode (`python app.py`) still uses native pywebview window
-- No functionality loss — full UI available in browser
+### Build fixes (pre_build_fix.py)
+- **Bug 1 fixed**: Replaced `net462` WinForms DLL with `netcoreapp3.0` variant from NuGet
+  - The bundled `Microsoft.Web.WebView2.WinForms.dll` was targeting classic .NET Framework
+  - pythonnet loads a .NET Core CLR, so the Framework DLL caused the crash
+- **Bug 2 fixed**: Added `Python.Runtime.runtimeconfig.json` with `LatestMajor` roll-forward
+  - Without this file, hostfxr refuses to roll forward across .NET major versions
+  - Now works on .NET 6, 7, 8, 9, or any future version
+- New `pre_build_fix.py` script automates both fixes before PyInstaller runs
 
-### .NET Desktop Runtime pre-detection (dev mode)
+### Graceful browser fallback
+- `import clr` runs early to fail fast if .NET CLR can't load
+- If native window fails for any reason, falls back to browser mode (no crash)
+- .NET Desktop Runtime pre-detection with guided install dialog (auto-install or manual)
+
+### .NET Desktop Runtime pre-detection
 - Checks for .NET Desktop Runtime BEFORE attempting to load pywebview
 - Detection via `dotnet --list-runtimes` (checks for `Microsoft.WindowsDesktop.App`)
 - Fallback: Windows registry check at `HKLM\SOFTWARE\dotnet\Setup\InstalledVersions`
