@@ -3,7 +3,9 @@
 
 Starts the Flask server in a daemon thread and opens a native pywebview window.
 Works in both dev mode (python app.py) and frozen mode (PyInstaller exe).
-Pre-detects .NET Desktop Runtime and guides user through setup if missing.
+
+IMPORTANT: webview.start() MUST be the last blocking call on the main thread.
+Flask runs in a daemon thread so it dies when the main thread exits.
 """
 
 import os
@@ -209,12 +211,7 @@ def _msgbox(text, title='Mission Control', style=0x40):
 
 
 def _check_dotnet_desktop_runtime():
-    """Check if .NET Desktop Runtime is installed (required by pywebview).
-
-    Returns True if Microsoft.WindowsDesktop.App is found via `dotnet --list-runtimes`.
-    Also returns True on non-Windows (not needed) or if dotnet isn't installed
-    but the runtime DLLs exist in system paths.
-    """
+    """Check if .NET Desktop Runtime is installed (required by pywebview)."""
     if sys.platform != 'win32':
         return True
 
@@ -230,7 +227,6 @@ def _check_dotnet_desktop_runtime():
         import winreg
         base = r'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App'
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as key:
-            # Any subkey = a version is installed
             if winreg.EnumValue(key, 0):
                 return True
     except (OSError, ImportError):
@@ -261,7 +257,7 @@ def _install_dotnet_desktop_runtime():
 def _ensure_dotnet_runtime():
     """Check for .NET Desktop Runtime and guide user through install if missing.
 
-    Returns True if runtime is available (or user chose browser fallback).
+    Returns True if runtime is available.
     Returns False to signal 'use browser mode instead'.
     """
     if _check_dotnet_desktop_runtime():
@@ -270,8 +266,6 @@ def _ensure_dotnet_runtime():
     if sys.platform != 'win32':
         return False
 
-    # MB_YESNOCANCEL | MB_ICONWARNING = 0x03 | 0x30 = 0x33
-    # Yes=6, No=7, Cancel=2
     result = _msgbox(
         'Mission Control requires the .NET Desktop Runtime to display its native window.\n\n'
         'Would you like to install it now?\n\n'
@@ -359,10 +353,10 @@ def _start_flask(port):
 
 
 # ---------------------------------------------------------------------------
-# Browser mode
+# Browser fallback
 # ---------------------------------------------------------------------------
 
-def _open_browser(port):
+def _open_browser_and_wait(port):
     """Open the default browser and keep the process alive for Flask."""
     webbrowser.open(f'http://127.0.0.1:{port}')
     try:
@@ -373,14 +367,12 @@ def _open_browser(port):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Entry point — webview.start() MUST be on main thread at top level
 # ---------------------------------------------------------------------------
 
-def main():
-    is_frozen = getattr(sys, 'frozen', False)
-
+if __name__ == '__main__':
     # Hide console window in frozen builds
-    if sys.platform == 'win32' and is_frozen:
+    if sys.platform == 'win32' and getattr(sys, 'frozen', False):
         try:
             import ctypes
             ctypes.windll.user32.ShowWindow(
@@ -393,78 +385,75 @@ def main():
         os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 
     _ensure_data_dirs()
-    port = _load_port()
+    _port = _load_port()
 
     # --- .NET Desktop Runtime pre-check ---
-    use_webview = _ensure_dotnet_runtime()
+    _use_webview = _ensure_dotnet_runtime()
 
     # --- Claude CLI check + auto-install ---
-    claude_available = _check_claude_cli()
-    cli_warning = None
-
-    if not claude_available:
+    _cli_warning = None
+    if not _check_claude_cli():
         print('Claude CLI not found — attempting auto-install...')
-        success, message = _install_claude_cli(status_callback=print)
-        if success:
-            claude_available = True
-            print(message)
+        _ok, _msg = _install_claude_cli(status_callback=print)
+        if _ok:
+            print(_msg)
         else:
-            cli_warning = message
-            print(f'Claude CLI setup: {message}')
+            _cli_warning = _msg
+            print(f'Claude CLI setup: {_msg}')
 
     # --- Start Flask in daemon thread ---
-    flask_thread = threading.Thread(target=_start_flask, args=(port,), daemon=True)
-    flask_thread.start()
+    _flask_thread = threading.Thread(target=_start_flask, args=(_port,), daemon=True)
+    _flask_thread.start()
 
-    if not _wait_for_port(port):
-        print(f'ERROR: Flask server did not start on port {port}')
+    if not _wait_for_port(_port):
+        print(f'ERROR: Flask server did not start on port {_port}')
         sys.exit(1)
 
-    print(f'Flask server running on http://127.0.0.1:{port}')
+    print(f'Flask server running on http://127.0.0.1:{_port}')
 
     # --- Browser mode (user chose skip, or .NET missing) ---
-    if not use_webview:
-        _open_browser(port)
-        return
+    if not _use_webview:
+        _open_browser_and_wait(_port)
+        sys.exit(0)
 
     # --- Native window via pywebview ---
+    # webview.start() MUST be the last blocking call on the main thread.
+    # It runs the Win32 message loop — returns only when the window is closed.
     _webview_ok = False
     try:
         import webview
         import clr  # triggers hostfxr + .NET CLR load — fail fast if broken
         _webview_ok = True
-    except Exception as e:
-        print(f'[MissionControl] Native window unavailable ({type(e).__name__}: {e})')
+    except Exception as _e:
+        print(f'[MissionControl] Native window unavailable ({type(_e).__name__}: {_e})')
         print('[MissionControl] Falling back to browser.')
 
     if _webview_ok:
         try:
-            window = webview.create_window(
+            _window = webview.create_window(
                 'Mission Control',
-                url=f'http://127.0.0.1:{port}',
+                url=f'http://127.0.0.1:{_port}',
                 width=1400,
                 height=900,
                 min_size=(900, 600),
             )
 
-            if cli_warning:
+            if _cli_warning:
                 def _show_warning():
                     time.sleep(2)
                     try:
-                        window.evaluate_js(
-                            f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
+                        _window.evaluate_js(
+                            f'alert({json.dumps("Claude CLI not found:\\n\\n" + _cli_warning)})'
                         )
                     except Exception:
                         pass
                 threading.Thread(target=_show_warning, daemon=True).start()
 
+            # BLOCKS here — runs Win32 message loop on main thread
+            # Returns only when the window is closed
             webview.start()
-        except Exception as e:
-            print(f'[MissionControl] Window creation failed ({e}), opening browser.')
-            _open_browser(port)
+        except Exception as _e:
+            print(f'[MissionControl] Window creation failed ({_e}), opening browser.')
+            _open_browser_and_wait(_port)
     else:
-        _open_browser(port)
-
-
-if __name__ == '__main__':
-    main()
+        _open_browser_and_wait(_port)
