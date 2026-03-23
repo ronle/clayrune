@@ -241,6 +241,11 @@
   .agent-image-preview img {
     width: 100%; height: 100%; object-fit: cover;
   }
+  .agent-file-preview {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: var(--text-dim); text-align: center; padding: 4px;
+    word-break: break-all; line-height: 1.2;
+  }
 
   /* ── MODAL ──────────────────────────────────────────────────────── */
   /* ── MULTI-MODAL LAYER ─────────────────────────────────────────── */
@@ -886,6 +891,7 @@
     transition: border-color 0.15s;
   }
   .agent-task-input:focus { border-color: var(--accent); }
+  .agent-task-input.drag-over { border-color: var(--accent); background: var(--accent-dim); }
   .agent-task-input::placeholder { color: var(--text-faint); }
 
   .btn-dispatch {
@@ -3682,9 +3688,12 @@ function agentPanelHTML(p) {
   const dispatchPreviews = noActiveTab ? renderAgentImagePreviews(p.id) : '';
   const dispatchRow = noActiveTab ? `${picker}${resumeIndicator}<div class="agent-input-row">
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
-      placeholder="Describe a task for the agent... (paste screenshots here)"
+      placeholder="Describe a task for the agent... (paste or drop files here)"
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'))"
       onpaste="handleAgentPaste(event,'${esc(p.id)}')"
+      ondragover="handleAgentDragOver(event,this)"
+      ondragleave="handleAgentDragLeave(event,this)"
+      ondrop="handleAgentDrop(event,'${esc(p.id)}')"
     ></textarea>
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
@@ -3767,9 +3776,12 @@ function agentPanelHTML(p) {
           ${followupPreviews}
           <div class="agent-chat-input-row">
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
-              placeholder="${st === 'stopped' ? 'Type to resume conversation...' : 'Send follow-up... (paste screenshots here)'}"
+              placeholder="${st === 'stopped' ? 'Type to resume conversation...' : 'Send follow-up... (paste or drop files here)'}"
               onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'))"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
+              ondragover="handleAgentDragOver(event,this)"
+              ondragleave="handleAgentDragLeave(event,this)"
+              ondrop="handleAgentDrop(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
             <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
           </div>
@@ -5005,12 +5017,47 @@ function handleAgentPaste(e, key) {
   refreshModal();
 }
 
+function handleAgentDragOver(e, el) {
+  e.preventDefault();
+  e.stopPropagation();
+  el.classList.add('drag-over');
+}
+
+function handleAgentDragLeave(e, el) {
+  e.preventDefault();
+  e.stopPropagation();
+  el.classList.remove('drag-over');
+}
+
+function handleAgentDrop(e, key) {
+  e.preventDefault();
+  e.stopPropagation();
+  e.target.classList.remove('drag-over');
+  const files = Array.from(e.dataTransfer.files);
+  if (files.length === 0) return;
+  const list = agentPendingImages[key] || [];
+  for (const file of files) {
+    const isImage = file.type.startsWith('image/');
+    list.push({
+      file,
+      objectUrl: isImage ? URL.createObjectURL(file) : null,
+      serverPath: null,
+      isDocument: !isImage,
+      fileName: file.name
+    });
+  }
+  agentPendingImages[key] = list;
+  refreshModal();
+}
+
 function renderAgentImagePreviews(key) {
   const list = agentPendingImages[key] || [];
   if (list.length === 0) return '';
   return `<div class="agent-image-previews">${list.map((img, i) => `
     <div class="agent-image-preview">
-      <img src="${img.objectUrl}" alt="paste">
+      ${img.isDocument
+        ? `<div class="agent-file-preview" title="${esc(img.fileName || 'file')}">&#128196; ${esc((img.fileName || 'file').length > 18 ? (img.fileName || 'file').slice(0,15) + '...' : (img.fileName || 'file'))}</div>`
+        : `<img src="${img.objectUrl}" alt="paste">`}
       <button class="create-preview-remove" onclick="removeAgentImage('${esc(key)}',${i})">&#10005;</button>
     </div>`).join('')}</div>`;
 }
@@ -5029,7 +5076,8 @@ async function uploadAgentImages(key) {
   for (const img of list) {
     if (img.serverPath) { paths.push(img.serverPath); continue; }
     const fd = new FormData();
-    fd.append('file', img.file, img.file.name || 'screenshot.png');
+    const fname = img.fileName || img.file.name || 'screenshot.png';
+    fd.append('file', img.file, fname);
     try {
       const res = await fetch(API_BASE + '/api/agent/upload-image', { method: 'POST', body: fd });
       const data = await res.json();
@@ -5041,7 +5089,12 @@ async function uploadAgentImages(key) {
 
 function buildTaskWithImages(task, imagePaths) {
   if (imagePaths.length === 0) return task;
-  const refs = imagePaths.map(p => `[Screenshot: ${p}]`).join('\n');
+  const imageExts = ['.png','.jpg','.jpeg','.gif','.webp','.bmp','.svg'];
+  const refs = imagePaths.map(p => {
+    const ext = (p.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+    const label = imageExts.includes(ext) ? 'Screenshot' : 'Attachment';
+    return `[${label}: ${p}]`;
+  }).join('\n');
   return `${task}\n\n${refs}`;
 }
 

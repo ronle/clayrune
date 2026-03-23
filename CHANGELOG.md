@@ -1,5 +1,33 @@
 # Mission Control — Changelog
 
+## [2026-03-23] — Drag-and-drop file attachments in agent chat
+
+### Drag-and-drop files into agent chat
+- Drag files (images, documents, any file type) onto the dispatch or follow-up textarea
+- Visual highlight on drag-over (accent border + dim background)
+- Images show thumbnail previews; documents show filename with file icon
+- Files uploaded via existing upload pipeline, referenced as `[Attachment: path]` (or `[Screenshot: path]` for images)
+- Works alongside existing paste-to-attach functionality
+
+## [2026-03-23] — Browser-mode bundled app + .NET guided setup
+
+### Bundled app uses browser mode
+- Frozen (PyInstaller) builds now open Mission Control in the default browser
+- Avoids the pythonnet `Python.Runtime.Loader.Initialize` crash in PyInstaller bundles
+- Dev mode (`python app.py`) still uses native pywebview window
+- No functionality loss — full UI available in browser
+
+### .NET Desktop Runtime pre-detection (dev mode)
+- Checks for .NET Desktop Runtime BEFORE attempting to load pywebview
+- Detection via `dotnet --list-runtimes` (checks for `Microsoft.WindowsDesktop.App`)
+- Fallback: Windows registry check at `HKLM\SOFTWARE\dotnet\Setup\InstalledVersions`
+
+### Guided setup dialog when .NET is missing (dev mode)
+- Three-button MessageBox: **Yes** (auto-install), **No** (open download page), **Cancel** (use browser)
+- Auto-install via `winget install Microsoft.DotNet.DesktopRuntime.8`
+- Manual install option opens the .NET 8.0 download page in browser
+- Browser fallback always available — app fully functional without native window
+
 ## [2026-03-22c] — Global Settings UI, Agent Process Registration
 
 ### Global Settings modal
