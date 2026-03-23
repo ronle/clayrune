@@ -891,7 +891,7 @@
     transition: border-color 0.15s;
   }
   .agent-task-input:focus { border-color: var(--accent); }
-  .agent-task-input.drag-over { border-color: var(--accent); background: var(--accent-dim); }
+  .agent-drop-zone.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 5px; background: var(--accent-dim); }
   .agent-task-input::placeholder { color: var(--text-faint); }
 
   .btn-dispatch {
@@ -3686,14 +3686,15 @@ function agentPanelHTML(p) {
 
   // Dispatch row (only shown on the +New screen, not when viewing an active session)
   const dispatchPreviews = noActiveTab ? renderAgentImagePreviews(p.id) : '';
-  const dispatchRow = noActiveTab ? `${picker}${resumeIndicator}<div class="agent-input-row">
+  const dispatchRow = noActiveTab ? `${picker}${resumeIndicator}<div class="agent-input-row agent-drop-zone"
+    ondragover="handleAgentDragOver(event,this)"
+    ondragenter="handleAgentDragOver(event,this)"
+    ondragleave="handleAgentDragLeave(event,this)"
+    ondrop="handleAgentDrop(event,'${esc(p.id)}')">
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
       placeholder="Describe a task for the agent... (paste or drop files here)"
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'))"
       onpaste="handleAgentPaste(event,'${esc(p.id)}')"
-      ondragover="handleAgentDragOver(event,this)"
-      ondragleave="handleAgentDragLeave(event,this)"
-      ondrop="handleAgentDrop(event,'${esc(p.id)}')"
     ></textarea>
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
@@ -3774,14 +3775,15 @@ function agentPanelHTML(p) {
     const chatInput = (st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle')
       ? `<div class="agent-chat-input">
           ${followupPreviews}
-          <div class="agent-chat-input-row">
+          <div class="agent-chat-input-row agent-drop-zone"
+              ondragover="handleAgentDragOver(event,this)"
+              ondragenter="handleAgentDragOver(event,this)"
+              ondragleave="handleAgentDragLeave(event,this)"
+              ondrop="handleAgentDrop(event,'fu_${esc(activeSessionId)}')">
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
               placeholder="${st === 'stopped' ? 'Type to resume conversation...' : 'Send follow-up... (paste or drop files here)'}"
               onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'))"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
-              ondragover="handleAgentDragOver(event,this)"
-              ondragleave="handleAgentDragLeave(event,this)"
-              ondrop="handleAgentDrop(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
             <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
           </div>
@@ -5020,10 +5022,13 @@ function handleAgentPaste(e, key) {
 function handleAgentDragOver(e, el) {
   e.preventDefault();
   e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
   el.classList.add('drag-over');
 }
 
 function handleAgentDragLeave(e, el) {
+  // Only remove highlight if we actually left the container (not entering a child)
+  if (el.contains(e.relatedTarget)) return;
   e.preventDefault();
   e.stopPropagation();
   el.classList.remove('drag-over');
@@ -5032,7 +5037,9 @@ function handleAgentDragLeave(e, el) {
 function handleAgentDrop(e, key) {
   e.preventDefault();
   e.stopPropagation();
-  e.target.classList.remove('drag-over');
+  // Find the drop-zone container and remove highlight
+  const zone = e.target.closest('.agent-drop-zone');
+  if (zone) zone.classList.remove('drag-over');
   const files = Array.from(e.dataTransfer.files);
   if (files.length === 0) return;
   const list = agentPendingImages[key] || [];
