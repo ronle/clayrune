@@ -1946,6 +1946,41 @@
   }
   .hm-escalation-banner .esc-icon { font-size:16px; }
   .hm-escalation-banner .esc-msg { flex:1; font-size:12px; color:var(--text); }
+
+  /* Hivemind orchestrator tab badge + worker popover */
+  .agent-tab.hivemind-orch { border-left:2px solid var(--accent); }
+  .hm-tab-badge { font-size:10px; color:var(--accent); margin-right:2px; }
+  .hm-orch-label {
+    font-size:11px; color:var(--accent); font-weight:600;
+    padding:2px 6px; background:rgba(99,102,241,0.1); border-radius:4px;
+  }
+  .btn-hm-dash {
+    font-size:11px; padding:2px 8px; background:transparent;
+    border:1px solid var(--border); color:var(--text-faint);
+    border-radius:4px; cursor:pointer; transition:all 0.15s;
+  }
+  .btn-hm-dash:hover { border-color:var(--accent); color:var(--accent); }
+  .hm-worker-popover {
+    position:fixed; z-index:10000; background:var(--bg-card, var(--surface));
+    border:1px solid var(--border); border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.3); min-width:260px; max-width:360px;
+    font-size:12px;
+  }
+  .hm-worker-popover.hidden { display:none; }
+  .hm-pop-header {
+    padding:8px 12px; font-weight:600; border-bottom:1px solid var(--border);
+    color:var(--text-faint); font-size:11px; text-transform:uppercase; letter-spacing:0.5px;
+  }
+  .hm-pop-worker {
+    display:flex; align-items:center; gap:8px; padding:6px 12px;
+    border-bottom:1px solid rgba(255,255,255,0.05); cursor:pointer; transition:background 0.1s;
+  }
+  .hm-pop-worker:last-child { border-bottom:none; }
+  .hm-pop-worker:hover { background:var(--surface); }
+  .hm-pop-ws-title { flex:1; font-weight:500; color:var(--text); }
+  .hm-pop-ws-meta { color:var(--text-faint); font-size:11px; }
+  .hm-pop-ws-status { font-size:11px; opacity:0.7; }
+  .hm-pop-empty { padding:12px; color:var(--text-faint); font-style:italic; }
 </style>
 </head>
 <body>
@@ -2001,6 +2036,7 @@
 <div class="modal-layer" id="modal-layer"></div>
 <div class="minimized-tray" id="minimized-tray"></div>
 <div id="toast-container"></div>
+<div id="hm-worker-popover" class="hm-worker-popover hidden" onmouseenter="cancelHideHmPopover()" onmouseleave="scheduleHideHmPopover()"></div>
 
 <div class="agent-console hidden collapsed" id="agent-console">
   <div class="agent-console-bar" onclick="toggleAgentConsole()">
@@ -2245,7 +2281,10 @@ function modalContentHTML(p) {
     ? `<span class="summary-value blocked-text">${esc(p.blocked_reason||'Blocked')}</span>`
     : `<span class="summary-value current-task">${esc(p.current_task||'—')}</span>`;
 
-  const activeTab = modalActiveTab[p.id] || 'agent';
+  // Migrate stale tab selections (memory/rules moved to three-dot menu)
+  const validTabs = ['agent','backlog','agent-log','plans','activity','hivemind'];
+  let activeTab = modalActiveTab[p.id] || 'agent';
+  if (!validTabs.includes(activeTab)) { activeTab = 'agent'; modalActiveTab[p.id] = 'agent'; }
 
   const logHTML = (p.activity_log||[]).slice(0,20).map(e => `
     <div class="log-entry">
@@ -2410,6 +2449,12 @@ function modalContentHTML(p) {
                 &#x2713; Connect</button>
             `}
           </div>
+          <button class="modal-menu-item" onclick="openMemoryModal('${esc(p.id)}')">
+            <span class="menu-icon">&#x1F4DD;</span> Memory
+          </button>
+          <button class="modal-menu-item" onclick="openRulesModal('${esc(p.id)}')">
+            <span class="menu-icon">&#x2699;</span> Rules
+          </button>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item danger" onclick="deleteProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F5D1;</span> Delete Project
@@ -2455,8 +2500,6 @@ function modalContentHTML(p) {
       <div class="modal-tab ${activeTab==='agent-log'?'active':''}" onclick="switchModalTab('${esc(p.id)}','agent-log')">Agent Log</div>
       <div class="modal-tab ${activeTab==='plans'?'active':''}" onclick="switchModalTab('${esc(p.id)}','plans')">Plans</div>
       <div class="modal-tab ${activeTab==='activity'?'active':''}" onclick="switchModalTab('${esc(p.id)}','activity')">Activity</div>
-      <div class="modal-tab ${activeTab==='memory'?'active':''}" onclick="switchModalTab('${esc(p.id)}','memory')">Memory</div>
-      <div class="modal-tab ${activeTab==='rules'?'active':''}" onclick="switchModalTab('${esc(p.id)}','rules')">Rules</div>
       <div class="modal-tab ${activeTab==='hivemind'?'active':''}" onclick="switchModalTab('${esc(p.id)}','hivemind')">Hivemind</div>
       ${activeTab !== 'agent' ? `<div class="modal-tab-search">
         <input type="text" id="tab-search-${esc(p.id)}" placeholder="Filter..."
@@ -2512,12 +2555,6 @@ function modalContentHTML(p) {
           <div class="section-title">Activity Log</div>
           <div class="log-entries">${logHTML || '<div style="color:var(--text-faint);font-style:italic">No activity yet</div>'}</div>
         </div>
-      </div>
-      <div class="modal-tab-content ${activeTab==='memory'?'active':''}" data-tab="memory">
-        ${memoryTabHTML(p)}
-      </div>
-      <div class="modal-tab-content ${activeTab==='rules'?'active':''}" data-tab="rules">
-        ${rulesTabHTML(p)}
       </div>
       <div class="modal-tab-content ${activeTab==='hivemind'?'active':''}" data-tab="hivemind">
         ${hivemindTabHTML(p)}
@@ -2608,6 +2645,9 @@ function closeModalById(modalId) {
   if (modalId.startsWith('__hivemind_')) {
     const hmId = modalId.replace('__hivemind_', '');
     if (hivemindSSE[hmId]) { hivemindSSE[hmId].close(); delete hivemindSSE[hmId]; }
+    clearTimeout(_hmDashDebounce[hmId]);
+    delete _hmDashDebounce[hmId];
+    delete _hmDashInFlight[hmId];
   }
   // Clean up terminal pop-out resources
   cleanupTerminalModal(modalId);
@@ -2616,7 +2656,7 @@ function closeModalById(modalId) {
   if (chip) chip.remove();
   openModals.delete(modalId);
 
-  if (entry.projectId) {
+  if (entry.projectId && !modalId.startsWith('__')) {
     const p = allProjects.find(x => x.id === entry.projectId);
     if (p && p.backlog) p.backlog.forEach(item => openAttPanels.delete(item.id));
   }
@@ -2796,7 +2836,7 @@ function restoreModal(modalId) {
   entry.element.classList.remove('minimized');
   const chip = document.getElementById('chip-' + CSS.escape(modalId));
   if (chip) chip.remove();
-  if (entry.projectId) refreshModalById(modalId);
+  if (entry.projectId && !modalId.startsWith('__hivemind_')) refreshModalById(modalId);
   const scrollBody = entry.element.querySelector('.modal-scroll-body');
   if (scrollBody && entry.savedScrollTop) scrollBody.scrollTop = entry.savedScrollTop;
   focusModal(modalId);
@@ -2839,6 +2879,8 @@ function updateAgentStatusUI(sessionId, status) {
 function refreshModalById(modalId) {
   const entry = openModals.get(modalId);
   if (!entry || entry.minimized) return;
+  // Hivemind dashboard modals use their own refresh path
+  if (modalId.startsWith('__hivemind_')) return;
   const p = allProjects.find(x => x.id === entry.projectId);
   if (!p) { closeModalById(modalId); return; }
 
@@ -2927,7 +2969,7 @@ function refreshModalById(modalId) {
 
 function refreshModal() {
   for (const [modalId, entry] of openModals) {
-    if (entry.projectId) refreshModalById(modalId);
+    if (entry.projectId && !modalId.startsWith('__hivemind_')) refreshModalById(modalId);
   }
 }
 
@@ -3747,8 +3789,75 @@ let terminalOutputBuffers = {};  // session_id → string[]
 let terminalOutputCount = {};    // session_id → int
 let terminalDismissed = new Set(); // session IDs closed by user — don't reopen from replayed markers
 
+function isHivemindWorker(h) {
+  return !!(h.hivemindWsId || (agentStatusCache[h.sessionId] || {}).hivemindWsId);
+}
+function isHivemindOrchestrator(h) {
+  return (h.hivemindRole === 'orchestrator') || ((agentStatusCache[h.sessionId] || {}).hivemindRole === 'orchestrator');
+}
+
 function getProjectSessions(projectId) {
-  return agentHistory.filter(h => h.projectId === projectId);
+  return agentHistory.filter(h => h.projectId === projectId && !isHivemindWorker(h));
+}
+
+// ── Hivemind worker popover ─────────────────────────────────────────────────
+let hmPopoverTimer = null;
+let hmPopoverSessionId = null;
+
+function showHmWorkerPopover(event, sessionId) {
+  cancelHideHmPopover();
+  const cached = agentStatusCache[sessionId];
+  if (!cached || !cached.hivemindId) return;
+  const popover = document.getElementById('hm-worker-popover');
+  const tab = event.currentTarget;
+  const rect = tab.getBoundingClientRect();
+  popover.style.left = Math.max(0, rect.left) + 'px';
+  popover.style.top = (rect.bottom + 4) + 'px';
+  popover.classList.remove('hidden');
+  hmPopoverSessionId = sessionId;
+
+  // Get workers from agentHistory matching this hivemind
+  const hmId = cached.hivemindId;
+  const workers = agentHistory.filter(h => {
+    const c = agentStatusCache[h.sessionId] || h;
+    return (c.hivemindId || h.hivemindId) === hmId && (c.hivemindWsId || h.hivemindWsId);
+  });
+
+  // Enrich with workstream titles from hivemindCache
+  let wsTitleMap = {};
+  for (const pid of Object.keys(hivemindCache)) {
+    const hms = (hivemindCache[pid] || {}).hiveminds || [];
+    const hm = hms.find(h => h.id === hmId);
+    if (hm && hm._workstreams) {
+      hm._workstreams.forEach(w => { wsTitleMap[w.id] = w.title; });
+      break;
+    }
+  }
+
+  if (workers.length === 0) {
+    popover.innerHTML = `<div class="hm-pop-header">&#x2B21; Hivemind Workers</div><div class="hm-pop-empty">No workers spawned yet</div>`;
+  } else {
+    const rows = workers.map(w => {
+      const wsId = w.hivemindWsId || (agentStatusCache[w.sessionId] || {}).hivemindWsId || '';
+      const wsTitle = wsTitleMap[wsId] || wsId;
+      return `<div class="hm-pop-worker" onclick="if(typeof openHivemindDashboard==='function'){openHivemindDashboard('${esc(hmId)}','${esc(wsId)}');}">
+        <span class="agent-status-dot ${w.status}"></span>
+        <span class="hm-pop-ws-title">${esc(wsTitle)}</span>
+        <span class="hm-pop-ws-status">${esc(w.status)}</span>
+      </div>`;
+    }).join('');
+    popover.innerHTML = `<div class="hm-pop-header">&#x2B21; Hivemind Workers (${workers.length})</div>${rows}`;
+  }
+}
+function scheduleHideHmPopover() {
+  hmPopoverTimer = setTimeout(() => {
+    const el = document.getElementById('hm-worker-popover');
+    if (el) el.classList.add('hidden');
+    hmPopoverSessionId = null;
+  }, 300);
+}
+function cancelHideHmPopover() {
+  if (hmPopoverTimer) { clearTimeout(hmPopoverTimer); hmPopoverTimer = null; }
 }
 
 let _skipAgentOutput = false;  // set by refreshModalById to skip expensive output rendering
@@ -3774,8 +3883,10 @@ function agentPanelHTML(p) {
   const tabsHTML = sessions.map(h => {
     const isActive = h.sessionId === activeSessionId;
     const label = (h.task || '').substring(0, 30) || 'Session';
-    return `<div class="agent-tab ${isActive ? 'active' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task)}">
-      <span class="agent-status-dot ${h.status}"></span>
+    const isOrch = isHivemindOrchestrator(h);
+    const hmBadge = isOrch ? '<span class="hm-tab-badge" title="Hivemind orchestrator">&#x2B21;</span>' : '';
+    return `<div class="agent-tab ${isActive ? 'active' : ''} ${isOrch ? 'hivemind-orch' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task)}"${isOrch ? ` onmouseenter="showHmWorkerPopover(event,'${esc(h.sessionId)}')" onmouseleave="scheduleHideHmPopover()"` : ''}>
+      ${hmBadge}<span class="agent-status-dot ${h.status}"></span>
       <span class="agent-tab-label">${esc(label)}</span>
       <button class="agent-tab-close" onclick="event.stopPropagation();closeAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="Close tab">&#10005;</button>
     </div>`;
@@ -3940,15 +4051,19 @@ function agentPanelHTML(p) {
           return `<button class="btn-plan-file" onclick="openPlanFileViewer('${esc(p.id)}','${esc(activeSessionId)}')" title="${esc(fname)}">&#128196; ${esc(label)}</button>`;
         })()
       : '';
+    const isActiveOrch = isHivemindOrchestrator({sessionId: activeSessionId, hivemindRole: (activeSession||{}).hivemindRole});
+    const orchHmId = isActiveOrch ? ((activeSession||{}).hivemindId || '') : '';
     tabContent = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;flex-shrink:0">
         <span class="agent-status-dot ${st}"></span>
         <span class="agent-status-label ${st}">${st}</span>
+        ${isActiveOrch ? '<span class="hm-orch-label">&#x2B21; Hivemind</span>' : ''}
         ${stopBtn}
         <span class="token-badge" id="session-metrics-${esc(activeSessionId)}">${activeSession ? sessionMetricsHTML(activeSession) : ''}</span>
         <span class="agent-activity" id="agent-activity-${esc(activeSessionId)}"></span>
         <span id="plan-file-btn-${esc(activeSessionId)}">${planFileBtn}</span>
         <button class="btn-popout" onclick="openPlanViewer('${esc(activeSessionId)}')" title="Open output in viewer window">Pop Out &#8599;</button>
+        ${orchHmId ? `<button class="btn-hm-dash" onclick="openHivemindDashboard('${esc(orchHmId)}')">Dashboard &#8599;</button>` : ''}
       </div>
       <div class="agent-chat">
         <div class="agent-output" id="agent-output-${esc(activeSessionId)}">${outputLines}</div>
@@ -3981,7 +4096,7 @@ function newAgentTab(projectId) {
 }
 
 function getDefaultResumeId(projectId) {
-  const entries = agentLogCache[projectId] || [];
+  const entries = (agentLogCache[projectId] || []).filter(e => !e.hivemind_ws_id);
   const runningSessions = getProjectSessions(projectId);
   const runningResumeIds = new Set(
     runningSessions.filter(h => h.resumedFrom).map(h => h.resumedFrom)
@@ -4002,8 +4117,8 @@ function selectResumeSession(projectId, claudeSessionId) {
 
 function sessionPickerHTML(projectId) {
   const entries = agentLogCache[projectId] || [];
-  // Filter to entries with a claude_session_id
-  const resumable = entries.filter(e => e.claude_session_id);
+  // Filter to entries with a claude_session_id (exclude hivemind workers)
+  const resumable = entries.filter(e => e.claude_session_id && !e.hivemind_ws_id);
   if (resumable.length === 0) return '';
 
   // Exclude sessions already running in open tabs for this project
@@ -4794,21 +4909,22 @@ async function fetchAgentStatus(projectId) {
 
     for (const s of sessions) {
       const sid = s.session_id;
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0 };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '' };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
       }
       if (!agentHistory.find(h => h.sessionId === sid)) {
-        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '' });
+        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '' });
       }
       if (s.status === 'running' || s.status === 'idle') {
         connectAgentStream(projectId, sid);
       }
     }
-    // Set active tab to most recent running/idle, or first session
+    // Set active tab to most recent running/idle non-worker, or first visible session
     if (sessions.length > 0 && !activeAgentTab[projectId]) {
-      const running = sessions.find(s => s.status === 'running' || s.status === 'idle');
-      activeAgentTab[projectId] = running ? running.session_id : sessions[0].session_id;
+      const visible = sessions.filter(s => !s.hivemind_ws_id);
+      const running = visible.find(s => s.status === 'running' || s.status === 'idle');
+      activeAgentTab[projectId] = running ? running.session_id : (visible[0] || sessions[0]).session_id;
     }
     if (sessions.length > 0) renderAgentConsole();
   } catch(e) {}
@@ -4823,7 +4939,7 @@ let continueInputOpen = {};  // entryId → true (tracks which continue input is
 function agentLogPanelHTML(p) {
   if (!p.project_path) return '';
   const isOpen = agentLogOpen[p.id] || false;
-  const entries = agentLogCache[p.id] || [];
+  const entries = (agentLogCache[p.id] || []).filter(e => !e.hivemind_ws_id);
 
   const entriesHTML = entries.length === 0
     ? '<div class="agent-log-empty">No completed sessions yet</div>'
@@ -5374,6 +5490,11 @@ function flashSaved(elId) {
 const hivemindCache = {};  // projectId -> { hiveminds: [...], loaded: true }
 const hivemindDashboardWs = {};  // hivemindId -> selected workstream id (or null for overview)
 let hivemindSSE = {};  // hivemindId -> EventSource
+let _hmDashDebounce = {};   // hivemindId -> setTimeout timer ID
+let _hmDashInFlight = {};   // hivemindId -> true if fetch in progress
+let _hmTabDebounce = {};    // projectId -> setTimeout timer ID
+
+const hmCreateFormVisible = {};
 
 function hivemindTabHTML(p) {
   const cached = hivemindCache[p.id];
@@ -5381,42 +5502,47 @@ function hivemindTabHTML(p) {
     return `<div class="card-section"><div style="color:var(--text-faint);font-style:italic">Loading hiveminds...</div></div>`;
   }
   const hiveminds = cached.hiveminds || [];
+
+  let listHTML = '';
   if (!hiveminds.length) {
-    return `<div class="card-section">
-      <div class="section-title">Hivemind</div>
-      <div style="color:var(--text-faint);font-style:italic;margin-bottom:14px">
-        No hiveminds yet. Create one to start coordinated multi-agent analysis.
-      </div>
-      <button class="btn-add" onclick="showCreateHivemind('${esc(p.id)}')">+ New Hivemind</button>
-      <div id="hm-create-form-${esc(p.id)}" style="display:none;margin-top:12px">
-        ${hivemindCreateFormHTML(p.id)}
-      </div>
+    listHTML = `<div style="color:var(--text-faint);font-style:italic;margin-bottom:14px">
+      No hiveminds yet. Create one to start coordinated multi-agent analysis.
     </div>`;
+  } else {
+    const sorted = [...hiveminds].sort((a, b) => {
+      const order = { active: 0, paused: 1, pending: 2, completed: 3, stopped: 4 };
+      return (order[a.status] ?? 5) - (order[b.status] ?? 5);
+    });
+    listHTML = sorted.map(hm => {
+      const ws = hm._workstreams || [];
+      const totalFindings = ws.reduce((s, w) => s + (w.findings_count || 0), 0);
+      const completedWs = ws.filter(w => w.status === 'completed').length;
+      const controls = hm.status === 'active'
+        ? `<button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','pause')" title="Pause" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:13px;padding:2px 4px">&#x23F8;</button>
+           <button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','stop')" title="Stop" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:13px;padding:2px 4px">&#x23F9;</button>`
+        : hm.status === 'paused'
+        ? `<button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','start')" title="Resume" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:13px;padding:2px 4px">&#x25B6;</button>`
+        : hm.status === 'completed' || hm.status === 'stopped'
+        ? `<button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','start')" title="Restart" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:13px;padding:2px 4px">&#x25B6;</button>`
+        : '';
+      return `<div class="hm-list-row" onclick="openHivemindDashboard('${esc(hm.id)}')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer;background:var(--surface);transition:background 0.15s" onmouseover="this.style.background='var(--surface-hover)'" onmouseout="this.style.background='var(--surface)'">
+        <span class="hm-status-badge ${esc(hm.status)}" style="font-size:11px;flex-shrink:0">${esc(hm.status)}</span>
+        <span style="flex:1;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(hm.title || hm.goal || 'Untitled')}</span>
+        <span style="font-size:11px;color:var(--text-faint);flex-shrink:0">${ws.length} ws &middot; ${completedWs} done &middot; ${totalFindings} findings</span>
+        <span style="display:flex;gap:2px;flex-shrink:0" onclick="event.stopPropagation()">${controls}</span>
+      </div>`;
+    }).join('');
   }
-  // Show active/most recent hivemind prominently, list others below
-  const sorted = [...hiveminds].sort((a, b) => {
-    const order = { active: 0, paused: 1, pending: 2, completed: 3, stopped: 4 };
-    return (order[a.status] ?? 5) - (order[b.status] ?? 5);
-  });
-  const primary = sorted[0];
-  const others = sorted.slice(1);
 
-  let html = `<div class="card-section">
-    <div class="section-title">Hivemind</div>
-    ${hivemindCardHTML(p.id, primary, true)}`;
-
-  if (others.length) {
-    html += `<div style="margin-top:16px;font-size:12px;color:var(--text-faint);margin-bottom:6px">Other Hiveminds</div>`;
-    others.forEach(hm => { html += hivemindCardHTML(p.id, hm, false); });
-  }
-
-  html += `<div style="margin-top:12px">
+  const showForm = hmCreateFormVisible[p.id] ? 'block' : 'none';
+  return `<div class="card-section">
+    <div class="section-title">Hiveminds</div>
+    ${listHTML}
     <button class="btn-add" onclick="showCreateHivemind('${esc(p.id)}')">+ New Hivemind</button>
-    <div id="hm-create-form-${esc(p.id)}" style="display:none;margin-top:12px">
+    <div style="display:${showForm};margin-top:12px">
       ${hivemindCreateFormHTML(p.id)}
     </div>
-  </div></div>`;
-  return html;
+  </div>`;
 }
 
 function hivemindCreateFormHTML(projectId) {
@@ -5435,7 +5561,7 @@ function hivemindCreateFormHTML(projectId) {
     </div>
     <div class="hm-actions">
       <button onclick="createHivemind('${esc(projectId)}')">Create Hivemind</button>
-      <button class="secondary" onclick="document.getElementById('hm-create-form-${esc(projectId)}').style.display='none'">Cancel</button>
+      <button class="secondary" onclick="hmCreateFormVisible['${esc(projectId)}']=false;refreshModal()">Cancel</button>
     </div>
   </div>`;
 }
@@ -5540,8 +5666,8 @@ async function loadHiveminds(projectId) {
 }
 
 function showCreateHivemind(projectId) {
-  const el = document.getElementById('hm-create-form-' + projectId);
-  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  hmCreateFormVisible[projectId] = !hmCreateFormVisible[projectId];
+  refreshModal();
 }
 
 async function createHivemind(projectId) {
@@ -5570,7 +5696,7 @@ async function createHivemind(projectId) {
     });
     const data = await res.json();
     if (data.ok) {
-      // Reload hiveminds
+      hmCreateFormVisible[projectId] = false;
       delete hivemindCache[projectId];
       loadHiveminds(projectId);
       showToast('Hivemind created — orchestrator is decomposing the goal...');
@@ -5693,6 +5819,7 @@ function buildHmOverviewHTML(hivemindId, manifest, workstreams, fullData) {
   const active = workstreams.filter(w => w.status === 'active').length;
   const decisions = fullData.decisions || [];
   const openQ = fullData.open_questions || [];
+  const allFindings = fullData._findings || [];
 
   const recentMsgs = (fullData.recent_messages || []).slice(-20);
   const busHTML = recentMsgs.map(m => {
@@ -5732,6 +5859,20 @@ function buildHmOverviewHTML(hivemindId, manifest, workstreams, fullData) {
       `).join('')}
     </div>
 
+    ${allFindings.length ? `
+      <div style="font-size:13px;font-weight:500;margin-top:16px;margin-bottom:8px">Recent Findings <span style="font-weight:400;color:var(--text-faint)">(${allFindings.length} total)</span></div>
+      <div style="max-height:300px;overflow-y:auto">
+        ${allFindings.slice(-20).reverse().map(f => `<div style="font-size:12px;padding:6px 8px;margin-bottom:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+            <strong style="flex:1">${esc(f.title || '(untitled)')}</strong>
+            <span style="font-size:10px;color:var(--text-faint)">${esc(f.ws_id || '')}</span>
+            <span style="font-size:10px;color:var(--text-faint)">${esc((f.timestamp || '').substring(11, 16))}</span>
+          </div>
+          <div style="color:var(--text-faint);line-height:1.4">${esc((f.content || '').substring(0, 300))}${(f.content || '').length > 300 ? '...' : ''}</div>
+        </div>`).join('')}
+      </div>
+    ` : ''}
+
     ${decisions.length ? `
       <div style="font-size:13px;font-weight:500;margin-top:16px;margin-bottom:8px">Decisions</div>
       ${decisions.map(d => `<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border-faint)">
@@ -5742,7 +5883,11 @@ function buildHmOverviewHTML(hivemindId, manifest, workstreams, fullData) {
 
     ${openQ.length ? `
       <div style="font-size:13px;font-weight:500;margin-top:16px;margin-bottom:8px">Open Questions</div>
-      ${openQ.map(q => `<div style="font-size:12px;color:var(--text-faint);padding:2px 0">- ${esc(q.question || '')}</div>`).join('')}
+      ${openQ.map(q => `<div style="font-size:12px;padding:6px 8px;margin-bottom:4px;border:1px solid var(--border);border-radius:4px;display:flex;align-items:flex-start;gap:8px">
+        <span style="flex:1;color:var(--text-faint);line-height:1.4">${esc(q.question || '')}</span>
+        <button onclick="respondToQuestion('${esc(hivemindId)}',this)" data-question="${esc(q.question || '')}"
+          style="background:var(--accent);border:none;color:#fff;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;white-space:nowrap;flex-shrink:0">Respond</button>
+      </div>`).join('')}
     ` : ''}
 
     <div class="hm-bus-section">
@@ -5764,8 +5909,7 @@ function buildHmOverviewHTML(hivemindId, manifest, workstreams, fullData) {
 }
 
 function buildWsDetailHTML(hivemindId, ws, fullData) {
-  // Get findings for this workstream
-  const wsFindings = [];
+  const wsFindings = (fullData._findings || []).filter(f => f.ws_id === ws.id);
   const allMsgs = fullData.recent_messages || [];
   const wsMessages = allMsgs.filter(m => m.from === ws.id || m.to === ws.id);
 
@@ -5800,6 +5944,19 @@ function buildWsDetailHTML(hivemindId, ws, fullData) {
       Worker session: <code>${esc(sid)}</code>
     </div>` : ''}
 
+    ${wsFindings.length ? `
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px">Findings <span style="font-weight:400;color:var(--text-faint)">(${wsFindings.length})</span></div>
+      <div style="max-height:250px;overflow-y:auto;margin-bottom:12px">
+        ${wsFindings.slice(-15).reverse().map(f => `<div style="font-size:12px;padding:6px 8px;margin-bottom:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+            <strong style="flex:1">${esc(f.title || '(untitled)')}</strong>
+            <span style="font-size:10px;color:var(--text-faint)">${esc((f.timestamp || '').substring(11, 16))}</span>
+          </div>
+          <div style="color:var(--text-faint);line-height:1.4">${esc((f.content || '').substring(0, 300))}${(f.content || '').length > 300 ? '...' : ''}</div>
+        </div>`).join('')}
+      </div>
+    ` : ''}
+
     <div style="font-size:13px;font-weight:500;margin-bottom:8px">Messages</div>
     <div class="hm-activity" style="max-height:250px">
       ${wsMessages.length ? wsMessages.map(m => {
@@ -5827,11 +5984,19 @@ function selectDashboardWs(hivemindId, wsId) {
 async function refreshHivemindDashboard(hivemindId) {
   const modalId = '__hivemind_' + hivemindId;
   if (!openModals.has(modalId)) return;
+  if (_hmDashInFlight[hivemindId]) return;
+  _hmDashInFlight[hivemindId] = true;
   try {
-    const res = await fetch(API_BASE + `/api/hivemind/${hivemindId}`);
+    const [res, findingsRes] = await Promise.all([
+      fetch(API_BASE + `/api/hivemind/${hivemindId}`),
+      fetch(API_BASE + `/api/hivemind/${hivemindId}/knowledge/findings`),
+    ]);
     const data = await res.json();
+    const allFindings = await findingsRes.json().catch(() => []);
+    data._findings = Array.isArray(allFindings) ? allFindings : [];
+
     const mainEl = document.getElementById('hm-dash-main-' + hivemindId);
-    if (!mainEl) return;
+    if (!mainEl) { _hmDashInFlight[hivemindId] = false; return; }
 
     const selectedWs = hivemindDashboardWs[hivemindId];
     const ws = selectedWs ? (data.workstreams || []).find(w => w.id === selectedWs) : null;
@@ -5853,6 +6018,7 @@ async function refreshHivemindDashboard(hivemindId) {
       });
     }
   } catch(e) {}
+  _hmDashInFlight[hivemindId] = false;
 }
 
 async function spawnWorker(hivemindId, wsId) {
@@ -5884,6 +6050,16 @@ async function sendHivemindDirective(hivemindId) {
   } catch(e) {}
 }
 
+function respondToQuestion(hivemindId, btn) {
+  const question = btn.dataset.question || '';
+  const directiveEl = document.getElementById('hm-directive-' + hivemindId);
+  if (directiveEl) {
+    directiveEl.value = `RE: "${question.substring(0, 100)}${question.length > 100 ? '...' : ''}" — `;
+    directiveEl.focus();
+    directiveEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
 async function sendWsDirective(hivemindId, wsId) {
   const el = document.getElementById('hm-ws-directive-' + wsId);
   if (!el) return;
@@ -5904,25 +6080,51 @@ async function viewSynthesis(hivemindId) {
   try {
     const res = await fetch(API_BASE + `/api/hivemind/${hivemindId}/knowledge/synthesis`);
     const data = await res.json();
-    const content = data.content || '';
-    // Open in a simple viewer modal
+    const content = (typeof data.content === 'string') ? data.content : JSON.stringify(data.content || '');
     const modalId = '__hm_synth_' + hivemindId;
     if (openModals.has(modalId)) { focusModal(modalId); return; }
+
+    // Render markdown line-by-line (same approach as plan file viewer)
+    const lines = content.split('\n');
+    let bodyHTML = '';
+    let tableLines = [];
+    function flushTable() {
+      if (!tableLines.length) return;
+      if (isPipeTable(tableLines)) {
+        bodyHTML += `<div class="hl-table">${buildPipeTable(tableLines)}</div>`;
+      } else {
+        bodyHTML += `<div class="hl-table-pre">${tableLines.map(l => formatTableLine(esc(l))).join('\n')}</div>`;
+      }
+      tableLines = [];
+    }
+    for (const line of lines) {
+      if (isTableLine(line)) { tableLines.push(line); }
+      else if (tableLines.length > 0 && line.trim() === '') { tableLines.push(line); }
+      else { flushTable(); bodyHTML += `<div class="agent-line">${formatAgentText(line)}</div>`; }
+    }
+    flushTable();
+
     const layer = document.getElementById('modal-layer');
     const win = document.createElement('div');
     win.className = 'modal-window focused';
-    win.style.width = '700px';
-    win.style.height = '500px';
+    win.dataset.modalId = modalId;
+    win.style.width = '800px';
+    win.style.height = '600px';
     const z = nextModalZ++;
     win.style.zIndex = z;
     win.innerHTML = `
-      <div class="modal-header" style="cursor:move;display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface)">
-        <h3 style="margin:0;font-size:14px;flex:1">Synthesis</h3>
-        <button onclick="closeModalById('${esc(modalId)}')" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:16px;padding:4px 8px">&#x2715;</button>
-      </div>
-      <div class="hm-synthesis-content" style="margin:16px;max-height:calc(100% - 80px)">${esc(typeof content === 'string' ? content : JSON.stringify(content))}</div>`;
+      <div class="modal-content plan-viewer-content" style="height:100%;display:flex;flex-direction:column">
+        <div class="modal-window-controls">
+          <button class="modal-minimize" onclick="minimizeModal('${esc(modalId)}')" title="Minimize">&#x2015;</button>
+          <button class="modal-close" onclick="closeModalById('${esc(modalId)}')" title="Close">&#10005;</button>
+        </div>
+        <div class="plan-viewer-header modal-header">
+          <h3 style="color:#c4b5fd;margin:0;font-size:15px">Synthesis</h3>
+        </div>
+        <div class="plan-viewer-body" style="flex:1;overflow-y:auto">${bodyHTML}</div>
+      </div>`;
     layer.appendChild(win);
-    openModals.set(modalId, { projectId: '', element: win, minimized: false, zIndex: z });
+    openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
     centerModalElement(win);
     focusModal(modalId);
   } catch(e) { showToast('Failed to load synthesis', 8000); }
@@ -5952,19 +6154,25 @@ function connectHivemindSSE(hivemindId) {
   es.onmessage = (evt) => {
     try {
       const data = JSON.parse(evt.data);
-      // Refresh dashboard on any event
-      refreshHivemindDashboard(hivemindId);
-      // Show toast for escalations
+      // Show toast for escalations immediately (no debounce)
       if (data.type === 'hivemind_escalation') {
         showToast('Hivemind escalation: ' + (data.message || '').substring(0, 100), 8000);
       }
-      // Reload tab cache if the hivemind tab is currently visible
+      // Debounced dashboard refresh (500ms trailing edge)
+      clearTimeout(_hmDashDebounce[hivemindId]);
+      _hmDashDebounce[hivemindId] = setTimeout(() => {
+        refreshHivemindDashboard(hivemindId);
+      }, 500);
+      // Debounced hivemind tab reload (2s trailing edge — expensive N+1 fetch)
       for (const [pid, cache] of Object.entries(hivemindCache)) {
         if (cache.hiveminds?.some(h => h.id === hivemindId)) {
           if (modalActiveTab[pid] === 'hivemind') {
-            loadHiveminds(pid);  // async reload + refreshModal
+            clearTimeout(_hmTabDebounce[pid]);
+            _hmTabDebounce[pid] = setTimeout(() => {
+              loadHiveminds(pid);
+            }, 2000);
           } else {
-            cache.loaded = false;  // force reload on next tab switch
+            cache.loaded = false;
           }
           break;
         }
@@ -6020,10 +6228,11 @@ function renderAgentConsole() {
   if (!acExpanded) document.body.classList.add('console-visible');
 
   const runningCount = agentHistory.filter(h => h.status === 'running' || h.status === 'idle').length;
-  countEl.textContent = runningCount > 0 ? `${runningCount} running` : agentHistory.length;
+  const visibleHistory = agentHistory.filter(h => !isHivemindWorker(h));
+  countEl.textContent = runningCount > 0 ? `${runningCount} running` : visibleHistory.length;
   countEl.classList.toggle('has-running', runningCount > 0);
 
-  body.innerHTML = agentHistory.map(h => {
+  body.innerHTML = visibleHistory.map(h => {
     const isOpen = acOpenSessions.has(h.sessionId);
     const rawBuf = agentOutputBuffers[h.sessionId] || [];
     // Only split lines when panel is open (expensive for large buffers)
@@ -6204,20 +6413,107 @@ async function saveMemory(projectId) {
   } catch(e) { alert('Failed to save memory'); }
 }
 
+async function openMemoryModal(projectId) {
+  const modalId = '__memory_' + projectId;
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    return;
+  }
+
+  const p = allProjects.find(x => x.id === projectId);
+  if (!p) return;
+
+  if (!memoryCache[projectId]) {
+    try {
+      const res = await fetch(API_BASE + '/api/project/' + projectId + '/memory');
+      const data = await res.json();
+      memoryCache[projectId] = { content: data.content || '', path: data.path || '', loaded: true };
+    } catch(e) {
+      memoryCache[projectId] = { content: '', path: '', loaded: true };
+    }
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  content.innerHTML = `
+    <div class="modal-header" style="padding:16px 24px 12px 28px">
+      <div class="modal-window-controls">
+        <button class="modal-minimize" onclick="minimizeModal('${esc(modalId)}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${esc(modalId)}')" title="Close">&#10005;</button>
+      </div>
+      <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Memory &mdash; ${esc(p.name || p.id)}</h2>
+    </div>
+    <div style="padding:0 24px 16px">
+      ${memoryTabHTML(p)}
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+}
+
+async function openRulesModal(projectId) {
+  const modalId = '__rules_' + projectId;
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    return;
+  }
+
+  const p = allProjects.find(x => x.id === projectId);
+  if (!p) return;
+
+  if (!rulesLoaded[projectId]) {
+    try {
+      const res = await fetch(API_BASE + `/api/project/${projectId}/rules`);
+      rulesLoaded[projectId] = await res.json();
+    } catch(e) {
+      rulesLoaded[projectId] = { agent_rules: '', shared_rules: '' };
+    }
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  content.innerHTML = `
+    <div class="modal-header" style="padding:16px 24px 12px 28px">
+      <div class="modal-window-controls">
+        <button class="modal-minimize" onclick="minimizeModal('${esc(modalId)}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${esc(modalId)}')" title="Close">&#10005;</button>
+      </div>
+      <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Rules &mdash; ${esc(p.name || p.id)}</h2>
+    </div>
+    <div style="padding:0 24px 16px">
+      ${rulesTabHTML(p)}
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+}
+
 // ── Tab switch ──────────────────────────────────────────────────────────────
 
 function switchModalTab(projectId, tab) {
   modalActiveTab[projectId] = tab;
   if (tab === 'agent-log') {
     loadAgentLog(projectId);
-    return;
-  }
-  if (tab === 'memory' && !memoryCache[projectId]) {
-    loadMemory(projectId);
-    return;
-  }
-  if (tab === 'rules' && !rulesLoaded[projectId]) {
-    loadRules(projectId).then(() => refreshModal());
     return;
   }
   if (tab === 'plans') {
@@ -6235,7 +6531,7 @@ function switchModalTab(projectId, tab) {
 
 function findModalIdForProject(projectId) {
   for (const [modalId, entry] of openModals) {
-    if (entry.projectId === projectId) return modalId;
+    if (entry.projectId === projectId && !modalId.startsWith('__')) return modalId;
   }
   return null;
 }

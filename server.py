@@ -1259,6 +1259,9 @@ def _log_agent_completion(session):
         'cost_usd': session.get('cost_usd', 0),
         'num_turns': session.get('num_turns', 0),
         'plan_file': session.get('plan_file', ''),
+        'hivemind_id': session.get('hivemind_id', ''),
+        'hivemind_ws_id': session.get('hivemind_ws_id', ''),
+        'hivemind_role': session.get('hivemind_role', ''),
     }
     log = _load_agent_log(project_id)
     log.insert(0, entry)
@@ -2082,6 +2085,9 @@ def agent_status(project_id):
                 'cost_usd': s.get('cost_usd', 0),
                 'num_turns': s.get('num_turns', 0),
                 'mode': s.get('mode', 'A'),
+                'hivemind_id': s.get('hivemind_id', ''),
+                'hivemind_ws_id': s.get('hivemind_ws_id', ''),
+                'hivemind_role': s.get('hivemind_role', ''),
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (
@@ -3405,13 +3411,16 @@ def _hm_dispatch_orchestrator(hivemind_id, task_type, extra_context=''):
             f"  - [{f.get('timestamp', '')[:16]}] ({f.get('ws_id', '')}): {f.get('title', '')} — {f.get('content', '')[:300]}"
             for f in all_findings[-50:]
         ) or '  (none)'
+        synth_path = str(_hm_dir(hivemind_id) / 'knowledge' / 'synthesis.md').replace('\\', '/')
         task_prompt = (
             f"YOUR TASK: Synthesize all findings into an updated synthesis document.\n\n"
             f"ALL FINDINGS:\n{findings_text}\n\n"
-            f"Write a comprehensive synthesis and update it by calling:\n"
-            f'curl -s -X PUT http://localhost:{port}/api/hivemind/{hivemind_id}/knowledge/synthesis '
-            f'-H "Content-Type: application/json" '
-            f"""-d '{{"content":"# Title\\n\\nYour synthesis markdown here..."}}'"""
+            f"Write your comprehensive synthesis as markdown directly to this file:\n"
+            f"  {synth_path}\n\n"
+            f"After writing the file, notify the server by running:\n"
+            f"  curl -s -X PUT http://localhost:{port}/api/hivemind/{hivemind_id}/knowledge/synthesis "
+            f'-H "Content-Type: application/json" -d \'{{"notify_only": true}}\'\n\n'
+            f"IMPORTANT: Write the file FIRST using the Write tool, then call the curl notification."
         )
     elif task_type == 'replan':
         task_prompt = (
@@ -3748,11 +3757,13 @@ def hivemind_knowledge_synthesis_put(hivemind_id):
     if not manifest:
         return jsonify({'error': 'not found'}), 404
     data = request.get_json() or {}
-    content = data.get('content', '')
-    if not content:
-        # Try raw body
-        content = request.get_data(as_text=True)
-    _hm_write_synthesis(hivemind_id, content)
+    # notify_only mode: orchestrator wrote the file directly, just push SSE
+    if not data.get('notify_only'):
+        content = data.get('content', '')
+        if not content:
+            content = request.get_data(as_text=True)
+        if content:
+            _hm_write_synthesis(hivemind_id, content)
     manifest['updated_at'] = now_iso()
     _hm_save_manifest(hivemind_id, manifest)
     _hm_push_sse(hivemind_id, {
