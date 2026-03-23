@@ -5668,7 +5668,7 @@ function buildHivemindDashboardHTML(hivemindId, manifest, workstreams, fullData)
       <h3 style="margin:0;font-size:14px;flex:1">${esc(manifest.title || 'Hivemind Dashboard')}</h3>
       <span class="hm-status-badge ${esc(manifest.status)}">${esc(manifest.status)}</span>
       ${controlsHTML}
-      <button onclick="closeModal('__hivemind_${esc(hivemindId)}')" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:16px;padding:4px 8px">&#x2715;</button>
+      <button onclick="closeModalById('__hivemind_${esc(hivemindId)}')" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:16px;padding:4px 8px">&#x2715;</button>
     </div>
     <div class="hm-dashboard" id="hm-dash-body-${esc(hivemindId)}">
       <div class="hm-dash-sidebar">
@@ -5900,8 +5900,8 @@ async function sendWsDirective(hivemindId, wsId) {
 async function viewSynthesis(hivemindId) {
   try {
     const res = await fetch(API_BASE + `/api/hivemind/${hivemindId}/knowledge/synthesis`);
-    const text = await res.text();
-    const content = typeof text === 'string' ? text : (JSON.parse(text).content || text);
+    const data = await res.json();
+    const content = data.content || '';
     // Open in a simple viewer modal
     const modalId = '__hm_synth_' + hivemindId;
     if (openModals.has(modalId)) { focusModal(modalId); return; }
@@ -5915,7 +5915,7 @@ async function viewSynthesis(hivemindId) {
     win.innerHTML = `
       <div class="modal-header" style="cursor:move;display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface)">
         <h3 style="margin:0;font-size:14px;flex:1">Synthesis</h3>
-        <button onclick="closeModal('${esc(modalId)}')" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:16px;padding:4px 8px">&#x2715;</button>
+        <button onclick="closeModalById('${esc(modalId)}')" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:16px;padding:4px 8px">&#x2715;</button>
       </div>
       <div class="hm-synthesis-content" style="margin:16px;max-height:calc(100% - 80px)">${esc(typeof content === 'string' ? content : JSON.stringify(content))}</div>`;
     layer.appendChild(win);
@@ -5955,10 +5955,14 @@ function connectHivemindSSE(hivemindId) {
       if (data.type === 'hivemind_escalation') {
         showToast('Hivemind escalation: ' + (data.message || '').substring(0, 100), 8000);
       }
-      // Invalidate tab cache for the project
+      // Reload tab cache if the hivemind tab is currently visible
       for (const [pid, cache] of Object.entries(hivemindCache)) {
         if (cache.hiveminds?.some(h => h.id === hivemindId)) {
-          cache.loaded = false;  // force reload on next tab view
+          if (modalActiveTab[pid] === 'hivemind') {
+            loadHiveminds(pid);  // async reload + refreshModal
+          } else {
+            cache.loaded = false;  // force reload on next tab switch
+          }
           break;
         }
       }
