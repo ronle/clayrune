@@ -1,5 +1,25 @@
 # Mission Control — Changelog
 
+## [2026-03-22c] — Global Settings UI, Agent Process Registration
+
+### Global Settings modal
+- New "Settings" button in header opens a 600px modal with all configuration options
+- Organized into 5 sections: Identity, Agent Defaults, Claude Code Integration, Memory & Condensation, Paths & Server
+- Toggle switches for boolean settings (streaming agent, remote control, auto-condense)
+- Dropdowns for model and permission mode selection
+- Settings save on change with toast notification
+- API: `GET /api/config` and `PUT /api/config` endpoints for reading/writing config.json
+
+### Per-project Remote Control toggle
+- New "Remote Control" toggle in project three-dot menu (after Agent Model)
+- Shows ON/OFF status; per-project override for the global setting
+- When enabled, agents get `--remote-control` flag for claude.ai control
+
+### Agent-reported process registration
+- Agents can register spawned processes via `POST /api/processes/register`
+- System prompt teaches agents to call the API when spawning background processes
+- External processes visible in Process Manager with kill support
+
 ## [2026-03-22b] — .NET fallback, Process Manager
 
 ### .NET runtime fallback

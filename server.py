@@ -2740,6 +2740,38 @@ def append_memory(project_id):
 
 
 
+# ── Global config endpoints ────────────────────────────────────────────────
+
+_CONFIG_EDITABLE_KEYS = {
+    'user_name', 'agent_name', 'agent_model', 'agent_max_turns',
+    'agent_permission_mode', 'agent_channels', 'agent_remote_control',
+    'use_streaming_agent', 'condense_enabled', 'condense_threshold_kb',
+    'condense_model', 'projects_base', 'shared_rules_path', 'port',
+}
+
+@app.route('/api/config')
+def get_config():
+    """Return all editable config keys."""
+    return jsonify({k: CONFIG.get(k) for k in _CONFIG_EDITABLE_KEYS})
+
+@app.route('/api/config', methods=['PUT'])
+def update_config():
+    """Update config keys and persist to config.json."""
+    data = request.get_json() or {}
+    updated = {}
+    for k, v in data.items():
+        if k in _CONFIG_EDITABLE_KEYS:
+            CONFIG[k] = v
+            updated[k] = v
+    if updated:
+        try:
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                json.dump(CONFIG, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            return jsonify({'error': f'failed to save config: {e}'}), 500
+    return jsonify({'ok': True, 'updated': list(updated.keys())})
+
+
 # ── Domain settings ─────────────────────────────────────────────────────────
 
 @app.route('/api/settings/domains')

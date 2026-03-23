@@ -262,6 +262,16 @@ def _dotnet_error_fallback(port):
 # ---------------------------------------------------------------------------
 
 def main():
+    # Hide console window (we use console=True in PyInstaller so Python
+    # exception handling works, but hide the window for clean UX)
+    if sys.platform == 'win32' and getattr(sys, 'frozen', False):
+        try:
+            import ctypes
+            ctypes.windll.user32.ShowWindow(
+                ctypes.windll.kernel32.GetConsoleWindow(), 0)  # SW_HIDE
+        except Exception:
+            pass
+
     # Ensure UTF-8 output (Windows console fix)
     if sys.platform == 'win32':
         os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
@@ -295,45 +305,37 @@ def main():
     print(f'Flask server running on http://127.0.0.1:{port}')
 
     # --- Open pywebview window ---
-    # Pre-check: can pythonnet/clr actually initialize?
-    # webview.start() crashes at the native level if .NET is missing,
-    # which PyInstaller's runw bootloader shows as an unhandled exception
-    # dialog before Python's try/except can catch it.
-    dotnet_ok = True
     try:
-        from clr_loader import get_coreclr
-        get_coreclr()
-    except Exception:
-        dotnet_ok = False
+        import webview
 
-    if not dotnet_ok:
-        _dotnet_error_fallback(port)
-        return
+        window = webview.create_window(
+            'Mission Control',
+            url=f'http://127.0.0.1:{port}',
+            width=1400,
+            height=900,
+            min_size=(900, 600),
+        )
 
-    import webview
+        # Show CLI warning after window loads (non-blocking)
+        if cli_warning:
+            def _show_warning():
+                time.sleep(2)  # let page render
+                try:
+                    window.evaluate_js(
+                        f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
+                    )
+                except Exception:
+                    pass
+            threading.Thread(target=_show_warning, daemon=True).start()
 
-    window = webview.create_window(
-        'Mission Control',
-        url=f'http://127.0.0.1:{port}',
-        width=1400,
-        height=900,
-        min_size=(900, 600),
-    )
-
-    # Show CLI warning after window loads (non-blocking)
-    if cli_warning:
-        def _show_warning():
-            time.sleep(2)  # let page render
-            try:
-                window.evaluate_js(
-                    f'alert({json.dumps("Claude CLI not found:\\n\\n" + cli_warning)})'
-                )
-            except Exception:
-                pass
-        threading.Thread(target=_show_warning, daemon=True).start()
-
-    # Blocking — runs the native window event loop
-    webview.start()
+        # Blocking — runs the native window event loop
+        webview.start()
+    except Exception as e:
+        err_str = str(e).lower()
+        if any(k in err_str for k in ('python.runtime', 'clr_loader', 'pythonnet', '.net', 'coreclr')):
+            _dotnet_error_fallback(port)
+        else:
+            raise
 
 
 if __name__ == '__main__':

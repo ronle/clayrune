@@ -610,6 +610,42 @@
   }
   .btn-cleanup:hover { background: var(--amber-dim); }
 
+  /* SETTINGS MODAL */
+  .settings-section { margin-bottom: 20px; }
+  .settings-section-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--accent); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 0; gap: 16px;
+  }
+  .settings-label { font-size: 13px; color: var(--text); flex-shrink: 0; }
+  .settings-hint { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+  .settings-input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    font-family: 'Inter', sans-serif; font-size: 12px; padding: 5px 10px;
+    border-radius: 4px; outline: none; width: 220px; text-align: right;
+  }
+  .settings-input:focus { border-color: var(--accent); }
+  .settings-input[type="number"] { width: 80px; }
+  .settings-select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    font-family: 'Inter', sans-serif; font-size: 12px; padding: 5px 10px;
+    border-radius: 4px; outline: none; cursor: pointer;
+  }
+  .settings-toggle-wrap { display: flex; align-items: center; gap: 8px; }
+  .settings-toggle {
+    position: relative; width: 36px; height: 20px; background: var(--surface3);
+    border-radius: 10px; cursor: pointer; transition: background 0.2s;
+  }
+  .settings-toggle.on { background: var(--accent); }
+  .settings-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    background: #fff; border-radius: 50%; transition: transform 0.2s;
+  }
+  .settings-toggle.on::after { transform: translateX(16px); }
+
   /* ADD FORM */
   .backlog-add { display: flex; flex-direction: column; gap: 8px; }
   .backlog-input {
@@ -1812,6 +1848,7 @@
     <button class="btn-header-action" onclick="openSharedRulesEditor()">Shared Rules</button>
     <button class="btn-header-action" onclick="openScheduler()">Scheduler</button>
     <button class="btn-header-action" onclick="openProcessManager()">Processes</button>
+    <button class="btn-header-action" onclick="openSettings()">Settings</button>
     <button class="btn-new-project" onclick="openNewProjectForm()">+ New</button>
     <button class="btn-header-action" onclick="showDesktop()" title="Minimize all windows">&#x1F5D4;</button>
     <button class="btn-header-action" onclick="startWalkthrough()" title="Take a tour">Tour</button>
@@ -2216,6 +2253,9 @@ function modalContentHTML(p) {
             <button class="modal-menu-sub-item${p.agent_model==='claude-haiku-4-5-20251001'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-haiku-4-5-20251001')">
               <span class="modal-menu-sub-dot" style="background:var(--blue)"></span> Haiku 4.5</button>
           </div>
+          <button class="modal-menu-item" onclick="toggleProjectRemoteControl('${esc(p.id)}',${!p.agent_remote_control})">
+            <span class="menu-icon">&#x1F4F1;</span> Remote Control ${p.agent_remote_control ? '<span style="margin-left:auto;color:var(--green);font-size:11px">ON</span>' : '<span style="margin-left:auto;color:var(--text-faint);font-size:11px">OFF</span>'}
+          </button>
           <button class="modal-menu-item" onclick="editProjectDescription('${esc(p.id)}')">
             <span class="menu-icon">&#x270E;</span> ${p.description ? 'Edit' : 'Add'} Description
           </button>
@@ -2529,6 +2569,19 @@ async function setProjectModel(projectId, model) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ agent_model: model })
     });
+    await refreshSilent();
+  } catch(e) {}
+}
+
+async function toggleProjectRemoteControl(projectId, enabled) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ agent_remote_control: enabled })
+    });
+    showToast(enabled ? 'Remote control enabled' : 'Remote control disabled');
     await refreshSilent();
   } catch(e) {}
 }
@@ -6623,6 +6676,187 @@ async function createProject() {
     await refreshSilent();
     openProjectModal(id);
   } catch(e) { alert('Failed to create project: ' + e.message); }
+}
+
+// ── Global Settings ──────────────────────────────────────────────────────────
+
+async function openSettings() {
+  const modalId = '__settings';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  content.style.width = '600px';
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">Settings</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div id="settings-body" style="padding:8px 28px 24px;overflow-y:auto;max-height:70vh">
+      <div class="process-empty">Loading...</div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  await _renderSettings();
+}
+
+async function _renderSettings() {
+  const body = document.getElementById('settings-body');
+  if (!body) return;
+  let cfg;
+  try {
+    const res = await fetch(API_BASE + '/api/config');
+    cfg = await res.json();
+  } catch(e) {
+    body.innerHTML = '<div class="process-empty">Failed to load settings.</div>';
+    return;
+  }
+
+  const modelOptions = [
+    ['', 'Default'],
+    ['claude-sonnet-4-5-20250929', 'Sonnet 4.5'],
+    ['claude-opus-4-6', 'Opus 4.6'],
+    ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
+  ];
+  const modelSel = modelOptions.map(([v, l]) =>
+    `<option value="${v}" ${cfg.agent_model === v ? 'selected' : ''}>${l}</option>`
+  ).join('');
+
+  const permOptions = [
+    ['', 'Default'],
+    ['default', 'Default (ask)'],
+    ['plan', 'Plan mode'],
+    ['auto-edit', 'Auto-edit'],
+    ['full-auto', 'Full auto'],
+  ];
+  const permSel = permOptions.map(([v, l]) =>
+    `<option value="${v}" ${cfg.agent_permission_mode === v ? 'selected' : ''}>${l}</option>`
+  ).join('');
+
+  function toggle(key, val) {
+    return `<div class="settings-toggle ${val ? 'on' : ''}" onclick="toggleSetting(this,'${key}')"></div>`;
+  }
+
+  function textInput(key, val, opts = '') {
+    return `<input class="settings-input" type="text" value="${esc(val || '')}" onchange="saveSetting('${key}',this.value)" ${opts}>`;
+  }
+
+  function numInput(key, val) {
+    return `<input class="settings-input" type="number" value="${val || 0}" onchange="saveSetting('${key}',parseInt(this.value)||0)">`;
+  }
+
+  body.innerHTML = `
+    <div class="settings-section">
+      <div class="settings-section-title">Identity</div>
+      <div class="settings-row">
+        <div><div class="settings-label">User Name</div><div class="settings-hint">Shown in agent context</div></div>
+        ${textInput('user_name', cfg.user_name)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Agent Name</div><div class="settings-hint">Display name for agents</div></div>
+        ${textInput('agent_name', cfg.agent_name)}
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Agent Defaults</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Default Model</div><div class="settings-hint">Fallback when project has no override</div></div>
+        <select class="settings-select" onchange="saveSetting('agent_model',this.value)">${modelSel}</select>
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Max Turns</div><div class="settings-hint">0 = unlimited</div></div>
+        ${numInput('agent_max_turns', cfg.agent_max_turns)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Permission Mode</div><div class="settings-hint">Controls agent tool permissions</div></div>
+        <select class="settings-select" onchange="saveSetting('agent_permission_mode',this.value)">${permSel}</select>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Claude Code Integration</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Streaming Agent (Mode B)</div><div class="settings-hint">Persistent process with stdin messaging</div></div>
+        ${toggle('use_streaming_agent', cfg.use_streaming_agent)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Remote Control</div><div class="settings-hint">Monitor/control agents from claude.ai</div></div>
+        ${toggle('agent_remote_control', cfg.agent_remote_control)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Channels</div><div class="settings-hint">MCP plugin channels (e.g. plugin:telegram@...)</div></div>
+        ${textInput('agent_channels', cfg.agent_channels)}
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Memory & Condensation</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Auto-Condense</div><div class="settings-hint">Automatically condense large memory files</div></div>
+        ${toggle('condense_enabled', cfg.condense_enabled)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Condense Threshold (KB)</div><div class="settings-hint">Trigger condensation when memory exceeds this</div></div>
+        ${numInput('condense_threshold_kb', cfg.condense_threshold_kb)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Condense Model</div><div class="settings-hint">Model for housekeeping (blank = default)</div></div>
+        ${textInput('condense_model', cfg.condense_model)}
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Paths & Server</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Projects Base</div><div class="settings-hint">Root directory for project file browsing</div></div>
+        ${textInput('projects_base', cfg.projects_base)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Shared Rules Path</div><div class="settings-hint">Path to global SHARED_RULES.md</div></div>
+        ${textInput('shared_rules_path', cfg.shared_rules_path)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Port</div><div class="settings-hint">Requires restart to take effect</div></div>
+        ${numInput('port', cfg.port)}
+      </div>
+    </div>`;
+}
+
+async function saveSetting(key, value) {
+  try {
+    await fetch(API_BASE + '/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [key]: value }),
+    });
+    showToast('Setting saved');
+  } catch(e) {
+    showToast('Failed to save setting', 4000);
+  }
+}
+
+function toggleSetting(el, key) {
+  const isOn = el.classList.toggle('on');
+  saveSetting(key, isOn);
 }
 
 // ── Process Manager ──────────────────────────────────────────────────────────
