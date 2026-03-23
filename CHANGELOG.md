@@ -1,5 +1,30 @@
 # Mission Control — Changelog
 
+## [2026-03-23] — Hivemind Phase 2+3: Agent Integration & Frontend
+
+### Backend — Agent Integration (Phase 2)
+- **Worker spawn**: `POST /api/hivemind/{id}/workstreams/{ws_id}/spawn` dispatches a standard MC agent session as a hivemind worker, with full workstream-specific context injection (handoff, findings, bus messages, decisions)
+- **Handoff endpoint**: `POST /api/hivemind/{id}/workstreams/{ws_id}/handoff` — workers submit structured handoff documents (what was done, key findings, next worker instructions); written to `{ws_id}_handoff.md`
+- **Orchestrator CLI sessions**: Short-lived `claude -p` subprocesses for goal decomposition (on create), synthesis, and re-planning — same pattern as memory condensation housekeeping agents
+- **Auto-decomposition**: Creating a hivemind auto-dispatches an orchestrator CLI session to break the goal into workstreams
+- **Auto-spawn**: Orchestrator background loop automatically spawns workers for ready workstreams (dependencies met, under max_concurrent_workers)
+- **Worker lifecycle**: Detects finished/crashed workers, auto-retries up to max_retries_per_workstream, sets failed status when exhausted
+- **Auto-completion**: When all workstreams complete, hivemind status set to completed and final synthesis triggered
+- **Worker context builder**: `_hm_build_worker_context()` injects handoff, accumulated context, recent findings, bus messages, decisions, and API capabilities into the worker system prompt
+
+### Frontend — Hivemind Tab & Dashboard (Phase 3+4)
+- **Hivemind tab** in project modal — shows all hiveminds for a project with status, workstream list, activity feed
+- **Create dialog** — goal input, title, max workers, model selection; orchestrator auto-decomposes
+- **Workstream list** with status icons (completed/active/pending/blocked/paused/failed)
+- **Activity feed** — recent bus messages with timestamps
+- **Pause/Stop/Resume controls** on hivemind cards
+- **Full dashboard modal** — standalone 900x600 modal with sidebar (workstream selector), overview, and per-workstream detail views
+- **Per-workstream detail** — description, findings count, session count, messages, manual worker spawn button, directive input
+- **Synthesis viewer** — modal showing the current knowledge synthesis markdown
+- **Directive inputs** — send messages to orchestrator or specific workstreams via the bus
+- **SSE live updates** — hivemind dashboard auto-refreshes on bus events; escalation toasts
+- **Proper cleanup** — SSE connections closed when dashboard modal is closed
+
 ## [2026-03-23] — Fix drag-and-drop in Tauri window
 - Disable Tauri's native drag-drop interception (`dragDropEnabled: false`) so JS drop events fire
 - Add document-level `dragover`/`drop` preventers to stop browser file-open on missed drops

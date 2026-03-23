@@ -2830,6 +2830,10 @@ def hivemind_create():
     # Initialize empty synthesis
     _hm_write_synthesis(hivemind_id, f"# {manifest['title']} — Synthesis\n\nNo findings yet.\n")
 
+    # Auto-dispatch orchestrator for goal decomposition (if workstreams not provided)
+    if not data.get('workstreams'):
+        _hm_dispatch_orchestrator(hivemind_id, 'decompose')
+
     return jsonify({'ok': True, 'hivemind': manifest})
 
 
@@ -3055,6 +3059,542 @@ def hivemind_workstream_status(hivemind_id, ws_id):
         'status': new_status,
     })
     return jsonify({'ok': True, 'status': new_status})
+
+
+# ── Hivemind: Worker Context Builder & Spawn ─────────────────────────────────
+
+_hivemind_orchestrating = set()  # hivemind_ids currently running orchestrator CLI sessions
+_hivemind_orch_lock = threading.Lock()
+
+
+def _hm_read_handoff(hivemind_id, ws_id):
+    """Read the latest handoff document for a workstream."""
+    p = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}_handoff.md'
+    if p.exists():
+        try:
+            return p.read_text(encoding='utf-8')
+        except Exception:
+            pass
+    return ''
+
+
+def _hm_write_handoff(hivemind_id, ws_id, content):
+    """Write a handoff document for a workstream."""
+    p = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}_handoff.md'
+    p.write_text(content, encoding='utf-8')
+
+
+def _hm_build_worker_context(hivemind_id, ws_id):
+    """Build the system prompt context for a hivemind worker agent."""
+    manifest = _hm_load_manifest(hivemind_id)
+    ws = _hm_load_workstream(hivemind_id, ws_id)
+    if not manifest or not ws:
+        return ''
+
+    port = PORT
+    parts = []
+
+    parts.append(
+        f"You are a specialist agent in a Hivemind analysis.\n"
+        f"Hivemind: {manifest.get('title', '')}\n"
+        f"Overall Goal: {manifest.get('goal', '')}"
+    )
+
+    parts.append(
+        f"YOUR WORKSTREAM: {ws.get('title', ws_id)}\n"
+        f"YOUR BRIEF: {ws.get('description', '')}"
+    )
+
+    # Handoff from previous worker (highest priority context)
+    handoff = _hm_read_handoff(hivemind_id, ws_id)
+    if handoff:
+        parts.append(f"HANDOFF FROM PREVIOUS WORKER:\n{handoff[:4000]}")
+
+    # Accumulated context
+    ctx = _hm_read_context(hivemind_id, ws_id)
+    if ctx:
+        parts.append(f"ACCUMULATED CONTEXT:\n{ctx[:4000]}")
+
+    # Recent findings from this workstream
+    findings = _hm_read_findings(hivemind_id, ws_id, last_n=20)
+    if findings:
+        findings_text = '\n'.join(
+            f"- [{f.get('timestamp', '')[:16]}] {f.get('title', '')}: {f.get('content', '')[:200]}"
+            for f in findings[-20:]
+        )
+        parts.append(f"RECENT FINDINGS FROM THIS WORKSTREAM:\n{findings_text}")
+
+    # Relevant bus messages from other workstreams
+    bus_msgs = _hm_read_bus_messages(hivemind_id, last_n=50, ws_filter=ws_id)
+    if bus_msgs:
+        bus_text = '\n'.join(
+            f"- [{m.get('timestamp', '')[:16]}] {m.get('from', '')} -> {m.get('to', '')}: "
+            f"{m.get('content', '')[:200]}"
+            for m in bus_msgs[-15:]
+        )
+        parts.append(f"RELEVANT MESSAGES FROM BUS:\n{bus_text}")
+
+    # Decisions that affect this workstream
+    decisions = _hm_read_decisions(hivemind_id, last_n=20)
+    relevant = [d for d in decisions if ws_id in d.get('impacts', []) or d.get('workstream') == ws_id]
+    if relevant:
+        dec_text = '\n'.join(
+            f"- {d.get('decision', '')}: {d.get('rationale', '')[:200]}"
+            for d in relevant[-10:]
+        )
+        parts.append(f"DECISIONS THAT AFFECT YOUR WORK:\n{dec_text}")
+
+    # Worker capabilities (API endpoints)
+    parts.append(
+        f"YOUR CAPABILITIES (use curl to call these):\n"
+        f'- Report a finding: curl -s -X POST http://localhost:{port}/api/hivemind/{hivemind_id}/bus/post '
+        f'-H "Content-Type: application/json" '
+        f"""-d '{{"from":"{ws_id}","type":"finding_report","title":"...","content":"...","confidence":"high|medium|low"}}'\n"""
+        f'- Ask a question: curl -s -X POST http://localhost:{port}/api/hivemind/{hivemind_id}/bus/post '
+        f'-H "Content-Type: application/json" '
+        f"""-d '{{"from":"{ws_id}","type":"question","to":"ws_xxx","content":"..."}}'\n"""
+        f'- Report a blocker: curl -s -X POST http://localhost:{port}/api/hivemind/{hivemind_id}/escalate '
+        f'-H "Content-Type: application/json" '
+        f"""-d '{{"from":"{ws_id}","content":"..."}}'\n"""
+        f'- Submit handoff (REQUIRED before marking complete): curl -s -X POST '
+        f'http://localhost:{port}/api/hivemind/{hivemind_id}/workstreams/{ws_id}/handoff '
+        f'-H "Content-Type: application/json" '
+        f"""-d '{{"what_was_done":"...","key_findings_summary":"...","next_worker_should":"..."}}'\n"""
+        f'- Mark complete: curl -s -X POST http://localhost:{port}/api/hivemind/{hivemind_id}/workstreams/{ws_id}/status '
+        f'-H "Content-Type: application/json" '
+        f"""-d '{{"status":"completed"}}'"""
+    )
+
+    parts.append(
+        "RULES:\n"
+        "1. Build on accumulated context — do NOT repeat analysis already completed\n"
+        "2. Report findings as you discover them (do not batch at the end)\n"
+        "3. Reference evidence and data for all findings\n"
+        "4. If you need information from another workstream, ask via the bus\n"
+        "5. If you encounter a decision point that affects other workstreams, escalate\n"
+        "6. Do NOT write to the project MEMORY.md — your findings go to the bus only\n"
+        "7. TWO-PHASE PROTOCOL:\n"
+        "   PHASE 1 — Do your analysis. Post findings to the bus as you discover them.\n"
+        "   PHASE 2 — When done, submit a handoff document via the handoff endpoint, "
+        "then mark your workstream complete. Do NOT skip Phase 2."
+    )
+
+    return "\n\n".join(parts)
+
+
+@app.route('/api/hivemind/<hivemind_id>/workstreams/<ws_id>/spawn', methods=['POST'])
+def hivemind_workstream_spawn(hivemind_id, ws_id):
+    """Spawn a worker agent for a specific workstream."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'hivemind not found'}), 404
+    ws = _hm_load_workstream(hivemind_id, ws_id)
+    if not ws:
+        return jsonify({'error': 'workstream not found'}), 404
+
+    project_id = manifest.get('project_id', '')
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+
+    pp = p.get('project_path', '')
+    if not pp or not Path(pp).is_dir():
+        return jsonify({'error': 'project_path not set'}), 400
+
+    # Build worker context
+    worker_context = _hm_build_worker_context(hivemind_id, ws_id)
+
+    # Determine model: workstream override > manifest config > global config
+    model = ws.get('model', '') or manifest.get('config', {}).get('worker_model', '') or CONFIG.get('agent_model', '')
+
+    task = (
+        f"You are a Hivemind worker for workstream: {ws.get('title', ws_id)}.\n"
+        f"Brief: {ws.get('description', '')}\n\n"
+        f"Begin your analysis. Follow the two-phase protocol described in your system prompt."
+    )
+
+    # Build command — Mode A (spawn-per-turn) for workers
+    cmd = ['claude', '-p', task, '--print', '--verbose', '--output-format', 'stream-json',
+           '--dangerously-skip-permissions', '--append-system-prompt', worker_context]
+    if model:
+        cmd.extend(['--model', model])
+    max_turns = manifest.get('config', {}).get('worker_max_turns', 0) or CONFIG.get('agent_max_turns', 0)
+    if max_turns and int(max_turns) > 0:
+        cmd.extend(['--max-turns', str(int(max_turns))])
+
+    session_id = f'hm_{uuid.uuid4().hex[:8]}'
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=pp,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            creationflags=_POPEN_FLAGS,
+            startupinfo=_STARTUPINFO,
+        )
+        threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+        _register_process(proc, f'Hivemind Worker ({ws.get("title", ws_id)[:30]})', 'hivemind_worker',
+                          session_id, project_id, task[:80])
+
+        session = {
+            'proc': proc,
+            'status': 'running',
+            'task': task,
+            'log_lines': [],
+            'started_at': now_iso(),
+            'session_id': session_id,
+            'project_id': project_id,
+            'mode': 'A',
+            'housekeeping': True,  # prevent MEMORY.md writes — hivemind workers use bus only
+            'hivemind_id': hivemind_id,
+            'hivemind_ws_id': ws_id,
+        }
+        with agent_lock:
+            agent_sessions[session_id] = session
+
+        t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
+        t.start()
+
+        # Update workstream status
+        ws['status'] = 'active'
+        ws['current_agent_session_id'] = session_id
+        ws['sessions_used'] = ws.get('sessions_used', 0) + 1
+        _hm_save_workstream(hivemind_id, ws_id, ws)
+
+        _hm_push_sse(hivemind_id, {
+            'type': 'hivemind_worker_spawned',
+            'hivemind_id': hivemind_id,
+            'ws_id': ws_id,
+            'session_id': session_id,
+        })
+
+        _log_agent_activity(project_id, f"Hivemind worker spawned for {ws.get('title', ws_id)}")
+        return jsonify({'ok': True, 'session_id': session_id})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/hivemind/<hivemind_id>/workstreams/<ws_id>/handoff', methods=['POST'])
+def hivemind_workstream_handoff(hivemind_id, ws_id):
+    """Submit a worker handoff document (Phase 2 of two-phase protocol)."""
+    ws = _hm_load_workstream(hivemind_id, ws_id)
+    if not ws:
+        return jsonify({'error': 'workstream not found'}), 404
+
+    data = request.get_json() or {}
+
+    # Build handoff markdown
+    sections = []
+    sections.append(f"# Handoff: {ws.get('title', ws_id)}")
+    sections.append(f"**Date:** {now_iso()}")
+
+    if data.get('what_was_done'):
+        sections.append(f"## What Was Done\n{data['what_was_done']}")
+    if data.get('key_findings_summary'):
+        sections.append(f"## Key Findings\n{data['key_findings_summary']}")
+    if data.get('decisions_made'):
+        decisions = data['decisions_made']
+        if isinstance(decisions, list):
+            dec_text = '\n'.join(f"- {d}" for d in decisions)
+        else:
+            dec_text = str(decisions)
+        sections.append(f"## Decisions Made\n{dec_text}")
+    if data.get('open_questions'):
+        questions = data['open_questions']
+        if isinstance(questions, list):
+            q_text = '\n'.join(f"- {q}" for q in questions)
+            # Also append to open_questions.jsonl
+            for q in questions:
+                _hm_append_open_question(hivemind_id, {
+                    'id': 'q_' + str(uuid.uuid4())[:8],
+                    'timestamp': now_iso(),
+                    'workstream': ws_id,
+                    'question': str(q),
+                })
+        else:
+            q_text = str(questions)
+        sections.append(f"## Open Questions\n{q_text}")
+    if data.get('next_worker_should'):
+        sections.append(f"## Next Worker Should\n{data['next_worker_should']}")
+
+    handoff_md = '\n\n'.join(sections) + '\n'
+    _hm_write_handoff(hivemind_id, ws_id, handoff_md)
+
+    # Record artifact if provided
+    if data.get('artifact'):
+        artifact_path = _hm_dir(hivemind_id) / 'workstreams' / f'{ws_id}_artifact.json'
+        artifact_path.write_text(json.dumps(data['artifact'], indent=2, ensure_ascii=False), encoding='utf-8')
+
+    _hm_push_sse(hivemind_id, {
+        'type': 'hivemind_handoff',
+        'hivemind_id': hivemind_id,
+        'ws_id': ws_id,
+        'summary': data.get('key_findings_summary', '')[:500],
+    })
+
+    return jsonify({'ok': True})
+
+
+# ── Hivemind: Orchestrator CLI Sessions ──────────────────────────────────────
+
+def _hm_dispatch_orchestrator(hivemind_id, task_type, extra_context=''):
+    """Spawn a short-lived orchestrator CLI session for a hivemind.
+    task_type: 'decompose' | 'synthesize' | 'replan'
+    """
+    with _hivemind_orch_lock:
+        if hivemind_id in _hivemind_orchestrating:
+            return None
+        _hivemind_orchestrating.add(hivemind_id)
+
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        with _hivemind_orch_lock:
+            _hivemind_orchestrating.discard(hivemind_id)
+        return None
+
+    project_id = manifest.get('project_id', '')
+    p = load_project(project_id)
+    pp = (p or {}).get('project_path', '') or str(Path.home())
+    if not Path(pp).is_dir():
+        pp = str(Path.home())
+
+    port = PORT
+    workstreams = _hm_list_workstreams(hivemind_id)
+    ws_summary = '\n'.join(
+        f"  - {ws['id']}: {ws.get('title', '')} [status={ws.get('status', 'pending')}, "
+        f"findings={ws.get('findings_count', 0)}, priority={ws.get('priority', 5)}]"
+        for ws in workstreams
+    ) or '  (none yet)'
+
+    synthesis = _hm_read_synthesis(hivemind_id)
+    decisions = _hm_read_decisions(hivemind_id, last_n=10)
+    decisions_text = '\n'.join(
+        f"  - {d.get('decision', '')}" for d in decisions
+    ) or '  (none)'
+
+    # Task-specific prompt
+    if task_type == 'decompose':
+        task_prompt = (
+            f"YOUR TASK: Decompose the goal into workstreams.\n\n"
+            f"Analyze the goal and break it into 3-8 focused workstreams. For each workstream, "
+            f"call the create endpoint with: id (ws_001, ws_002, ...), title, description, "
+            f"dependencies (list of ws_ids that must complete first), and priority (1=highest).\n\n"
+            f"Consider which workstreams can run in parallel (no dependencies) vs which need "
+            f"results from earlier workstreams.\n\n"
+            f"Create workstreams by calling:\n"
+            f'curl -s -X POST http://localhost:{port}/api/hivemind/{hivemind_id}/workstreams/create '
+            f'-H "Content-Type: application/json" '
+            f"""-d '{{"id":"ws_001","title":"...","description":"...","dependencies":[],"priority":1}}'\n\n"""
+            f"Create ALL workstreams, then stop. Do not start any analysis yourself."
+        )
+    elif task_type == 'synthesize':
+        all_findings = _hm_read_all_findings(hivemind_id)
+        findings_text = '\n'.join(
+            f"  - [{f.get('timestamp', '')[:16]}] ({f.get('ws_id', '')}): {f.get('title', '')} — {f.get('content', '')[:300]}"
+            for f in all_findings[-50:]
+        ) or '  (none)'
+        task_prompt = (
+            f"YOUR TASK: Synthesize all findings into an updated synthesis document.\n\n"
+            f"ALL FINDINGS:\n{findings_text}\n\n"
+            f"Write a comprehensive synthesis and update it by calling:\n"
+            f'curl -s -X PUT http://localhost:{port}/api/hivemind/{hivemind_id}/knowledge/synthesis '
+            f'-H "Content-Type: application/json" '
+            f"""-d '{{"content":"# Title\\n\\nYour synthesis markdown here..."}}'"""
+        )
+    elif task_type == 'replan':
+        task_prompt = (
+            f"YOUR TASK: Re-evaluate workstream plan and make adjustments.\n\n"
+            f"{extra_context}\n\n"
+            f"You can update workstreams, create new ones, or adjust priorities. "
+            f"Use the API endpoints provided."
+        )
+    else:
+        task_prompt = extra_context or "Review the current state."
+
+    prompt = (
+        f"You are the orchestrator of a Hivemind analysis. Complete ONLY the specified task and exit.\n\n"
+        f"GOAL: {manifest.get('goal', '')}\n\n"
+        f"CURRENT WORKSTREAMS:\n{ws_summary}\n\n"
+        f"KNOWLEDGE BASE SUMMARY:\n{synthesis[:2000] if synthesis else '(empty)'}\n\n"
+        f"RECENT DECISIONS:\n{decisions_text}\n\n"
+        f"{task_prompt}"
+    )
+
+    model = manifest.get('config', {}).get('orchestrator_model', '') or 'sonnet'
+    cmd = ['claude', '-p', prompt, '--model', model, '--max-turns', '5',
+           '--print', '--verbose', '--output-format', 'stream-json',
+           '--dangerously-skip-permissions']
+
+    session_id = f'hm_orch_{uuid.uuid4().hex[:8]}'
+
+    def _run():
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=pp,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=_POPEN_FLAGS,
+                startupinfo=_STARTUPINFO,
+            )
+            threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+            _register_process(proc, f'Hivemind Orchestrator ({task_type})', 'hivemind_orchestrator',
+                              session_id, project_id, f'Hivemind orchestrator: {task_type}')
+
+            session = {
+                'proc': proc,
+                'status': 'running',
+                'task': f'Hivemind orchestrator: {task_type}',
+                'log_lines': [],
+                'started_at': now_iso(),
+                'session_id': session_id,
+                'project_id': project_id,
+                'mode': 'A',
+                'housekeeping': True,
+                'hivemind_id': hivemind_id,
+                'hivemind_role': 'orchestrator',
+            }
+            with agent_lock:
+                agent_sessions[session_id] = session
+
+            _read_agent_stream(proc, session)
+
+            # After orchestrator finishes, push SSE update
+            _hm_push_sse(hivemind_id, {
+                'type': 'hivemind_message',
+                'hivemind_id': hivemind_id,
+                'message': {
+                    'id': 'msg_' + str(uuid.uuid4())[:8],
+                    'timestamp': now_iso(),
+                    'from': 'orchestrator',
+                    'to': 'all',
+                    'type': 'status_update',
+                    'content': f'Orchestrator {task_type} completed',
+                },
+            })
+
+        except Exception as e:
+            print(f"[hivemind-orchestrator-cli] error: {e}")
+        finally:
+            with _hivemind_orch_lock:
+                _hivemind_orchestrating.discard(hivemind_id)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return session_id
+
+
+def _hm_auto_spawn_workers(hivemind_id):
+    """Auto-spawn workers for ready workstreams (called by orchestrator loop)."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest or manifest.get('status') != 'active':
+        return
+
+    workstreams = _hm_list_workstreams(hivemind_id)
+    max_concurrent = manifest.get('config', {}).get('max_concurrent_workers', 3)
+
+    # Count currently active workers
+    active_count = sum(1 for ws in workstreams if ws.get('status') == 'active')
+    if active_count >= max_concurrent:
+        return
+
+    # Find ready workstreams
+    ready = _hm_resolve_dependencies(workstreams)
+    slots = max_concurrent - active_count
+
+    for ws in ready[:slots]:
+        # Check the agent session is actually still alive
+        current_sid = ws.get('current_agent_session_id')
+        if current_sid and current_sid in agent_sessions:
+            s = agent_sessions[current_sid]
+            if s.get('status') == 'running':
+                continue  # already has a running worker
+
+        # Spawn via internal call (not HTTP)
+        ws_id = ws['id']
+        project_id = manifest.get('project_id', '')
+        p = load_project(project_id)
+        if not p:
+            continue
+        pp = p.get('project_path', '')
+        if not pp or not Path(pp).is_dir():
+            continue
+
+        worker_context = _hm_build_worker_context(hivemind_id, ws_id)
+        model = ws.get('model', '') or manifest.get('config', {}).get('worker_model', '') or CONFIG.get('agent_model', '')
+
+        task = (
+            f"You are a Hivemind worker for workstream: {ws.get('title', ws_id)}.\n"
+            f"Brief: {ws.get('description', '')}\n\n"
+            f"Begin your analysis. Follow the two-phase protocol described in your system prompt."
+        )
+
+        cmd = ['claude', '-p', task, '--print', '--verbose', '--output-format', 'stream-json',
+               '--dangerously-skip-permissions', '--append-system-prompt', worker_context]
+        if model:
+            cmd.extend(['--model', model])
+
+        session_id = f'hm_{uuid.uuid4().hex[:8]}'
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=pp,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=_POPEN_FLAGS,
+                startupinfo=_STARTUPINFO,
+            )
+            threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+            _register_process(proc, f'Hivemind Worker ({ws.get("title", ws_id)[:30]})', 'hivemind_worker',
+                              session_id, project_id, task[:80])
+
+            session = {
+                'proc': proc,
+                'status': 'running',
+                'task': task,
+                'log_lines': [],
+                'started_at': now_iso(),
+                'session_id': session_id,
+                'project_id': project_id,
+                'mode': 'A',
+                'housekeeping': True,
+                'hivemind_id': hivemind_id,
+                'hivemind_ws_id': ws_id,
+            }
+            with agent_lock:
+                agent_sessions[session_id] = session
+
+            t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
+            t.start()
+
+            ws['status'] = 'active'
+            ws['current_agent_session_id'] = session_id
+            ws['sessions_used'] = ws.get('sessions_used', 0) + 1
+            _hm_save_workstream(hivemind_id, ws_id, ws)
+
+            _hm_push_sse(hivemind_id, {
+                'type': 'hivemind_worker_spawned',
+                'hivemind_id': hivemind_id,
+                'ws_id': ws_id,
+                'session_id': session_id,
+            })
+            _log_agent_activity(project_id, f"Hivemind auto-spawned worker for {ws.get('title', ws_id)}")
+
+        except Exception as e:
+            print(f"[hivemind] Failed to spawn worker for {ws_id}: {e}")
 
 
 # ── Hivemind API: Message Bus ────────────────────────────────────────────────
@@ -3353,6 +3893,10 @@ def _hivemind_orchestrator_loop():
     and schedule worker spawns. Runs every 10 seconds."""
     while not _hivemind_orchestrator_stop.is_set():
         try:
+            if not HIVEMIND_DIR.exists():
+                _hivemind_orchestrator_stop.wait(10)
+                continue
+
             for d in HIVEMIND_DIR.iterdir():
                 if not d.is_dir() or d.name.startswith('_'):
                     continue
@@ -3364,6 +3908,42 @@ def _hivemind_orchestrator_loop():
                 workstreams = _hm_list_workstreams(hivemind_id)
                 if not workstreams:
                     continue
+
+                # Detect finished workers: workstreams marked 'active' whose agent session
+                # is no longer running → update to completed or failed
+                for ws in workstreams:
+                    if ws.get('status') != 'active':
+                        continue
+                    sid = ws.get('current_agent_session_id')
+                    if not sid or sid not in agent_sessions:
+                        continue
+                    s = agent_sessions[sid]
+                    if s.get('status') in ('completed', 'error'):
+                        # Worker finished — if workstream wasn't explicitly marked,
+                        # push a worker_done event
+                        _hm_push_sse(hivemind_id, {
+                            'type': 'hivemind_worker_done',
+                            'hivemind_id': hivemind_id,
+                            'ws_id': ws['id'],
+                            'session_id': sid,
+                            'status': s.get('status', 'completed'),
+                        })
+                        ws['last_agent_session_id'] = sid
+                        ws['current_agent_session_id'] = None
+                        # Don't auto-mark completed — the worker should have done that via the API
+                        # But if the worker crashed without marking, leave as 'active' for retry
+                        if s.get('status') == 'error' and ws.get('status') == 'active':
+                            retry_count = ws.get('retry_count', 0)
+                            max_retries = manifest.get('config', {}).get('max_retries_per_workstream', 2)
+                            if retry_count < max_retries:
+                                ws['retry_count'] = retry_count + 1
+                                ws['status'] = 'pending'  # will be auto-spawned next tick
+                            else:
+                                ws['status'] = 'failed'
+                        _hm_save_workstream(hivemind_id, ws['id'], ws)
+
+                # Re-read workstreams after potential updates
+                workstreams = _hm_list_workstreams(hivemind_id)
 
                 # Check for blocked workstreams that are now unblocked
                 completed_ids = {ws['id'] for ws in workstreams if ws.get('status') == 'completed'}
@@ -3380,9 +3960,13 @@ def _hivemind_orchestrator_loop():
                                 'status': 'pending',
                             })
 
+                # Auto-spawn workers for ready workstreams
+                _hm_auto_spawn_workers(hivemind_id)
+
                 # Check if all workstreams are completed
+                workstreams = _hm_list_workstreams(hivemind_id)
                 all_completed = all(ws.get('status') in ('completed', 'failed') for ws in workstreams)
-                if all_completed:
+                if all_completed and workstreams:
                     manifest['status'] = 'completed'
                     manifest['updated_at'] = now_iso()
                     _hm_save_manifest(hivemind_id, manifest)
@@ -3391,6 +3975,8 @@ def _hivemind_orchestrator_loop():
                         'hivemind_id': hivemind_id,
                         'status': 'completed',
                     })
+                    # Trigger final synthesis
+                    _hm_dispatch_orchestrator(hivemind_id, 'synthesize')
 
         except Exception as e:
             print(f"[hivemind-orchestrator] Error: {e}")

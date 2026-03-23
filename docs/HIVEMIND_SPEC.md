@@ -1,11 +1,11 @@
 # Hivemind — Persistent Multi-Agent Collaborative Intelligence
 
-## Feature Specification v1.1
+## Feature Specification v1.2
 **Project:** Mission Control
 **Author:** Ron + Claude
 **Date:** 2026-03-23
-**Revised:** 2026-03-23 (v1.1 — architecture corrections and gap-fills)
-**Status:** Draft — open for review
+**Revised:** 2026-03-23 (v1.2 — typed artifact contracts, two-phase protocol, structured handoffs, enhanced watchdog, debate engine, complexity scoring)
+**Status:** Phases 1-4 implemented — Phase 5 (Intelligence & Polish) pending
 
 ---
 
@@ -39,6 +39,10 @@ Unlike ephemeral multi-agent systems (including Claude Code's built-in Agent Tea
 | **Message Bus** | The communication channel between agents — all messages are persisted |
 | **Synthesis** | A periodically-updated human-readable summary of everything the hivemind has learned, produced by an orchestrator CLI session |
 | **Escalation** | When an agent surfaces a decision or blocker to the user for input |
+| **Artifact contract** | A typed, schema-constrained payload that a worker produces as output and downstream workstreams consume as structured input — not free-form prose |
+| **Handoff document** | A structured summary written by a worker at session end: what was done, what was found, what the next worker should know and do first |
+| **Watchdog** | The server-side process that monitors worker health using 5 stuck-signal checks and triggers self-healing automatically |
+| **Complexity score** | A 1–5 rating automatically assigned to a workstream by the orchestrator CLI session based on scope, data size, and cross-dependencies — used to auto-select the worker model |
 
 ---
 
@@ -53,6 +57,7 @@ data/hiveminds/{hivemind_id}/
     {ws_id}.json                   # Workstream definition and status
     {ws_id}_findings.jsonl         # Append-only findings log (source of truth)
     {ws_id}_context.md             # Derived working summary — updated by orchestrator CLI sessions
+    {ws_id}_handoff.md             # Latest structured handoff written by the worker at session end
   knowledge/
     synthesis.md                   # Running synthesis (produced by orchestrator CLI sessions)
     decisions.jsonl                # Decisions made + rationale
@@ -88,7 +93,9 @@ data/hiveminds/{hivemind_id}/
     "require_user_approval_for_decisions": false,
     "orchestrator_model": "sonnet",
     "worker_model": "sonnet",
-    "max_retries_per_workstream": 2
+    "max_retries_per_workstream": 2,
+    "complexity_scoring": true,
+    "debate_enabled": false
   }
 }
 ```
@@ -111,6 +118,8 @@ Status values: `pending` | `active` | `paused` | `stopped` | `completed`
   "findings_count": 14,
   "sessions_used": 3,
   "retry_count": 0,
+  "complexity_score": 3,
+  "artifact_schema": "false_positive_taxonomy",
   "current_agent_session_id": null,
   "last_agent_session_id": "abc-123-def"
 }
@@ -122,6 +131,8 @@ Status values: `pending` | `active` | `blocked` | `completed` | `paused` | `fail
 - `priority` — integer, lower = higher priority. Used by the server orchestrator when more workstreams are ready than there are worker slots. Default: 5.
 - `model` — overrides `manifest.config.worker_model` for this specific workstream. Allows high-complexity workstreams to use Opus while data-processing ones use Haiku.
 - `retry_count` — tracks how many times this workstream has been retried after failure.
+- `complexity_score` — integer 1–5, auto-assigned by the orchestrator CLI session during goal decomposition based on scope, estimated data volume, and cross-workstream dependencies. Used to auto-select `model` when `complexity_scoring: true` (1–2 → Haiku, 3 → Sonnet, 4–5 → Opus). Can be manually overridden.
+- `artifact_schema` — optional named schema that this workstream's output must conform to (see Section 3.7). Downstream workstreams reference this to know what structured data they'll receive.
 
 ### 3.4 Findings (`workstreams/{ws_id}_findings.jsonl`)
 
@@ -156,7 +167,7 @@ Append-only. Each line:
 }
 ```
 
-Message types: `finding_report` | `question` | `answer` | `status_update` | `escalation` | `directive` | `synthesis_update`
+Message types: `finding_report` | `question` | `answer` | `status_update` | `escalation` | `directive` | `synthesis_update` | `debate_resolution`
 
 ### 3.6 Decisions (`knowledge/decisions.jsonl`)
 
@@ -173,6 +184,35 @@ Message types: `finding_report` | `question` | `answer` | `status_update` | `esc
 }
 ```
 
+### 3.7 Typed Artifact Contracts
+
+Borrowed from cohen-liel/hivemind's `contracts.py` pattern. Instead of agents passing findings as free-form prose, workstreams that produce output consumed by downstream workstreams define a typed `TaskOutput` contract. This makes the handoff reliable and allows the orchestrator CLI session to validate that required inputs are available before spawning dependent workers.
+
+Contracts are defined in `data/hiveminds/{hivemind_id}/contracts.json`:
+
+```json
+{
+  "false_positive_taxonomy": {
+    "description": "Taxonomy of unreliable engulfing pattern types with filter criteria",
+    "fields": {
+      "categories": "array of {name, description, filter_rule, fp_reduction_pct}",
+      "primary_filter": "string — the single strongest filter rule",
+      "sample_size": "integer",
+      "confidence": "high | medium | low"
+    },
+    "produced_by": "ws_002",
+    "consumed_by": ["ws_003", "ws_004", "ws_005"]
+  }
+}
+```
+
+**How contracts are used:**
+- The orchestrator CLI session defines contracts during goal decomposition, based on known dependencies between workstreams
+- Workers whose `artifact_schema` is set are instructed to produce a JSON artifact matching the contract schema as part of their handoff document (see Section 4.6)
+- Before spawning a dependent workstream, the server orchestrator checks that all required artifact contracts from upstream workstreams have been fulfilled
+- Downstream workers receive the upstream artifact JSON injected into their context alongside the standard findings and context
+
+**Contract validation is soft** — a missing or non-conforming artifact does not block the workstream; instead it is logged and a warning is included in the worker context injection so the downstream agent knows to ask for clarification via the bus if needed.
 
 ---
 
@@ -205,7 +245,7 @@ Orchestrator CLI sessions are **short-lived `claude -p` subprocesses** invoked b
 
 | Trigger | Task | Output |
 |---------|------|--------|
-| Hivemind creation | Decompose goal into initial workstreams | Creates `workstreams/{ws_id}.json` files via bus API |
+| Hivemind creation | Decompose goal into initial workstreams; assign complexity scores (1–5) to each; auto-select model per workstream; define artifact contracts for dependent pairs | Creates `workstreams/{ws_id}.json` files and `contracts.json` via bus API |
 | Every N worker turns (configurable) | Synthesize all findings into `knowledge/synthesis.md` | Writes via `PUT /api/hivemind/{id}/knowledge/synthesis` |
 | Worker escalation received | Assess escalation, decide response or surface to user | Posts directive or escalation to bus |
 | Workstream stall detected | Re-plan: adjust workstream scope, add/merge workstreams | Updates workstream definitions via API |
@@ -285,6 +325,23 @@ RULES:
 4. If you need information from another workstream, ask via the bus
 5. If you encounter a decision point that affects other workstreams, escalate
 6. Do NOT write to the project MEMORY.md — your findings go to the bus only
+
+TWO-PHASE PROTOCOL — you MUST follow this:
+PHASE 1 — WORK PHASE: Do your analysis. Use tools. Post findings to the bus as you discover them.
+  Continue until you have completed your brief or hit a blocker.
+PHASE 2 — SUMMARY PHASE (mandatory before marking complete):
+  When your work is done, produce a structured handoff by calling:
+    curl -X POST http://localhost:5199/api/hivemind/{id}/workstreams/{ws_id}/handoff -d '{
+      "what_was_done": "...",
+      "key_findings_summary": "...",
+      "decisions_made": [...],
+      "open_questions": [...],
+      "next_worker_should": "...",
+      "artifact": { ...structured output matching artifact_schema if defined... }
+    }'
+  Then mark the workstream complete:
+    curl -X POST http://localhost:5199/api/hivemind/{id}/workstreams/{ws_id}/status -d '{"status":"completed"}'
+  Do NOT skip Phase 2. The handoff is what lets the next worker pick up without repeating your work.
 ```
 
 **Memory policy for workers:** Workers must not write to the project `MEMORY.md`. Their knowledge goes exclusively to the hivemind knowledge base via the bus API. The server orchestrator may optionally write a top-level summary to project `MEMORY.md` at synthesis time (one-way bridge: knowledge base → project memory). Project `MEMORY.md` content is also excluded from worker context injection to prevent cross-contamination.
@@ -295,22 +352,94 @@ When building the worker system prompt, the server applies the same context budg
 
 1. Load `{ws_id}_context.md`
 2. Load last 20 findings from `{ws_id}_findings.jsonl`
-3. Load relevant bus messages (cross-workstream findings tagged for this workstream)
-4. Load applicable decisions from `knowledge/decisions.jsonl`
-5. Check combined size — if over threshold (default 20KB), trigger context condensation before spawning
+3. Load `{ws_id}_handoff.md` from the previous worker session (if exists) — injected first so the new worker's primary orientation is the handoff
+4. Load relevant bus messages (cross-workstream findings tagged for this workstream)
+5. Load applicable decisions from `knowledge/decisions.jsonl`
+6. Load fulfilled artifact contracts from upstream workstreams (structured JSON, injected as `--- UPSTREAM ARTIFACT: {schema_name} ---`)
+7. Check combined size — if over threshold (default 20KB), trigger context condensation before spawning
 
 Context condensation for hivemind workstreams follows the same pattern as the existing `_auto_condense_memory()` flow: a short-lived `claude -p` housekeeping session reads the full findings and context, produces a condensed `{ws_id}_context.md`, and then the worker is spawned with the condensed context.
 
-### 4.5 Error Recovery
+### 4.5 Error Recovery and Watchdog
 
-Worker failures are expected in long-running hiveminds (context overflow, timeout, bad data). The server orchestrator handles these explicitly:
+Worker failures are expected in long-running hiveminds (context overflow, timeout, bad data). The server orchestrator handles these through a **watchdog** that monitors 5 distinct stuck signals (adapted from cohen-liel/hivemind's `orch_watchdog.py`):
 
-- **Transient failures** (context overflow, timeout, unexpected exit): auto-retry up to `manifest.config.max_retries_per_workstream`. Each retry spawns a fresh worker that inherits all findings posted before the failure. `workstream.retry_count` is incremented on each attempt.
-- **Unrecoverable failures** (repeated failures after max retries, or agent posts an escalation of type `blocker`): workstream status set to `failed`; server orchestrator escalates to user with a summary of what was attempted and what failed.
-- **Stall detection**: if a worker session has been running for > N minutes with no new findings posted to the bus, the server orchestrator flags it as potentially stalled and escalates to user.
+| Signal | Detection | Threshold |
+|--------|-----------|-----------|
+| **No findings posted** | No new bus messages from this worker | > 15 minutes |
+| **Output similarity** | Consecutive agent output blocks have > 85% text similarity (agent repeating itself) | 3 consecutive similar blocks |
+| **No file progress** | Worker has made no file writes or tool calls | > 10 minutes |
+| **Circular delegation** | Worker posts the same question to the bus more than twice | 2 repeats |
+| **Repeated tool calls** | Same tool called with identical arguments 3+ times in a row | 3 repeats |
 
-The `_condensing_projects` guard pattern is reused: a `_retrying_workstreams` set prevents double-spawn on retry.
+When any signal fires, the watchdog triggers a graduated self-healing response:
 
+```
+Signal detected
+  → Step 1 — REASSIGN: send worker a directive:
+      "You appear to be stuck on [signal description]. Approach this differently:
+       [specific suggestion based on signal type]. Resume Phase 1."
+  → If still stuck after 5 minutes → Step 2 — SIMPLIFY:
+      Spawn orchestrator CLI session (task: simplify this workstream's scope to unblock it)
+      Orchestrator updates workstream description to a narrower scope
+      Worker receives updated brief via follow-up message
+  → If still stuck after another 5 minutes → Step 3 — KILL & RESPAWN:
+      Kill worker process via Process Manager kill API
+      Increment retry_count
+      If retry_count < max_retries_per_workstream: respawn with fresh context
+      Else: set status to "failed", escalate to user
+```
+
+**For process-level failures** (crash, OOM, unexpected exit):
+- **Transient** (exit code != 0, context overflow): auto-retry up to `max_retries_per_workstream`. Each retry spawns a fresh worker inheriting all findings posted before the failure.
+- **Unrecoverable** (retries exhausted, or worker posts `escalation` of type `blocker`): set status to `failed`, escalate to user with a full summary of attempts.
+
+The `_retrying_workstreams` set (same guard pattern as `_condensing_projects`) prevents double-spawn on retry. The `_watchdog_thread` runs as a background thread alongside the server orchestrator, checking all active workers on a 60-second tick.
+
+### 4.6 Two-Phase Agent Protocol
+
+Every worker session is structured into two mandatory phases. This guarantees parseable, usable output regardless of how much work was done:
+
+**Phase 1 — Work Phase**
+The worker has full tool access. It does analysis, reads files, calls APIs, runs code, and posts findings to the bus as it discovers them. This phase has no fixed end — the worker decides when its brief is complete or when it has reached a blocker.
+
+**Phase 2 — Summary Phase (mandatory)**
+When Phase 1 ends (either by completion or blocker), the worker switches to structured output mode. It calls the handoff endpoint with a document containing:
+- `what_was_done` — concise summary of the work performed this session
+- `key_findings_summary` — the 3–5 most important findings (not a repeat of every finding, just the essentials)
+- `decisions_made` — any decisions the worker made that affect other workstreams
+- `open_questions` — unresolved questions for future sessions or other workstreams
+- `next_worker_should` — the single most important thing the next worker on this workstream should do first
+- `artifact` — the structured output matching `artifact_schema` (if defined on this workstream)
+
+The handoff is written to `{ws_id}_handoff.md` on the server and becomes the **first thing injected** into the next worker's context. This eliminates the most common failure mode in multi-session workstreams: the new worker spending its first 5 turns rediscovering what the previous worker already established.
+
+The two-phase structure also makes the watchdog's output-similarity detection more effective: if a worker is looping in Phase 1, the repeated-output signal fires before it wastes the full context window.
+
+### 4.7 Debate Engine (optional, per-hivemind)
+
+When `debate_enabled: true` in manifest config, the server orchestrator can trigger a debate round between two workstreams when their findings appear to contradict each other. This prevents silent contradictions from persisting in the knowledge base.
+
+**Trigger conditions (server-side heuristics):**
+- Two findings from different workstreams contain directly opposing conclusions (detected by keyword/semantic overlap + negation patterns in finding content)
+- The orchestrator CLI session flags a contradiction during synthesis
+- User manually triggers a debate on two specific findings
+
+**Debate flow:**
+```
+Server orchestrator detects contradiction between f_002_003 and f_003_007
+  → Spawns orchestrator CLI session (task: structure a debate prompt)
+  → Orchestrator CLI produces debate brief: both findings, the core question, evidence for each side
+  → Server spawns a short-lived "debate" worker (claude -p, --max-turns 3):
+      Presented with both findings and asked: which is more supported by evidence?
+      What would resolve the contradiction? Is additional analysis needed?
+  → Debate worker posts its assessment to bus as type "debate_resolution"
+  → Orchestrator CLI session decides: mark one finding as superseded, flag as unresolved,
+      or create a new open_question for a future workstream
+  → Resolution recorded in knowledge/decisions.jsonl
+```
+
+The debate engine is off by default because it adds cost and latency. It's most valuable in research-heavy hiveminds where findings from different analytical angles are likely to conflict (e.g., the engulfing pattern hivemind where session-timing analysis and volume analysis might reach different conclusions about what constitutes a valid signal).
 
 ---
 
@@ -338,6 +467,7 @@ The `_condensing_projects` guard pattern is reused: a `_retrying_workstreams` se
 | `PUT` | `/api/hivemind/{id}/workstreams/{ws_id}` | Update workstream definition |
 | `POST` | `/api/hivemind/{id}/workstreams/{ws_id}/status` | Update status |
 | `POST` | `/api/hivemind/{id}/workstreams/{ws_id}/spawn` | Spawn a worker agent for this workstream |
+| `POST` | `/api/hivemind/{id}/workstreams/{ws_id}/handoff` | Submit worker handoff document (Phase 2); writes `{ws_id}_handoff.md`, validates artifact contract if schema defined |
 
 ### 5.3 Message Bus
 
@@ -378,6 +508,9 @@ Hivemind events flow through the existing SSE infrastructure. New event types (p
 | `hivemind_synthesis` | `{hivemind_id, updated_at}` | `synthesis.md` updated |
 | `hivemind_worker_spawned` | `{hivemind_id, ws_id, session_id}` | Worker agent started |
 | `hivemind_worker_done` | `{hivemind_id, ws_id, session_id, status}` | Worker completed or failed |
+| `hivemind_worker_stuck` | `{hivemind_id, ws_id, signal, step}` | Watchdog detected a stuck signal; step = reassign/simplify/respawn |
+| `hivemind_handoff` | `{hivemind_id, ws_id, summary}` | Worker submitted Phase 2 handoff document |
+| `hivemind_debate` | `{hivemind_id, finding_ids, resolution}` | Debate round completed; contradiction resolved or flagged |
 | `hivemind_message` | `{hivemind_id, message}` | General bus message |
 
 These events are pushed to the project's SSE stream and consumed by the frontend's existing `connectAgentStream()` handler, extended to route `hivemind_*` events to the Hivemind tab.
@@ -737,18 +870,23 @@ signals show 67-72% win rate depending on filter combination.
 
 ## 12. Comparison with Alternatives
 
-| Feature | Claude Agent Teams | ruflo / claude-squad | MC Hivemind |
+| Feature | Claude Agent Teams | cohen-liel/hivemind | MC Hivemind |
 |---------|-------------------|---------------------|-------------|
 | Multi-agent coordination | Yes | Yes | Yes |
-| Persistent knowledge | No | Limited | **Full persistence** |
+| Persistent knowledge | No | No | **Full persistence** |
 | Resumable across restarts | No | No | **Yes** |
 | Cumulative expertise | No | No | **Yes** |
-| Visual dashboard | Terminal only | Terminal only | **Full web UI** |
+| Visual dashboard | Terminal only | React web + mobile | **Integrated into MC** |
 | User intervention | Direct terminal | Limited | **Inline escalations + directives** |
 | Cross-session synthesis | No | No | **Auto-synthesis (CLI-native)** |
 | Context condensation | No | No | **Yes (leverages MC memory system)** |
-| Cost tracking | Per-session | No | **Per-hivemind aggregate** |
-| Dependency management | Task-level | No | **Workstream-level with blocking** |
-| Per-workstream model | No | No | **Yes (Haiku/Sonnet/Opus per workstream)** |
-| Error recovery | None | None | **Retry policy + stall detection** |
-| All Claude via CLI | Yes | Yes | **Yes — no direct API calls** |
+| Cost tracking | Per-session | Per-session | **Per-hivemind aggregate** |
+| Dependency management | Task-level | DAG (full dependency graph) | **Workstream-level with blocking** |
+| Per-workstream model | No | No | **Yes — auto via complexity score** |
+| Error recovery / self-healing | None | Watchdog (5 signals) | **Watchdog (5 signals) + graduated response** |
+| Typed artifact contracts | No | Yes (TaskInput/TaskOutput) | **Yes (schema-validated, soft enforcement)** |
+| Structured agent handoffs | No | Yes | **Yes (two-phase protocol + handoff doc)** |
+| Debate engine | No | No | **Optional (contradiction resolution)** |
+| All Claude via CLI | Yes | Yes (+ SDK) | **Yes — no direct API calls** |
+| Domain | Any | Software engineering only | **Domain-agnostic** |
+| Time horizon | Session | Session | **Days / weeks / ongoing** |
