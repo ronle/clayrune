@@ -212,7 +212,11 @@
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .tile-task.blocked-text { color: var(--red-text); }
-  .tile-task.empty { color: var(--text-faint); }
+  .tile-task.empty, .tile-task.idle { color: var(--text-faint); }
+  .tile-task.running { color: var(--green-text); }
+  .tile-task.idle-agent { color: var(--accent); }
+  .tile-task.error { color: var(--red-text); }
+  .tile-task.completed { color: var(--text-dim); }
 
   /* TILE FOOTER */
   .tile-footer {
@@ -423,6 +427,11 @@
   .summary-value.current-task { color: var(--accent); }
   .summary-value.blocked-text { color: var(--red-text); }
   .summary-value.next-text    { color: var(--green-text); }
+  .summary-value.running      { color: var(--green-text); }
+  .summary-value.idle-agent   { color: var(--accent); }
+  .summary-value.idle         { color: var(--text-faint); }
+  .summary-value.error        { color: var(--red-text); }
+  .summary-value.completed    { color: var(--text-dim); }
 
   /* CARD BODY (modal) */
   .card-body { border-top: 1px solid var(--border); }
@@ -2271,6 +2280,81 @@ function hasRunningAgent(projectId) {
   return agentHistory.some(h => h.projectId === projectId && (h.status === 'running' || h.status === 'idle'));
 }
 
+function computeLiveStatus(projectId) {
+  let currentTask = 'Idle', currentTaskClass = 'idle';
+  let nextAction = '\u2014', nextActionClass = '';
+
+  // --- Current Task ---
+  // Check hivemind first
+  const hmData = hivemindCache[projectId];
+  if (hmData && hmData.hiveminds) {
+    const activeHm = hmData.hiveminds.find(h => h.status === 'running' || h.status === 'active');
+    if (activeHm) {
+      const ws = activeHm._workstreams || [];
+      const done = ws.filter(w => w.status === 'completed').length;
+      const active = ws.filter(w => w.status === 'active').length;
+      const goal = activeHm.goal || activeHm.title || '';
+      const goalSnip = goal.length > 40 ? goal.slice(0, 37) + '...' : goal;
+      currentTask = `Hivemind: ${done}/${ws.length} done, ${active} active \u2014 ${goalSnip}`;
+      currentTaskClass = 'running';
+    }
+  }
+
+  // Check running/idle agents (don't override hivemind)
+  const sessions = agentHistory.filter(h => h.projectId === projectId && !isHivemindWorker(h));
+  const runningSess = sessions.find(h => h.status === 'running' || h.status === 'idle');
+  if (runningSess) {
+    if (currentTaskClass !== 'running') {
+      const task = runningSess.task || 'Working...';
+      currentTask = task.length > 60 ? task.slice(0, 57) + '...' : task;
+      currentTaskClass = runningSess.status === 'idle' ? 'idle-agent' : 'running';
+    }
+  } else if (currentTaskClass === 'idle') {
+    // Check recent error
+    const errored = sessions.find(h => h.status === 'error');
+    if (errored) {
+      const task = errored.task || 'Unknown task';
+      currentTask = task.length > 55 ? task.slice(0, 52) + '...' : task;
+      currentTaskClass = 'error';
+    } else {
+      // Check last completed
+      const completed = sessions.find(h => h.status === 'completed');
+      if (completed) {
+        const task = completed.task || 'Task';
+        currentTask = 'Done: ' + (task.length > 55 ? task.slice(0, 52) + '...' : task);
+        currentTaskClass = 'completed';
+      }
+    }
+  }
+
+  // --- Next Action ---
+  // Hivemind pending workstreams
+  if (hmData && hmData.hiveminds) {
+    const activeHm = hmData.hiveminds.find(h => h.status === 'running' || h.status === 'active');
+    if (activeHm) {
+      const ws = activeHm._workstreams || [];
+      const pending = ws.find(w => w.status === 'pending');
+      if (pending) {
+        const title = pending.title || pending.id || 'workstream';
+        nextAction = 'Next: ' + (title.length > 50 ? title.slice(0, 47) + '...' : title);
+        nextActionClass = 'next-text';
+      }
+    }
+  }
+  // Backlog fallback
+  if (!nextActionClass) {
+    const p = allProjects.find(x => x.id === projectId);
+    const open = ((p && p.backlog) || []).filter(i => i.status === 'open');
+    if (open.length) {
+      const text = open[0].text || '';
+      nextAction = text.length > 55 ? text.slice(0, 52) + '...' : text;
+      nextActionClass = 'next-text';
+    }
+  }
+
+  return { currentTask, currentTaskClass, nextAction, nextActionClass };
+}
+
 function tileHTML(p, slotIndex) {
   const sc = `status-${p.status||'unknown'}`;
   const domCfg = getDomainConfig(p.domain||'general');
@@ -2281,11 +2365,10 @@ function tileHTML(p, slotIndex) {
   const agentBadge = hasRunningAgent(p.id)
     ? `<span class="agent-running-badge">Agent Running</span>` : '';
 
+  const live = computeLiveStatus(p.id);
   const taskText = p.blocked
     ? `<div class="tile-task blocked-text">${esc(p.blocked_reason||'Blocked')}</div>`
-    : (p.current_task
-      ? `<div class="tile-task">${esc(p.current_task)}</div>`
-      : `<div class="tile-task empty">${esc(p.next_action||'No current task')}</div>`);
+    : `<div class="tile-task ${live.currentTaskClass}">${esc(live.currentTask)}</div>`;
 
   const cardBgStyle = p.modal_color ? ` style="background:${p.modal_color.bg}"` : '';
 
@@ -2323,9 +2406,10 @@ function modalContentHTML(p) {
   const backlogBadge = openItems.length
     ? `<span class="backlog-badge">${openItems.length} open</span>` : '';
 
+  const modalLive = computeLiveStatus(p.id);
   const currentTaskHTML = p.blocked
     ? `<span class="summary-value blocked-text">${esc(p.blocked_reason||'Blocked')}</span>`
-    : `<span class="summary-value current-task">${esc(p.current_task||'—')}</span>`;
+    : `<span class="summary-value ${modalLive.currentTaskClass}">${esc(modalLive.currentTask)}</span>`;
 
   // Migrate stale tab selections (memory/rules moved to three-dot menu)
   const validTabs = ['agent','backlog','agent-log','plans','activity','hivemind'];
@@ -2536,8 +2620,8 @@ function modalContentHTML(p) {
         ${currentTaskHTML}
       </div>
       <div class="summary-item">
-        <div class="summary-label">Next action</div>
-        <span class="summary-value next-text">${esc(p.next_action||'—')}</span>
+        <div class="summary-label">Next up</div>
+        <span class="summary-value ${modalLive.nextActionClass}">${esc(modalLive.nextAction)}</span>
       </div>
     </div>
     <div class="modal-tab-bar">

@@ -1,5 +1,16 @@
 # Mission Control — Changelog
 
+## [2026-03-24] — Live status on tiles & modals, UX fixes
+
+### Live Auto-Populated Status
+- **Current Task** and **Next Action** fields are now fully auto-computed from live state
+- `computeLiveStatus(projectId)` inspects running agents, hiveminds, errors, completions, and backlog
+- Priority: Hivemind > Running agent > Error > Last completed > Idle
+- Next action: Hivemind pending workstreams > Top backlog item > —
+- Color-coded: green (running), accent (idle agent), red (error), dim (idle/completed)
+- Applies to both project tiles and modal summary section
+- Replaces stale manual `current_task` / `next_action` fields
+
 ## [2026-03-24] — Plan approval gate, error recovery, UX fixes
 
 ### Plan Approval — No More Auto-Approve
