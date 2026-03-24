@@ -14,9 +14,23 @@
 - Placeholder text: "Type to continue from where it stopped..."
 - Sends follow-up via existing resume mechanism (`-r` for Mode A, stdin respawn for Mode B)
 
-### Lightweight Modal Sizing
-- Memory, Rules, and Shared Rules pop-out modals now use `height: auto; max-height: 80vh` instead of inheriting the default `80vh` fixed height
-- Content area has `overflow-y: auto` for scrolling when content exceeds max height
+### Flexible Modal Textareas
+- Memory, Rules, and Shared Rules modals use flex layouts — textareas grow/shrink with modal resize
+- New `.memory-editor` and `.rules-editor` CSS classes (same pattern as `.shared-rules-editor`)
+- Modals start at `60vh` height, resizable via drag corner
+
+### Universal Ctrl+Scroll Zoom
+- Ctrl+Scroll now zooms all modal content (was agent output only)
+- `applyModalZoom()` helper sets `font-size` on `.modal-content` for full cascade
+- Zoom levels persist per modal across refreshes
+
+### Memory Path Resolution Fix
+- `_native_memory_path()` now checks both underscore and dash encodings
+- Prefers most recently modified file when both exist (fixes stale memory on projects with `_` in path)
+
+### Agent Chat Overflow Fix
+- Keep `.modal-scroll-body` overflow hidden while agent tab is active
+- Prevents follow-up input bar from being pushed below the modal
 
 ### Hivemind Improvements (from prior session)
 - Agent context now includes hivemind API instructions for chat-first creation

@@ -183,6 +183,16 @@ def _native_memory_path(project_path):
     # Encode: C:\Users\foo\bar → C--Users-foo-bar
     encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
     mem_path = CLAUDE_HOME / encoded / 'memory' / 'MEMORY.md'
+    # Claude Code may also replace underscores with dashes — check both
+    # and prefer whichever was modified most recently
+    encoded_alt = encoded.replace('_', '-')
+    if encoded_alt != encoded:
+        alt_path = CLAUDE_HOME / encoded_alt / 'memory' / 'MEMORY.md'
+        if alt_path.exists() and mem_path.exists():
+            if alt_path.stat().st_mtime > mem_path.stat().st_mtime:
+                return alt_path
+        elif alt_path.exists():
+            return alt_path
     return mem_path
 
 

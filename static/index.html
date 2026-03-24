@@ -1567,8 +1567,8 @@
   .agent-log-usage .alu-cost { color: var(--green-text); }
 
   .shared-rules-editor {
-    padding: 28px; display: flex; flex-direction: column;
-    height: calc(100% - 56px); box-sizing: border-box;
+    padding: 0 24px 16px; display: flex; flex-direction: column;
+    flex: 1; min-height: 0; box-sizing: border-box;
   }
   .shared-rules-editor h2 {
     font-size: 16px; font-weight: 700; color: var(--text); margin: 0 0 6px 0;
@@ -1580,6 +1580,36 @@
   }
   .shared-rules-editor .rules-textarea {
     flex: 1; min-height: 0; max-height: none; resize: none;
+  }
+
+  /* Flex-fill editors for lightweight modals */
+  .memory-editor {
+    padding: 0 24px 16px;
+    flex: 1; display: flex; flex-direction: column;
+    min-height: 0; overflow: hidden;
+  }
+  .memory-editor .memory-section {
+    flex: 1; display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  .memory-editor .memory-hint { flex-shrink: 0; }
+  .memory-editor .memory-textarea {
+    flex: 1; min-height: 80px; max-height: none; resize: none;
+  }
+
+  .rules-editor {
+    padding: 0 24px 16px;
+    flex: 1; display: flex; flex-direction: column;
+    min-height: 0; overflow: hidden;
+  }
+  .rules-editor .memory-section {
+    flex: 1; display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  .rules-editor .memory-hint { flex-shrink: 0; }
+  .rules-editor .rules-label { flex-shrink: 0; }
+  .rules-editor .rules-textarea {
+    flex: 1; min-height: 60px; max-height: none; resize: none;
   }
 
   .new-project-form { padding: 28px; }
@@ -2865,7 +2895,6 @@ function sizeAgentChat(win, sessionId) {
   if (!scrollBody || !chat) return;
   scrollBody.style.overflow = 'hidden';
   const available = scrollBody.clientHeight;
-  scrollBody.style.overflow = '';
   const panel = chat.parentElement;
   let used = 0;
   for (const child of panel.children) {
@@ -2974,9 +3003,7 @@ function refreshModalById(modalId) {
     sizeAgentChat(entry.element, sid);
   }
   if (modalZoomLevels[modalId]) {
-    entry.element.querySelectorAll('.agent-output, .ac-session-output, .plan-viewer-body').forEach(el => {
-      el.style.fontSize = modalZoomLevels[modalId] + 'px';
-    });
+    applyModalZoom(entry.element, modalZoomLevels[modalId]);
   }
   if (modalSearchQuery[entry.projectId]) {
     applyTabFilter(entry.projectId);
@@ -5395,14 +5422,14 @@ function rulesTabHTML(p) {
     <div class="rules-label">Agent Rules (AGENT_RULES.md)</div>
     <textarea spellcheck="true" class="rules-textarea" id="rules-agent-${esc(p.id)}" rows="8"
       placeholder="Project-specific rules for the agent...">${esc(loaded.agent_rules || '')}</textarea>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-shrink:0">
       <button class="btn-save-rules" onclick="saveProjectRules('${esc(p.id)}')">Save Agent Rules</button>
       <span class="rules-saved" id="rules-saved-agent-${esc(p.id)}">Saved</span>
     </div>
     <div class="rules-label" style="margin-top:14px">Shared Baseline (SHARED_RULES.md)</div>
     <textarea spellcheck="true" class="rules-textarea" id="rules-shared-${esc(p.id)}" rows="8"
       placeholder="Shared rules applied to all projects...">${esc(loaded.shared_rules || '')}</textarea>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-shrink:0">
       <button class="btn-save-rules" onclick="saveSharedRules('${esc(p.id)}')">Save Shared Rules</button>
       <span class="rules-saved" id="rules-saved-shared-${esc(p.id)}">Saved</span>
     </div>
@@ -6353,7 +6380,7 @@ function memoryTabHTML(p) {
     <textarea class="memory-textarea" id="memory-editor-${esc(p.id)}" rows="16"
       placeholder="# Project Memory\n\n## Architecture Decisions\n- ...\n\n## Gotchas\n- ..."
     >${esc(cached.content || '')}</textarea>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+    <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-shrink:0">
       <button class="btn-save-rules" onclick="saveMemory('${esc(p.id)}')">Save</button>
       <span class="rules-saved" id="memory-saved-${esc(p.id)}">Saved</span>
     </div>
@@ -6412,8 +6439,7 @@ async function openMemoryModal(projectId) {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.height = 'auto';
-  content.style.maxHeight = '80vh';
+  content.style.height = '60vh';
   content.innerHTML = `
     <div class="modal-header" style="padding:16px 24px 12px 28px">
       <div class="modal-window-controls">
@@ -6422,7 +6448,7 @@ async function openMemoryModal(projectId) {
       </div>
       <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Memory &mdash; ${esc(p.name || p.id)}</h2>
     </div>
-    <div style="padding:0 24px 16px;overflow-y:auto">
+    <div class="memory-editor">
       ${memoryTabHTML(p)}
     </div>`;
   win.appendChild(content);
@@ -6461,8 +6487,7 @@ async function openRulesModal(projectId) {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.height = 'auto';
-  content.style.maxHeight = '80vh';
+  content.style.height = '60vh';
   content.innerHTML = `
     <div class="modal-header" style="padding:16px 24px 12px 28px">
       <div class="modal-window-controls">
@@ -6471,7 +6496,7 @@ async function openRulesModal(projectId) {
       </div>
       <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Rules &mdash; ${esc(p.name || p.id)}</h2>
     </div>
-    <div style="padding:0 24px 16px;overflow-y:auto">
+    <div class="rules-editor">
       ${rulesTabHTML(p)}
     </div>`;
   win.appendChild(content);
@@ -6679,8 +6704,7 @@ async function openSharedRulesEditor() {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.height = 'auto';
-  content.style.maxHeight = '80vh';
+  content.style.height = '60vh';
   content.innerHTML = `
     <div class="modal-header" style="padding:16px 24px 12px 28px">
       <div class="modal-window-controls">
@@ -6690,7 +6714,7 @@ async function openSharedRulesEditor() {
       <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Shared Baseline Rules</h2>
       <div class="rules-hint" style="margin:4px 0 0">SHARED_RULES.md &mdash; applies to all projects</div>
     </div>
-    <div class="shared-rules-editor" style="padding:0 24px 16px;overflow-y:auto">
+    <div class="shared-rules-editor">
       <textarea spellcheck="true" class="rules-textarea" id="shared-rules-global" rows="16"
         placeholder="Enter shared rules that apply to all projects..."></textarea>
       <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-shrink:0">
@@ -8833,24 +8857,34 @@ document.addEventListener('touchend', (e) => {
   if (e.touches.length < 2) modalPinch = null;
 });
 
-// ── Ctrl+Scroll zoom on agent output areas ──────────────────────────────────
+// ── Ctrl+Scroll zoom on all modal content ───────────────────────────────────
 
 const modalZoomLevels = {}; // modalId → current font-size in px
 
+function applyModalZoom(modal, size) {
+  // Set on modal-content for elements that inherit
+  const content = modal.querySelector('.modal-content');
+  if (content) content.style.fontSize = size + 'px';
+  // Also set directly on elements with explicit font-size in CSS (overrides inheritance)
+  modal.querySelectorAll(
+    '.agent-output, .ac-session-output, .plan-viewer-body, ' +
+    'textarea, pre, code, .agent-line, .agent-activity, ' +
+    '.memory-hint, .rules-hint, .rules-label, ' +
+    '.backlog-text, .backlog-input, .log-entry, ' +
+    '.hm-overview, .hm-ws-detail, .agent-status-label'
+  ).forEach(el => { el.style.fontSize = size + 'px'; });
+}
+
 document.getElementById('modal-layer').addEventListener('wheel', (e) => {
   if (!e.ctrlKey) return;
-  const target = e.target.closest('.agent-output, .ac-session-output, .plan-viewer-body');
-  if (!target) return;
-  const modal = target.closest('.modal-window');
+  const modal = e.target.closest('.modal-window');
   if (!modal) return;
   e.preventDefault();
   const modalId = modal.dataset.modalId;
-  if (!modalZoomLevels[modalId]) modalZoomLevels[modalId] = 12;
+  if (!modalZoomLevels[modalId]) modalZoomLevels[modalId] = 13;
   const delta = e.deltaY > 0 ? -1 : 1;
   modalZoomLevels[modalId] = Math.max(8, Math.min(24, modalZoomLevels[modalId] + delta));
-  modal.querySelectorAll('.agent-output, .ac-session-output, .plan-viewer-body').forEach(el => {
-    el.style.fontSize = modalZoomLevels[modalId] + 'px';
-  });
+  applyModalZoom(modal, modalZoomLevels[modalId]);
 }, { passive: false });
 </script>
 </body>
