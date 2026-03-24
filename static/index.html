@@ -258,6 +258,8 @@
     position: absolute;
     pointer-events: auto;
     filter: drop-shadow(0 8px 32px rgba(0,0,0,0.5));
+    max-width: 100vw; max-height: 100vh;
+    box-sizing: border-box;
   }
   .modal-window.minimized { display: none; }
   .modal-window.focused .modal-content {
@@ -285,7 +287,12 @@
     opacity: 0.5;
   }
   @media (hover: none), (pointer: coarse) {
-    .modal-content { resize: none; }
+    .modal-content {
+      resize: none;
+      min-width: 0; min-height: 200px;
+      max-width: 100vw; max-height: 100vh;
+      width: calc(100vw - 16px);
+    }
     .modal-content::after {
       content: ''; width: 18px; height: 18px; bottom: 4px; right: 4px;
       border-right: 3px solid var(--text-faint); border-bottom: 3px solid var(--text-faint);
@@ -2055,6 +2062,15 @@ let allProjects = [];
 const _isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const _orderKey = _isMobileDevice ? 'projectOrder_mobile' : 'projectOrder';
+function _clampModalSize(el, w, h) {
+  if (_isMobileDevice) {
+    el.style.width = Math.min(w, window.innerWidth - 8) + 'px';
+    if (h) el.style.height = Math.min(h, window.innerHeight - 8) + 'px';
+  } else {
+    el.style.width = w + 'px';
+    if (h) el.style.height = h + 'px';
+  }
+}
 let projectOrder = JSON.parse(localStorage.getItem(_orderKey) || '[]');
 let activeFilter = 'all';
 let showDoneMap = {};
@@ -5494,8 +5510,6 @@ let _hmDashDebounce = {};   // hivemindId -> setTimeout timer ID
 let _hmDashInFlight = {};   // hivemindId -> true if fetch in progress
 let _hmTabDebounce = {};    // projectId -> setTimeout timer ID
 
-const hmCreateFormVisible = {};
-
 function hivemindTabHTML(p) {
   const cached = hivemindCache[p.id];
   if (!cached || !cached.loaded) {
@@ -5534,35 +5548,10 @@ function hivemindTabHTML(p) {
     }).join('');
   }
 
-  const showForm = hmCreateFormVisible[p.id] ? 'block' : 'none';
   return `<div class="card-section">
     <div class="section-title">Hiveminds</div>
     ${listHTML}
-    <button class="btn-add" onclick="showCreateHivemind('${esc(p.id)}')">+ New Hivemind</button>
-    <div style="display:${showForm};margin-top:12px">
-      ${hivemindCreateFormHTML(p.id)}
-    </div>
-  </div>`;
-}
-
-function hivemindCreateFormHTML(projectId) {
-  return `<div class="hm-create-form">
-    <input type="text" id="hm-title-${esc(projectId)}" placeholder="Title (optional — auto-generated from goal)">
-    <textarea id="hm-goal-${esc(projectId)}" placeholder="Describe the goal for this hivemind analysis...&#10;&#10;The orchestrator will decompose this into workstreams automatically."></textarea>
-    <div style="display:flex;gap:8px;align-items:center">
-      <label style="font-size:12px;color:var(--text-faint)">Max workers:</label>
-      <input type="number" id="hm-workers-${esc(projectId)}" value="3" min="1" max="8" style="width:50px">
-      <label style="font-size:12px;color:var(--text-faint);margin-left:8px">Model:</label>
-      <select id="hm-model-${esc(projectId)}" style="font-size:12px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px">
-        <option value="sonnet">Sonnet</option>
-        <option value="haiku">Haiku</option>
-        <option value="opus">Opus</option>
-      </select>
-    </div>
-    <div class="hm-actions">
-      <button onclick="createHivemind('${esc(projectId)}')">Create Hivemind</button>
-      <button class="secondary" onclick="hmCreateFormVisible['${esc(projectId)}']=false;refreshModal()">Cancel</button>
-    </div>
+    <button class="btn-add" onclick="startHivemindChat('${esc(p.id)}')">+ New Hivemind</button>
   </div>`;
 }
 
@@ -5665,46 +5654,22 @@ async function loadHiveminds(projectId) {
   }
 }
 
-function showCreateHivemind(projectId) {
-  hmCreateFormVisible[projectId] = !hmCreateFormVisible[projectId];
+function startHivemindChat(projectId) {
+  // Switch to Agent tab and pre-fill with hivemind setup prompt
+  modalActiveTab[projectId] = 'agent';
   refreshModal();
-}
-
-async function createHivemind(projectId) {
-  const goalEl = document.getElementById('hm-goal-' + projectId);
-  const titleEl = document.getElementById('hm-title-' + projectId);
-  const workersEl = document.getElementById('hm-workers-' + projectId);
-  const modelEl = document.getElementById('hm-model-' + projectId);
-  const goal = (goalEl?.value || '').trim();
-  if (!goal) { alert('Please enter a goal'); return; }
-  const title = (titleEl?.value || '').trim();
-  const maxWorkers = parseInt(workersEl?.value || '3', 10);
-  const model = modelEl?.value || 'sonnet';
-
-  try {
-    const res = await fetch(API_BASE + '/api/hivemind/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId,
-        goal,
-        title: title || undefined,
-        max_concurrent_workers: maxWorkers,
-        worker_model: model,
-        orchestrator_model: model === 'haiku' ? 'sonnet' : model,
-      }),
-    });
-    const data = await res.json();
-    if (data.ok) {
-      hmCreateFormVisible[projectId] = false;
-      delete hivemindCache[projectId];
-      loadHiveminds(projectId);
-      showToast('Hivemind created — orchestrator is decomposing the goal...');
-    } else {
-      alert('Error: ' + (data.error || 'unknown'));
+  // Wait for DOM to settle, then fill the agent input and dispatch
+  setTimeout(() => {
+    const input = document.getElementById('agent-task-' + projectId);
+    if (input) {
+      input.value = 'I want to start a new Hivemind multi-agent analysis on this project. ' +
+        'Before creating it, ask me clarifying questions about the goal, scope, priorities, ' +
+        'and any constraints. Then create the hivemind when you have enough context.';
+      input.focus();
     }
-  } catch(e) { alert('Failed to create hivemind'); }
+  }, 100);
 }
+
 
 async function hivemindAction(hivemindId, action) {
   try {
@@ -5751,8 +5716,7 @@ async function openHivemindDashboard(hivemindId, selectedWsId) {
   const win = document.createElement('div');
   win.className = 'modal-window focused';
   win.dataset.modalId = modalId;
-  win.style.width = '900px';
-  win.style.height = '600px';
+  _clampModalSize(win, 900, 600);
   win.style.position = 'fixed';
   const z = nextModalZ++;
   win.style.zIndex = z;
@@ -5885,7 +5849,7 @@ function buildHmOverviewHTML(hivemindId, manifest, workstreams, fullData) {
       <div style="font-size:13px;font-weight:500;margin-top:16px;margin-bottom:8px">Open Questions</div>
       ${openQ.map(q => `<div style="font-size:12px;padding:6px 8px;margin-bottom:4px;border:1px solid var(--border);border-radius:4px;display:flex;align-items:flex-start;gap:8px">
         <span style="flex:1;color:var(--text-faint);line-height:1.4">${esc(q.question || '')}</span>
-        <button onclick="respondToQuestion('${esc(hivemindId)}',this)" data-question="${esc(q.question || '')}"
+        <button onclick="respondToQuestion('${esc(hivemindId)}',this)" data-question="${esc(q.question || '')}" data-question-id="${esc(q.id || '')}"
           style="background:var(--accent);border:none;color:#fff;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;white-space:nowrap;flex-shrink:0">Respond</button>
       </div>`).join('')}
     ` : ''}
@@ -6039,24 +6003,33 @@ async function sendHivemindDirective(hivemindId) {
   if (!el) return;
   const msg = el.value.trim();
   if (!msg) return;
+  const pendingQId = el.dataset.pendingQuestionId || '';
   el.value = '';
+  delete el.dataset.pendingQuestionId;
   try {
     await fetch(API_BASE + `/api/hivemind/${hivemindId}/intervene`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg, target: 'orchestrator' }),
     });
+    if (pendingQId) {
+      await fetch(API_BASE + `/api/hivemind/${hivemindId}/knowledge/questions/${pendingQId}/resolve`, { method: 'POST' });
+    }
     refreshHivemindDashboard(hivemindId);
   } catch(e) {}
 }
 
 function respondToQuestion(hivemindId, btn) {
   const question = btn.dataset.question || '';
+  const questionId = btn.dataset.questionId || '';
   const directiveEl = document.getElementById('hm-directive-' + hivemindId);
   if (directiveEl) {
     directiveEl.value = `RE: "${question.substring(0, 100)}${question.length > 100 ? '...' : ''}" — `;
     directiveEl.focus();
     directiveEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Store question ID so sendHivemindDirective can resolve it
+    directiveEl.dataset.pendingQuestionId = questionId;
+    directiveEl.dataset.pendingHivemindId = hivemindId;
   }
 }
 
@@ -6108,8 +6081,7 @@ async function viewSynthesis(hivemindId) {
     const win = document.createElement('div');
     win.className = 'modal-window focused';
     win.dataset.modalId = modalId;
-    win.style.width = '800px';
-    win.style.height = '600px';
+    _clampModalSize(win, 800, 600);
     const z = nextModalZ++;
     win.style.zIndex = z;
     win.innerHTML = `
@@ -6956,8 +6928,7 @@ function openTerminalPopout(projectId, sessionId, command) {
   document.getElementById('modal-layer').appendChild(win);
 
   // Size and position
-  win.style.width = '900px';
-  win.style.height = '600px';
+  _clampModalSize(win, 900, 600);
   const z = nextModalZ++;
   win.style.zIndex = z;
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z, terminalSessionId: sessionId });
@@ -7165,7 +7136,7 @@ async function openScheduler() {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.width = '700px';
+  _clampModalSize(content, 700);
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
       <span style="font-size:16px;font-weight:700;color:var(--text)">Scheduled Tasks</span>
@@ -7805,7 +7776,7 @@ async function openSettings() {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.width = '600px';
+  _clampModalSize(content, 600);
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
       <span style="font-size:16px;font-weight:700;color:var(--text)">Settings</span>
@@ -7987,7 +7958,7 @@ async function openProcessManager() {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.width = '800px';
+  _clampModalSize(content, 800);
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
       <span style="font-size:16px;font-weight:700;color:var(--text)">Process Manager</span>
@@ -8819,16 +8790,18 @@ document.addEventListener('touchmove', (e) => {
     const t = e.touches[0];
     const dx = t.clientX - modalTouchResize.startX;
     const dy = t.clientY - modalTouchResize.startY;
-    modalTouchResize.content.style.width = Math.max(380, modalTouchResize.origW + dx) + 'px';
-    modalTouchResize.content.style.height = Math.max(300, modalTouchResize.origH + dy) + 'px';
+    const minW = _isMobileDevice ? 260 : 380, minH = _isMobileDevice ? 200 : 300;
+    modalTouchResize.content.style.width = Math.max(minW, modalTouchResize.origW + dx) + 'px';
+    modalTouchResize.content.style.height = Math.max(minH, modalTouchResize.origH + dy) + 'px';
     return;
   }
   // Pinch resize
   if (modalPinch && e.touches.length === 2) {
     e.preventDefault();
+    const minW = _isMobileDevice ? 260 : 380, minH = _isMobileDevice ? 200 : 300;
     const scale = pinchDist(e) / modalPinch.startDist;
-    modalPinch.content.style.width = Math.max(380, Math.round(modalPinch.origW * scale)) + 'px';
-    modalPinch.content.style.height = Math.max(300, Math.round(modalPinch.origH * scale)) + 'px';
+    modalPinch.content.style.width = Math.max(minW, Math.round(modalPinch.origW * scale)) + 'px';
+    modalPinch.content.style.height = Math.max(minH, Math.round(modalPinch.origH * scale)) + 'px';
   }
 }, { passive: false });
 
