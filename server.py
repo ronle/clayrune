@@ -967,6 +967,13 @@ def _build_agent_context(project):
         "will hang indefinitely. Instead, just describe your plan in a text message and "
         "proceed directly with implementation. If the user asks you to plan, write your "
         "plan as a text response, then start coding immediately.",
+        f"Hivemind: You can launch multi-agent coordinated analysis on this project. "
+        f"To create a hivemind, call: curl -s -X POST http://localhost:{port}/api/hivemind/create "
+        f'-H "Content-Type: application/json" '
+        f"-d '{{\"project_id\":\"{pid}\",\"goal\":\"GOAL_TEXT\",\"max_concurrent_workers\":3,"
+        f"\"orchestrator_model\":\"sonnet\",\"worker_model\":\"sonnet\"}}' "
+        f"— The orchestrator will decompose the goal into workstreams and spawn workers automatically. "
+        f"Before creating, ask the user clarifying questions about scope, priorities, and constraints.",
     ])
     parts.append("--- SYSTEM ---\n" + "\n".join(awareness))
 
@@ -1056,11 +1063,8 @@ def _read_agent_stream(proc, session):
                             elif tool_name == 'ExitPlanMode':
                                 if session.get('_last_md_file'):
                                     session['plan_file'] = session['_last_md_file']
-                                session['log_lines'].append('[Plan mode exit detected — Mode A cannot approve, queueing follow-up]')
-                                # Queue a follow-up to resume without plan mode
-                                session.setdefault('pending_followups', []).append(
-                                    'Plan approved. Proceed with implementation immediately. '
-                                    'Do NOT call EnterPlanMode or ExitPlanMode again.')
+                                session['waiting_for_plan_approval'] = True
+                                session['log_lines'].append('[Plan mode exit detected — waiting for user approval]')
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
                 elif msg_type == 'result':
@@ -1101,26 +1105,6 @@ def _read_agent_stream(proc, session):
                 session.pop('_dispatching_followup', None)
 
 
-def _auto_approve_plan_b(session):
-    """For Mode B: send a follow-up message via stdin to break out of plan mode."""
-    proc = session.get('proc')
-    if not proc or not session.get('process_alive'):
-        return
-    approval_msg = (
-        'Plan approved. Proceed with implementation immediately. '
-        'Do NOT call EnterPlanMode or ExitPlanMode again.'
-    )
-    try:
-        payload = json.dumps({
-            'type': 'user',
-            'message': {'role': 'user', 'content': approval_msg}
-        }) + '\n'
-        with session.get('stdin_lock', threading.Lock()):
-            proc.stdin.write(payload)
-            proc.stdin.flush()
-    except Exception:
-        pass
-
 
 def _read_agent_stream_b(proc, session):
     """Reader thread for Mode B: persistent process with stream-json I/O.
@@ -1157,9 +1141,8 @@ def _read_agent_stream_b(proc, session):
                             elif tool_name == 'ExitPlanMode':
                                 if session.get('_last_md_file'):
                                     session['plan_file'] = session['_last_md_file']
-                                # Auto-approve: send follow-up so agent isn't stuck
-                                session['log_lines'].append('[Plan mode exit detected — auto-approving]')
-                                _auto_approve_plan_b(session)
+                                session['waiting_for_plan_approval'] = True
+                                session['log_lines'].append('[Plan mode exit detected — waiting for user approval]')
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
                 elif msg_type == 'result':
@@ -2702,7 +2685,7 @@ def _hm_read_decisions(hivemind_id, last_n=None):
 
 
 def _hm_read_open_questions(hivemind_id):
-    """Read open questions from the JSONL file."""
+    """Read open questions from the JSONL file (excludes resolved)."""
     p = _hm_dir(hivemind_id) / 'knowledge' / 'open_questions.jsonl'
     if not p.exists():
         return []
@@ -2712,7 +2695,9 @@ def _hm_read_open_questions(hivemind_id):
             for line in f:
                 line = line.strip()
                 if line:
-                    result.append(json.loads(line))
+                    q = json.loads(line)
+                    if not q.get('resolved'):
+                        result.append(q)
     except Exception:
         pass
     return result
@@ -2723,6 +2708,29 @@ def _hm_append_open_question(hivemind_id, question):
     p = _hm_dir(hivemind_id) / 'knowledge' / 'open_questions.jsonl'
     with open(p, 'a', encoding='utf-8') as f:
         f.write(json.dumps(question, ensure_ascii=False) + '\n')
+
+
+def _hm_resolve_question(hivemind_id, question_id):
+    """Mark an open question as resolved by rewriting the JSONL."""
+    p = _hm_dir(hivemind_id) / 'knowledge' / 'open_questions.jsonl'
+    if not p.exists():
+        return False
+    lines = []
+    found = False
+    with open(p, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            q = json.loads(line)
+            if q.get('id') == question_id:
+                q['resolved'] = True
+                found = True
+            lines.append(json.dumps(q, ensure_ascii=False))
+    if found:
+        with open(p, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines) + '\n')
+    return found
 
 
 def _hm_read_synthesis(hivemind_id):
@@ -3794,6 +3802,18 @@ def hivemind_knowledge_findings(hivemind_id):
         last_n = int(request.args.get('limit', 50))
         return jsonify(_hm_read_findings(hivemind_id, ws_id, last_n))
     return jsonify(_hm_read_all_findings(hivemind_id))
+
+
+@app.route('/api/hivemind/<hivemind_id>/knowledge/questions/<question_id>/resolve', methods=['POST'])
+def hivemind_resolve_question(hivemind_id, question_id):
+    """Mark an open question as resolved."""
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'not found'}), 404
+    found = _hm_resolve_question(hivemind_id, question_id)
+    if not found:
+        return jsonify({'error': 'question not found'}), 404
+    return jsonify({'ok': True})
 
 
 # ── Hivemind API: Escalation & User Intervention ────────────────────────────

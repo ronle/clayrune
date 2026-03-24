@@ -4021,7 +4021,7 @@ function agentPanelHTML(p) {
       ? `<button class="btn-stop" onclick="stopAgent('${esc(p.id)}','${esc(activeSessionId)}')">Stop</button>` : '';
 
     const followupPreviews = renderAgentImagePreviews('fu_' + activeSessionId);
-    const chatInput = (st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle')
+    const chatInput = (st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle' || st === 'error')
       ? `<div class="agent-chat-input">
           ${followupPreviews}
           <div class="agent-chat-input-row agent-drop-zone"
@@ -4030,7 +4030,7 @@ function agentPanelHTML(p) {
               ondragleave="handleAgentDragLeave(event,this)"
               ondrop="handleAgentDrop(event,'fu_${esc(activeSessionId)}')">
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
-              placeholder="${st === 'stopped' ? 'Type to resume conversation...' : 'Send follow-up... (paste or drop files here)'}"
+              placeholder="${st === 'error' ? 'Type to continue from where it stopped...' : st === 'stopped' ? 'Type to resume conversation...' : 'Send follow-up... (paste or drop files here)'}"
               onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'))"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
@@ -6412,6 +6412,8 @@ async function openMemoryModal(projectId) {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
+  content.style.height = 'auto';
+  content.style.maxHeight = '80vh';
   content.innerHTML = `
     <div class="modal-header" style="padding:16px 24px 12px 28px">
       <div class="modal-window-controls">
@@ -6420,7 +6422,7 @@ async function openMemoryModal(projectId) {
       </div>
       <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Memory &mdash; ${esc(p.name || p.id)}</h2>
     </div>
-    <div style="padding:0 24px 16px">
+    <div style="padding:0 24px 16px;overflow-y:auto">
       ${memoryTabHTML(p)}
     </div>`;
   win.appendChild(content);
@@ -6459,6 +6461,8 @@ async function openRulesModal(projectId) {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
+  content.style.height = 'auto';
+  content.style.maxHeight = '80vh';
   content.innerHTML = `
     <div class="modal-header" style="padding:16px 24px 12px 28px">
       <div class="modal-window-controls">
@@ -6467,7 +6471,7 @@ async function openRulesModal(projectId) {
       </div>
       <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Rules &mdash; ${esc(p.name || p.id)}</h2>
     </div>
-    <div style="padding:0 24px 16px">
+    <div style="padding:0 24px 16px;overflow-y:auto">
       ${rulesTabHTML(p)}
     </div>`;
   win.appendChild(content);
@@ -6675,6 +6679,8 @@ async function openSharedRulesEditor() {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
+  content.style.height = 'auto';
+  content.style.maxHeight = '80vh';
   content.innerHTML = `
     <div class="modal-header" style="padding:16px 24px 12px 28px">
       <div class="modal-window-controls">
@@ -6684,7 +6690,7 @@ async function openSharedRulesEditor() {
       <h2 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Shared Baseline Rules</h2>
       <div class="rules-hint" style="margin:4px 0 0">SHARED_RULES.md &mdash; applies to all projects</div>
     </div>
-    <div class="shared-rules-editor" style="padding:0 24px 16px">
+    <div class="shared-rules-editor" style="padding:0 24px 16px;overflow-y:auto">
       <textarea spellcheck="true" class="rules-textarea" id="shared-rules-global" rows="16"
         placeholder="Enter shared rules that apply to all projects..."></textarea>
       <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-shrink:0">

@@ -1,5 +1,31 @@
 # Mission Control — Changelog
 
+## [2026-03-24] — Plan approval gate, error recovery, UX fixes
+
+### Plan Approval — No More Auto-Approve
+- **Removed auto-approve**: `ExitPlanMode` no longer auto-approves plans — both Mode A and Mode B now set `waiting_for_plan_approval` flag and wait for user to click "Approve Plan"
+- Removed `_auto_approve_plan_b()` function entirely
+- Mode A no longer queues approval in `pending_followups`
+- Mode B no longer sends approval via stdin automatically
+- User retains full control over plan review before implementation starts
+
+### Error Recovery — Continue from Errored Sessions
+- Agent follow-up input bar now visible on errored sessions (was hidden before)
+- Placeholder text: "Type to continue from where it stopped..."
+- Sends follow-up via existing resume mechanism (`-r` for Mode A, stdin respawn for Mode B)
+
+### Lightweight Modal Sizing
+- Memory, Rules, and Shared Rules pop-out modals now use `height: auto; max-height: 80vh` instead of inheriting the default `80vh` fixed height
+- Content area has `overflow-y: auto` for scrolling when content exceeds max height
+
+### Hivemind Improvements (from prior session)
+- Agent context now includes hivemind API instructions for chat-first creation
+- `startHivemindChat()` — switches to Agent tab with prefilled setup prompt
+- Open questions: "Respond" button prefills directive, resolves question after sending
+- New endpoint: `POST /api/hivemind/{id}/knowledge/questions/{qid}/resolve`
+- `_hm_read_open_questions()` now filters out resolved questions
+- Findings displayed in dashboard overview and workstream detail views
+
 ## [2026-03-23] — Hivemind Phase 2+3: Agent Integration & Frontend
 
 ### Backend — Agent Integration (Phase 2)
