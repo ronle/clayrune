@@ -81,6 +81,43 @@ MissionControl.exe
 
 A native window should appear (not a browser).
 
+## Creating a GitHub Release
+
+### 1. Build the zip
+
+```batch
+python pre_build_fix.py && pyinstaller build.spec --noconfirm
+
+:: Create release zip (PowerShell)
+powershell Compress-Archive -Path dist\MissionControl -DestinationPath dist\MissionControl-Windows.zip -Force
+```
+
+### 2. Tag and upload
+
+```batch
+git tag v<VERSION>
+git push origin master --tags
+gh release create v<VERSION> dist/MissionControl-Windows.zip --title "v<VERSION> — <title>" --notes "<notes>"
+```
+
+### 3. Verify the bundle before uploading
+
+Confirm these exist in `dist/MissionControl/_internal/`:
+- `pythonnet/runtime/Python.Runtime.dll`
+- `pythonnet/runtime/Python.Runtime.runtimeconfig.json`
+- `clr_loader/` directory with `hostfxr.py`, `ffi/`, etc.
+
+And confirm these modules appear in `build/build/xref-build.html`:
+- `webview.platforms.winforms`
+- `webview.platforms.edgechromium`
+- `webview.guilib`
+
+If any are missing, the native window will silently fall back to browser mode.
+
+### Windows SmartScreen
+
+The exe is not code-signed, so Windows will show a "Windows protected your PC" warning on first launch. Users need to click **"More info" → "Run anyway"**. This is expected and noted in the release description.
+
 ## Creating the Installer (Optional)
 
 If you want to create a Windows installer:
@@ -101,7 +138,9 @@ If you want to create a Windows installer:
 
 2. **Re-run pre_build_fix.py:** The patches may not have been applied.
 
-3. **Check WinForms DLL variant:**
+3. **Verify webview.platforms.winforms is bundled:** Open `build/build/xref-build.html` and search for `webview.platforms.winforms`. If missing, the `build.spec` is not using `collect_submodules('webview')`. This is the most common cause — pywebview's `guilib.py` imports `webview.platforms.winforms` dynamically inside a function, which PyInstaller cannot detect via static analysis. The `build.spec` must use `collect_submodules()` (not a manual hiddenimports list) to catch this.
+
+4. **Check WinForms DLL variant:**
    ```python
    import site
    for sp in site.getsitepackages():
@@ -147,6 +186,16 @@ pyinstaller build.spec --noconfirm
 
 # Output is at: dist/MissionControl/MissionControl.exe
 ```
+
+## Critical: build.spec Hidden Imports
+
+The `build.spec` uses `collect_submodules('webview')` and `collect_submodules('clr_loader')` to automatically discover and bundle all submodules. **Do not replace these with a manual hiddenimports list.** The key reason:
+
+- `guilib.py` imports `webview.platforms.winforms` **dynamically inside a function** — PyInstaller's static analysis cannot detect it
+- `winforms.py` conditionally imports `webview.platforms.edgechromium` at module level
+- `clr_loader` has submodules (`ffi`, `hostfxr`) that are loaded dynamically by pythonnet
+
+Without `collect_submodules`, the native window silently fails and the app falls back to browser mode with no visible error.
 
 ## What pre_build_fix.py Does
 
