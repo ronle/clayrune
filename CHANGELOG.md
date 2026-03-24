@@ -1,5 +1,21 @@
 # Mission Control — Changelog
 
+## [2026-03-24] — Fix process registration & plan approval reliability
+
+### Process Registration — Windows-safe PID operations
+- **New `_pid_is_alive()`**: uses `ctypes.windll.kernel32.OpenProcess()` on Windows instead of unreliable `os.kill(pid, 0)`
+- **New `_kill_pid()`**: uses `taskkill /F /PID` on Windows instead of broken `os.kill(pid, 9)`
+- Registration endpoint now warns-but-registers when PID not detected alive (handles race where process exits quickly)
+- System prompt now includes explicit PID capture instructions for agents (Bash `$!` and Python `p.pid`)
+- Process listing and kill operations use new cross-platform helpers
+
+### Plan Approval — Server-side flag clearing
+- **Root cause fix**: server now clears `waiting_for_plan_approval = False` when any followup is received
+- Previously the flag was set on ExitPlanMode but never cleared — subsequent status polls re-set frontend state to "waiting"
+- Frontend SSE handlers (`turn_complete`, `status`) now also clear `waitingForPlanApproval` locally
+- `approvePlan()` rewritten: always sends directly via fetch API (no dependency on input element existing in DOM)
+- Added double-click guard — button removed immediately before any async work
+
 ## [2026-03-24] — Live status on tiles & modals, UX fixes
 
 ### Live Auto-Populated Status

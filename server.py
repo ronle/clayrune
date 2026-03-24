@@ -39,6 +39,43 @@ if sys.platform == 'win32':
     _STARTUPINFO.wShowWindow = 0  # SW_HIDE
 
 
+def _pid_is_alive(pid):
+    """Check if a PID is alive. Works reliably on both Windows and Unix."""
+    if sys.platform == 'win32':
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def _kill_pid(pid):
+    """Kill a process by PID. Works reliably on both Windows and Unix."""
+    if sys.platform == 'win32':
+        try:
+            subprocess.run(['taskkill', '/F', '/PID', str(pid)],
+                           capture_output=True, timeout=10,
+                           creationflags=_POPEN_FLAGS)
+            return True
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 9)
+            return True
+        except OSError:
+            return False
+
+
 def _hide_process_windows(pid):
     """Hide any console windows created by a process (Windows only)."""
     if sys.platform != 'win32':
@@ -971,7 +1008,10 @@ def _build_agent_context(project):
         f"curl -s -X POST http://localhost:{port}/api/processes/register "
         f'-H "Content-Type: application/json" '
         f"-d '{{\"pid\":PID_NUMBER,\"name\":\"Short description\",\"project_id\":\"{pid}\","
-        f"\"command\":\"the command that was run\"}}'",
+        f"\"command\":\"the command that was run\"}}' "
+        f"— To get PID: in Bash use `cmd &` then `echo $!`; "
+        f"in Python use `p = subprocess.Popen(...); p.pid`. "
+        f"Register IMMEDIATELY after spawning. PID must be an integer.",
         "IMPORTANT — Plan Mode: Do NOT use EnterPlanMode or ExitPlanMode. "
         "You are running headless without an interactive terminal, so plan mode approval "
         "will hang indefinitely. Instead, just describe your plan in a text message and "
@@ -1723,6 +1763,9 @@ def agent_followup(project_id):
         if not existing or existing['project_id'] != project_id:
             return jsonify({'error': 'session not found'}), 404
 
+        # Clear plan approval flag — user has responded
+        existing['waiting_for_plan_approval'] = False
+
         if existing.get('mode') == 'B':
             # Mode B: write directly to persistent process stdin
             if not existing.get('process_alive'):
@@ -2366,11 +2409,7 @@ def list_processes():
                 exit_code = proc.poll()
             else:
                 # External process — check via OS
-                try:
-                    os.kill(entry['pid'], 0)
-                    alive = True
-                except OSError:
-                    alive = False
+                alive = _pid_is_alive(entry['pid'])
                 exit_code = None
             result.append({
                 'pid': entry['pid'],
@@ -2406,9 +2445,7 @@ def kill_tracked_process(pid):
                 return jsonify({'error': f'kill failed: {e}'}), 500
         else:
             # External process — kill via OS
-            try:
-                os.kill(pid, 9)  # SIGKILL
-            except OSError as e:
+            if not _kill_pid(pid):
                 tracked_processes.pop(pid, None)
                 return jsonify({'ok': True, 'already_dead': True})
         tracked_processes.pop(pid, None)
@@ -2444,11 +2481,10 @@ def register_external_process():
     command_preview = data.get('command', '')
     if not pid or not isinstance(pid, int):
         return jsonify({'error': 'pid (integer) required'}), 400
-    # Verify PID is actually running
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return jsonify({'error': f'PID {pid} is not running'}), 400
+    # Verify PID is actually running (warn but still register — process may have exited quickly)
+    alive = _pid_is_alive(pid)
+    if not alive:
+        print(f"[process-register] Warning: PID {pid} not detected as alive, registering anyway")
     project_name = project_id
     try:
         p = load_project(project_id)
