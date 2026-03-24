@@ -1,11 +1,12 @@
 """
 pre_build_fix.py — Run before PyInstaller to fix .NET compatibility issues.
 
-Fixes three build bugs that cause pywebview to crash on target machines:
+Fixes four build bugs that cause pywebview to crash on target machines:
 1. Replaces net462 WinForms DLL with netcoreapp3.0 variant (compatible with .NET 6+)
 2. Writes Python.Runtime.runtimeconfig.json with LatestMajor roll-forward policy
 3. Patches winforms.py to add clr.AddReference('Microsoft.Win32.SystemEvents')
    (split from WinForms assembly in .NET 6)
+4. Patches OpenFolderDialog class to handle missing internal .NET types in .NET 6+
 
 Usage:  python pre_build_fix.py && pyinstaller build.spec --noconfirm
 """
@@ -173,14 +174,93 @@ def patch_winforms_systemevents():
     return False
 
 
+# ── Part 4: Patch OpenFolderDialog for .NET 6+ ────────────────────────────────
+
+def patch_openfolderdialog():
+    """Wrap OpenFolderDialog class in try/except to handle missing .NET types.
+
+    In .NET 6+, the internal FileDialogNative+IFileDialog type doesn't exist,
+    causing the class-level attribute access to fail with AttributeError.
+    This patch wraps the class definition and provides a fallback implementation
+    using FolderBrowserDialog.
+    """
+    for sp in site_packages:
+        wf = os.path.join(sp, 'webview', 'platforms', 'winforms.py')
+        if not os.path.exists(wf):
+            continue
+
+        with open(wf, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Check if already patched
+        marker = "_OpenFolderDialog_available = False"
+        if marker in content:
+            print("[pre-build] winforms.py already patched for OpenFolderDialog — OK")
+            return True
+
+        # Find the OpenFolderDialog class definition
+        old_class_start = "class OpenFolderDialog:"
+        if old_class_start not in content:
+            print("[pre-build] WARNING: could not find OpenFolderDialog class in winforms.py")
+            return False
+
+        # Find where the class ends (next class or module-level code)
+        # The class ends at "_main_window_created = Event()"
+        old_class_end_marker = "_main_window_created = Event()"
+        if old_class_end_marker not in content:
+            print("[pre-build] WARNING: could not find end of OpenFolderDialog class")
+            return False
+
+        # Extract the class definition
+        class_start_idx = content.index(old_class_start)
+        class_end_idx = content.index(old_class_end_marker)
+        old_class = content[class_start_idx:class_end_idx]
+
+        # Create the patched version with try/except wrapper
+        patched_class = '''# OpenFolderDialog uses internal .NET Framework types that may not exist in .NET 6+
+# Wrap in try/except to allow module import to succeed even if these types are missing
+_OpenFolderDialog_available = False
+try:
+    ''' + old_class.replace('\n', '\n    ').rstrip() + '''
+    _OpenFolderDialog_available = True
+except (TypeError, AttributeError) as _e:
+    # Provide a fallback class that uses standard FolderBrowserDialog
+    class OpenFolderDialog:
+        @classmethod
+        def show(cls, parent=None, initialDirectory=None, allow_multiple=False, title=None):
+            dialog = WinForms.FolderBrowserDialog()
+            if initialDirectory:
+                dialog.SelectedPath = initialDirectory
+            if title:
+                dialog.Description = title
+            result = dialog.ShowDialog()
+            if result == WinForms.DialogResult.OK:
+                return (dialog.SelectedPath,)
+            return None
+
+
+'''
+        # Replace old class with patched version
+        new_content = content[:class_start_idx] + patched_class + content[class_end_idx:]
+
+        with open(wf, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        print(f"[pre-build] Patched {wf} — wrapped OpenFolderDialog with try/except")
+        return True
+
+    print("[pre-build] ERROR: Could not find webview/platforms/winforms.py")
+    return False
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     ok1 = fix_winforms_dll()
     ok2 = write_runtimeconfig()
     ok3 = patch_winforms_systemevents()
+    ok4 = patch_openfolderdialog()
 
-    if ok1 and ok2 and ok3:
+    if ok1 and ok2 and ok3 and ok4:
         print("[pre-build] All fixes applied. Safe to run PyInstaller.")
     else:
         print("[pre-build] Some fixes failed — build may not work on all machines.")

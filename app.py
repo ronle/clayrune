@@ -468,9 +468,8 @@ if __name__ == '__main__':
                 def _show_warning():
                     time.sleep(2)
                     try:
-                        _window.evaluate_js(
-                            f'alert({json.dumps("Claude CLI not found:\\n\\n" + _cli_warning)})'
-                        )
+                        _msg = json.dumps("Claude CLI not found:\n\n" + _cli_warning)
+                        _window.evaluate_js(f'alert({_msg})')
                     except Exception:
                         pass
                 threading.Thread(target=_show_warning, daemon=True).start()

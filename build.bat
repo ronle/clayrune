@@ -6,16 +6,25 @@ echo ========================================
 echo.
 
 :: Install build dependencies
-echo [1/2] Installing build dependencies...
-pip install pyinstaller pywebview flask
+echo [1/3] Installing build dependencies...
+pip install pyinstaller pywebview flask pythonnet
 if %ERRORLEVEL% neq 0 (
     echo ERROR: pip install failed.
     exit /b 1
 )
 echo.
 
+:: Run pre-build fixes (DLL variants + runtimeconfig)
+echo [2/3] Running pre-build fixes...
+python pre_build_fix.py
+if %ERRORLEVEL% neq 0 (
+    echo ERROR: Pre-build fixes failed.
+    exit /b 1
+)
+echo.
+
 :: Run PyInstaller
-echo [2/2] Building with PyInstaller...
+echo [3/3] Building with PyInstaller...
 pyinstaller build.spec --noconfirm
 if %ERRORLEVEL% neq 0 (
     echo ERROR: PyInstaller build failed.

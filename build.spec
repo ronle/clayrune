@@ -13,13 +13,33 @@ import site
 block_cipher = None
 ROOT = os.path.dirname(os.path.abspath(SPEC))
 
-# Find pythonnet runtimeconfig.json in site-packages
-_runtimeconfig_datas = []
+# Collect pythonnet and clr_loader packages from site-packages
+_pythonnet_datas = []
 for _sp in site.getsitepackages():
-    _rc = os.path.join(_sp, 'pythonnet', 'runtime', 'Python.Runtime.runtimeconfig.json')
-    if os.path.exists(_rc):
-        _runtimeconfig_datas.append((_rc, 'pythonnet/runtime'))
-        break
+    # pythonnet runtime directory (DLL + runtimeconfig)
+    _pn_runtime = os.path.join(_sp, 'pythonnet', 'runtime')
+    if os.path.isdir(_pn_runtime):
+        for _f in os.listdir(_pn_runtime):
+            _pythonnet_datas.append((os.path.join(_pn_runtime, _f), 'pythonnet/runtime'))
+
+    # pythonnet package Python files
+    _pn_pkg = os.path.join(_sp, 'pythonnet')
+    if os.path.isdir(_pn_pkg):
+        for _f in os.listdir(_pn_pkg):
+            _fp = os.path.join(_pn_pkg, _f)
+            if os.path.isfile(_fp) and _f.endswith('.py'):
+                _pythonnet_datas.append((_fp, 'pythonnet'))
+
+    # clr_loader package (needed by pythonnet)
+    _clr = os.path.join(_sp, 'clr_loader')
+    if os.path.isdir(_clr):
+        for _root, _dirs, _files in os.walk(_clr):
+            _rel = os.path.relpath(_root, _sp)
+            for _f in _files:
+                _pythonnet_datas.append((os.path.join(_root, _f), _rel))
+
+    if _pythonnet_datas:
+        break  # Found packages, stop searching
 
 a = Analysis(
     [os.path.join(ROOT, 'app.py')],
@@ -30,7 +50,7 @@ a = Analysis(
         (os.path.join(ROOT, 'github_sync.py'), '.'),
         (os.path.join(ROOT, 'static', 'index.html'), 'static'),
         (os.path.join(ROOT, 'mc_tty_shim', 'sitecustomize.py'), 'mc_tty_shim'),
-    ] + _runtimeconfig_datas,
+    ] + _pythonnet_datas,
     hiddenimports=[
         'flask',
         'webview',
