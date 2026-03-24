@@ -3978,9 +3978,12 @@ def _hivemind_orchestrator_loop():
                         })
                         ws['last_agent_session_id'] = sid
                         ws['current_agent_session_id'] = None
-                        # Don't auto-mark completed — the worker should have done that via the API
-                        # But if the worker crashed without marking, leave as 'active' for retry
-                        if s.get('status') == 'error' and ws.get('status') == 'active':
+                        # Auto-mark workstream completed on agent success
+                        if s.get('status') == 'completed' and ws.get('status') == 'active':
+                            ws['status'] = 'completed'
+                            if not ws.get('completed_at'):
+                                ws['completed_at'] = now_iso()
+                        elif s.get('status') == 'error' and ws.get('status') == 'active':
                             retry_count = ws.get('retry_count', 0)
                             max_retries = manifest.get('config', {}).get('max_retries_per_workstream', 2)
                             if retry_count < max_retries:
