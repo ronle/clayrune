@@ -2081,6 +2081,7 @@ def agent_status(project_id):
                 'hivemind_id': s.get('hivemind_id', ''),
                 'hivemind_ws_id': s.get('hivemind_ws_id', ''),
                 'hivemind_role': s.get('hivemind_role', ''),
+                'waiting_for_plan_approval': s.get('waiting_for_plan_approval', False),
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (

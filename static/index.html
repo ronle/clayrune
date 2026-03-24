@@ -172,6 +172,23 @@
     border-radius: 10px; overflow: hidden;
   }
 
+  /* ── COMPACT TILE DENSITY ─────────────────────────────────── */
+  body.compact .main { padding: 14px 16px; gap: 16px; }
+  body.compact .projects-col { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  body.compact .card { aspect-ratio: 5 / 4; border-radius: 8px; }
+  body.compact .grid-spacer { aspect-ratio: 5 / 4; }
+  body.compact .card-header { padding: 10px 12px 8px 14px; }
+  body.compact .project-name { font-size: 13px; }
+  body.compact .domain-tag { font-size: 9px; padding: 1px 6px; }
+  body.compact .status-pill { font-size: 10px; padding: 2px 8px; }
+  body.compact .tile-body { padding: 0 12px 0 14px; gap: 4px; }
+  body.compact .tile-task { font-size: 11px; }
+  body.compact .tile-next { font-size: 10px; }
+  body.compact .tile-footer { padding: 6px 12px 8px 14px; }
+  body.compact .backlog-badge { font-size: 9px; }
+  body.compact .agent-running-badge { font-size: 8px; padding: 2px 6px; }
+  body.compact .drag-ghost { transform: scale(0.88); }
+
   /* TILE HEADER */
   .card-header {
     display: flex; flex-direction: column; gap: 8px;
@@ -217,6 +234,9 @@
   .tile-task.idle-agent { color: var(--accent); }
   .tile-task.error { color: var(--red-text); }
   .tile-task.completed { color: var(--text-dim); }
+  .tile-task.plan-approval { color: var(--accent); }
+  .tile-next { font-size: 11px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile-next.next-text { color: var(--text-secondary); }
 
   /* TILE FOOTER */
   .tile-footer {
@@ -432,6 +452,7 @@
   .summary-value.idle         { color: var(--text-faint); }
   .summary-value.error        { color: var(--red-text); }
   .summary-value.completed    { color: var(--text-dim); }
+  .summary-value.plan-approval { color: var(--accent); }
 
   /* CARD BODY (modal) */
   .card-body { border-top: 1px solid var(--border); }
@@ -2051,6 +2072,7 @@
     <button class="btn-header-action" onclick="openSettings()">Settings</button>
     <button class="btn-new-project" onclick="openNewProjectForm()">+ New</button>
     <button class="btn-header-action" onclick="showDesktop()" title="Minimize all windows">&#x1F5D4;</button>
+    <button class="btn-header-action" id="density-toggle" onclick="toggleDensity()" title="Toggle compact tiles">&#x25A6;</button>
     <button class="btn-header-action" onclick="startWalkthrough()" title="Take a tour">Tour</button>
     <span class="refresh-timer" id="refresh-timer">refresh in 30s</span>
     <div class="live-badge"><div class="live-dot"></div>Live</div>
@@ -2304,7 +2326,11 @@ function computeLiveStatus(projectId) {
   const sessions = agentHistory.filter(h => h.projectId === projectId && !isHivemindWorker(h));
   const runningSess = sessions.find(h => h.status === 'running' || h.status === 'idle');
   if (runningSess) {
-    if (currentTaskClass !== 'running') {
+    const cache = agentStatusCache[runningSess.sessionId] || {};
+    if (cache.waitingForPlanApproval) {
+      currentTask = 'Awaiting plan approval';
+      currentTaskClass = 'plan-approval';
+    } else if (currentTaskClass !== 'running') {
       const task = runningSess.task || 'Working...';
       currentTask = task.length > 60 ? task.slice(0, 57) + '...' : task;
       currentTaskClass = runningSess.status === 'idle' ? 'idle-agent' : 'running';
@@ -2386,6 +2412,7 @@ function tileHTML(p, slotIndex) {
     </div>
     <div class="tile-body">
       ${taskText}
+      ${live.nextAction !== '\u2014' ? `<div class="tile-next ${live.nextActionClass}">${esc(live.nextAction)}</div>` : ''}
     </div>
     <div class="tile-footer">
       ${backlogBadge}
@@ -2957,6 +2984,14 @@ function showDesktop() {
   for (const [modalId, entry] of openModals) {
     if (!entry.minimized) minimizeModal(modalId);
   }
+}
+
+function toggleDensity() {
+  document.body.classList.toggle('compact');
+  const isCompact = document.body.classList.contains('compact');
+  localStorage.setItem('mc_tile_density', isCompact ? 'compact' : 'default');
+  const btn = document.getElementById('density-toggle');
+  if (btn) btn.style.color = isCompact ? 'var(--accent)' : '';
 }
 
 function restoreModal(modalId) {
@@ -4731,6 +4766,12 @@ function appendAgentLine(sessionId, text) {
     exitPlanModeCount[sessionId] = (exitPlanModeCount[sessionId] || 0) + 1;
     collapseIntoPlanButton(sessionId, el);
 
+    // Mark as waiting for plan approval in caches
+    if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForPlanApproval = true;
+    const histEntry = agentHistory.find(h => h.sessionId === sessionId);
+    if (histEntry) histEntry.waitingForPlanApproval = true;
+    refreshModal();
+
     // Show "Approve Plan" button on first ExitPlanMode
     if (exitPlanModeCount[sessionId] === 1) {
       const cached = agentStatusCache[sessionId];
@@ -4805,6 +4846,10 @@ function appendAgentLine(sessionId, text) {
 }
 
 function approvePlan(projectId, sessionId) {
+  // Clear plan approval state
+  if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForPlanApproval = false;
+  const hEntry = agentHistory.find(h => h.sessionId === sessionId);
+  if (hEntry) hEntry.waitingForPlanApproval = false;
   // Remove the approve button/row
   const row = document.getElementById(`plan-approve-${sessionId}`);
   if (row) row.remove();
@@ -5036,7 +5081,7 @@ async function fetchAgentStatus(projectId) {
 
     for (const s of sessions) {
       const sid = s.session_id;
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '' };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', waitingForPlanApproval: s.waiting_for_plan_approval || false };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
       }
@@ -8706,6 +8751,15 @@ if (!_isMobileDevice) {
     }
   }).catch(() => {});
 }
+// Restore tile density preference
+if (localStorage.getItem('mc_tile_density') === 'compact') {
+  document.body.classList.add('compact');
+  requestAnimationFrame(() => {
+    const btn = document.getElementById('density-toggle');
+    if (btn) btn.style.color = 'var(--accent)';
+  });
+}
+
 fetchProjects().then(async () => {
   // Restore any running/completed agent sessions into the console
   for (const p of allProjects) {
