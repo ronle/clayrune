@@ -6911,7 +6911,12 @@ function openTerminalPopout(projectId, sessionId, command) {
       <span class="terminal-status-dot running" id="term-dot-${esc(sessionId)}"></span>
       <span class="terminal-cmd">$ ${esc(cmdLabel)}</span>
       <button class="btn-terminal-stop" id="term-stop-${esc(sessionId)}" onclick="stopTerminal('${esc(sessionId)}')">Stop</button>
-      <div class="modal-window-controls" style="position:static;margin:0;margin-left:auto">
+      <div style="display:flex;align-items:center;gap:2px;margin-left:auto;margin-right:8px">
+        <button onclick="termZoom('${esc(sessionId)}',-1)" style="background:none;border:1px solid var(--border);color:var(--text-dim);width:24px;height:24px;border-radius:4px;cursor:pointer;font-size:14px;line-height:1;padding:0" title="Decrease font size">&#x2212;</button>
+        <span id="term-fontsize-${esc(sessionId)}" style="font-size:11px;color:var(--text-faint);min-width:22px;text-align:center"></span>
+        <button onclick="termZoom('${esc(sessionId)}',1)" style="background:none;border:1px solid var(--border);color:var(--text-dim);width:24px;height:24px;border-radius:4px;cursor:pointer;font-size:14px;line-height:1;padding:0" title="Increase font size">+</button>
+      </div>
+      <div class="modal-window-controls" style="position:static;margin:0">
         <button class="modal-minimize" onclick="minimizeModal('${esc(modalId)}')" title="Minimize">&#x2015;</button>
         <button class="modal-close" onclick="closeModalById('${esc(modalId)}')" title="Close">&#10005;</button>
       </div>
@@ -6962,7 +6967,7 @@ function initTerminalXterm(sessionId) {
       white: '#f1f5f9',
     },
     fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 12,
+    fontSize: _isMobileDevice ? 9 : 12,
     lineHeight: 1.4,
     cursorBlink: false,
     disableStdin: true,
@@ -6977,6 +6982,8 @@ function initTerminalXterm(sessionId) {
 
   terminalInstances[sessionId] = term;
   terminalInstances[sessionId]._fitAddon = fitAddon;
+  const sizeLabel = document.getElementById('term-fontsize-' + sessionId);
+  if (sizeLabel) sizeLabel.textContent = term.options.fontSize;
 
   // Re-fit on container resize
   new ResizeObserver(() => {
@@ -6988,6 +6995,16 @@ function initTerminalXterm(sessionId) {
   for (const line of buf) {
     term.write(line);
   }
+}
+
+function termZoom(sessionId, delta) {
+  const term = terminalInstances[sessionId];
+  if (!term) return;
+  const newSize = Math.max(5, Math.min(24, term.options.fontSize + delta));
+  term.options.fontSize = newSize;
+  const label = document.getElementById('term-fontsize-' + sessionId);
+  if (label) label.textContent = newSize;
+  try { term._fitAddon.fit(); } catch {}
 }
 
 function connectTerminalStream(projectId, sessionId) {
