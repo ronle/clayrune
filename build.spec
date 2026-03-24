@@ -9,9 +9,16 @@ IMPORTANT: Run pre_build_fix.py first to fix .NET DLL variants!
 
 import os
 import site
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 ROOT = os.path.dirname(os.path.abspath(SPEC))
+
+# Collect ALL webview submodules — pywebview's own hook only collects data files,
+# not hidden imports.  guilib.py dynamically imports webview.platforms.winforms
+# inside a function, which PyInstaller's static analysis cannot detect.
+_webview_hiddens = collect_submodules('webview')
+_clr_loader_hiddens = collect_submodules('clr_loader')
 
 # Collect pythonnet and clr_loader packages from site-packages
 _pythonnet_datas = []
@@ -53,11 +60,8 @@ a = Analysis(
     ] + _pythonnet_datas,
     hiddenimports=[
         'flask',
-        'webview',
-        'webview.platforms.edgechromium',
-        'clr_loader',
         'pythonnet',
-    ],
+    ] + _webview_hiddens + _clr_loader_hiddens,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

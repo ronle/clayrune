@@ -451,8 +451,16 @@ if __name__ == '__main__':
         import clr  # triggers CoreCLR + .NET load — fail fast if broken
         _webview_ok = True
     except Exception as _e:
-        print(f'[MissionControl] Native window unavailable ({type(_e).__name__}: {_e})')
+        _err = f'Native window unavailable ({type(_e).__name__}: {_e})'
+        print(f'[MissionControl] {_err}')
         print('[MissionControl] Falling back to browser.')
+        _msgbox(
+            f'{_err}\n\nThe app will open in your browser instead.\n\n'
+            'To fix: install .NET Desktop Runtime 6.0+ from\n'
+            'https://dotnet.microsoft.com/download/dotnet/8.0',
+            'Mission Control - Native Window Unavailable',
+            0x30,  # MB_ICONWARNING
+        )
 
     if _webview_ok:
         try:
@@ -480,7 +488,13 @@ if __name__ == '__main__':
             while webview.windows:
                 time.sleep(0.5)
         except Exception as _e:
-            print(f'[MissionControl] Window creation failed ({_e}), opening browser.')
+            _err = f'Window creation failed ({type(_e).__name__}: {_e})'
+            print(f'[MissionControl] {_err}')
+            _msgbox(
+                f'{_err}\n\nThe app will open in your browser instead.',
+                'Mission Control - Native Window Failed',
+                0x30,
+            )
             _open_browser_and_wait(_port)
     else:
         _open_browser_and_wait(_port)
