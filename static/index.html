@@ -1029,6 +1029,21 @@
     .list-header span:nth-child(5), .list-row .lr-next { display: none; }
     .list-header span:nth-child(6), .list-row .lr-agent { display: none; }
   }
+  /* ── Short viewport compaction (low-res laptops, tablets landscape) ── */
+  @media (max-height: 750px) {
+    .modal-header { padding: 8px 16px 6px 20px !important; }
+    .modal-header .path-row { display: none !important; }
+    .modal-header .description { display: none !important; }
+    .modal-header .card-title-row { margin-bottom: 4px !important; }
+    .card-summary { display: none !important; }
+    .modal-tab-bar { padding: 0 14px !important; }
+    .modal-tab { padding: 6px 12px 4px !important; }
+    .agent-panel { padding: 6px 12px 6px 16px !important; }
+    .agent-panel-header { margin-bottom: 2px !important; }
+    .agent-panel-header .section-title { display: none !important; }
+    .agent-tab { padding: 4px 8px !important; }
+    .card-section { padding: 6px 12px 6px 16px !important; }
+  }
   @media (max-width: 600px) {
     .header { padding: 0 12px; }
     .header-search { display: none; }
