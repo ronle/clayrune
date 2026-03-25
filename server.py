@@ -1003,15 +1003,15 @@ def _build_agent_context(project):
         f"Terminal: curl -s -X POST http://localhost:{port}/api/terminal/launch "
         f'-H "Content-Type: application/json" '
         f"-d '{{\"project_id\":\"{pid}\",\"command\":\"<CMD>\"}}'",
-        f"Process tracking: When you spawn a background process (e.g. a server, bot, script), "
-        f"register it so the user can monitor/kill it from the Process Manager: "
-        f"curl -s -X POST http://localhost:{port}/api/processes/register "
+        f"MANDATORY — Process Registration: Every time you spawn a background process, server, bot, "
+        f"or any long-running command, you MUST register it with the Process Manager IMMEDIATELY after spawning. "
+        f"This is NOT optional. Unregistered processes cannot be monitored or stopped by the user. "
+        f"Steps: 1) Spawn the process. 2) Capture the PID (Bash: `cmd & echo $!` — Python: `p = subprocess.Popen(...); p.pid`). "
+        f"3) Register: curl -s -X POST http://localhost:{port}/api/processes/register "
         f'-H "Content-Type: application/json" '
         f"-d '{{\"pid\":PID_NUMBER,\"name\":\"Short description\",\"project_id\":\"{pid}\","
         f"\"command\":\"the command that was run\"}}' "
-        f"— To get PID: in Bash use `cmd &` then `echo $!`; "
-        f"in Python use `p = subprocess.Popen(...); p.pid`. "
-        f"Register IMMEDIATELY after spawning. PID must be an integer.",
+        f"— PID must be an integer. Do NOT skip this step.",
         "IMPORTANT — Plan Mode: Do NOT use EnterPlanMode or ExitPlanMode. "
         "You are running headless without an interactive terminal, so plan mode approval "
         "will hang indefinitely. Instead, just describe your plan in a text message and "
