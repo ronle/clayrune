@@ -5743,9 +5743,9 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
 
   if (answers.length === 0) return;
 
-  // Format answer as a clear text message
-  let message = answers.map(a =>
-    a.question ? `${a.question}\nAnswer: ${a.answer}` : a.answer
+  // Format answer as a clear response to the agent's AskUserQuestion
+  let message = '[Answers to your questions above]\n\n' + answers.map(a =>
+    a.question ? `Q: ${a.question}\nA: ${a.answer}` : a.answer
   ).join('\n\n');
 
   // Mark the form as answered
