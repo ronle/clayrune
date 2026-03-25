@@ -1031,6 +1031,11 @@ def _build_agent_context(project):
         "will hang indefinitely. Instead, just describe your plan in a text message and "
         "proceed directly with implementation. If the user asks you to plan, write your "
         "plan as a text response, then start coding immediately.",
+        "IMPORTANT — Questions: Do NOT use the AskUserQuestion tool. "
+        "You are running headless and the tool will auto-resolve with empty answers. "
+        "Instead, write your questions as plain text in your response and STOP. "
+        "The user will see your message and reply via follow-up. Wait for their response "
+        "before proceeding.",
         f"Hivemind: You can launch multi-agent coordinated analysis on this project. "
         f"To create a hivemind, call: curl -s -X POST http://localhost:{port}/api/hivemind/create "
         f'-H "Content-Type: application/json" '
