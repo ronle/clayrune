@@ -501,8 +501,8 @@
     .modal-content {
       resize: none;
       min-width: 0; min-height: 200px;
-      max-width: 100vw; max-height: 100vh;
-      width: 100vw; height: 100vh;
+      max-width: 100vw; max-height: calc(100vh - 48px);
+      width: 100vw; height: calc(100vh - 48px);
       border-radius: 0;
     }
     .modal-content::after {
@@ -510,20 +510,6 @@
       border-right: 3px solid var(--text-faint); border-bottom: 3px solid var(--text-faint);
       opacity: 0.6;
     }
-    /* ── Mobile modal compaction ─────────────────────────────── */
-    .modal-header { padding: 10px 16px 8px 20px; }
-    .modal-header .path-row { display: none; }
-    .modal-header .description { display: none; }
-    .card-summary { display: none; }
-    .modal-tab-bar { padding: 0 10px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .modal-tab { padding: 7px 10px 5px; font-size: 10px; }
-    .agent-panel { padding: 8px 10px 8px 14px !important; }
-    .agent-panel-header { margin-bottom: 6px; }
-    .agent-panel-header .section-title { display: none; }
-    .agent-tab-bar { gap: 0; }
-    .agent-tab { padding: 5px 8px; font-size: 11px; }
-    .card-section { padding: 8px 10px 8px 14px; }
-    .btn-popout { display: none; }
   }
 
   .modal-window-controls {
@@ -706,10 +692,16 @@
   .modal-scroll-body {
     flex: 1; overflow-y: auto; min-height: 0; overscroll-behavior: contain;
   }
+  .modal-scroll-body.agent-active {
+    overflow: hidden; display: flex; flex-direction: column;
+  }
   .modal-scroll-body::-webkit-scrollbar { width: 6px; }
   .modal-scroll-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
   .modal-tab-content { display: none; }
   .modal-tab-content.active { display: block; }
+  .modal-scroll-body.agent-active > .modal-tab-content.active[data-tab="agent"] {
+    display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden;
+  }
 
   /* LOG ENTRIES */
   .log-entries { display: flex; flex-direction: column; gap: 5px; }
@@ -1007,9 +999,27 @@
     .feed-col { display: none; }
     .bottom-tab-bar { display: flex !important; }
     .agent-console { left: 0 !important; bottom: 48px; }
-    .card-summary { grid-template-columns: 1fr; }
-    .summary-item { border-right: none; border-bottom: 1px solid var(--border); }
-    .summary-item:last-child { border-bottom: none; }
+    .card-summary { display: none !important; }
+    .modal-content {
+      max-width: 100vw; max-height: calc(100vh - 48px);
+      width: 100vw; height: calc(100vh - 48px);
+      border-radius: 0;
+    }
+    .modal-window { max-height: calc(100vh - 48px); }
+    .tile-task, .tile-next { display: none; }
+    /* ── Modal compaction for mobile ─────────────────────────── */
+    .modal-header { padding: 10px 16px 8px 20px !important; }
+    .modal-header .path-row { display: none !important; }
+    .modal-header .description { display: none !important; }
+    .modal-tab-bar { padding: 0 10px !important; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .modal-tab { padding: 7px 10px 5px !important; font-size: 10px !important; }
+    .agent-panel { padding: 8px 10px 8px 14px !important; }
+    .agent-panel-header { margin-bottom: 4px !important; }
+    .agent-panel-header .section-title { display: none !important; }
+    .agent-tab-bar { gap: 0 !important; }
+    .agent-tab { padding: 5px 8px !important; font-size: 11px !important; }
+    .card-section { padding: 8px 10px 8px 14px !important; }
+    .btn-popout { display: none !important; }
   }
   @media (max-width: 768px) {
     .metrics-row { flex-wrap: wrap; }
@@ -1251,7 +1261,7 @@
 
   .agent-chat {
     background: #0a0c10; border: 1px solid var(--border); border-radius: 6px;
-    display: flex; flex-direction: column;
+    display: flex; flex-direction: column; flex: 1; min-height: 0;
     position: relative; overflow: hidden;
   }
   .agent-chat-separator {
@@ -3084,7 +3094,7 @@ function modalContentHTML(p) {
         >${modalSearchQuery[p.id] ? `<span class="search-clear" onclick="clearTabSearch('${esc(p.id)}')">&#x2715;</span>` : ''}
       </div>` : ''}
     </div>
-    <div class="modal-scroll-body">
+    <div class="modal-scroll-body${activeTab==='agent'?' agent-active':''}">
       <div class="modal-tab-content ${activeTab==='backlog'?'active':''}" data-tab="backlog">
         <div class="card-section">
           <div class="section-title">
@@ -3150,6 +3160,11 @@ function getStatusColor(status) {
 }
 
 function centerModalElement(win) {
+  if (_isMobileDevice || window.innerWidth <= 960) {
+    win.style.left = '0px';
+    win.style.top = '0px';
+    return;
+  }
   const w = win.offsetWidth, h = win.offsetHeight;
   const offset = Math.max(0, openModals.size - 1) * 30;
   win.style.left = Math.max(0, (window.innerWidth - w) / 2 + offset) + 'px';
@@ -3683,14 +3698,20 @@ function sizeAgentChat(win, sessionId) {
   const out = document.getElementById(`agent-output-${sessionId}`);
   if (!scrollBody || !chat) return;
   scrollBody.style.overflow = 'hidden';
+  // Constrain the tab content and agent panel to fill scroll body exactly
+  const tabContent = chat.closest('.modal-tab-content');
+  const panel = chat.closest('.agent-panel');
   const available = scrollBody.clientHeight;
-  const panel = chat.parentElement;
+  if (tabContent) { tabContent.style.height = available + 'px'; tabContent.style.overflow = 'hidden'; }
+  if (panel) { panel.style.height = available + 'px'; panel.style.overflow = 'hidden'; }
   let used = 0;
-  for (const child of panel.children) {
-    if (child !== chat) used += child.offsetHeight;
+  if (panel) {
+    for (const child of panel.children) {
+      if (child !== chat) used += child.offsetHeight;
+    }
+    const panelStyle = getComputedStyle(panel);
+    used += parseFloat(panelStyle.paddingTop) + parseFloat(panelStyle.paddingBottom);
   }
-  const panelStyle = getComputedStyle(panel);
-  used += parseFloat(panelStyle.paddingTop) + parseFloat(panelStyle.paddingBottom);
   const chatHeight = Math.max(120, available - used - 8);
   chat.style.height = chatHeight + 'px';
   if (out) {
@@ -3785,7 +3806,10 @@ function refreshModalById(modalId) {
     if (el) { el.focus(); el.selectionStart = selStart; el.selectionEnd = selEnd; }
   }
   const newScrollBody = content.querySelector('.modal-scroll-body');
-  if (newScrollBody) newScrollBody.scrollTop = savedScroll;
+  if (newScrollBody) {
+    newScrollBody.scrollTop = savedScroll;
+    newScrollBody.classList.toggle('agent-active', curTab === 'agent');
+  }
   const nameInput = content.querySelector('.name-edit');
   if (nameInput) autoSizeNameInput(nameInput);
   if (sid && curTab === 'agent') {
