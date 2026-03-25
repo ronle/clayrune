@@ -4578,7 +4578,64 @@ function setTokenMode(mode) {
 // 'ctrl-enter' = Ctrl/Cmd+Enter sends, Enter for newline (default)
 let enterKeyMode = localStorage.getItem('enter_mode') || 'ctrl-enter';
 
+// ── Prompt History (Up/Down arrow recall) ───────────────────────────────────
+const _promptHistory = JSON.parse(localStorage.getItem('prompt_history') || '[]');
+const _PROMPT_HISTORY_MAX = 100;
+let _promptHistoryIdx = -1;  // -1 = not navigating
+let _promptDraft = '';        // stash current input when navigating
+
+function _pushPromptHistory(text) {
+  if (!text) return;
+  // Deduplicate: remove if already most recent
+  if (_promptHistory.length && _promptHistory[_promptHistory.length - 1] === text) return;
+  _promptHistory.push(text);
+  if (_promptHistory.length > _PROMPT_HISTORY_MAX) _promptHistory.shift();
+  localStorage.setItem('prompt_history', JSON.stringify(_promptHistory));
+  _promptHistoryIdx = -1;
+}
+
 function handleInputEnter(event, sendFn) {
+  // Up/Down arrow: navigate prompt history
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    const ta = event.target;
+    if (!_promptHistory.length) return;
+    // Only activate when cursor is on first line (Up) or last line (Down)
+    const val = ta.value;
+    const pos = ta.selectionStart;
+    if (event.key === 'ArrowUp') {
+      // Only if cursor is on the first line
+      const beforeCursor = val.substring(0, pos);
+      if (beforeCursor.includes('\n')) return; // not on first line
+      event.preventDefault();
+      if (_promptHistoryIdx === -1) {
+        _promptDraft = val;
+        _promptHistoryIdx = _promptHistory.length - 1;
+      } else if (_promptHistoryIdx > 0) {
+        _promptHistoryIdx--;
+      }
+      ta.value = _promptHistory[_promptHistoryIdx];
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    } else {
+      // ArrowDown — only if cursor is on the last line
+      const afterCursor = val.substring(pos);
+      if (afterCursor.includes('\n')) return; // not on last line
+      if (_promptHistoryIdx === -1) return; // not navigating
+      event.preventDefault();
+      _promptHistoryIdx++;
+      if (_promptHistoryIdx >= _promptHistory.length) {
+        _promptHistoryIdx = -1;
+        ta.value = _promptDraft;
+      } else {
+        ta.value = _promptHistory[_promptHistoryIdx];
+      }
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }
+    return;
+  }
+  // Any other key resets history navigation
+  if (_promptHistoryIdx !== -1 && event.key !== 'Enter') {
+    _promptHistoryIdx = -1;
+  }
   if (event.key !== 'Enter') return;
   if (enterKeyMode === 'enter') {
     // Enter sends, Shift+Enter for newline
@@ -5103,6 +5160,7 @@ async function dispatchAgent(projectId) {
 
   // Require a prompt for fresh sessions; resume can go without one
   if (!task && !resumeId) { input.focus(); return; }
+  _pushPromptHistory(task);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
 
@@ -5716,6 +5774,7 @@ async function sendFollowup(projectId, sessionId) {
   const input = document.getElementById(`agent-followup-${sessionId}`);
   const message = input.value.trim();
   if (!message) { input.focus(); return; }
+  _pushPromptHistory(message);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
 
@@ -6106,6 +6165,7 @@ async function dispatchContinue(projectId, entryId, claudeSessionId) {
   const input = document.getElementById(`continue-msg-${entryId}`);
   const task = input.value.trim();
   if (!task) { input.focus(); return; }
+  _pushPromptHistory(task);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
   continueInputOpen = {};
