@@ -332,15 +332,20 @@ def _has_running_agent(project_id):
     return False
 
 
-def _should_condense(project):
-    """Check whether memory condensation should be triggered for this project."""
+def _should_condense(project, include_claude_md=False):
+    """Check whether memory condensation should be triggered for this project.
+
+    If include_claude_md is True, also count the project's CLAUDE.md in the size check.
+    This is used by the pre-dispatch context budget check.
+    """
     if not CONFIG.get('condense_enabled', True):
         return False
     pid = project['id']
     with _condense_lock:
         if pid in _condensing_projects:
             return False
-    if _has_running_agent(pid):
+    # Skip running-agent check when called from pre-dispatch (agent hasn't started yet)
+    if not include_claude_md and _has_running_agent(pid):
         return False
     mem_path = _get_memory_path(project)
     archive_path = _get_archive_path(project)
@@ -349,6 +354,15 @@ def _should_condense(project):
         combined += mem_path.stat().st_size
     if archive_path.exists():
         combined += archive_path.stat().st_size
+    if include_claude_md:
+        pp = project.get('project_path', '')
+        if pp:
+            claude_md = Path(pp) / 'CLAUDE.md'
+            if claude_md.exists():
+                try:
+                    combined += claude_md.stat().st_size
+                except OSError:
+                    pass
     threshold = CONFIG.get('condense_threshold_kb', 15) * 1024
     return combined > threshold
 
@@ -1354,8 +1368,8 @@ def _log_agent_completion(session):
                                 encoding='utf-8',
                             )
 
-                # Trigger condensation if thresholds met
-                if _should_condense(p):
+                # Trigger condensation if thresholds met (include CLAUDE.md in check)
+                if _should_condense(p, include_claude_md=True):
                     _dispatch_condense(p)
         except Exception:
             pass  # never fail the completion flow for memory
@@ -1414,7 +1428,7 @@ def _auto_dispatch_followup(session, message):
 
 
 def _check_context_budget(project, appended_prompt):
-    """Measure context files and return a warning string if total exceeds 20KB."""
+    """Measure context files; if total exceeds 20KB, trigger condensation and return info string."""
     sizes = {}
     pp = project.get('project_path', '')
     # CLAUDE.md in project root
@@ -1436,13 +1450,21 @@ def _check_context_budget(project, appended_prompt):
     total = sum(sizes.values())
     if total > 20 * 1024:
         parts = ', '.join(f'{k}: {v/1024:.1f}k' for k, v in sizes.items())
-        tokens_est = total / 4  # rough char-to-token ratio
-        return f'[context warning] Total context: ~{tokens_est/1000:.1f}k tokens ({parts}). Consider trimming large files.'
+        # Actively trigger condensation instead of just warning
+        if _should_condense(project, include_claude_md=True):
+            _dispatch_condense(project)
+            return f'[context trim] Auto-condensing context files ({parts}) — will be smaller next session.'
+        # If condensation is already running or disabled, just note it
+        pid = project['id']
+        with _condense_lock:
+            if pid in _condensing_projects:
+                return f'[context trim] Condensation in progress ({parts}).'
+        return None  # Don't warn if we can't act on it
     return None
 
 
 def _dispatch_condense(project):
-    """Launch a housekeeping agent to condense memory for a project."""
+    """Launch a housekeeping agent to condense memory + CLAUDE.md for a project."""
     pid = project['id']
     with _condense_lock:
         if pid in _condensing_projects:
@@ -1453,8 +1475,19 @@ def _dispatch_condense(project):
     archive_path = _get_archive_path(project)
     pp = project.get('project_path', '')
 
-    prompt = (
-        "You are a memory housekeeping agent. Your ONLY job is to condense the project memory files.\n\n"
+    # Check if CLAUDE.md exists and is large enough to warrant condensation
+    claude_md_path = Path(pp) / 'CLAUDE.md' if pp else None
+    claude_md_big = False
+    if claude_md_path and claude_md_path.exists():
+        try:
+            claude_md_big = claude_md_path.stat().st_size > 8 * 1024  # > 8KB
+        except OSError:
+            pass
+
+    prompt_parts = [
+        "You are a memory housekeeping agent. Your ONLY job is to condense the project context files "
+        "so they stay concise and effective.\n",
+        f"## MEMORY.md condensation\n"
         f"1. Read {mem_path}\n"
         f"2. Read {archive_path} (if it exists)\n"
         "3. Preserve ALL curated/manually-written sections (anything NOT under '## Session Log') verbatim.\n"
@@ -1462,9 +1495,27 @@ def _dispatch_condense(project):
         "(e.g., ## Architecture, ## Patterns, ## Gotchas). Merge with existing sections if present.\n"
         "5. Keep only the last 5 session log entries in the Session Log section.\n"
         f"6. Write the condensed result back to {mem_path}. Target: under 8KB total.\n"
-        f"7. Delete {archive_path} when done (if it exists).\n"
-        "8. Do NOT create any other files. Do NOT modify any code. Only touch the two memory files above."
+        f"7. Delete {archive_path} when done (if it exists).\n",
+    ]
+
+    if claude_md_big:
+        prompt_parts.append(
+            f"\n## CLAUDE.md condensation\n"
+            f"8. Read {claude_md_path}\n"
+            "9. This file contains project instructions and context that Claude CLI loads natively. "
+            "Condense it while preserving ALL critical information:\n"
+            "   - Keep all instructions, rules, and constraints verbatim.\n"
+            "   - Merge duplicate/overlapping sections.\n"
+            "   - Remove redundant examples, excessive formatting, and verbose explanations.\n"
+            "   - Compress session logs / historical notes into brief summaries.\n"
+            "   - Preserve code snippets, API references, and config patterns exactly.\n"
+            f"10. Write the condensed result back to {claude_md_path}. Target: under 8KB.\n"
+        )
+
+    prompt_parts.append(
+        "\nDo NOT create any other files. Do NOT modify any code. Only touch the files listed above."
     )
+    prompt = '\n'.join(prompt_parts)
 
     model = CONFIG.get('condense_model', '') or 'sonnet'
     cmd = ['claude', '-p', prompt, '--model', model, '--max-turns', '5',
@@ -1640,11 +1691,11 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
             t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
             t.start()
 
-        # Context budget warning (only for new sessions, not resumes)
+        # Context budget check — triggers auto-condensation if context too large
         if not resume_id:
-            warning = _check_context_budget(p, context)
-            if warning:
-                session['log_lines'].append(warning)
+            notice = _check_context_budget(p, context)
+            if notice:
+                session['log_lines'].append(notice)
 
         # Notify user if session was auto-started fresh due to transcript size
         if original_resume and not resume_id:

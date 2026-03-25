@@ -1,5 +1,54 @@
 # Mission Control — Changelog
 
+## [2026-03-25] — Active Context Auto-Trimming
+
+### Context Budget → Active Condensation
+- **`_check_context_budget()`** now triggers auto-condensation instead of just logging a passive warning
+- Pre-dispatch check: when total context (CLAUDE.md + MEMORY.md + prompt) > 20KB, condensation fires immediately
+- Post-completion check: also includes CLAUDE.md in size calculation (was MEMORY-only)
+- Message changed from `[context warning]` to `[context trim]` with actionable status
+
+### CLAUDE.md Condensation
+- **`_dispatch_condense()`** now handles CLAUDE.md alongside MEMORY.md
+- Only condenses CLAUDE.md when > 8KB (preserves small project configs)
+- Housekeeping agent instructions: preserve rules/constraints verbatim, merge duplicates, compress verbose explanations, keep code snippets exact
+- Target: under 8KB per file
+
+### `_should_condense()` Expanded
+- New `include_claude_md` parameter — includes project CLAUDE.md in size threshold check
+- Used by both pre-dispatch (context budget) and post-completion triggers
+- Skips running-agent guard when called from pre-dispatch (agent hasn't started yet)
+
+## [2026-03-24] — Major UI Redesign
+
+### Layout Overhaul
+- **Collapsible sidebar** (52px → 220px on hover): Logo, nav items (Dashboard, Scheduler, Settings, Shared Rules, Processes), project shortcuts with status-colored dots
+- **Slim header** (48px): Breadcrumb, Ctrl+K search trigger, token counter, agent count metric pill, Live badge
+- **Metrics row** replaces stats bar: Active Agents, Cost Today, Tasks Completed, Errors — with live data
+- **Toolbar** replaces filter row: Grid/List view toggle, filter dropdown with active pills, density toggle, + New Project button
+- **Content area** with proper flex scroll (replaces body scroll)
+
+### New Features
+- **List view**: 7-column table (indicator, project, status, current task, next up, agent, updated) — toggle with Grid view
+- **Command palette** (Ctrl+K): Search projects, actions (Scheduler, Settings, etc.), and view toggles with keyboard navigation (arrow keys + Enter)
+- **Collapsible feed**: Click toggle to hide/show Activity Feed column (state persisted in localStorage)
+- **Clickable feed entries**: Click any activity entry to open that project's modal
+- **Mobile responsive design**: Bottom tab bar at ≤960px, single-column tiles at ≤600px, metrics row wraps at ≤768px
+- **View persistence**: Grid/List mode, feed collapsed state, and density all saved to localStorage
+
+### Mobile Fixes
+- **Modal height**: Account for bottom tab bar — `calc(100vh - 48px)` at ≤960px viewport
+- **Modal positioning**: Full-width, top-aligned on mobile (no center offset)
+- **Agent chat input**: Fixed text entry box hidden below screen — `sizeAgentChat()` now constrains tab content and agent panel heights
+- **Hide tile details on mobile**: Current Task and Next Up hidden at ≤960px
+
+### Visual Refinements
+- Refined color palette: darker backgrounds (#0c0e14), less saturated borders (#252a38), softer text (#e8ecf4)
+- Tile aspect ratio: 1:1 → 5:4 (more information-dense)
+- Tighter tile padding: header 14px, body 16px, footer 10px
+- Feed column: 380px → 320px, clickable entries with hover accent border
+- Left indicator on tiles: 4px → 3px
+
 ## [2026-03-24] — Fix process registration & plan approval reliability
 
 ### Process Registration — Windows-safe PID operations
