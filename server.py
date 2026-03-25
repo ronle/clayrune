@@ -4839,7 +4839,11 @@ def delete_schedule(schedule_id):
 
 @app.route('/')
 def index():
-    return send_from_directory(STATIC_DIR, 'index.html')
+    resp = send_from_directory(STATIC_DIR, 'index.html')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 import atexit
