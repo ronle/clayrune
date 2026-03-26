@@ -1031,11 +1031,9 @@ def _build_agent_context(project):
         "will hang indefinitely. Instead, just describe your plan in a text message and "
         "proceed directly with implementation. If the user asks you to plan, write your "
         "plan as a text response, then start coding immediately.",
-        "IMPORTANT — Questions: Do NOT use the AskUserQuestion tool. "
-        "You are running headless and the tool will auto-resolve with empty answers. "
-        "Instead, write your questions as plain text in your response and STOP. "
-        "The user will see your message and reply via follow-up. Wait for their response "
-        "before proceeding.",
+        "IMPORTANT — Questions: When you need to ask the user questions, use the AskUserQuestion tool. "
+        "Mission Control will intercept the questions and present them as an interactive form. "
+        "The user's answers will be sent as a follow-up message to resume the conversation.",
         f"Hivemind: You can launch multi-agent coordinated analysis on this project. "
         f"To create a hivemind, call: curl -s -X POST http://localhost:{port}/api/hivemind/create "
         f'-H "Content-Type: application/json" '
@@ -1136,6 +1134,13 @@ def _read_agent_stream(proc, session):
                                 session['log_lines'].append('[Plan mode exit detected — waiting for user approval]')
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
+                                session['waiting_for_question'] = True
+                                # Kill process — the auto-resolved turn is wasted.
+                                # User's answer will resume the session via follow-up.
+                                try:
+                                    proc.kill()
+                                except OSError:
+                                    pass
                 elif msg_type == 'result':
                     # Capture session_id from result as fallback
                     if 'session_id' in msg:
@@ -1160,9 +1165,14 @@ def _read_agent_stream(proc, session):
         # If a follow-up replaced us, the new reader owns status updates.
         if session.get('proc') is my_proc:
             if session['status'] == 'running':
-                session['status'] = 'completed' if rc == 0 else 'error'
-                if rc != 0:
-                    session['log_lines'].append(f"[exited with code {rc}]")
+                if session.get('waiting_for_question'):
+                    # Process was intentionally killed after AskUserQuestion —
+                    # not an error, just waiting for user's answer
+                    session['status'] = 'idle'
+                else:
+                    session['status'] = 'completed' if rc == 0 else 'error'
+                    if rc != 0:
+                        session['log_lines'].append(f"[exited with code {rc}]")
             _log_agent_completion(session)
 
             # Auto-dispatch pending follow-ups
@@ -1214,6 +1224,13 @@ def _read_agent_stream_b(proc, session):
                                 session['log_lines'].append('[Plan mode exit detected — waiting for user approval]')
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
+                                session['waiting_for_question'] = True
+                                # Kill process — the auto-resolved turn is wasted.
+                                # User's answer will resume via follow-up (respawns process).
+                                try:
+                                    proc.kill()
+                                except OSError:
+                                    pass
                 elif msg_type == 'result':
                     if 'session_id' in msg:
                         session['claude_session_id'] = msg['session_id']
@@ -1239,9 +1256,14 @@ def _read_agent_stream_b(proc, session):
         session['process_alive'] = False
         if session.get('proc') is my_proc:
             if session['status'] in ('running', 'idle'):
-                session['status'] = 'completed' if rc == 0 else 'error'
-                if rc != 0:
-                    session['log_lines'].append(f"[exited with code {rc}]")
+                if session.get('waiting_for_question'):
+                    # Process was intentionally killed after AskUserQuestion —
+                    # not an error, just waiting for user's answer
+                    session['status'] = 'idle'
+                else:
+                    session['status'] = 'completed' if rc == 0 else 'error'
+                    if rc != 0:
+                        session['log_lines'].append(f"[exited with code {rc}]")
             _log_agent_completion(session)
 
 
@@ -1819,8 +1841,9 @@ def agent_followup(project_id):
         if not existing or existing['project_id'] != project_id:
             return jsonify({'error': 'session not found'}), 404
 
-        # Clear plan approval flag — user has responded
+        # Clear plan approval / question flags — user has responded
         existing['waiting_for_plan_approval'] = False
+        existing['waiting_for_question'] = False
 
         if existing.get('mode') == 'B':
             # Mode B: write directly to persistent process stdin
