@@ -1156,8 +1156,10 @@ def _read_agent_stream(proc, session):
                 session['log_lines'].append(line)
     except Exception as e:
         # Only log stream errors if we're still the active reader
+        # and the process wasn't intentionally killed (question/stop)
         if session.get('proc') is my_proc:
-            session['log_lines'].append(f"[stream error: {e}]")
+            if not session.get('waiting_for_question') and session.get('status') not in ('stopped',):
+                session['log_lines'].append(f"[stream error: {e}]")
     finally:
         rc = proc.wait()
         _unregister_process(proc.pid)
@@ -1249,7 +1251,8 @@ def _read_agent_stream_b(proc, session):
                 session['log_lines'] = session['log_lines'][-1500:]
     except Exception as e:
         if session.get('proc') is my_proc:
-            session['log_lines'].append(f"[stream error: {e}]")
+            if not session.get('waiting_for_question') and session.get('status') not in ('stopped',):
+                session['log_lines'].append(f"[stream error: {e}]")
     finally:
         rc = proc.wait()
         _unregister_process(proc.pid)
@@ -2026,6 +2029,10 @@ def agent_stop(project_id):
         if session['status'] not in ('running', 'idle'):
             return jsonify({'error': 'agent not running'}), 400
         proc = session['proc']
+        # Set status BEFORE killing so the reader thread's finally block
+        # sees 'stopped' and doesn't overwrite it with 'error'
+        session['status'] = 'stopped'
+        session['log_lines'].append('[Agent stopped by user]')
         # Kill process for both modes
         if session.get('mode') == 'B':
             try:
@@ -2038,8 +2045,6 @@ def agent_stop(project_id):
         except Exception:
             pass
         _unregister_process(proc.pid)
-        session['status'] = 'stopped'
-        session['log_lines'].append('[Agent stopped by user]')
 
     # Wait for process to exit
     try:
