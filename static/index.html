@@ -168,6 +168,14 @@
   }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
   .refresh-timer { color: var(--text-faint); font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+  .header-tour-btn {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--surface3); border: 1px solid var(--border);
+    color: var(--text-dim); font-size: 13px; font-weight: 700;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; flex-shrink: 0;
+  }
+  .header-tour-btn:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
 
   /* ── METRICS ROW (replaces stats bar) ────────────────────────────── */
   .metrics-row {
@@ -501,8 +509,8 @@
     .modal-content {
       resize: none;
       min-width: 0; min-height: 200px;
-      max-width: 100vw; max-height: calc(100vh - 48px);
-      width: 100vw; height: calc(100vh - 48px);
+      max-width: 100vw; max-height: calc(100dvh - 48px);
+      width: 100vw; height: calc(100dvh - 48px);
       border-radius: 0;
     }
     .modal-content::after {
@@ -1001,11 +1009,11 @@
     .agent-console { left: 0 !important; bottom: 48px; }
     .card-summary { display: none !important; }
     .modal-content {
-      max-width: 100vw; max-height: calc(100vh - 48px);
-      width: 100vw; height: calc(100vh - 48px);
+      max-width: 100vw; max-height: calc(100dvh - 48px);
+      width: 100vw; height: calc(100dvh - 48px);
       border-radius: 0;
     }
-    .modal-window { max-height: calc(100vh - 48px); }
+    .modal-window { max-height: calc(100dvh - 48px); }
     .tile-task, .tile-next { display: none; }
     /* ── Modal compaction for mobile ─────────────────────────── */
     .modal-header { padding: 10px 16px 8px 20px !important; }
@@ -2457,6 +2465,7 @@
       </div>
       <span class="refresh-timer" id="refresh-timer">refresh in 30s</span>
       <div class="live-badge"><div class="live-dot"></div>Live</div>
+      <button class="header-tour-btn" onclick="startWalkthrough()" title="Take Tour">?</button>
     </div>
   </div>
 
@@ -3121,7 +3130,7 @@ function modalContentHTML(p) {
           <div class="backlog-add">
             <textarea spellcheck="true" class="backlog-input" id="backlog-input-${esc(p.id)}" rows="2"
               placeholder="Add action item... (paste/drop images here)"
-              onkeydown="handleInputEnter(event,()=>addBacklogItem('${esc(p.id)}'))"
+              onkeydown="handleInputEnter(event,()=>addBacklogItem('${esc(p.id)}'),'${esc(p.id)}')"
               onpaste="handleCreatePaste(event,'${esc(p.id)}')"
               ondragover="createDragOver(event,'${esc(p.id)}')"
               ondragleave="createDragLeave('${esc(p.id)}')"
@@ -4578,27 +4587,38 @@ function setTokenMode(mode) {
 // 'ctrl-enter' = Ctrl/Cmd+Enter sends, Enter for newline (default)
 let enterKeyMode = localStorage.getItem('enter_mode') || 'ctrl-enter';
 
-// ── Prompt History (Up/Down arrow recall) ───────────────────────────────────
-const _promptHistory = JSON.parse(localStorage.getItem('prompt_history') || '[]');
+// ── Prompt History (Up/Down arrow recall) — per-project ─────────────────────
+const _promptHistoryCache = {};  // projectId → array
 const _PROMPT_HISTORY_MAX = 100;
 let _promptHistoryIdx = -1;  // -1 = not navigating
 let _promptDraft = '';        // stash current input when navigating
+let _promptHistoryProject = null; // which project we're navigating in
 
-function _pushPromptHistory(text) {
-  if (!text) return;
+function _getPromptHistory(projectId) {
+  if (!projectId) return [];
+  if (!_promptHistoryCache[projectId]) {
+    _promptHistoryCache[projectId] = JSON.parse(localStorage.getItem('prompt_history_' + projectId) || '[]');
+  }
+  return _promptHistoryCache[projectId];
+}
+
+function _pushPromptHistory(text, projectId) {
+  if (!text || !projectId) return;
+  const hist = _getPromptHistory(projectId);
   // Deduplicate: remove if already most recent
-  if (_promptHistory.length && _promptHistory[_promptHistory.length - 1] === text) return;
-  _promptHistory.push(text);
-  if (_promptHistory.length > _PROMPT_HISTORY_MAX) _promptHistory.shift();
-  localStorage.setItem('prompt_history', JSON.stringify(_promptHistory));
+  if (hist.length && hist[hist.length - 1] === text) return;
+  hist.push(text);
+  if (hist.length > _PROMPT_HISTORY_MAX) hist.shift();
+  localStorage.setItem('prompt_history_' + projectId, JSON.stringify(hist));
   _promptHistoryIdx = -1;
 }
 
-function handleInputEnter(event, sendFn) {
-  // Up/Down arrow: navigate prompt history
+function handleInputEnter(event, sendFn, projectId) {
+  // Up/Down arrow: navigate prompt history (per-project)
   if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
     const ta = event.target;
-    if (!_promptHistory.length) return;
+    const hist = _getPromptHistory(projectId);
+    if (!hist.length) return;
     // Only activate when cursor is on first line (Up) or last line (Down)
     const val = ta.value;
     const pos = ta.selectionStart;
@@ -4607,26 +4627,28 @@ function handleInputEnter(event, sendFn) {
       const beforeCursor = val.substring(0, pos);
       if (beforeCursor.includes('\n')) return; // not on first line
       event.preventDefault();
-      if (_promptHistoryIdx === -1) {
+      if (_promptHistoryIdx === -1 || _promptHistoryProject !== projectId) {
         _promptDraft = val;
-        _promptHistoryIdx = _promptHistory.length - 1;
+        _promptHistoryIdx = hist.length - 1;
+        _promptHistoryProject = projectId;
       } else if (_promptHistoryIdx > 0) {
         _promptHistoryIdx--;
       }
-      ta.value = _promptHistory[_promptHistoryIdx];
+      ta.value = hist[_promptHistoryIdx];
       ta.selectionStart = ta.selectionEnd = ta.value.length;
     } else {
       // ArrowDown — only if cursor is on the last line
       const afterCursor = val.substring(pos);
       if (afterCursor.includes('\n')) return; // not on last line
-      if (_promptHistoryIdx === -1) return; // not navigating
+      if (_promptHistoryIdx === -1 || _promptHistoryProject !== projectId) return;
       event.preventDefault();
       _promptHistoryIdx++;
-      if (_promptHistoryIdx >= _promptHistory.length) {
+      if (_promptHistoryIdx >= hist.length) {
         _promptHistoryIdx = -1;
+        _promptHistoryProject = null;
         ta.value = _promptDraft;
       } else {
-        ta.value = _promptHistory[_promptHistoryIdx];
+        ta.value = hist[_promptHistoryIdx];
       }
       ta.selectionStart = ta.selectionEnd = ta.value.length;
     }
@@ -4635,6 +4657,7 @@ function handleInputEnter(event, sendFn) {
   // Any other key resets history navigation
   if (_promptHistoryIdx !== -1 && event.key !== 'Enter') {
     _promptHistoryIdx = -1;
+    _promptHistoryProject = null;
   }
   if (event.key !== 'Enter') return;
   if (enterKeyMode === 'enter') {
@@ -4873,7 +4896,7 @@ function agentPanelHTML(p) {
     ondrop="handleAgentDrop(event,'${esc(p.id)}')">
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
       placeholder="Describe a task for the agent... (paste or drop files here)"
-      onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'))"
+      onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'),'${esc(p.id)}')"
       onpaste="handleAgentPaste(event,'${esc(p.id)}')"
     ></textarea>
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
@@ -4948,7 +4971,7 @@ function agentPanelHTML(p) {
       return result;
     })();
 
-    const stopBtn = (isRunning || st === 'idle')
+    const stopBtn = (isRunning || st === 'idle' || st === 'error')
       ? `<button class="btn-stop" onclick="stopAgent('${esc(p.id)}','${esc(activeSessionId)}')">Stop</button>` : '';
 
     const followupPreviews = renderAgentImagePreviews('fu_' + activeSessionId);
@@ -4962,7 +4985,7 @@ function agentPanelHTML(p) {
               ondrop="handleAgentDrop(event,'fu_${esc(activeSessionId)}')">
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
               placeholder="${st === 'error' ? 'Type to continue from where it stopped...' : st === 'stopped' ? 'Type to resume conversation...' : 'Send follow-up... (paste or drop files here)'}"
-              onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'))"
+              onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'),'${esc(p.id)}')"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
             <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
@@ -5160,7 +5183,7 @@ async function dispatchAgent(projectId) {
 
   // Require a prompt for fresh sessions; resume can go without one
   if (!task && !resumeId) { input.focus(); return; }
-  _pushPromptHistory(task);
+  _pushPromptHistory(task, projectId);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
 
@@ -5774,7 +5797,7 @@ async function sendFollowup(projectId, sessionId) {
   const input = document.getElementById(`agent-followup-${sessionId}`);
   const message = input.value.trim();
   if (!message) { input.focus(); return; }
-  _pushPromptHistory(message);
+  _pushPromptHistory(message, projectId);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
 
@@ -5837,13 +5860,18 @@ async function sendFollowup(projectId, sessionId) {
 
 async function stopAgent(projectId, sessionId) {
   try {
-    await fetch(API_BASE + `/api/project/${projectId}/agent/stop`, {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/agent/stop`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ session_id: sessionId })
     });
-    if (agentStatusCache[sessionId]) agentStatusCache[sessionId].status = 'stopped';
-    updateHistoryStatus(sessionId, 'stopped');
+    if (res.ok) {
+      if (agentStatusCache[sessionId]) agentStatusCache[sessionId].status = 'stopped';
+      updateHistoryStatus(sessionId, 'stopped');
+    } else {
+      // Stop failed (e.g. process already exited) — fetch real status from server
+      console.warn('Stop failed, fetching fresh status');
+    }
     if (agentEventSources[sessionId]) {
       agentEventSources[sessionId].close();
       delete agentEventSources[sessionId];
@@ -5851,7 +5879,10 @@ async function stopAgent(projectId, sessionId) {
     refreshModal();
     renderAgentConsole();
     refreshSilent();
-  } catch(e) {}
+  } catch(e) {
+    console.error('Stop request error:', e);
+    refreshSilent();
+  }
 }
 
 // Fetch all agent sessions for a project on modal open / page boot
@@ -5912,7 +5943,7 @@ function agentLogPanelHTML(p) {
         <div class="agent-log-ts">${esc(e.ts_relative || e.ts || '')} &middot; started ${esc(e.started_relative || e.started_at || '')}${(() => { const u = e.usage || {}; const t = (u.input_tokens||0)+(u.output_tokens||0); const cr = u.cache_read_input_tokens||0; let s = t ? ` &middot; ${formatTokens(t)} tokens` : ''; if (cr) s += ` (${formatTokens(cr)} cached)`; if (e.num_turns) s += ` &middot; ${e.num_turns} turn${e.num_turns!==1?'s':''}`; return s; })()}${e.cost_usd ? ` &middot; <span class="alu-cost">${formatCost(e.cost_usd)}</span>` : ''}</div>
         ${csid ? `<div class="agent-log-session-id">claude -r <code title="Click to copy">${esc(csid)}</code><span class="copy-sid" onclick="navigator.clipboard.writeText('${esc(csid)}');this.textContent='copied!';setTimeout(()=>this.textContent='copy',1200)" title="Copy session ID">copy</span></div>` : ''}
         ${csid ? `<div class="agent-log-continue-input${continueInputOpen[eid] ? ' open' : ''}" id="continue-input-${esc(eid)}">
-          <textarea id="continue-msg-${esc(eid)}" rows="2" placeholder="What should the agent continue with?" onkeydown="handleInputEnter(event,()=>dispatchContinue('${esc(p.id)}','${esc(eid)}','${esc(csid)}'))"></textarea>
+          <textarea id="continue-msg-${esc(eid)}" rows="2" placeholder="What should the agent continue with?" onkeydown="handleInputEnter(event,()=>dispatchContinue('${esc(p.id)}','${esc(eid)}','${esc(csid)}'),'${esc(p.id)}')"></textarea>
           <button class="btn-send" onclick="dispatchContinue('${esc(p.id)}','${esc(eid)}','${esc(csid)}')">Send</button>
         </div>` : ''}
       </div>`;
@@ -6165,7 +6196,7 @@ async function dispatchContinue(projectId, entryId, claudeSessionId) {
   const input = document.getElementById(`continue-msg-${entryId}`);
   const task = input.value.trim();
   if (!task) { input.focus(); return; }
-  _pushPromptHistory(task);
+  _pushPromptHistory(task, projectId);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
   continueInputOpen = {};
@@ -8880,6 +8911,14 @@ async function _renderSettings() {
         <div><div class="settings-label">Port</div><div class="settings-hint">Requires restart to take effect</div></div>
         ${numInput('port', cfg.port)}
       </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Help</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Interface Tour</div><div class="settings-hint">Walk through the main features</div></div>
+        <button class="btn-dispatch" onclick="closeModalById('__settings');startWalkthrough()">Take Tour</button>
+      </div>
     </div>`;
 }
 
@@ -9040,33 +9079,35 @@ const WT_STEPS = [
     target: null, pos: 'center',
   },
   {
-    id: 'header-left',
-    title: 'Navigation Bar',
-    body: 'The Mission Control header. The logo and tagline identify your workspace.',
-    target: '.header-left', pos: 'bottom',
+    id: 'sidebar',
+    title: 'Sidebar Navigation',
+    body: 'The sidebar gives quick access to Dashboard, Scheduler, Settings, Shared Rules, and Processes. Hover to expand and see project shortcuts.',
+    target: '#sidebar', pos: 'right',
+    skip: () => window.innerWidth <= 960, // hidden on mobile
   },
   {
-    id: 'header-right',
-    title: 'Header Actions',
-    body: 'Shared Rules lets you set instructions for all agents. Scheduler runs tasks on a timer. The live badge pulses while auto-refresh is active.',
-    target: '.header-right', pos: 'bottom',
+    id: 'header',
+    title: 'Header Bar',
+    body: 'Search projects with Ctrl+K, see token usage at a glance, and check the live badge that pulses while auto-refresh is active.',
+    target: '.header', pos: 'bottom',
   },
   {
-    id: 'new-btn',
-    title: 'Create Projects',
-    body: 'Click "+ New" to create a project. Each project tracks its own backlog, agent sessions, and activity.',
-    target: '.btn-new', pos: 'bottom',
+    id: 'toolbar',
+    title: 'Toolbar',
+    body: 'Switch between Grid and List views, filter projects by status or domain, toggle compact density, or create a new project.',
+    target: '.toolbar', pos: 'bottom',
   },
   {
     id: 'stats',
     title: 'Metrics Row',
-    body: 'See active agents, cost, completed tasks, and errors at a glance. Click a metric to filter projects.',
+    body: 'See active agents, cost, completed tasks, and errors at a glance.',
     target: '#metrics-row', pos: 'bottom',
+    skip: () => window.innerWidth <= 600, // hidden on small screens
   },
   {
     id: 'sample-tile',
     title: 'Project Tiles',
-    body: 'Each tile shows a project\u2019s status, current task, and last activity. We\u2019ve created a sample project for you to explore.',
+    body: 'Each tile shows a project\u2019s status and last activity. Click one to open its details. We\u2019ve created a sample project for you.',
     target: null, pos: 'right', demo: 'tile',
     onEnter: async () => {
       await fetch(API_BASE + '/api/walkthrough/sample-project', { method: 'POST' });
@@ -9082,7 +9123,7 @@ const WT_STEPS = [
   {
     id: 'tabs',
     title: 'Tabs',
-    body: 'Switch between Agent (dispatch AI), Backlog (tasks), Agent Log (history), Plans, Activity, and more.',
+    body: 'Switch between Agent (dispatch AI), Backlog (tasks), Agent Log (history), Plans, Activity, and Hivemind.',
     target: null, pos: 'bottom', demo: 'modal', demoTarget: '.modal-tab-bar',
   },
   {
@@ -9100,7 +9141,7 @@ const WT_STEPS = [
   {
     id: 'menu',
     title: 'Project Menu',
-    body: 'The three-dot menu gives access to status changes, color theming, GitHub sync, and project settings.',
+    body: 'The three-dot menu gives access to status changes, color theming, agent model, Memory, Rules, GitHub sync, and more.',
     target: null, pos: 'bottom', demo: 'modal', demoTarget: '.modal-menu-btn',
   },
   {
@@ -9129,9 +9170,17 @@ const WT_STEPS = [
   },
   {
     id: 'feed',
-    title: 'Activity Stream',
-    body: 'Real-time activity across all projects appears here \u2014 agent dispatches, task updates, status changes, and more.',
+    title: 'Activity Feed',
+    body: 'Real-time activity across all projects appears in the feed column \u2014 agent dispatches, task updates, status changes, and more. Click any entry to jump to that project.',
     target: '.feed-col', pos: 'left',
+    skip: () => window.innerWidth <= 960, // hidden on mobile
+  },
+  {
+    id: 'bottom-tabs',
+    title: 'Navigation Bar',
+    body: 'Tap the bottom bar to switch between Dashboard, Scheduler, Settings, and Processes.',
+    target: '#bottom-tab-bar', pos: 'top',
+    skip: () => window.innerWidth > 960, // only on mobile
   },
   {
     id: 'console',
@@ -9140,9 +9189,35 @@ const WT_STEPS = [
     target: '#agent-console', pos: 'top',
   },
   {
+    id: 'cmd-palette',
+    title: 'Command Palette',
+    body: 'Press Ctrl+K anytime to search projects, switch views, open settings, or re-take this tour.',
+    target: '.cmd-palette', pos: 'bottom',
+    onEnter: () => {
+      const overlay = document.getElementById('cmd-overlay');
+      if (overlay) {
+        overlay.classList.add('open');
+        overlay.style.background = 'transparent';
+        overlay.style.backdropFilter = 'none';
+        overlay.style.webkitBackdropFilter = 'none';
+        cmdPaletteOpen = true;
+      }
+    },
+    onLeave: () => {
+      const overlay = document.getElementById('cmd-overlay');
+      if (overlay) {
+        overlay.classList.remove('open');
+        overlay.style.background = '';
+        overlay.style.backdropFilter = '';
+        overlay.style.webkitBackdropFilter = '';
+        cmdPaletteOpen = false;
+      }
+    },
+  },
+  {
     id: 'done',
     title: 'You\u2019re All Set!',
-    body: 'Start by exploring the sample project or create your own. You can re-run this tour anytime using the "Tour" button in the header.',
+    body: 'Start by exploring the sample project or create your own. You can re-run this tour from Settings or the Command Palette (Ctrl+K \u2192 "Take Tour").',
     target: null, pos: 'center',
   },
 ];
@@ -9170,7 +9245,7 @@ function wtDemoTileHTML() {
 }
 
 function wtDemoModalHTML(activeTab) {
-  const tabs = ['Agent','Backlog','Agent Log','Plans','Activity','Memory','Rules'];
+  const tabs = ['Agent','Backlog','Agent Log','Plans','Activity','Hivemind'];
   const tabBar = tabs.map(t => {
     const key = t.toLowerCase().replace(' ', '-');
     const active = (activeTab === key) ? ' active' : '';
@@ -9240,7 +9315,7 @@ function wtDemoModalHTML(activeTab) {
 }
 
 function wtDemoMenuHTML() {
-  const tabs = ['Agent','Backlog','Agent Log','Plans','Activity','Memory','Rules'];
+  const tabs = ['Agent','Backlog','Agent Log','Plans','Activity','Hivemind'];
   const tabBar = tabs.map(t => {
     const key = t.toLowerCase().replace(' ', '-');
     return `<div class="modal-tab${key === 'agent' ? ' active' : ''}">${t}</div>`;
@@ -9277,6 +9352,13 @@ function wtDemoMenuHTML() {
               <span class="menu-icon">&#x1F517;</span> GitHub Sync <span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
             </button>
             <div class="modal-menu-sep"></div>
+            <button class="modal-menu-item" style="pointer-events:none">
+              <span class="menu-icon">&#x1F4DD;</span> Memory
+            </button>
+            <button class="modal-menu-item" style="pointer-events:none">
+              <span class="menu-icon">&#x1F4DC;</span> Rules
+            </button>
+            <div class="modal-menu-sep"></div>
             <button class="modal-menu-item danger" style="pointer-events:none">
               <span class="menu-icon">&#x1F5D1;</span> Delete Project
             </button>
@@ -9307,9 +9389,19 @@ function startWalkthrough() {
 }
 
 async function wtShow(idx) {
+  // Call onLeave for the previous step
+  const prevStep = WT_STEPS[wtStep];
+  if (prevStep && prevStep.onLeave) prevStep.onLeave();
+
   wtStep = idx;
   const step = WT_STEPS[idx];
   if (!step) { wtEnd(); return; }
+
+  // Skip steps that don't apply to current viewport
+  if (step.skip && step.skip()) {
+    if (idx < WT_STEPS.length - 1) { wtShow(idx + 1); return; }
+    else { wtEnd(); return; }
+  }
 
   if (step.onEnter) await step.onEnter();
 
@@ -9339,15 +9431,18 @@ async function wtShow(idx) {
 
     if (step.demo === 'tile') {
       demo.innerHTML = wtDemoTileHTML();
-      // Center the tile in the upper-left area
-      demo.style.left = '80px';
-      demo.style.top = '180px';
+      const isMobile = window.innerWidth <= 960;
+      demo.style.left = isMobile ? `${Math.max(16, (window.innerWidth - 260) / 2)}px` : '80px';
+      demo.style.top = isMobile ? '100px' : '180px';
       overlay.appendChild(demo);
       targetEl = demo.firstElementChild;
     } else if (step.demo === 'modal-menu') {
       demo.innerHTML = wtDemoMenuHTML();
-      demo.style.left = `${Math.max(40, (window.innerWidth - 700) / 2)}px`;
-      demo.style.top = `${Math.max(40, (window.innerHeight - 520) / 2)}px`;
+      const demoW = Math.min(700, window.innerWidth - 32);
+      demo.style.left = `${Math.max(16, (window.innerWidth - demoW) / 2)}px`;
+      demo.style.top = `${Math.max(16, (window.innerHeight - 520) / 2)}px`;
+      if (demoW < 700) demo.style.transform = `scale(${demoW / 700})`;
+      demo.style.transformOrigin = 'top left';
       overlay.appendChild(demo);
       if (step.demoTarget) {
         const subEl = demo.querySelector(step.demoTarget);
@@ -9368,8 +9463,10 @@ async function wtShow(idx) {
                 : step.demo === 'modal-agent' ? 'agent'
                 : 'agent';
       demo.innerHTML = wtDemoModalHTML(tab);
-      demo.style.left = `${Math.max(40, (window.innerWidth - 700) / 2)}px`;
-      demo.style.top = `${Math.max(40, (window.innerHeight - 520) / 2)}px`;
+      const demoW = Math.min(700, window.innerWidth - 32);
+      demo.style.left = `${Math.max(16, (window.innerWidth - demoW) / 2)}px`;
+      demo.style.top = `${Math.max(16, (window.innerHeight - 520) / 2)}px`;
+      if (demoW < 700) { demo.style.transform = `scale(${demoW / 700})`; demo.style.transformOrigin = 'top left'; }
       overlay.appendChild(demo);
       if (step.demoTarget) {
         const subEl = demo.querySelector(step.demoTarget);
@@ -9491,12 +9588,18 @@ function wtPositionCard(targetEl, cardEl, pos) {
 }
 
 function wtNext() { if (wtStep < WT_STEPS.length - 1) wtShow(wtStep + 1); else wtEnd(); }
-function wtBack() { if (wtStep > 0) wtShow(wtStep - 1); }
+function wtBack() {
+  let prev = wtStep - 1;
+  while (prev > 0 && WT_STEPS[prev].skip && WT_STEPS[prev].skip()) prev--;
+  if (prev >= 0) wtShow(prev);
+}
 function wtSkip() {
   if (wtDontShow) localStorage.setItem('walkthrough_done', '1');
   wtEnd();
 }
 function wtEnd() {
+  const curStep = WT_STEPS[wtStep];
+  if (curStep && curStep.onLeave) curStep.onLeave();
   wtActive = false;
   localStorage.setItem('walkthrough_done', '1');
   document.querySelectorAll('.wt-elevated').forEach(el => el.classList.remove('wt-elevated'));
@@ -9756,10 +9859,19 @@ function pinchDist(e) {
 
 document.getElementById('modal-layer').addEventListener('touchstart', (e) => {
   if (e.touches.length === 2) {
+    const modal = e.target.closest('.modal-window');
     const content = e.target.closest('.modal-content');
-    if (!content) return;
+    if (!content || !modal) return;
     e.preventDefault();
-    modalPinch = { content, startDist: pinchDist(e), origW: content.offsetWidth, origH: content.offsetHeight };
+    if (_isMobileDevice || window.innerWidth <= 960) {
+      // On mobile: pinch = text zoom
+      const modalId = modal.dataset.modalId;
+      if (!modalZoomLevels[modalId]) modalZoomLevels[modalId] = 13;
+      modalPinch = { modal, modalId, startDist: pinchDist(e), startZoom: modalZoomLevels[modalId], isZoom: true };
+    } else {
+      // On desktop: pinch = resize modal
+      modalPinch = { content, startDist: pinchDist(e), origW: content.offsetWidth, origH: content.offsetHeight, isZoom: false };
+    }
   }
 }, { passive: false });
 
@@ -9775,13 +9887,21 @@ document.addEventListener('touchmove', (e) => {
     modalTouchResize.content.style.height = Math.max(minH, modalTouchResize.origH + dy) + 'px';
     return;
   }
-  // Pinch resize
+  // Pinch
   if (modalPinch && e.touches.length === 2) {
     e.preventDefault();
-    const minW = _isMobileDevice ? 260 : 380, minH = _isMobileDevice ? 200 : 300;
     const scale = pinchDist(e) / modalPinch.startDist;
-    modalPinch.content.style.width = Math.max(minW, Math.round(modalPinch.origW * scale)) + 'px';
-    modalPinch.content.style.height = Math.max(minH, Math.round(modalPinch.origH * scale)) + 'px';
+    if (modalPinch.isZoom) {
+      // Text zoom: scale font size from start zoom level
+      const newSize = Math.max(8, Math.min(28, Math.round(modalPinch.startZoom * scale)));
+      modalZoomLevels[modalPinch.modalId] = newSize;
+      applyModalZoom(modalPinch.modal, newSize);
+    } else {
+      // Modal resize
+      const minW = 380, minH = 300;
+      modalPinch.content.style.width = Math.max(minW, Math.round(modalPinch.origW * scale)) + 'px';
+      modalPinch.content.style.height = Math.max(minH, Math.round(modalPinch.origH * scale)) + 'px';
+    }
   }
 }, { passive: false });
 

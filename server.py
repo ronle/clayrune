@@ -58,17 +58,28 @@ def _pid_is_alive(pid):
             return False
 
 
-def _kill_pid(pid):
-    """Kill a process by PID. Works reliably on both Windows and Unix."""
+def _kill_pid(pid, tree=False):
+    """Kill a process by PID. Works reliably on both Windows and Unix.
+    If tree=True, also kills all child processes (Windows: taskkill /T)."""
     if sys.platform == 'win32':
         try:
-            subprocess.run(['taskkill', '/F', '/PID', str(pid)],
-                           capture_output=True, timeout=10,
+            cmd = ['taskkill', '/F']
+            if tree:
+                cmd.append('/T')
+            cmd.extend(['/PID', str(pid)])
+            subprocess.run(cmd, capture_output=True, timeout=10,
                            creationflags=_POPEN_FLAGS)
             return True
         except Exception:
             return False
     else:
+        if tree:
+            # Kill process group if possible
+            try:
+                os.killpg(os.getpgid(pid), 9)
+                return True
+            except OSError:
+                pass
         try:
             os.kill(pid, 9)
             return True
@@ -1163,27 +1174,29 @@ def _read_agent_stream(proc, session):
     finally:
         rc = proc.wait()
         _unregister_process(proc.pid)
-        # Only update session status if we're still the active reader.
-        # If a follow-up replaced us, the new reader owns status updates.
-        if session.get('proc') is my_proc:
-            if session['status'] == 'running':
-                if session.get('waiting_for_question'):
-                    # Process was intentionally killed after AskUserQuestion —
-                    # not an error, just waiting for user's answer
-                    session['status'] = 'idle'
-                else:
-                    session['status'] = 'completed' if rc == 0 else 'error'
-                    if rc != 0:
-                        session['log_lines'].append(f"[exited with code {rc}]")
-            _log_agent_completion(session)
+        # Acquire lock to prevent race with agent_stop setting 'stopped'
+        with agent_lock:
+            # Only update session status if we're still the active reader.
+            # If a follow-up replaced us, the new reader owns status updates.
+            if session.get('proc') is my_proc:
+                if session['status'] == 'running':
+                    if session.get('waiting_for_question'):
+                        # Process was intentionally killed after AskUserQuestion —
+                        # not an error, just waiting for user's answer
+                        session['status'] = 'idle'
+                    else:
+                        session['status'] = 'completed' if rc == 0 else 'error'
+                        if rc != 0:
+                            session['log_lines'].append(f"[exited with code {rc}]")
+                _log_agent_completion(session)
 
-            # Auto-dispatch pending follow-ups
-            pending = session.get('pending_followups', [])
-            if pending:
-                session['_dispatching_followup'] = True
-                followup_msg = pending.pop(0)
-                _auto_dispatch_followup(session, followup_msg)
-                session.pop('_dispatching_followup', None)
+                # Auto-dispatch pending follow-ups
+                pending = session.get('pending_followups', [])
+                if pending:
+                    session['_dispatching_followup'] = True
+                    followup_msg = pending.pop(0)
+                    _auto_dispatch_followup(session, followup_msg)
+                    session.pop('_dispatching_followup', None)
 
 
 
@@ -1256,18 +1269,20 @@ def _read_agent_stream_b(proc, session):
     finally:
         rc = proc.wait()
         _unregister_process(proc.pid)
-        session['process_alive'] = False
-        if session.get('proc') is my_proc:
-            if session['status'] in ('running', 'idle'):
-                if session.get('waiting_for_question'):
-                    # Process was intentionally killed after AskUserQuestion —
-                    # not an error, just waiting for user's answer
-                    session['status'] = 'idle'
-                else:
-                    session['status'] = 'completed' if rc == 0 else 'error'
-                    if rc != 0:
-                        session['log_lines'].append(f"[exited with code {rc}]")
-            _log_agent_completion(session)
+        # Acquire lock to prevent race with agent_stop setting 'stopped'
+        with agent_lock:
+            session['process_alive'] = False
+            if session.get('proc') is my_proc:
+                if session['status'] in ('running', 'idle'):
+                    if session.get('waiting_for_question'):
+                        # Process was intentionally killed after AskUserQuestion —
+                        # not an error, just waiting for user's answer
+                        session['status'] = 'idle'
+                    else:
+                        session['status'] = 'completed' if rc == 0 else 'error'
+                        if rc != 0:
+                            session['log_lines'].append(f"[exited with code {rc}]")
+                _log_agent_completion(session)
 
 
 def _log_agent_activity(project_id, msg):
@@ -2026,7 +2041,7 @@ def agent_stop(project_id):
         session = agent_sessions.get(session_id)
         if not session or session['project_id'] != project_id:
             return jsonify({'error': 'session not found'}), 404
-        if session['status'] not in ('running', 'idle'):
+        if session['status'] not in ('running', 'idle', 'error'):
             return jsonify({'error': 'agent not running'}), 400
         proc = session['proc']
         # Set status BEFORE killing so the reader thread's finally block
@@ -2040,6 +2055,8 @@ def agent_stop(project_id):
             except Exception:
                 pass
             session['process_alive'] = False
+        # Kill the entire process tree (Claude CLI spawns child processes)
+        _kill_pid(proc.pid, tree=True)
         try:
             proc.kill()
         except Exception:
@@ -2072,19 +2089,20 @@ def agent_session_delete(project_id):
             return jsonify({'ok': True})  # Already gone — idempotent
         if session['status'] in ('running', 'idle'):
             proc = session['proc']
+            session['status'] = 'stopped'
+            session['log_lines'].append('[Agent stopped — tab closed]')
             if session.get('mode') == 'B':
                 try:
                     proc.stdin.close()
                 except Exception:
                     pass
                 session['process_alive'] = False
+            _kill_pid(proc.pid, tree=True)
             try:
                 proc.kill()
             except Exception:
                 pass
             _unregister_process(proc.pid)
-            session['status'] = 'stopped'
-            session['log_lines'].append('[Agent stopped — tab closed]')
 
     # Wait outside lock for process to fully exit
     if proc:
@@ -2523,13 +2541,14 @@ def kill_tracked_process(pid):
             if proc.poll() is not None:
                 tracked_processes.pop(pid, None)
                 return jsonify({'ok': True, 'already_dead': True})
+            _kill_pid(pid, tree=True)
             try:
                 proc.kill()
             except Exception as e:
                 return jsonify({'error': f'kill failed: {e}'}), 500
         else:
             # External process — kill via OS
-            if not _kill_pid(pid):
+            if not _kill_pid(pid, tree=True):
                 tracked_processes.pop(pid, None)
                 return jsonify({'ok': True, 'already_dead': True})
         tracked_processes.pop(pid, None)
