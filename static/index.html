@@ -1155,7 +1155,13 @@
   .agent-status-dot.running    { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
   .agent-status-dot.completed  { background: var(--accent); }
   .agent-status-dot.error      { background: var(--red); }
+  .agent-status-dot.recovering { background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: pulse 2s infinite; }
+  .agent-status-dot.needs-attention { background: #f97316; box-shadow: 0 0 6px #f97316; animation: pulse 1s infinite; }
   .agent-status-dot.stopped    { background: var(--amber); }
+  .guardian-banner { background: rgba(249,115,22,0.12); border: 1px solid rgba(249,115,22,0.4); color: #fb923c; padding: 8px 12px; border-radius: 6px; margin: 6px 0; font-size: 12px; line-height: 1.5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .guardian-banner button { border: none; padding: 6px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .guardian-banner .btn-retry { background: var(--green); color: #fff; }
+  .guardian-banner .btn-fresh { background: var(--accent); color: #fff; }
   .agent-status-label {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600;
   }
@@ -2565,6 +2571,7 @@
 const API_BASE = window.__TAURI_INTERNALS__ ? 'http://localhost:5199' : '';
 
 let allProjects = [];
+let _globalConfig = {};  // cached global config — used to resolve effective per-project mode
 const _isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const _orderKey = _isMobileDevice ? 'projectOrder_mobile' : 'projectOrder';
@@ -3024,6 +3031,9 @@ function modalContentHTML(p) {
           <button class="modal-menu-item" onclick="toggleProjectRemoteControl('${esc(p.id)}',${!p.agent_remote_control})">
             <span class="menu-icon">&#x1F4F1;</span> Remote Control ${p.agent_remote_control ? '<span style="margin-left:auto;color:var(--green);font-size:11px">ON</span>' : '<span style="margin-left:auto;color:var(--text-faint);font-size:11px">OFF</span>'}
           </button>
+          <button class="modal-menu-item" onclick="toggleProjectStreaming('${esc(p.id)}',${!((p.use_streaming_agent !== undefined && p.use_streaming_agent !== null) ? p.use_streaming_agent : !!_globalConfig.use_streaming_agent)})">
+            <span class="menu-icon">&#x26A1;</span> Agent: <strong style="margin-left:4px">${((p.use_streaming_agent !== undefined && p.use_streaming_agent !== null) ? p.use_streaming_agent : !!_globalConfig.use_streaming_agent) ? 'Mode B' : 'Mode A'}</strong>${(p.use_streaming_agent === undefined || p.use_streaming_agent === null) ? '<span style="margin-left:6px;color:var(--text-faint);font-size:10px">(global)</span>' : ''}<span style="margin-left:auto;color:var(--text-faint);font-size:11px">switch &rarr; ${((p.use_streaming_agent !== undefined && p.use_streaming_agent !== null) ? p.use_streaming_agent : !!_globalConfig.use_streaming_agent) ? 'A' : 'B'}</span>
+          </button>
           <button class="modal-menu-item" onclick="editProjectDescription('${esc(p.id)}')">
             <span class="menu-icon">&#x270E;</span> ${p.description ? 'Edit' : 'Add'} Description
           </button>
@@ -3365,6 +3375,19 @@ async function toggleProjectRemoteControl(projectId, enabled) {
       body: JSON.stringify({ agent_remote_control: enabled })
     });
     showToast(enabled ? 'Remote control enabled' : 'Remote control disabled');
+    await refreshSilent();
+  } catch(e) {}
+}
+
+async function toggleProjectStreaming(projectId, enabled) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ use_streaming_agent: enabled })
+    });
+    showToast(enabled ? 'Mode B (streaming) enabled — new sessions will use persistent process' : 'Mode B disabled — new sessions will use Mode A (spawn per turn)');
     await refreshSilent();
   } catch(e) {}
 }
@@ -3745,14 +3768,45 @@ function sizeAgentChat(win, sessionId) {
 }
 
 function updateAgentStatusUI(sessionId, status) {
-  // Update status dot and label without rebuilding the modal
+  // Check for guardian state override on the dot
+  const cached = agentStatusCache[sessionId];
+  const gState = cached?.guardianState;
+  const dotClass = gState === 'recovering' ? 'recovering' : gState === 'needs_attention' ? 'needs-attention' : status;
+  const labelText = gState === 'recovering' ? 'recovering' : gState === 'needs_attention' ? 'attention' : status;
   const dot = document.querySelector(`#session-metrics-${CSS.escape(sessionId)}`)?.closest('.agent-panel')?.querySelector('.agent-status-dot');
   const label = document.querySelector(`#session-metrics-${CSS.escape(sessionId)}`)?.closest('.agent-panel')?.querySelector('.agent-status-label');
-  if (dot) { dot.className = `agent-status-dot ${status}`; }
-  if (label) { label.className = `agent-status-label ${status}`; label.textContent = status; }
-  // Also update the session tab dot
+  if (dot) { dot.className = `agent-status-dot ${dotClass}`; }
+  if (label) { label.className = `agent-status-label ${dotClass}`; label.textContent = labelText; }
   const tabDot = document.querySelector(`.agent-tab.active .agent-status-dot`);
-  if (tabDot) { tabDot.className = `agent-status-dot ${status}`; }
+  if (tabDot) { tabDot.className = `agent-status-dot ${dotClass}`; }
+}
+
+async function guardianReset(projectId, sessionId, action) {
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}/agent/guardian-reset`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session_id: sessionId, action })
+    });
+    const cached = agentStatusCache[sessionId];
+    if (cached) {
+      if (action === 'retry') {
+        cached.guardianState = 'recovering';
+        cached.circuitBreakerTripped = false;
+        cached.status = 'running';
+      } else {
+        cached.guardianState = null;
+        cached.circuitBreakerTripped = false;
+      }
+    }
+    if (action === 'retry') {
+      updateHistoryStatus(sessionId, 'running');
+      updateAgentStatusUI(sessionId, 'running');
+      connectAgentStream(projectId, sessionId);
+    }
+    refreshModal();
+    renderAgentConsole();
+  } catch(e) { showToast('Guardian reset failed', 5000); }
 }
 
 function refreshModalById(modalId) {
@@ -3844,6 +3898,10 @@ function refreshModalById(modalId) {
   }
   if (modalSearchQuery[entry.projectId]) {
     applyTabFilter(entry.projectId);
+  }
+  // Re-render data-driven tabs after DOM rebuild
+  if (curTab === 'plans' && plansCache[entry.projectId]) {
+    renderPlansTab(entry.projectId);
   }
 }
 
@@ -4465,6 +4523,11 @@ function renderFeed() {
 async function refreshSilent() {
   const res = await fetch(API_BASE + '/api/projects');
   allProjects = await res.json();
+  // Refresh global config cache so per-project menu labels reflect the effective mode
+  try {
+    const cfgRes = await fetch(API_BASE + '/api/config');
+    if (cfgRes.ok) _globalConfig = await cfgRes.json();
+  } catch(e) {}
   applyOrder();
   render();
   refreshModal();
@@ -4975,8 +5038,25 @@ function agentPanelHTML(p) {
       ? `<button class="btn-stop" onclick="stopAgent('${esc(p.id)}','${esc(activeSessionId)}')">Stop</button>` : '';
 
     const followupPreviews = renderAgentImagePreviews('fu_' + activeSessionId);
+    const guardianState = activeSession?.guardianState;
+    const cbTripped = activeSession?.circuitBreakerTripped;
+    const guardianBanner = cbTripped
+      ? `<div class="guardian-banner">
+          <span>\u26A0 Auto-recovery exhausted after repeated failures.</span>
+          <button class="btn-retry" onclick="guardianReset('${esc(p.id)}','${esc(activeSessionId)}','retry')">Try Again</button>
+          <button class="btn-fresh" onclick="dispatchAgent('${esc(p.id)}')">Start Fresh</button>
+        </div>`
+      : guardianState === 'recovering'
+        ? `<div class="guardian-banner"><span>\u23F3 Guardian is recovering the session...</span></div>`
+        : guardianState === 'needs_attention'
+          ? `<div class="guardian-banner">
+              <span>\u26A0 Session needs attention.</span>
+              <button class="btn-retry" onclick="guardianReset('${esc(p.id)}','${esc(activeSessionId)}','retry')">Retry</button>
+              <button class="btn-fresh" onclick="guardianReset('${esc(p.id)}','${esc(activeSessionId)}','dismiss')">Dismiss</button>
+            </div>`
+          : '';
     const chatInput = (st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle' || st === 'error')
-      ? `<div class="agent-chat-input">
+      ? `${guardianBanner}<div class="agent-chat-input">
           ${followupPreviews}
           <div class="agent-chat-input-row agent-drop-zone"
               ondragover="handleAgentDragOver(event,this)"
@@ -4984,7 +5064,7 @@ function agentPanelHTML(p) {
               ondragleave="handleAgentDragLeave(event,this)"
               ondrop="handleAgentDrop(event,'fu_${esc(activeSessionId)}')">
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
-              placeholder="${st === 'error' ? 'Type to continue from where it stopped...' : st === 'stopped' ? 'Type to resume conversation...' : 'Send follow-up... (paste or drop files here)'}"
+              placeholder="${st === 'error' ? 'Type to continue from where it stopped...' : st === 'stopped' ? 'Type to resume conversation...' : st === 'running' ? 'Interrupt and redirect agent... (Enter to send)' : 'Send follow-up... (paste or drop files here)'}"
               onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'),'${esc(p.id)}')"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
@@ -5147,6 +5227,7 @@ function closeAgentTab(projectId, sessionId) {
     agentEventSources[sessionId].close();
     delete agentEventSources[sessionId];
   }
+  if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
 
   // Kill process + remove session from backend
   fetch(API_BASE + `/api/project/${projectId}/agent/session`, {
@@ -5221,9 +5302,16 @@ async function dispatchAgent(projectId) {
   }
 }
 
+let agentSSEWatchdogs = {};  // sessionId → timer ID
+let followupTimeouts = {};  // sessionId → { timerId, projectId }
+
 function connectAgentStream(projectId, sessionId) {
   if (agentEventSources[sessionId]) {
     agentEventSources[sessionId].close();
+  }
+  if (agentSSEWatchdogs[sessionId]) {
+    clearInterval(agentSSEWatchdogs[sessionId]);
+    delete agentSSEWatchdogs[sessionId];
   }
 
   // Tell server how many lines we already have, so it doesn't replay them.
@@ -5233,11 +5321,30 @@ function connectAgentStream(projectId, sessionId) {
   const es = new EventSource(API_BASE + `/api/project/${projectId}/agent/stream?session=${sessionId}&since=${since}`);
   agentEventSources[sessionId] = es;
 
+  // Heartbeat watchdog: if no SSE event (data or heartbeat) arrives within 30s,
+  // the connection has silently died. Force reconnect.
+  let lastEventTime = Date.now();
+  agentSSEWatchdogs[sessionId] = setInterval(() => {
+    if (Date.now() - lastEventTime > 30000) {
+      console.warn(`SSE watchdog: no event for 30s on session ${sessionId.slice(0,8)}, reconnecting`);
+      clearInterval(agentSSEWatchdogs[sessionId]);
+      delete agentSSEWatchdogs[sessionId];
+      es.close();
+      delete agentEventSources[sessionId];
+      const cached = agentStatusCache[sessionId];
+      if (cached && (cached.status === 'running' || cached.status === 'idle')) {
+        connectAgentStream(projectId, sessionId);
+      }
+    }
+  }, 10000);
+
   es.onmessage = (event) => {
+    lastEventTime = Date.now();
     try {
       const msg = JSON.parse(event.data);
       if (msg.type === 'output') {
         sseRetryCount[sessionId] = 0;  // successful data — reset retry counter
+        if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         if (!agentOutputBuffers[sessionId]) agentOutputBuffers[sessionId] = [];
         agentOutputBuffers[sessionId].push(msg.text);
         agentServerLines[sessionId] = (agentServerLines[sessionId] || 0) + 1;
@@ -5292,6 +5399,7 @@ function connectAgentStream(projectId, sessionId) {
       } else if (msg.type === 'question' && msg.questions) {
         renderAgentQuestion(sessionId, projectId, msg.questions);
       } else if (msg.type === 'turn_complete') {
+        if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Mode B: turn finished but process still alive — do NOT close SSE
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = 'idle';
@@ -5305,6 +5413,7 @@ function connectAgentStream(projectId, sessionId) {
         refreshModal();
         renderAgentConsole();
       } else if (msg.type === 'status') {
+        if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Terminal status — close SSE
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = msg.status;
@@ -5317,19 +5426,35 @@ function connectAgentStream(projectId, sessionId) {
         es.close();
         delete agentEventSources[sessionId];
         delete sseRetryCount[sessionId];
+        if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
         delete agentLogCache[projectId];  // invalidate so fresh data (with claude_session_id) loads
         if (agentLogOpen[projectId]) loadAgentLog(projectId);  // re-fetch if panel is open
         refreshModal();
         renderAgentConsole();
         refreshSilent();
       } else if (msg.type === 'error') {
+        if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         if (agentStatusCache[sessionId]) agentStatusCache[sessionId].status = 'error';
         updateHistoryStatus(sessionId, 'error');
         es.close();
         delete agentEventSources[sessionId];
         delete sseRetryCount[sessionId];
+        if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
         delete agentLogCache[projectId];  // invalidate so fresh data loads
         if (agentLogOpen[projectId]) loadAgentLog(projectId);  // re-fetch if panel is open
+        refreshModal();
+        renderAgentConsole();
+      } else if (msg.type === 'guardian') {
+        const cached = agentStatusCache[sessionId];
+        if (cached) {
+          cached.guardianState = msg.state;
+          cached.circuitBreakerTripped = msg.circuit_breaker || false;
+        }
+        if (msg.state === 'recovering') {
+          showToast('Session Guardian is recovering the agent...', 5000);
+        } else if (msg.state === 'needs_attention') {
+          showToast('Agent session needs attention \u2014 auto-recovery exhausted', 10000);
+        }
         refreshModal();
         renderAgentConsole();
       }
@@ -5339,6 +5464,7 @@ function connectAgentStream(projectId, sessionId) {
   es.onerror = () => {
     es.close();
     delete agentEventSources[sessionId];
+    if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
     const cached = agentStatusCache[sessionId];
     if (cached && (cached.status === 'running' || cached.status === 'idle')) {
       const retries = (sseRetryCount[sessionId] || 0) + 1;
@@ -5575,7 +5701,16 @@ function appendAgentLine(sessionId, text) {
   // Plan detection: [tool: ExitPlanMode] signals end of plan
   if (text.trim() === '[tool: ExitPlanMode]') {
     exitPlanModeCount[sessionId] = (exitPlanModeCount[sessionId] || 0) + 1;
-    collapseIntoPlanButton(sessionId, el);
+    // Store plan content for viewer but keep text visible for first occurrence
+    planViewerContent[sessionId] = planViewerContent[sessionId] || [];
+    const children = Array.from(el.children);
+    for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i];
+      const txt = (child.textContent || '').trim();
+      if (child.classList.contains('agent-line-tool') || child.classList.contains('agent-line-prompt') || child.classList.contains('plan-show-btn')) break;
+      if (txt === '[tool: ExitPlanMode]') continue;
+      planViewerContent[sessionId].unshift(child.textContent || child.innerText || '');
+    }
 
     // Mark as waiting for plan approval in caches
     if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForPlanApproval = true;
@@ -5583,7 +5718,7 @@ function appendAgentLine(sessionId, text) {
     if (histEntry) histEntry.waitingForPlanApproval = true;
     refreshModal();
 
-    // Show "Approve Plan" button on first ExitPlanMode
+    // Show "Approve Plan" + "Collapse" buttons on first ExitPlanMode (plan stays visible)
     if (exitPlanModeCount[sessionId] === 1) {
       const cached = agentStatusCache[sessionId];
       const pid = cached ? cached.projectId : null;
@@ -5591,9 +5726,10 @@ function appendAgentLine(sessionId, text) {
         const approveRow = document.createElement('div');
         approveRow.className = 'plan-approve-row';
         approveRow.id = `plan-approve-${sessionId}`;
-        approveRow.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;margin:6px 0';
+        approveRow.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;margin:6px 0;flex-wrap:wrap';
         approveRow.innerHTML = `<span style="color:var(--text-dim);font-size:12px">Agent is waiting for plan approval.</span>
-          <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>`;
+          <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>
+          <button style="background:var(--bg2);color:var(--text);border:1px solid var(--border2);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer" onclick="collapseIntoPlanButton('${esc(sessionId)}',this.closest('.agent-output'))">Collapse Plan</button>`;
         el.appendChild(approveRow);
         el.scrollTop = el.scrollHeight;
       }
@@ -5601,7 +5737,7 @@ function appendAgentLine(sessionId, text) {
 
     // Detect stuck ExitPlanMode loop (agent can't exit plan mode via non-interactive dispatch)
     if (exitPlanModeCount[sessionId] >= 2) {
-      // Remove the approve button if still present (will re-add with warning)
+      collapseIntoPlanButton(sessionId, el);
       const oldApprove = document.getElementById(`plan-approve-${sessionId}`);
       if (oldApprove) oldApprove.remove();
       const cached = agentStatusCache[sessionId];
@@ -5797,6 +5933,18 @@ async function sendFollowup(projectId, sessionId) {
   const input = document.getElementById(`agent-followup-${sessionId}`);
   const message = input.value.trim();
   if (!message) { input.focus(); return; }
+
+  // Guardian guards — prevent piling on during recovery
+  const guardCached = agentStatusCache[sessionId];
+  if (guardCached?.guardianState === 'recovering') {
+    showToast('Session is being recovered \u2014 please wait', 3000);
+    return;
+  }
+  if (guardCached?.circuitBreakerTripped) {
+    showToast('Session recovery exhausted \u2014 use "Try Again" or "Start Fresh"', 5000);
+    return;
+  }
+
   _pushPromptHistory(message, projectId);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
@@ -5822,6 +5970,9 @@ async function sendFollowup(projectId, sessionId) {
   const previewContainer = input.closest('.agent-chat-input')?.querySelector('.agent-image-previews');
   if (previewContainer) previewContainer.remove();
 
+  // Capture status BEFORE optimistic update — needed to choose endpoint
+  const currentStatus = (agentStatusCache[sessionId] || {}).status;
+
   // Optimistically update status to running before API returns
   if (agentStatusCache[sessionId]) {
     agentStatusCache[sessionId].status = 'running';
@@ -5831,8 +5982,22 @@ async function sendFollowup(projectId, sessionId) {
   updateHistoryStatus(sessionId, 'running');
   updateAgentStatusUI(sessionId, 'running');
 
+  // If agent is currently running, use interrupt endpoint (atomic stop+resume)
+  // instead of queueing a followup that won't be seen until the turn ends.
+  const useInterrupt = currentStatus === 'running';
+  const endpoint = useInterrupt
+    ? `/api/project/${projectId}/agent/interrupt`
+    : `/api/project/${projectId}/agent/followup`;
+
+  // Close existing SSE before interrupt — server will kill the old process
+  if (useInterrupt && agentEventSources[sessionId]) {
+    agentEventSources[sessionId].close();
+    delete agentEventSources[sessionId];
+    if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
+  }
+
   // Fire the API call without blocking — SSE will deliver the response
-  fetch(API_BASE + `/api/project/${projectId}/agent/followup`, {
+  fetch(API_BASE + endpoint, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ message: fullMessage, session_id: sessionId })
@@ -5851,38 +6016,67 @@ async function sendFollowup(projectId, sessionId) {
         }
       }
     }
-    // Reconnect SSE after server confirms (agent process is now started)
-    if (!data.queued && !agentEventSources[sessionId]) {
+    // Reconnect SSE after server confirms (agent process is now started/restarted)
+    if (!agentEventSources[sessionId]) {
       connectAgentStream(projectId, sessionId);
     }
   }).catch(e => console.error('Follow-up error:', e));
+
+  // Start followup response timeout — if no output in 20s, warn user
+  if (followupTimeouts[sessionId]) clearTimeout(followupTimeouts[sessionId].timerId);
+  followupTimeouts[sessionId] = {
+    projectId,
+    timerId: setTimeout(() => {
+      delete followupTimeouts[sessionId];
+      const cached = agentStatusCache[sessionId];
+      if (cached && cached.status === 'running') {
+        showToast('Agent appears unresponsive — no output for 20 seconds. Try sending another message or restart the agent.', 10000);
+      }
+    }, 20000)
+  };
 }
 
+const _recentlyStoppedSessions = {};  // sessionId → timestamp when stopped
+
 async function stopAgent(projectId, sessionId) {
+  if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
+  // Immediately update UI — don't wait for server response
+  if (agentStatusCache[sessionId]) agentStatusCache[sessionId].status = 'stopped';
+  updateHistoryStatus(sessionId, 'stopped');
+  _recentlyStoppedSessions[sessionId] = Date.now();
+  if (agentEventSources[sessionId]) {
+    agentEventSources[sessionId].close();
+    delete agentEventSources[sessionId];
+  }
+  if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
+  refreshModal();
+  renderAgentConsole();
+
+  // Fire the stop request with a timeout — server kill can take seconds
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
   try {
     const res = await fetch(API_BASE + `/api/project/${projectId}/agent/stop`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ session_id: sessionId })
+      body: JSON.stringify({ session_id: sessionId }),
+      signal: controller.signal,
     });
-    if (res.ok) {
-      if (agentStatusCache[sessionId]) agentStatusCache[sessionId].status = 'stopped';
-      updateHistoryStatus(sessionId, 'stopped');
-    } else {
-      // Stop failed (e.g. process already exited) — fetch real status from server
-      console.warn('Stop failed, fetching fresh status');
+    clearTimeout(timeoutId);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      console.warn('Stop response:', data.error || res.status);
     }
-    if (agentEventSources[sessionId]) {
-      agentEventSources[sessionId].close();
-      delete agentEventSources[sessionId];
-    }
-    refreshModal();
-    renderAgentConsole();
-    refreshSilent();
   } catch(e) {
-    console.error('Stop request error:', e);
-    refreshSilent();
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') {
+      console.warn('Stop request timed out — process may still be terminating');
+      showToast('Stop sent — process is terminating...', 3000);
+    } else {
+      console.error('Stop request error:', e);
+    }
   }
+  refreshSilent();
 }
 
 // Fetch all agent sessions for a project on modal open / page boot
@@ -5895,7 +6089,16 @@ async function fetchAgentStatus(projectId) {
 
     for (const s of sessions) {
       const sid = s.session_id;
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', waitingForPlanApproval: s.waiting_for_plan_approval || false };
+      // Don't let server overwrite a recently-stopped session with 'error'
+      // (protects against race where reader thread sets error before stop lands)
+      const stoppedAt = _recentlyStoppedSessions[sid];
+      if (stoppedAt && (Date.now() - stoppedAt < 15000) && s.status === 'error') {
+        s.status = 'stopped';
+      }
+      if (stoppedAt && (Date.now() - stoppedAt >= 15000)) {
+        delete _recentlyStoppedSessions[sid];
+      }
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
       }
@@ -5906,13 +6109,40 @@ async function fetchAgentStatus(projectId) {
         connectAgentStream(projectId, sid);
       }
     }
+    // Clean up stale sessions that the server no longer knows about
+    // (e.g., after server restart when in-memory sessions are lost)
+    const serverSids = new Set(sessions.map(s => s.session_id));
+    const staleEntries = agentHistory.filter(h => h.projectId === projectId && !serverSids.has(h.sessionId));
+    for (const stale of staleEntries) {
+      delete agentStatusCache[stale.sessionId];
+      delete agentOutputBuffers[stale.sessionId];
+      if (agentEventSources[stale.sessionId]) {
+        agentEventSources[stale.sessionId].close();
+        delete agentEventSources[stale.sessionId];
+      }
+      if (agentSSEWatchdogs[stale.sessionId]) {
+        clearInterval(agentSSEWatchdogs[stale.sessionId]);
+        delete agentSSEWatchdogs[stale.sessionId];
+      }
+    }
+    if (staleEntries.length > 0) {
+      agentHistory = agentHistory.filter(h => !(h.projectId === projectId && !serverSids.has(h.sessionId)));
+    }
+    // Clear active tab if it points to a stale session
+    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId])) {
+      delete activeAgentTab[projectId];
+    }
+
     // Set active tab to most recent running/idle non-worker, or first visible session
     if (sessions.length > 0 && !activeAgentTab[projectId]) {
       const visible = sessions.filter(s => !s.hivemind_ws_id);
       const running = visible.find(s => s.status === 'running' || s.status === 'idle');
       activeAgentTab[projectId] = running ? running.session_id : (visible[0] || sessions[0]).session_id;
     }
-    if (sessions.length > 0) renderAgentConsole();
+    if (sessions.length > 0 || staleEntries.length > 0) {
+      refreshModal();
+      renderAgentConsole();
+    }
   } catch(e) {}
 }
 
@@ -6004,7 +6234,7 @@ async function loadProjectPlans(projectId) {
     plansCache[projectId] = [];
   }
   refreshModal();
-  setTimeout(() => renderPlansTab(projectId), 50);
+  renderPlansTab(projectId);
 }
 
 function renderPlansTab(projectId) {

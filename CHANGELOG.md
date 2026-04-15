@@ -1,5 +1,142 @@
 # Mission Control — Changelog
 
+## [2026-04-15] — Per-Project Agent Isolation & Guardian Overhaul
+
+### Per-Project Agent Manager (eliminates cross-project blocking)
+- **Root cause**: every agent operation (dispatch, follow-up, stop, guardian state mutation) routed through a single global `agent_lock`. A slow process-tree kill in Project X blocked stdin writes, status reads, and SSE events for every other project — Mode A and Mode B "isolation" was illusory because both modes ultimately serialized on the same mutex.
+- **`ProjectAgentManager`** (server.py:329) — new class, one instance per `project_id`, owns its own `RLock`, `session_ids` set, and lazily-spawned guardian thread.
+- **`get_manager(project_id)`** + **`get_manager_for_session(session_id)`** + **`all_managers()`** — registry helpers. `_managers_lock` is held only for microseconds to mutate the registry dict; never held across any subprocess, kill, or stdin write.
+- **All 30 `with agent_lock:` call sites** replaced with `with get_manager(<project_id>).lock:` — covers `_dispatch_agent_internal`, follow-up endpoints, stop / interrupt-resume, hivemind dispatches, terminal broadcast, scheduler purge, Process Manager kill, and every guardian state mutation.
+- **`agent_lock` deleted entirely.** No shared mutex remains anywhere on the agent execution path.
+
+### Per-Project Guardian Threads
+- **`_project_guardian_loop(manager)`** (server.py:5494) — one guardian thread per `ProjectAgentManager`, lazily spawned via `manager.ensure_guardian()` on first dispatch.
+- Each loop iterates only its own project's `session_ids` — has zero visibility into other projects, by construction.
+- Legacy global `_session_guardian_loop` is now a no-op stub kept for compatibility with startup callers.
+- A hung kill, slow check, or recovery sequence in one project cannot affect any other project.
+
+### Guardian Hung-Process Detection: CPU-Aware
+- **`GUARDIAN_HUNG_TIMEOUT`: 180s → 600s.** The old 3-minute threshold was killing healthy thinking turns mid-stream.
+- **New `_proc_is_cpu_idle(session, proc, now)`** (server.py:5448) — uses psutil to compare cumulative CPU times of the process *tree* (parent + children) across guardian ticks. Kill only fires if the tree burned <0.05 CPU-seconds per wall-second since the previous sample.
+- **State 2 (hung process) now requires both stdout silence AND CPU idleness.** Long WebFetch / Bash / Read tool calls survive — they burn syscall/network time that psutil sees.
+- **psutil missing → kill never fires.** Without psutil, `_proc_is_cpu_idle` returns `False` and the guardian falls back to dead-process detection only. No false positives possible.
+- Lock is never held across `_kill_proc_background` — flag flips happen under the lock, the kill runs after release.
+
+### Critical Bug: Stale `last_output_time` on Resume
+- **Symptom**: prompting any idle Mode B session triggered an instant guardian kill ("no output for 609s — killing hung process") even though the agent had no chance to produce a single chunk.
+- **Cause**: `last_output_time` was set at session creation and only advanced when the stream reader saw stdout. When a turn completed and the session sat idle, the timestamp froze. The five resume paths flipped `status` back to `'running'` without resetting the timestamp, so the guardian's next tick computed `now - last_output_time = (entire idle gap)` and killed.
+- **Fix**: every site that sets `status='running'` on a resume now also sets `last_output_time = _time.time()`:
+  - Mode A initial follow-up (server.py:1606)
+  - Mode A interrupt-resume (server.py:2367)
+  - Mode B respawn after auto-fresh (server.py:2082)
+  - Mode B stdin write to alive process (server.py:2108)
+  - Mode B follow-up via `_start_followup` (server.py:2149)
+
+### Frontend: Honest Mode Display
+- **Bug**: project context menu showed `Mode B (Streaming) OFF` when a project had no `use_streaming_agent` key, but dispatch fell back to global config (which is `True`) and ran Mode B regardless. UI lied about which mode would run.
+- **`_globalConfig` cache** in `index.html` — populated by `refreshSilent()` from `/api/config`, used to compute the *effective* mode (per-project override if set, else global default).
+- **Menu redesign** (index.html:3034): `⚡ Agent: Mode A (global)    switch → B`. Always shows the mode that will actually run, with a `(global)` badge when the project is inheriting and a `switch → A/B` hint for the next click. One click writes an explicit per-project override.
+
+### Migration Notes
+- No data migration required; sessions remain in the global `agent_sessions` dict (GIL-safe for reads). Only locking and guardian iteration moved per-project.
+- `agent_lock` is removed; any external code importing it will break (none in-tree).
+- Server restart required to pick up the timestamp resets and CPU-aware guardian.
+
+## [2026-04-14] — Session Guardian, Plan Visibility & Tab Fixes
+
+### Session Guardian (replaces Health Monitor)
+- **`_session_guardian_loop()`** — new 10-second tick background thread replaces the old `_health_monitor_loop()`
+- Detects 7 stuck states across both Mode A and Mode B sessions:
+  1. Dead process with stale running/idle status (was Mode B only, now covers Mode A too)
+  2. Hung process — alive but no output for 3+ minutes → kills process, marks needs_attention
+  3. Stuck `waiting_for_plan_approval` / `waiting_for_question` flags (>2 min, no SSE client)
+  4. Stuck `pending_followups` queue (>30s, not running, not dispatching)
+  5. Stuck `_dispatching_followup` flag (>30s)
+  6. Rapid error loop — circuit breaker trips after 3 failures within 60s
+  7. Popen failure — session stuck in `running` with dead/missing process (>15s grace)
+- **Auto-recovery**: preserves user's message, kills zombie process tree, retries `claude -r` with exponential backoff (5s→10s→20s)
+- **Circuit breaker**: after 3 rapid failures, stops retrying, sets `guardian_state='needs_attention'`
+- Recovery is scoped to individual sessions — parallel agents in other projects are never affected
+- Per-session tracking: `last_output_time`, `last_status_change_time`, `guardian_state`, `recovery_attempts`, `pending_recovery_message`, `circuit_breaker_tripped`
+
+### Critical Bug Fix: `_start_followup` Error Handling
+- Wrapped `_start_followup()` body in try/except — previously, if `subprocess.Popen` failed (wrong PATH, disk full, etc.), the session would get permanently stuck in `running` with no process, no reader thread, and no way to recover
+- On failure: sets `status='error'`, logs the error, guardian can then auto-recover
+
+### Pending Message Capture
+- `agent_followup` endpoint now saves the user's message as `pending_recovery_message` before spawning
+- If the spawn fails, the guardian has the message to retry automatically
+- Cleared on successful session completion (rc=0)
+
+### SSE & API Integration
+- New `guardian` SSE event type with `state` and `circuit_breaker` fields
+- `_last_sse_poll_time` tracked in SSE loop for stuck gate flag detection
+- Guardian state included in `/api/project/<id>/agent/status` response
+- New endpoint: `POST /api/project/<id>/agent/guardian-reset` — `action: "retry"` resets circuit breaker, `"dismiss"` clears notification
+
+### Frontend: Guardian UI
+- New status dot states: `.recovering` (yellow pulsing), `.needs-attention` (orange pulsing)
+- Guardian banner above chat input when circuit breaker trips:
+  - "Try Again" button — resets circuit breaker, allows retry
+  - "Start Fresh" button — dispatches new session
+  - "Recovering..." banner during active recovery
+  - "Needs attention" banner with retry/dismiss options
+- `sendFollowup` guards: blocks input during recovery or when circuit breaker is tripped
+- `updateAgentStatusUI` reflects guardian state on dots and labels
+- `agentStatusCache` populated with `guardianState` and `circuitBreakerTripped` from status API
+
+### Fix: Plan Content Hidden Before User Can Read
+- `collapseIntoPlanButton()` no longer auto-collapses plan text on first `ExitPlanMode`
+- Plan text stays visible in agent output so user can read it before deciding to approve
+- "Approve Plan" + "Collapse Plan" buttons shown at bottom of visible plan
+- On second ExitPlanMode (stuck loop), plan auto-collapses as before with warning
+
+### Fix: Plans Tab Rendering
+- Removed `setTimeout(() => renderPlansTab(...), 50)` — now called synchronously after `refreshModal()`
+- `refreshModalById` re-renders plans tab content after DOM rebuild when cache exists
+- Prevents race where SSE-triggered `refreshModal` could overwrite plans tab content
+
+## [2026-04-12] — Stale Session Cleanup After Server Restart
+
+### Frontend Session Reconciliation
+- **`fetchAgentStatus()`** now compares server-returned sessions against locally cached sessions
+- Sessions in `agentHistory` / `agentStatusCache` / `agentOutputBuffers` that the server doesn't know about (e.g., after server restart) are cleaned up automatically
+- `activeAgentTab[projectId]` is cleared if it points to a stale session, so the dispatch input (not the follow-up input) is shown
+- Associated SSE streams and watchdogs for stale sessions are closed
+- `refreshModal()` + `renderAgentConsole()` triggered after stale cleanup so UI updates immediately
+
+### Root Cause
+- After server restart, in-memory `agent_sessions` is empty, but the frontend still held references to old sessions
+- `activeAgentTab` pointed to a dead session ID → UI showed follow-up input instead of dispatch row
+- Follow-ups sent to the dead session ID → server returned 404 → silently failed
+- User saw a working chat UI but couldn't start new conversations or get responses
+
+## [2026-04-04] — Agent Stability: Health Monitor & Error Recovery
+
+### Process Health Watchdog
+- **`_health_monitor_loop()`** — new background thread runs every 12 seconds
+- Checks all Mode B sessions where `process_alive=True`, verifies PID is actually alive via `proc.poll()` + `_pid_is_alive()`
+- If process is dead but flag says alive: sets `process_alive=False`, `status='error'`, logs `[Health check: process {pid} found dead]`
+- Registered with `atexit` for clean shutdown via `_health_monitor_stop` Event
+
+### Race Condition Fixes (process_alive flag)
+- **`_read_agent_stream_b` finally block**: moved `session['process_alive'] = False` inside the `if session.get('proc') is my_proc:` guard — old reader threads from replaced processes can no longer falsely mark new processes as dead
+- **`sendFollowup` endpoint selection**: `currentStatus` now captured BEFORE the optimistic UI update to 'running', fixing a bug where `useInterrupt` was always `true` (idle Mode B sessions were being killed and respawned instead of writing to stdin)
+
+### Robust Followup Path
+- **PID verification before stdin write**: `agent_followup` now checks `proc.poll()` / `_pid_is_alive()` before trusting `process_alive=True` flag — if process is dead, redirects to respawn path instead of silently failing
+- **Old process cleanup on respawn**: Mode B respawn in followup now closes old proc's stdin and kills old process in background (prevents zombie processes)
+
+### Frontend Unresponsive Agent Detection
+- **`followupTimeouts`**: 20-second timer starts after every follow-up send; if no SSE output arrives, shows toast: "Agent appears unresponsive"
+- Timer cancelled on: output received, turn_complete, status change, error event, or user stop
+- Non-blocking warning — user can ignore if agent is just slow (e.g., large context resume)
+
+### Static File Cache Busting
+- `index.html` now served with `ETag` header based on file mtime+size
+- Switched from `no-store` to `no-cache` — allows conditional GET (304) so Tauri WebView2 always revalidates
+- Fixes stale frontend code being served after server-side changes
+
 ## [2026-03-25] — Active Context Auto-Trimming
 
 ### Context Budget → Active Condensation
