@@ -163,19 +163,17 @@ def _load_config():
 CONFIG = _load_config()
 PORT = int(os.environ.get('MC_PORT', CONFIG.get('port', 5199)))
 
-ALLOWED_ORIGINS = {
-    'https://tauri.localhost',
-    'tauri://localhost',
-    f'http://localhost:{PORT}',
-}
-
 @app.after_request
 def add_cors_headers(response):
-    origin = request.headers.get('Origin', '')
-    if origin in ALLOWED_ORIGINS:
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    # Localhost-only dev app: echo back whatever Origin the caller sends so
+    # the Tauri webview (which may use http://tauri.localhost, tauri://localhost,
+    # https://tauri.localhost, or other custom schemes depending on platform)
+    # can always reach the API. Not a security risk — server binds localhost.
+    origin = request.headers.get('Origin', '*')
+    response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Vary'] = 'Origin'
     if request.method == 'OPTIONS':
         response.status_code = 204
     return response
@@ -1258,6 +1256,11 @@ def _read_agent_stream(proc, session):
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
                                 session['waiting_for_question'] = True
+                                # Transition to 'idle' BEFORE killing so the guardian
+                                # doesn't race in and mark us 'error' when it sees a
+                                # dead process with status still 'running'.
+                                session['status'] = 'idle'
+                                session['last_status_change_time'] = _time.time()
                                 # Kill process — the auto-resolved turn is wasted.
                                 # User's answer will resume the session via follow-up.
                                 try:
@@ -1321,6 +1324,13 @@ def _read_agent_stream(proc, session):
                     _auto_dispatch_followup(session, followup_msg)
                     session.pop('_dispatching_followup', None)
 
+        # Auto-recover failed resume (Mode A)
+        if (session.get('_resume_id')
+                and session.get('status') == 'error'
+                and not session.get('_resume_recovery_attempted')
+                and _time.time() - session.get('_dispatch_time', 0) < 60
+                and not session.get('num_turns')):
+            _auto_recover_failed_resume(session)
 
 
 def _read_agent_stream_b(proc, session):
@@ -1365,6 +1375,11 @@ def _read_agent_stream_b(proc, session):
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
                                 session['waiting_for_question'] = True
+                                # Transition to 'idle' BEFORE killing so the guardian
+                                # doesn't race in and mark us 'error' when it sees a
+                                # dead process with status still 'running'.
+                                session['status'] = 'idle'
+                                session['last_status_change_time'] = _time.time()
                                 # Kill process — the auto-resolved turn is wasted.
                                 # User's answer will resume via follow-up (respawns process).
                                 try:
@@ -1422,6 +1437,111 @@ def _read_agent_stream_b(proc, session):
                 elif session['status'] == 'stopped':
                     pass  # User stopped — don't change status regardless of rc
                 _log_agent_completion(session)
+
+        # Auto-recover failed resume: if we tried to resume a prior session and
+        # it died quickly without producing meaningful output, restart fresh.
+        if (session.get('_resume_id')
+                and session.get('status') == 'error'
+                and not session.get('_resume_recovery_attempted')
+                and _time.time() - session.get('_dispatch_time', 0) < 60
+                and not session.get('num_turns')):
+            _auto_recover_failed_resume(session)
+
+
+def _auto_recover_failed_resume(session):
+    """When a resumed session dies immediately, silently restart fresh.
+
+    Reuses the same session object so the frontend sees seamless recovery.
+    """
+    session['_resume_recovery_attempted'] = True
+    project_id = session['project_id']
+    task = session.get('task', '')
+    mode = session.get('mode', 'A')
+    resume_id = session.get('_resume_id', '')
+
+    p = load_project(project_id)
+    if not p:
+        return
+    pp = p.get('project_path', '')
+    if not pp or not Path(pp).is_dir():
+        return
+
+    session['log_lines'].append(
+        f'[Resume of session {resume_id[:12]} failed — restarting fresh]')
+    print(f"[dispatch] Resume {resume_id[:12]} failed for {project_id}, retrying fresh")
+    _log_agent_activity(project_id, f"Resume failed, restarting fresh: {task[:80]}")
+
+    context = _build_agent_context(p)
+    fresh_task = (f"[Continuing from a previous conversation (session {resume_id}) that could not "
+                  f"be resumed. Start fresh but continue the user's request below.]\n\n{task}")
+
+    try:
+        if mode == 'B':
+            cmd = ['claude', *_build_claude_flags(p, streaming=True),
+                   '--append-system-prompt', context]
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, cwd=pp,
+                text=True, encoding='utf-8', errors='replace',
+                creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+            )
+            initial_msg = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": fresh_task}
+            }) + '\n'
+            proc.stdin.write(initial_msg)
+            proc.stdin.flush()
+
+            threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+            _register_process(proc, 'Agent (Mode B, fresh retry)', 'agent',
+                              session['session_id'], project_id, task[:80])
+
+            mgr = get_manager(project_id)
+            with mgr.lock:
+                session['proc'] = proc
+                session['status'] = 'running'
+                session['process_alive'] = True
+                session['stdin_lock'] = threading.Lock()
+                session['last_output_time'] = _time.time()
+                session['last_status_change_time'] = _time.time()
+                session['_resume_id'] = None  # no longer a resume
+                session['guardian_state'] = None
+                session['recovery_attempts'] = 0
+                session['circuit_breaker_tripped'] = False
+
+            threading.Thread(target=_read_agent_stream_b, args=(proc, session), daemon=True).start()
+
+        else:
+            # Mode A
+            cmd = ['claude', '-p', fresh_task, *_build_claude_flags(p),
+                   '--append-system-prompt', context]
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, cwd=pp,
+                text=True, encoding='utf-8', errors='replace',
+                creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+            )
+            threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+            _register_process(proc, 'Agent (Mode A, fresh retry)', 'agent',
+                              session['session_id'], project_id, task[:80])
+
+            mgr = get_manager(project_id)
+            with mgr.lock:
+                session['proc'] = proc
+                session['status'] = 'running'
+                session['last_output_time'] = _time.time()
+                session['last_status_change_time'] = _time.time()
+                session['_resume_id'] = None
+                session['guardian_state'] = None
+                session['recovery_attempts'] = 0
+                session['circuit_breaker_tripped'] = False
+
+            threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True).start()
+
+    except Exception as e:
+        session['log_lines'].append(f'[Fresh restart also failed: {e}]')
+        session['status'] = 'error'
+        print(f"[dispatch] Fresh retry failed for {project_id}: {e}")
 
 
 def _log_agent_activity(project_id, msg):
@@ -1843,6 +1963,8 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
                 'last_recovery_time': 0,
                 'pending_recovery_message': None,
                 'circuit_breaker_tripped': False,
+                '_resume_id': resume_id or None,
+                '_dispatch_time': _time.time(),
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -1891,6 +2013,8 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
                 'last_recovery_time': 0,
                 'pending_recovery_message': None,
                 'circuit_breaker_tripped': False,
+                '_resume_id': resume_id or None,
+                '_dispatch_time': _time.time(),
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -2054,26 +2178,50 @@ def agent_followup(project_id):
                     existing['log_lines'].append(
                         f'[Process {proc.pid} found dead on followup — will respawn]')
             if not existing.get('process_alive'):
-                # Process died (hard stop or crash) — respawn with claude -r
+                # Process died (hard stop or crash) — respawn
                 claude_sid = existing.get('claude_session_id')
-                if not claude_sid:
-                    return jsonify({'error': 'no session to resume'}), 400
-
-                # Check transcript size before resuming
-                too_large, size_bytes = _session_too_large(pp, claude_sid)
-                resume_flags = ['-r', claude_sid]
+                was_resume = bool(existing.get('_resume_id'))
+                resume_flags = []
                 context = None
-                if too_large:
-                    size_mb = size_bytes / (1024 * 1024)
-                    print(f"[followup] Session {claude_sid} is {size_mb:.1f} MB — starting fresh")
-                    _log_agent_activity(project_id,
-                                        f"Auto-fresh: session too large ({size_mb:.0f} MB)")
-                    existing['log_lines'].append(
-                        f'[Session transcript too large ({size_mb:.0f} MB) — starting fresh]')
-                    resume_flags = []
+
+                if not claude_sid and not was_resume:
+                    # No session ID at all and wasn't a resume — can't continue
+                    print(f"[followup] {project_id}: no claude_session_id, starting fresh")
                     context = _build_agent_context(p)
-                    message = (f"[Continuing from a previous conversation that grew too large "
-                               f"to resume ({size_mb:.0f} MB). Start fresh.]\n\n{message}")
+                    message = (f"[Previous conversation had no session ID to resume. "
+                               f"Starting fresh.]\n\n{message}")
+                elif not claude_sid and was_resume:
+                    # Was a resume but CLI never emitted a session_id — start fresh
+                    print(f"[followup] {project_id}: resume never emitted session_id, starting fresh")
+                    context = _build_agent_context(p)
+                    message = (f"[Resumed session did not provide a continuable session ID. "
+                               f"Starting fresh.]\n\n{message}")
+                elif was_resume:
+                    # Session was originally a resume that succeeded but process died.
+                    # Don't try to -r the same session again — it already proved fragile.
+                    # Start fresh to avoid the same failure loop.
+                    print(f"[followup] {project_id}: resumed session {claude_sid[:12]} died after turn, starting fresh")
+                    context = _build_agent_context(p)
+                    existing['log_lines'].append(
+                        f'[Resumed session process exited — restarting fresh]')
+                    message = (f"[Continuing from a previous conversation (session {claude_sid}) whose "
+                               f"process exited. Start fresh but continue the user's request.]\n\n{message}")
+                else:
+                    # Normal session — try to resume with -r
+                    too_large, size_bytes = _session_too_large(pp, claude_sid)
+                    if too_large:
+                        size_mb = size_bytes / (1024 * 1024)
+                        print(f"[followup] Session {claude_sid} is {size_mb:.1f} MB — starting fresh")
+                        _log_agent_activity(project_id,
+                                            f"Auto-fresh: session too large ({size_mb:.0f} MB)")
+                        existing['log_lines'].append(
+                            f'[Session transcript too large ({size_mb:.0f} MB) — starting fresh]')
+                        context = _build_agent_context(p)
+                        message = (f"[Continuing from a previous conversation that grew too large "
+                                   f"to resume ({size_mb:.0f} MB). Start fresh.]\n\n{message}")
+                    else:
+                        resume_flags = ['-r', claude_sid]
+                        print(f"[followup] {project_id}: respawning Mode B with -r {claude_sid[:12]}")
 
                 user_label = CONFIG.get('user_name') or 'User'
                 existing['log_lines'].append(f"\n> {user_label}: {message}\n")
@@ -2160,12 +2308,14 @@ def agent_followup(project_id):
             _kill_proc_background(rb['old_proc'])
         def _do_respawn_b():
             try:
+                print(f"[respawn-B] {rb['project_id']}: spawning cmd={' '.join(rb['cmd'][:5])}...")
                 proc = subprocess.Popen(
                     rb['cmd'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, cwd=rb['pp'],
                     text=True, encoding='utf-8', errors='replace',
                     creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
                 )
+                print(f"[respawn-B] {rb['project_id']}: spawned PID {proc.pid}")
                 threading.Thread(target=_hide_windows_delayed,
                                  args=(proc.pid,), daemon=True).start()
                 _register_process(proc, 'Agent respawn (B)', 'agent',
@@ -2176,6 +2326,7 @@ def agent_followup(project_id):
                     rb['existing']['process_alive'] = True
                     rb['existing']['stdin_lock'] = threading.Lock()
                     rb['existing']['pending_recovery_message'] = None
+                    rb['existing']['_resume_id'] = None  # clear resume context for future follow-ups
 
                 threading.Thread(target=_read_agent_stream_b,
                                  args=(proc, rb['existing']), daemon=True).start()
@@ -2190,6 +2341,7 @@ def agent_followup(project_id):
                     proc.stdin.write(stdin_msg)
                     proc.stdin.flush()
             except Exception as e:
+                print(f"[respawn-B] {rb['project_id']}: FAILED — {e}")
                 rb['existing']['log_lines'].append(f'[respawn error: {e}]')
                 rb['existing']['status'] = 'error'
                 rb['existing']['last_status_change_time'] = _time.time()
@@ -5582,6 +5734,12 @@ def _guardian_check_session(sid, session, now):
     # State 1: dead process, stale status (running/idle)
     if status in ('running', 'idle') and proc and now - last_change > 2:
         if proc.poll() is not None or not _pid_is_alive(proc.pid):
+            # Safety net: if the session is waiting for user input (question /
+            # plan approval), the process was killed intentionally by the reader
+            # thread as part of that flow. Don't mark it 'error' — the follow-up
+            # (user's answer) will respawn it.
+            if session.get('waiting_for_question') or session.get('waiting_for_plan_approval'):
+                return
             old_status = status
             print(f"[guardian] Session {sid[:8]}: PID {proc.pid} dead, was {old_status}")
             with get_manager(session['project_id']).lock:

@@ -32,10 +32,15 @@ pub fn run() {
 
             log::info!("Starting Flask server: {:?}", server_path);
 
+            // Inherit stdout/stderr so Flask's output lands in the Tauri parent
+            // terminal. Using piped() without a reader causes a deadlock once
+            // the ~64 KB pipe buffer fills (print() blocks forever, then the
+            // Python process may exit on BrokenPipeError). Inherit avoids the
+            // buffer entirely and also gives us live tracebacks for debugging.
             let child = std::process::Command::new("python")
                 .arg(&server_path)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
                 .spawn();
 
             match child {

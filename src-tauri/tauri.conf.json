@@ -4,8 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.missioncontrol.desktop",
   "build": {
-    "frontendDist": "../static",
-    "devUrl": "http://localhost:5199"
+    "frontendDist": "../static"
   },
   "app": {
     "windows": [
