@@ -1,5 +1,39 @@
 # Mission Control — Changelog
 
+## [2026-04-16] — Tauri Launcher, CORS, AskUserQuestion Race Fix & Resume Recovery
+
+### Tauri Launcher: Silent Server Death Fix
+- **Root cause**: `lib.rs` spawned Flask with `Stdio::piped()` but never read from the pipes. After hours of printing, the ~64 KB OS pipe buffer filled, `print()` blocked, Flask deadlocked, and the Python process eventually exited on `BrokenPipeError`. This was invisible — no traceback, no error, just a dead server.
+- **Fix**: `Stdio::piped()` → `Stdio::inherit()` in `lib.rs:40-43`. Flask stdout/stderr now flows directly into the Tauri parent terminal. No buffer, no drainage needed, and crash tracebacks are visible.
+- **Related**: removed `devUrl` from `tauri.conf.json` so `npx tauri dev` doesn't block waiting for an external HTTP server before running Cargo. The Rust app spawns Flask itself via the `setup()` hook; the webview loads `static/index.html` from `frontendDist` (disk) instead of HTTP.
+- **Launch workflow changed**: user runs `npx tauri dev` only — no separate `python server.py` in another terminal. The old dual-terminal setup caused port conflicts (two Flask instances on 5199, requests routing unpredictably, `port_conflict.log` accumulating entries).
+
+### CORS: Tauri Webview Origin Fix
+- **Symptom**: after removing `devUrl`, the webview loaded from Tauri's internal scheme (`http://tauri.localhost` or similar) instead of `http://localhost:5199`. API fetches returned 200 at the Flask layer but were blocked by the browser's CORS policy because the Origin didn't match the `ALLOWED_ORIGINS` set.
+- **Fix**: replaced the origin allowlist with an echo-back pattern — `Access-Control-Allow-Origin` is set to whatever Origin the caller sends. Safe because Mission Control binds localhost only and has no auth layer. Added `Vary: Origin` header for proper cache behavior.
+
+### Guardian Race Fix: AskUserQuestion
+- **Symptom**: when Claude called `AskUserQuestion`, the agent went into error state instead of showing the question UI. The user saw the question text flash briefly, then `[Guardian: process found dead]` followed by repeated `[Guardian: question may have been missed]` messages.
+- **Root cause**: the stream reader set `waiting_for_question=True` and called `proc.kill()` while `status` was still `'running'`. The guardian's 10s tick landed in the gap before the reader's `finally` block could reacquire the lock and set `status='idle'`. Guardian State 1 saw "dead process + running status" and marked the session `'error'`. When the reader finally got the lock, its `if status in ('running', 'idle')` check failed, so the graceful question-handling branch never ran.
+- **Fix (two layers)**:
+  1. Both Mode A and Mode B stream readers now set `status='idle'` and update `last_status_change_time` **before** calling `proc.kill()` for `AskUserQuestion`. This closes the race window — the guardian sees a fresh idle session, not a stale running one.
+  2. Guardian State 1 now checks `waiting_for_question` and `waiting_for_plan_approval` flags as a safety net. If either is set, the dead-process → error transition is skipped entirely.
+
+### Auto-Recovery for Failed Session Resumes
+- **Problem**: dispatching with `claude -r <session_id>` across server restarts is fragile. The CLI's internal state (turn counter, context budget) was set during the original session and may not survive a fresh process reading the transcript file. Two failure modes:
+  1. **Immediate death**: process exits within seconds, before producing any output.
+  2. **Post-turn death**: process completes one turn successfully, then exits. Follow-up respawn tries `-r` on the same session → same failure → silent error loop.
+- **Fix for immediate death** (`_auto_recover_failed_resume`):
+  - Each session now tracks `_resume_id` and `_dispatch_time` at dispatch.
+  - Both Mode A and Mode B readers: if a resumed session dies within 60s with `status='error'` and `num_turns=0`, `_auto_recover_failed_resume()` fires automatically.
+  - Reuses the same session object (seamless to frontend), spawns fresh `claude -p` with context note: `[Continuing from a previous conversation (session X) that could not be resumed. Start fresh.]`
+  - One-shot: `_resume_recovery_attempted` flag prevents infinite loops.
+- **Fix for post-turn death** (Mode B followup respawn):
+  - When a Mode B process dies after a turn that came from a `-r` resume, the follow-up respawn now **starts fresh** instead of trying `-r` on the same fragile session.
+  - Log message: `[Resumed session process exited — restarting fresh]`
+  - If `claude_session_id` was never emitted by the CLI, falls through to fresh start instead of returning 400 error.
+- **Verbose respawn logging**: every decision point in the Mode B follow-up respawn path prints to stdout (`[followup]`, `[respawn-B]` prefixed) so failures are visible in the Tauri terminal.
+
 ## [2026-04-15] — Per-Project Agent Isolation & Guardian Overhaul
 
 ### Per-Project Agent Manager (eliminates cross-project blocking)
