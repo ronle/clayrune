@@ -1,5 +1,37 @@
 # Mission Control — Changelog
 
+## [2026-04-17] — Interactive Mode (Mode C), Session Persistence & Expired Session Recovery
+
+### Interactive Agent Mode (Mode C) — SDK-Based Conversational Sessions
+- **New module `interactive_agent.py`**: uses the Claude Agent SDK (`claude-agent-sdk`) instead of spawning CLI subprocesses. Provides multi-turn interactive conversations with structured message streaming.
+- **Architecture**: single asyncio event loop in a daemon thread (`_sdk_loop`); each session has a `ClaudeSDKClient` + output queue; Flask endpoints dispatch async work via `run_coroutine_threadsafe()`; SSE endpoints drain the queue synchronously.
+- **Conversational behavior prompt** (`_INTERACTIVE_BEHAVIOR`): injected into Mode C sessions, instructs the agent to think out loud, explain reasoning before acting, surface options and tradeoffs, ask for clarification, and keep the user in the loop. This is the behavioral difference between autonomous Mode A/B and conversational Mode C.
+- **New server endpoints**:
+  - `POST /api/project/<id>/agent/interactive` — create interactive session
+  - `POST /api/project/<id>/agent/interactive/send` — send follow-up message
+  - `GET /api/project/<id>/agent/interactive/stream` — SSE stream for responses
+  - `POST /api/project/<id>/agent/interactive/stop` — stop session
+  - `GET /api/project/<id>/agent/interactive/status` — session status
+- **Frontend**:
+  - **"Chat" button** (accent-colored) next to "Dispatch" in every project modal dispatch row
+  - `dispatchInteractive()` — creates session and connects SSE stream
+  - `sendInteractive()` — sends follow-ups to existing interactive session
+  - `connectInteractiveStream()` — SSE consumer rendering text, tool calls, thinking blocks, results
+  - Input box placeholder changes to "Chat with agent..." for interactive sessions
+  - Input box always visible (not gated on status) for interactive sessions
+  - `interactiveSessions` Set tracks which session IDs are Mode C
+
+### Session Persistence: 30-Minute Purge → 24-Hour Retention
+- **Problem**: sessions were purged from memory after 30 minutes of being in a non-running state. Users returning after an hour found their sessions gone — follow-ups returned 404 and the UI showed stale cached state with no way to continue.
+- **Fix**: stale session cutoff changed from `timedelta(minutes=30)` to `timedelta(hours=24)`. Sessions survive all day. Users can go AFK for hours and return to the same conversation.
+- Memory impact is negligible: each session is ~200 KB (log_lines capped at 2000), so 100 sessions ≈ 20 MB.
+
+### Expired Session Auto-Recovery
+- **Problem**: when a follow-up hit a session that had been purged (after 24h or after server restart), the endpoint returned 404. The frontend showed an error state with no recovery path.
+- **Fix**: the follow-up endpoint now **dispatches a fresh agent** instead of returning 404. The new agent receives the user's message and starts working immediately — seamless continuation instead of a dead end.
+- Terminal log: `[followup] polymarket: session eb46ebd2 not found, dispatching fresh`
+- Response includes `auto_resumed: true` so the frontend can distinguish auto-recovered sessions.
+
 ## [2026-04-16] — Tauri Launcher, CORS, AskUserQuestion Race Fix & Resume Recovery
 
 ### Tauri Launcher: Silent Server Death Fix

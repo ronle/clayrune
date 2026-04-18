@@ -2159,12 +2159,31 @@ def agent_followup(project_id):
         return jsonify({'error': 'session_id required'}), 400
 
     _respawn_b = None  # set if Mode B needs to respawn outside lock
+    existing = None  # initialized before lock scope
 
     with get_manager(project_id).lock:
         existing = agent_sessions.get(session_id)
-        if not existing or existing['project_id'] != project_id:
-            return jsonify({'error': 'session not found'}), 404
+        if not existing or existing.get('project_id') != project_id:
+            # Session was purged or never existed. Try to recover by dispatching
+            # a fresh agent. If the frontend still knows the claude_session_id,
+            # we can resume via -r. Otherwise start completely fresh.
+            pass  # fall through to auto-recovery below
 
+    # Auto-recovery for expired sessions: dispatch fresh instead of 404
+    if not existing or existing.get('project_id') != project_id:
+        print(f"[followup] {project_id}: session {session_id[:8]} not found, dispatching fresh")
+        p = load_project(project_id)
+        if not p:
+            return jsonify({'error': 'project not found'}), 404
+        try:
+            new_sid = _dispatch_agent_internal(project_id, message)
+            _log_agent_activity(project_id, f"Session expired — auto-resumed: {message[:100]}")
+            return jsonify({'ok': True, 'session_id': new_sid, 'auto_resumed': True})
+        except Exception as e:
+            print(f"[followup] {project_id}: auto-resume failed: {e}")
+            return jsonify({'error': f'session expired and auto-resume failed: {e}'}), 500
+
+    with get_manager(project_id).lock:
         # Clear plan approval / question flags — user has responded
         existing['waiting_for_plan_approval'] = False
         existing['waiting_for_question'] = False
@@ -2818,6 +2837,121 @@ def agent_guardian_reset(project_id):
             args=(session,), daemon=True).start()
 
     return jsonify({'ok': True})
+
+
+# ── Interactive Agent (Mode C) ───────────────────────────────────────────────
+# SDK-based conversational sessions — full back-and-forth with the user.
+
+import interactive_agent as _ia
+
+
+@app.route('/api/project/<project_id>/agent/interactive', methods=['POST'])
+def interactive_dispatch(project_id):
+    """Create a new interactive (Mode C) session."""
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    pp = p.get('project_path', '')
+    if not pp or not Path(pp).is_dir():
+        return jsonify({'error': 'project_path not set'}), 400
+
+    data = request.get_json() or {}
+    task = data.get('message', '').strip()
+    if not task:
+        return jsonify({'error': 'message required'}), 400
+
+    resume_id = data.get('resume_id', '')
+    model = p.get('agent_model') or CONFIG.get('agent_model', '')
+    max_turns = CONFIG.get('agent_max_turns')
+
+    # Build context same as Mode A/B so the agent knows about the project
+    context = _build_agent_context(p)
+
+    try:
+        session_id = _ia.create_interactive_session(
+            project_id=project_id,
+            project_path=pp,
+            task=task,
+            system_prompt=context,
+            model=model,
+            max_turns=max_turns,
+            resume_id=resume_id or None,
+        )
+    except Exception as e:
+        print(f"[interactive] {project_id}: dispatch error: {e}")
+        return jsonify({'error': f'failed to create interactive session: {e}'}), 500
+
+    _log_agent_activity(project_id, f"Interactive session started: {task[:100]}")
+    print(f"[interactive] {project_id}: created session {session_id}")
+    return jsonify({'ok': True, 'session_id': session_id})
+
+
+@app.route('/api/project/<project_id>/agent/interactive/send', methods=['POST'])
+def interactive_send(project_id):
+    """Send a follow-up message to an interactive session."""
+    data = request.get_json() or {}
+    session_id = data.get('session_id', '')
+    message = data.get('message', '').strip()
+    if not session_id or not message:
+        return jsonify({'error': 'session_id and message required'}), 400
+
+    try:
+        _ia.send_interactive_message(session_id, message)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        print(f"[interactive] {project_id}: send error: {e}")
+        return jsonify({'error': f'send failed: {e}'}), 500
+
+    _log_agent_activity(project_id, f"Interactive follow-up: {message[:100]}")
+    return jsonify({'ok': True, 'session_id': session_id})
+
+
+@app.route('/api/project/<project_id>/agent/interactive/stream')
+def interactive_stream(project_id):
+    """SSE endpoint streaming interactive session output."""
+    session_id = request.args.get('session', '')
+    if not session_id:
+        return jsonify({'error': 'session param required'}), 400
+
+    return Response(
+        _ia.drain_interactive_queue(session_id),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+
+@app.route('/api/project/<project_id>/agent/interactive/stop', methods=['POST'])
+def interactive_stop(project_id):
+    """Stop an interactive session."""
+    data = request.get_json() or {}
+    session_id = data.get('session_id', '')
+    if not session_id:
+        return jsonify({'error': 'session_id required'}), 400
+
+    _ia.stop_interactive_session(session_id)
+    _log_agent_activity(project_id, "Interactive session stopped")
+    return jsonify({'ok': True})
+
+
+@app.route('/api/project/<project_id>/agent/interactive/status')
+def interactive_status(project_id):
+    """Return status of all interactive sessions for a project."""
+    sessions = _ia.list_interactive_sessions(project_id)
+    result = []
+    for s in sessions:
+        result.append({
+            'session_id': s.session_id,
+            'status': s.status,
+            'mode': 'C',
+            'started_at': s.started_at,
+            'claude_session_id': s.claude_session_id,
+            'cost_usd': s.cost_usd,
+            'usage': s.usage,
+            'num_turns': s.num_turns,
+            'log_lines': s.log_lines[-200:],
+        })
+    return jsonify({'sessions': result})
 
 
 # ── Terminal session management ───────────────────────────────────────────────
@@ -5412,8 +5546,10 @@ def _scheduler_loop():
             print(f"[scheduler] GitHub sync loop error: {e}")
 
         # ── Purge stale sessions from memory ──────────────────────────────
+        # 24-hour retention: users should be able to return to a conversation
+        # hours later and continue, just like in the CLI.
         try:
-            cutoff = now - timedelta(minutes=30)
+            cutoff = now - timedelta(hours=24)
             total_stale = 0
             for mgr in all_managers():
                 with mgr.lock:

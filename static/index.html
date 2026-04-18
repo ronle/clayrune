@@ -4976,6 +4976,7 @@ function agentPanelHTML(p) {
       onpaste="handleAgentPaste(event,'${esc(p.id)}')"
     ></textarea>
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
+    <button class="btn-dispatch" style="background:var(--accent);margin-left:4px" title="Interactive conversation mode — full back-and-forth with the agent" onclick="dispatchInteractive('${esc(p.id)}')">Chat</button>
   </div>
   ${dispatchPreviews}` : '';
 
@@ -5068,7 +5069,8 @@ function agentPanelHTML(p) {
               <button class="btn-fresh" onclick="guardianReset('${esc(p.id)}','${esc(activeSessionId)}','dismiss')">Dismiss</button>
             </div>`
           : '';
-    const chatInput = (st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle' || st === 'error')
+    const isInteractive = interactiveSessions.has(activeSessionId);
+    const chatInput = (isInteractive || st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle' || st === 'error')
       ? `${guardianBanner}<div class="agent-chat-input">
           ${followupPreviews}
           <div class="agent-chat-input-row agent-drop-zone"
@@ -5077,11 +5079,11 @@ function agentPanelHTML(p) {
               ondragleave="handleAgentDragLeave(event,this)"
               ondrop="handleAgentDrop(event,'fu_${esc(activeSessionId)}')">
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
-              placeholder="${st === 'error' ? 'Type to continue from where it stopped...' : st === 'stopped' ? 'Type to resume conversation...' : st === 'running' ? 'Interrupt and redirect agent... (Enter to send)' : 'Send follow-up... (paste or drop files here)'}"
-              onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'),'${esc(p.id)}')"
+              placeholder="${interactiveSessions.has(activeSessionId) ? 'Chat with agent... (Enter to send)' : st === 'error' ? 'Type to continue from where it stopped...' : st === 'stopped' ? 'Type to resume conversation...' : st === 'running' ? 'Interrupt and redirect agent... (Enter to send)' : 'Send follow-up... (paste or drop files here)'}"
+              onkeydown="handleInputEnter(event,()=>${interactiveSessions.has(activeSessionId) ? `sendInteractive('${esc(p.id)}','${esc(activeSessionId)}')` : `sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')`},'${esc(p.id)}')"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
-            <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
+            <button class="btn-dispatch" onclick="${interactiveSessions.has(activeSessionId) ? `sendInteractive('${esc(p.id)}','${esc(activeSessionId)}')` : `sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')`}">Send</button>
           </div>
         </div>` : '';
 
@@ -5317,6 +5319,141 @@ async function dispatchAgent(projectId) {
 
 let agentSSEWatchdogs = {};  // sessionId → timer ID
 let followupTimeouts = {};  // sessionId → { timerId, projectId }
+let interactiveSessions = new Set();  // session IDs that are Mode C (interactive)
+
+// ── Interactive (Mode C) ──────────────────────────────────────────────────
+
+async function dispatchInteractive(projectId) {
+  const input = document.getElementById(`agent-task-${projectId}`);
+  const task = (input.value || '').trim();
+  if (!task) { input.focus(); return; }
+  _pushPromptHistory(task, projectId);
+  input.value = '';
+  if (input.id) delete textareaValues[input.id];
+
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/agent/interactive`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message: task })
+    });
+    const data = await res.json();
+    if (!data.ok) { alert(data.error || 'Interactive dispatch failed'); return; }
+    const sessionId = data.session_id;
+    const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
+
+    interactiveSessions.add(sessionId);
+    agentOutputBuffers[sessionId] = [`> ${task}`];
+    agentStatusCache[sessionId] = { status: 'running', task, projectId, startedAt: new Date().toISOString(), mode: 'C' };
+    agentHistory.unshift({ projectId, sessionId, projectName: pName, task, status: 'running', startedAt: new Date().toISOString(), mode: 'C' });
+    activeAgentTab[projectId] = sessionId;
+
+    refreshModal();
+    renderAgentConsole();
+    connectInteractiveStream(projectId, sessionId);
+  } catch(e) {
+    alert('Failed to dispatch interactive: ' + e.message);
+  }
+}
+
+async function sendInteractive(projectId, sessionId) {
+  const input = document.getElementById(`agent-followup-${sessionId}`);
+  if (!input) return;
+  const message = input.value.trim();
+  if (!message) return;
+  _pushPromptHistory(message, projectId);
+  input.value = '';
+  if (input.id) delete textareaValues[input.id];
+
+  // Local echo
+  const buf = agentOutputBuffers[sessionId] || [];
+  buf.push(`\n> ${message}\n`);
+  agentOutputBuffers[sessionId] = buf;
+  refreshModalById(projectId);
+
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}/agent/interactive/send`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session_id: sessionId, message })
+    });
+    // Reconnect SSE for the new turn's output
+    connectInteractiveStream(projectId, sessionId);
+  } catch(e) {
+    buf.push(`[send error: ${e.message}]`);
+    refreshModalById(projectId);
+  }
+}
+
+function connectInteractiveStream(projectId, sessionId) {
+  // Close existing SSE if any
+  if (agentEventSources[sessionId]) {
+    agentEventSources[sessionId].close();
+  }
+
+  const url = API_BASE + `/api/project/${projectId}/agent/interactive/stream?session=${sessionId}`;
+  const es = new EventSource(url);
+  agentEventSources[sessionId] = es;
+
+  const buf = agentOutputBuffers[sessionId] || [];
+
+  es.onmessage = (event) => {
+    let msg;
+    try { msg = JSON.parse(event.data); } catch(e) { return; }
+
+    if (msg.type === 'assistant') {
+      // Render content blocks
+      for (const block of (msg.content || [])) {
+        if (block.type === 'text' && block.text) {
+          buf.push(block.text);
+        } else if (block.type === 'tool_use') {
+          const preview = (block.input && block.input.command) || (block.input && block.input.file_path) || (block.input && block.input.pattern) || JSON.stringify(block.input || {}).slice(0, 80);
+          buf.push(`[tool: ${block.name}] ${preview}`);
+        } else if (block.type === 'thinking' && block.thinking) {
+          buf.push(`[thinking] ${block.thinking.slice(0, 300)}${block.thinking.length > 300 ? '...' : ''}`);
+        }
+      }
+      agentStatusCache[sessionId] = { ...(agentStatusCache[sessionId] || {}), status: 'running' };
+      refreshModalById(projectId);
+      renderAgentConsole();
+
+    } else if (msg.type === 'text_delta') {
+      // Real-time text streaming — append to last line or start new one
+      if (buf.length && !buf[buf.length - 1].startsWith('[') && !buf[buf.length - 1].startsWith('>')) {
+        buf[buf.length - 1] += msg.text;
+      } else {
+        buf.push(msg.text);
+      }
+      refreshModalById(projectId);
+
+    } else if (msg.type === 'result') {
+      buf.push(`[turn complete — ${msg.subtype}${msg.cost_usd ? ` · $${msg.cost_usd.toFixed(4)}` : ''}]`);
+      agentStatusCache[sessionId] = { ...(agentStatusCache[sessionId] || {}), status: 'idle', cost_usd: msg.cost_usd };
+      refreshModalById(projectId);
+      renderAgentConsole();
+      es.close();
+      delete agentEventSources[sessionId];
+
+    } else if (msg.type === 'error') {
+      buf.push(`[error: ${msg.error}]`);
+      agentStatusCache[sessionId] = { ...(agentStatusCache[sessionId] || {}), status: 'error' };
+      refreshModalById(projectId);
+      renderAgentConsole();
+
+    } else if (msg.type === 'done') {
+      agentStatusCache[sessionId] = { ...(agentStatusCache[sessionId] || {}), status: msg.status || 'idle' };
+      refreshModalById(projectId);
+      renderAgentConsole();
+      es.close();
+      delete agentEventSources[sessionId];
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    delete agentEventSources[sessionId];
+  };
+}
 
 function connectAgentStream(projectId, sessionId) {
   if (agentEventSources[sessionId]) {
