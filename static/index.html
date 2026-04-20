@@ -437,12 +437,26 @@
     user-select: none;
   }
   /* Status-aware border for "needs attention" states (no left stripe). */
-  .card.status-blocked { border-color: var(--red); }
-  .card.status-waiting { border-color: var(--amber); }
+  .card.status-blocked,  .card.friendly-stuck  { border-color: var(--red); }
+  .card.status-waiting,  .card.friendly-asking { border-color: var(--amber); }
   body.tone-warm .card.status-blocked,
-  body.tone-editorial .card.status-blocked { box-shadow: 0 4px 0 var(--red); }
+  body.tone-editorial .card.status-blocked,
+  body.tone-warm .card.friendly-stuck,
+  body.tone-editorial .card.friendly-stuck { box-shadow: 0 4px 0 var(--red); }
   body.tone-warm .card.status-waiting,
-  body.tone-editorial .card.status-waiting { box-shadow: 0 4px 0 var(--amber); }
+  body.tone-editorial .card.status-waiting,
+  body.tone-warm .card.friendly-asking,
+  body.tone-editorial .card.friendly-asking { box-shadow: 0 4px 0 var(--amber); }
+  /* Top accent strip for needs-attention states, visible in all tones */
+  .card.friendly-asking::before,
+  .card.friendly-stuck::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0;
+    height: 3px; border-radius: 14px 14px 0 0; pointer-events: none;
+  }
+  .card.friendly-asking::before { background: var(--amber); }
+  .card.friendly-stuck::before  { background: var(--red); }
+  body.compact .card.friendly-asking::before,
+  body.compact .card.friendly-stuck::before { border-radius: 8px 8px 0 0; }
   .card:hover { border-color: var(--border2); box-shadow: 0 8px 24px rgba(0,0,0,0.35); transform: translateY(-2px); }
   body.tone-warm .card:hover,
   body.tone-editorial .card:hover { box-shadow: 0 8px 0 rgba(32,28,22,0.10); }
@@ -511,11 +525,29 @@
     letter-spacing: 0.8px; text-transform: uppercase; white-space: nowrap; font-weight: 700;
     align-self: flex-start;
   }
-  .status-active  { background: var(--green-dim);  color: var(--green-text); }
-  .status-blocked { background: var(--red-dim);    color: var(--red-text); }
-  .status-waiting { background: var(--amber-dim);  color: var(--amber-text); }
-  .status-parked  { background: var(--surface3);   color: var(--text-dim); }
+  .status-active,  .status-pill.friendly-working { background: var(--green-dim);  color: var(--green-text); }
+  .status-blocked, .status-pill.friendly-stuck   { background: var(--red-dim);    color: var(--red-text); }
+  .status-waiting, .status-pill.friendly-asking  { background: var(--amber-dim);  color: var(--amber-text); }
+  .status-parked,  .status-pill.friendly-idle    { background: var(--surface3);   color: var(--text-dim); }
   .status-unknown { background: var(--surface3);   color: var(--text-dim); }
+  .status-pill.friendly-done { background: var(--green-dim); color: var(--green-text); }
+
+  /* Dot prefix for friendly status pills */
+  .status-pill.friendly-working,
+  .status-pill.friendly-asking,
+  .status-pill.friendly-stuck,
+  .status-pill.friendly-done,
+  .status-pill.friendly-idle { display: inline-flex; align-items: center; gap: 6px; }
+  .status-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; flex-shrink: 0;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  .friendly-working .status-dot { animation: mc-pulse 2s ease-in-out infinite; }
+  @keyframes mc-pulse {
+    0%, 100% { transform: scale(1);   opacity: 1; }
+    50%      { transform: scale(1.3); opacity: 0.65; }
+  }
 
   .time-ago { color: var(--text-faint); font-size: 12px; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
 
@@ -3001,8 +3033,39 @@ function computeLiveStatus(projectId) {
   return { currentTask, currentTaskClass, nextAction, nextActionClass };
 }
 
+// Collapse internal project status + live agent state into one of the 5
+// user-facing states from the design handoff: working/asking/stuck/done/idle.
+function friendlyStatus(p) {
+  if (!p) return 'idle';
+  const live = computeLiveStatus(p.id) || {};
+  const c = live.currentTaskClass;
+  if (c === 'running')        return 'working';
+  if (c === 'plan-approval')  return 'asking';
+  if (c === 'error')          return 'stuck';
+  if (p.blocked)              return 'stuck';
+  switch (p.status) {
+    case 'active':    return 'working';
+    case 'waiting':   return 'asking';
+    case 'blocked':   return 'stuck';
+    case 'completed': return 'done';
+    case 'parked':    return 'idle';
+  }
+  if (c === 'completed')  return 'done';
+  if (c === 'idle-agent') return 'idle';
+  return 'idle';
+}
+
+const FRIENDLY_TO_VOICE = {
+  working: 'status_active',
+  asking:  'status_waiting',
+  stuck:   'status_blocked',
+  done:    'status_completed',
+  idle:    'status_parked',
+};
+
 function tileHTML(p, slotIndex) {
   const sc = `status-${p.status||'unknown'}`;
+  const fs = friendlyStatus(p);
   const domCfg = getDomainConfig(p.domain||'general');
   const backlog = p.backlog || [];
   const openItems = backlog.filter(i => i.status === 'open');
@@ -3019,7 +3082,7 @@ function tileHTML(p, slotIndex) {
   const cardBgStyle = p.modal_color ? ` style="background:${p.modal_color.bg}"` : '';
 
   return `
-  <div class="card ${sc}" data-id="${esc(p.id)}" data-slot="${slotIndex !== undefined ? slotIndex : ''}"${cardBgStyle}>
+  <div class="card ${sc} friendly-${fs}" data-id="${esc(p.id)}" data-slot="${slotIndex !== undefined ? slotIndex : ''}"${cardBgStyle}>
     <div class="card-header">
       <div class="card-title-row">
         ${p.emoji ? `<span class="card-avatar">${esc(p.emoji)}</span>` : ''}
@@ -3027,7 +3090,7 @@ function tileHTML(p, slotIndex) {
         <span class="domain-tag" style="background:${domCfg.bg};color:${domCfg.color}">${esc(domCfg.label||p.domain||'general')}</span>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <span class="status-pill ${sc}">${esc(vl('status_' + (p.status||'unknown')))}</span>
+        <span class="status-pill friendly-${fs}"><span class="status-dot"></span>${esc(vl(FRIENDLY_TO_VOICE[fs]))}</span>
         ${agentBadge}
       </div>
     </div>
@@ -3778,9 +3841,10 @@ function renderListView() {
 
 function listRowHTML(p) {
   const live = computeLiveStatus(p.id);
-  const statusColors = { active: 'var(--green)', blocked: 'var(--red)', waiting: 'var(--amber)', parked: 'var(--text-faint)' };
-  const statusBgs = { active: 'var(--green-dim)', blocked: 'var(--red-dim)', waiting: 'var(--amber-dim)', parked: 'var(--surface3)' };
-  const statusTexts = { active: 'var(--green-text)', blocked: 'var(--red-text)', waiting: 'var(--amber-text)', parked: 'var(--text-faint)' };
+  const fs = friendlyStatus(p);
+  const friendlyColors = { working: 'var(--green)', asking: 'var(--amber)', stuck: 'var(--red)', done: 'var(--green)', idle: 'var(--text-faint)' };
+  const friendlyBgs    = { working: 'var(--green-dim)', asking: 'var(--amber-dim)', stuck: 'var(--red-dim)', done: 'var(--green-dim)', idle: 'var(--surface3)' };
+  const friendlyTexts  = { working: 'var(--green-text)', asking: 'var(--amber-text)', stuck: 'var(--red-text)', done: 'var(--green-text)', idle: 'var(--text-faint)' };
   const isRunning = hasRunningAgent(p.id);
   const errSess = agentHistory.find(h => h.projectId === p.id && h.status === 'error');
   let agentLabel = '\u2014', agentClass = '';
@@ -3788,9 +3852,9 @@ function listRowHTML(p) {
   else if (errSess) { agentLabel = 'Error'; agentClass = 'error'; }
 
   return `<div class="list-row" data-id="${esc(p.id)}">
-    <div class="lr-indicator" style="background:${statusColors[p.status] || 'var(--text-faint)'}"></div>
+    <div class="lr-indicator" style="background:${friendlyColors[fs]}"></div>
     <div class="lr-name">${esc(p.name || p.id)}</div>
-    <div class="lr-status" style="background:${statusBgs[p.status]||'var(--surface3)'};color:${statusTexts[p.status]||'var(--text-faint)'}">${esc(vl('status_' + (p.status || 'unknown')))}</div>
+    <div class="lr-status" style="background:${friendlyBgs[fs]};color:${friendlyTexts[fs]}">${esc(vl(FRIENDLY_TO_VOICE[fs]))}</div>
     <div class="lr-task ${live.currentTaskClass}">${esc(live.currentTask)}</div>
     <div class="lr-next">${esc(live.nextAction)}</div>
     <div class="lr-agent ${agentClass}">${agentLabel}</div>
