@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mission Control</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Nunito:wght@600;700;800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
@@ -39,6 +39,105 @@
     --sidebar-exp: 220px;
     --header-h:    48px;
   }
+
+  /* ─── Appearance: accent presets ──────────────────────────────────────── */
+  body[data-accent="sunset"]  { --accent: #e8824a; --accent-dim: #4a2a1a; --accent-soft: #a8502d; }
+  body[data-accent="rose"]    { --accent: #d96480; --accent-dim: #4a2030; --accent-soft: #a14659; }
+  body[data-accent="lilac"]   { --accent: #8a7ce0; --accent-dim: #2d2750; --accent-soft: #5c5099; }
+  body[data-accent="lagoon"]  { --accent: #4fa89a; --accent-dim: #1a3d38; --accent-soft: #3a7a70; }
+  body[data-accent="ink"]     { --accent: #6b7286; --accent-dim: #2a2f3f; --accent-soft: #474e62; }
+  /* default accent = blue, handled by :root */
+
+  /* ─── Appearance: Warm tone (light, cream, rounded) ───────────────────── */
+  body.tone-warm {
+    --bg:          #f6f0e4;
+    --surface:     #ffffff;
+    --surface2:    #fbf7ee;
+    --surface3:    #efe7d6;
+    --border:      #e8e0cd;
+    --border2:     #c9bea6;
+    --text:        #201c16;
+    --text-dim:    #5a5247;
+    --text-faint:  #8a8172;
+    --green:       #2f8a5b;
+    --green-dim:   #dff2e6;
+    --green-text:  #2f8a5b;
+    --amber:       #c77a1a;
+    --amber-dim:   #fbe6c7;
+    --amber-text:  #a15e10;
+    --red:         #c23a3a;
+    --red-dim:     #f8dcdc;
+    --red-text:    #a12a2a;
+  }
+  body.tone-warm[data-accent="sunset"] { --accent-dim: #f5dcc5; --accent-soft: #d36a30; }
+  body.tone-warm[data-accent="rose"]   { --accent-dim: #f3d4dc; --accent-soft: #b84e6a; }
+  body.tone-warm[data-accent="lilac"]  { --accent-dim: #e0dcf5; --accent-soft: #6e63c0; }
+  body.tone-warm[data-accent="lagoon"] { --accent-dim: #d3eae6; --accent-soft: #3b8f80; }
+  body.tone-warm[data-accent="ink"]    { --accent-dim: #dcdde3; --accent-soft: #3a4055; }
+  body.tone-warm:not([data-accent])                     { --accent-dim: #d6e7fb; --accent-soft: #4888de; }
+  body.tone-warm[data-accent=""]                        { --accent-dim: #d6e7fb; --accent-soft: #4888de; }
+
+  /* Warm tone: Nunito for display text (rounder terminals = friendlier feel) */
+  body.tone-warm .project-name,
+  body.tone-warm .mc-value,
+  body.tone-warm h1,
+  body.tone-warm h2,
+  body.tone-warm h3 {
+    font-family: 'Nunito', 'Inter', sans-serif;
+    letter-spacing: -0.01em;
+  }
+
+  /* ─── Appearance: Editorial tone (cream, serif) ───────────────────────── */
+  body.tone-editorial {
+    --bg:          #faf9f6;
+    --surface:     #ffffff;
+    --surface2:    #f7f5ef;
+    --surface3:    #f2f0ea;
+    --border:      #e6e3db;
+    --border2:     #c8c4ba;
+    --text:        #151310;
+    --text-dim:    #595551;
+    --text-faint:  #8f8a84;
+    --green:       #3a6b46;
+    --green-dim:   #e9f1eb;
+    --green-text:  #3a6b46;
+    --amber:       #a66a11;
+    --amber-dim:   #f4e8d1;
+    --amber-text:  #8c5810;
+    --red:         #a42b2b;
+    --red-dim:     #f1dcdc;
+    --red-text:    #8a2424;
+    font-family: 'Fraunces', Georgia, serif;
+  }
+  body.tone-editorial[data-accent="sunset"] { --accent-dim: #f5ddc8; --accent-soft: #c7632d; }
+  body.tone-editorial[data-accent="rose"]   { --accent-dim: #f2d5dd; --accent-soft: #b24862; }
+  body.tone-editorial[data-accent="lilac"]  { --accent-dim: #e1dcf5; --accent-soft: #6a5fbb; }
+  body.tone-editorial[data-accent="lagoon"] { --accent-dim: #d5ebe7; --accent-soft: #3b8f80; }
+  body.tone-editorial[data-accent="ink"]    { --accent-dim: #dcdde3; --accent-soft: #3a4055; }
+  body.tone-editorial:not([data-accent])                { --accent-dim: #d8e8fb; --accent-soft: #4783d8; }
+
+  /* Code/terminal areas keep their own dark palette intentionally — unchanged. */
+
+  /* ─── Appearance: segmented control + accent pill (settings) ──────────── */
+  .mc-seg { display: inline-flex; background: var(--surface2); border: 1px solid var(--border); border-radius: 999px; padding: 3px; gap: 2px; }
+  .mc-seg button {
+    border: 0; background: transparent; padding: 6px 14px; border-radius: 999px;
+    font: inherit; font-size: 12px; font-weight: 600; color: var(--text-dim); cursor: pointer;
+  }
+  .mc-seg button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+  body.tone-warm .mc-seg button.active,
+  body.tone-editorial .mc-seg button.active { background: var(--text); color: var(--surface); box-shadow: none; }
+
+  .mc-accent-row { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 360px; }
+  .mc-accent-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px 5px 6px; border-radius: 999px;
+    border: 1.5px solid var(--border); background: var(--surface);
+    font: inherit; font-size: 12px; font-weight: 600;
+    color: var(--text-dim); cursor: pointer;
+  }
+  .mc-accent-pill.active { border-color: var(--text); color: var(--text); }
+  .mc-accent-swatch { width: 14px; height: 14px; border-radius: 50%; }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -327,7 +426,7 @@
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 14px;
     overflow: hidden;
     transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
     position: relative;
@@ -337,15 +436,16 @@
     cursor: pointer;
     user-select: none;
   }
-  .card::before {
-    content: ''; position: absolute;
-    left: 0; top: 0; bottom: 0; width: 3px;
-  }
-  .card.status-active::before  { background: var(--green); }
-  .card.status-blocked::before { background: var(--red); }
-  .card.status-waiting::before { background: var(--amber); }
-  .card.status-parked::before  { background: var(--text-faint); }
-  .card:hover { border-color: var(--border2); box-shadow: 0 4px 20px rgba(0,0,0,0.4); transform: translateY(-2px); }
+  /* Status-aware border for "needs attention" states (no left stripe). */
+  .card.status-blocked { border-color: var(--red); }
+  .card.status-waiting { border-color: var(--amber); }
+  body.tone-warm .card.status-blocked,
+  body.tone-editorial .card.status-blocked { box-shadow: 0 4px 0 var(--red); }
+  body.tone-warm .card.status-waiting,
+  body.tone-editorial .card.status-waiting { box-shadow: 0 4px 0 var(--amber); }
+  .card:hover { border-color: var(--border2); box-shadow: 0 8px 24px rgba(0,0,0,0.35); transform: translateY(-2px); }
+  body.tone-warm .card:hover,
+  body.tone-editorial .card:hover { box-shadow: 0 8px 0 rgba(32,28,22,0.10); }
 
   /* Grid spacer (invisible empty cell) */
   .grid-spacer { aspect-ratio: 5 / 4; border-radius: 10px; }
@@ -387,7 +487,7 @@
   /* TILE HEADER */
   .card-header {
     display: flex; flex-direction: column; gap: 6px;
-    padding: 14px 14px 8px 16px;
+    padding: 14px 14px 8px 14px;
   }
   .card-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .project-name { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: 0.1px; line-height: 1.2; }
@@ -415,7 +515,7 @@
 
   /* TILE BODY — compact info */
   .tile-body {
-    flex: 1; padding: 0 14px 0 16px;
+    flex: 1; padding: 0 14px;
     display: flex; flex-direction: column; gap: 4px;
     overflow: hidden;
   }
@@ -435,7 +535,7 @@
 
   /* TILE FOOTER */
   .tile-footer {
-    padding: 8px 14px 10px 16px;
+    padding: 8px 14px 12px 14px;
     display: flex; align-items: center; gap: 6px;
     margin-top: auto;
   }
@@ -615,7 +715,7 @@
   .modal-header {
     padding: 16px 24px 12px 28px;
     border-bottom: 1px solid var(--border);
-    background: #1e2230;
+    background: var(--surface2);
     cursor: grab;
     border-radius: 12px 12px 0 0;
     flex-shrink: 0;
@@ -664,7 +764,7 @@
   /* MODAL TABS */
   .modal-tab-bar {
     display: flex; gap: 0; border-bottom: 1px solid var(--border);
-    background: #1e2230; padding: 0 22px; flex-shrink: 0;
+    background: var(--surface2); padding: 0 22px; flex-shrink: 0;
   }
   .modal-tab {
     padding: 9px 16px 7px; cursor: pointer;
@@ -1298,7 +1398,7 @@
   .btn-stop:hover { background: var(--red); color: var(--bg); }
 
   .agent-chat {
-    background: #0a0c10; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
     display: flex; flex-direction: column; flex: 1; min-height: 0;
     position: relative; overflow: hidden;
   }
@@ -1316,7 +1416,7 @@
     flex: 1; min-height: 0;
     overflow-y: auto; overflow-x: hidden; padding: 12px;
     font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6;
-    color: #e2e8f0; white-space: pre-wrap; word-break: break-word; min-width: 0;
+    color: var(--text); white-space: pre-wrap; word-break: break-word; min-width: 0;
   }
   .agent-output:empty { display: none; }
   .agent-chat-input {
@@ -1336,7 +1436,7 @@
   .agent-output .agent-line-followup { color: var(--accent); font-weight: 600; }
   .agent-output .agent-line-queued { color: var(--yellow, #e5c07b); font-weight: 600; font-style: italic; }
   .agent-output .agent-line-prompt, .ac-session-output .agent-line-prompt {
-    color: var(--text); font-weight: 500; background: #1a2234;
+    color: var(--text); font-weight: 500; background: var(--surface2);
     margin: 6px -8px; padding: 8px 10px; border-radius: 5px; border-left: 3px solid var(--accent);
     -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
     white-space: pre-wrap;
@@ -1428,13 +1528,13 @@
   .plan-viewer-content { width: 1000px; height: 85vh; }
   .plan-viewer-header {
     padding: 16px 24px 12px 28px; border-bottom: 1px solid var(--border);
-    background: #1e2230; cursor: grab; border-radius: 12px 12px 0 0; flex-shrink: 0;
+    background: var(--surface2); cursor: grab; border-radius: 12px 12px 0 0; flex-shrink: 0;
   }
   .plan-viewer-header.dragging { cursor: grabbing; }
   .plan-viewer-body {
     flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px 28px;
     font-family: 'JetBrains Mono', monospace; font-size: 13px;
-    line-height: 1.6; color: #e2e8f0; white-space: pre-wrap; word-break: break-word; min-width: 0;
+    line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; min-width: 0;
   }
   .plan-viewer-body .agent-line { padding: 1px 0; }
   .plan-viewer-body .agent-line-tool { color: var(--amber-text); }
@@ -2073,10 +2173,10 @@
   .ac-stop-btn:hover { background: var(--red); color: var(--bg); }
 
   .ac-session-output {
-    display: none; background: #0a0c10; border-top: 1px solid var(--border);
+    display: none; background: var(--bg); border-top: 1px solid var(--border);
     max-height: 200px; overflow-y: auto; padding: 10px 20px;
     font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.5;
-    color: #e2e8f0; white-space: pre-wrap; word-break: break-word;
+    color: var(--text); white-space: pre-wrap; word-break: break-word;
   }
   .ac-session-output.open { display: block; }
   .ac-session-output::-webkit-scrollbar { width: 4px; }
@@ -2460,7 +2560,7 @@
   <!-- Header (slim) -->
   <div class="header">
     <div class="header-left">
-      <span class="header-breadcrumb"><strong>Dashboard</strong> &middot; <span id="header-project-count">0</span> projects</span>
+      <span class="header-breadcrumb"><strong id="header-breadcrumb-label">Dashboard</strong> &middot; <span id="header-project-count">0</span> projects</span>
     </div>
     <div class="header-right">
       <div class="header-search" onclick="toggleCommandPalette()">
@@ -2691,20 +2791,20 @@ function renderStats() {
   if (metricsEl) {
     metricsEl.innerHTML = `
       <div class="metric-card" onclick="setFilter('active')">
-        <div class="mc-label">Active Agents</div>
+        <div class="mc-label">${vl('metric_agents')}</div>
         <div class="mc-value">${runningAgents} <span class="mc-unit">/ ${allProjects.length} projects</span></div>
       </div>
       <div class="metric-card">
-        <div class="mc-label">Cost Today</div>
+        <div class="mc-label">${vl('metric_cost')}</div>
         <div class="mc-value"><span id="mc-cost-value">\u2014</span> <span class="mc-unit">USD</span></div>
       </div>
       <div class="metric-card">
-        <div class="mc-label">Tasks Completed</div>
+        <div class="mc-label">${vl('metric_done')}</div>
         <div class="mc-value">${completedCount} <span class="mc-unit">this session</span></div>
       </div>
       <div class="metric-card" onclick="setFilter('blocked')">
-        <div class="mc-label">Errors</div>
-        <div class="mc-value">${erroredProjects.length} <span class="mc-unit">${erroredProjects.length ? 'needs attention' : 'all clear'}</span></div>
+        <div class="mc-label">${vl('metric_errors')}</div>
+        <div class="mc-value">${erroredProjects.length} <span class="mc-unit">${erroredProjects.length ? vl('metric_attention') : vl('metric_clear')}</span></div>
       </div>`;
   }
   // Update header counters
@@ -2860,7 +2960,7 @@ function tileHTML(p, slotIndex) {
   const backlogBadge = openItems.length
     ? `<span class="backlog-badge">${openItems.length} open</span>` : '';
   const agentBadge = hasRunningAgent(p.id)
-    ? `<span class="agent-running-badge">Agent Running</span>` : '';
+    ? `<span class="agent-running-badge">${esc(vl('agent_running'))}</span>` : '';
 
   const live = computeLiveStatus(p.id);
   const taskText = p.blocked
@@ -2877,7 +2977,7 @@ function tileHTML(p, slotIndex) {
         <span class="domain-tag" style="background:${domCfg.bg};color:${domCfg.color}">${esc(domCfg.label||p.domain||'general')}</span>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <span class="status-pill ${sc}">${esc(p.status||'unknown')}</span>
+        <span class="status-pill ${sc}">${esc(vl('status_' + (p.status||'unknown')))}</span>
         ${agentBadge}
       </div>
     </div>
@@ -3101,7 +3201,7 @@ function modalContentHTML(p) {
         ${(() => { const cfg = getDomainConfig(p.domain||'general'); return `<span class="domain-tag" style="background:${cfg.bg};color:${cfg.color}">${esc(cfg.label||p.domain||'general')}</span>`; })()}
       </div>
       <div style="display:flex;align-items:center;gap:10px">
-        <span class="status-pill ${sc}">${esc(p.status||'unknown')}</span>
+        <span class="status-pill ${sc}">${esc(vl('status_' + (p.status||'unknown')))}</span>
         <span class="time-ago">${esc(p.last_updated_relative||'')}</span>
       </div>
       <div class="path-row">
@@ -3567,7 +3667,7 @@ function listRowHTML(p) {
   return `<div class="list-row" data-id="${esc(p.id)}">
     <div class="lr-indicator" style="background:${statusColors[p.status] || 'var(--text-faint)'}"></div>
     <div class="lr-name">${esc(p.name || p.id)}</div>
-    <div class="lr-status" style="background:${statusBgs[p.status]||'var(--surface3)'};color:${statusTexts[p.status]||'var(--text-faint)'}">${esc(p.status || 'unknown')}</div>
+    <div class="lr-status" style="background:${statusBgs[p.status]||'var(--surface3)'};color:${statusTexts[p.status]||'var(--text-faint)'}">${esc(vl('status_' + (p.status || 'unknown')))}</div>
     <div class="lr-task ${live.currentTaskClass}">${esc(live.currentTask)}</div>
     <div class="lr-next">${esc(live.nextAction)}</div>
     <div class="lr-agent ${agentClass}">${agentLabel}</div>
@@ -4756,6 +4856,92 @@ function setEnterMode(mode) {
   document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
   refreshModal();
 }
+
+// ── Appearance: tone / accent / density / voice ─────────────────────────────
+let currentTone   = localStorage.getItem('mc_tone')   || 'dark';
+let currentAccent = localStorage.getItem('mc_accent') || '';
+let currentVoice  = localStorage.getItem('mc_voice')  || 'pro';
+
+const VOICE_LABELS = {
+  status_active:    { casual: 'Working on it', pro: 'In progress' },
+  status_waiting:   { casual: 'Needs you',     pro: 'Awaiting input' },
+  status_blocked:   { casual: 'Stuck',         pro: 'Blocked' },
+  status_parked:    { casual: 'Resting',       pro: 'Idle' },
+  status_unknown:   { casual: 'Not sure',      pro: 'Unknown' },
+  status_completed: { casual: 'All done',      pro: 'Completed' },
+  agent_running:    { casual: "On it",         pro: 'Agent Running' },
+  header_dash:      { casual: 'Your team',     pro: 'Dashboard' },
+  metric_agents:    { casual: 'Working now',   pro: 'Active Agents' },
+  metric_cost:      { casual: 'Cost today',    pro: 'Cost Today' },
+  metric_done:      { casual: 'Done today',    pro: 'Tasks Completed' },
+  metric_errors:    { casual: 'Need help',     pro: 'Errors' },
+  metric_attention: { casual: 'need a hand',   pro: 'needs attention' },
+  metric_clear:     { casual: 'all quiet',     pro: 'all clear' },
+};
+
+function vl(key) {
+  const entry = VOICE_LABELS[key];
+  if (!entry) return key;
+  return entry[currentVoice] || entry.pro;
+}
+
+function setTone(tone) {
+  currentTone = tone;
+  localStorage.setItem('mc_tone', tone);
+  document.body.classList.remove('tone-warm', 'tone-editorial');
+  if (tone === 'warm') document.body.classList.add('tone-warm');
+  else if (tone === 'editorial') document.body.classList.add('tone-editorial');
+  // Re-render settings so segmented control highlight updates
+  if (document.getElementById('settings-body')) _renderSettings();
+}
+
+function setAccent(accent) {
+  currentAccent = accent;
+  localStorage.setItem('mc_accent', accent);
+  if (accent) document.body.setAttribute('data-accent', accent);
+  else document.body.removeAttribute('data-accent');
+  if (document.getElementById('settings-body')) _renderSettings();
+}
+
+function setDensity(mode) {
+  const isCompact = (mode === 'compact');
+  document.body.classList.toggle('compact', isCompact);
+  localStorage.setItem('mc_tile_density', isCompact ? 'compact' : 'default');
+  const btn = document.getElementById('density-toggle');
+  if (btn) btn.style.color = isCompact ? 'var(--accent)' : '';
+  if (document.getElementById('settings-body')) _renderSettings();
+}
+
+function setVoice(voice) {
+  currentVoice = voice;
+  localStorage.setItem('mc_voice', voice);
+  const bc = document.getElementById('header-breadcrumb-label');
+  if (bc) bc.textContent = vl('header_dash');
+  if (typeof renderStats === 'function') renderStats();
+  if (typeof renderProjects === 'function') renderProjects();
+  if (typeof renderListView === 'function') renderListView();
+  if (typeof refreshModal === 'function') refreshModal();
+  if (document.getElementById('settings-body')) _renderSettings();
+}
+
+function _applyAppearanceOnInit() {
+  const tone = localStorage.getItem('mc_tone');
+  if (tone === 'warm') document.body.classList.add('tone-warm');
+  else if (tone === 'editorial') document.body.classList.add('tone-editorial');
+  const accent = localStorage.getItem('mc_accent');
+  if (accent) document.body.setAttribute('data-accent', accent);
+  // Apply voice to the header breadcrumb label after DOM is parsed
+  const applyVoiceLabel = () => {
+    const bc = document.getElementById('header-breadcrumb-label');
+    if (bc) bc.textContent = vl('header_dash');
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyVoiceLabel);
+  } else {
+    applyVoiceLabel();
+  }
+}
+_applyAppearanceOnInit();
 
 function formatElapsed(startedAt) {
   if (!startedAt) return '';
@@ -9290,6 +9476,43 @@ async function _renderSettings() {
       <div class="settings-row">
         <div><div class="settings-label">Port</div><div class="settings-hint">Requires restart to take effect</div></div>
         ${numInput('port', cfg.port)}
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Appearance</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Theme</div><div class="settings-hint">Warm and Editorial are light themes — some chrome may show dark accents (experimental)</div></div>
+        <div class="mc-seg" id="mc-tone-seg">
+          <button class="${currentTone==='dark'?'active':''}" onclick="setTone('dark')">Dark</button>
+          <button class="${currentTone==='warm'?'active':''}" onclick="setTone('warm')">Warm</button>
+          <button class="${currentTone==='editorial'?'active':''}" onclick="setTone('editorial')">Editorial</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Accent color</div><div class="settings-hint">Used for highlights, primary buttons, and active states</div></div>
+        <div class="mc-accent-row" id="mc-accent-row">
+          <button class="mc-accent-pill ${!currentAccent?'active':''}" onclick="setAccent('')"><span class="mc-accent-swatch" style="background:#5b9ef5"></span>Default</button>
+          <button class="mc-accent-pill ${currentAccent==='sunset'?'active':''}" onclick="setAccent('sunset')"><span class="mc-accent-swatch" style="background:#e8824a"></span>Sunset</button>
+          <button class="mc-accent-pill ${currentAccent==='rose'?'active':''}" onclick="setAccent('rose')"><span class="mc-accent-swatch" style="background:#d96480"></span>Rose</button>
+          <button class="mc-accent-pill ${currentAccent==='lilac'?'active':''}" onclick="setAccent('lilac')"><span class="mc-accent-swatch" style="background:#8a7ce0"></span>Lilac</button>
+          <button class="mc-accent-pill ${currentAccent==='lagoon'?'active':''}" onclick="setAccent('lagoon')"><span class="mc-accent-swatch" style="background:#4fa89a"></span>Lagoon</button>
+          <button class="mc-accent-pill ${currentAccent==='ink'?'active':''}" onclick="setAccent('ink')"><span class="mc-accent-swatch" style="background:#6b7286"></span>Ink</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Density</div><div class="settings-hint">How much breathing room between things</div></div>
+        <div class="mc-seg">
+          <button class="${document.body.classList.contains('compact')?'':'active'}" onclick="setDensity('cozy')">Cozy</button>
+          <button class="${document.body.classList.contains('compact')?'active':''}" onclick="setDensity('compact')">Compact</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Writing style</div><div class="settings-hint">${currentVoice==='casual' ? 'Labels read like a friend helping out.' : 'Clear, neutral labels throughout the UI.'}</div></div>
+        <div class="mc-seg">
+          <button class="${currentVoice==='casual'?'active':''}" onclick="setVoice('casual')">Casual</button>
+          <button class="${currentVoice==='pro'?'active':''}" onclick="setVoice('pro')">Professional</button>
+        </div>
       </div>
     </div>
 
