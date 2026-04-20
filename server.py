@@ -637,6 +637,90 @@ def update_project(project_id):
     return jsonify({'ok': True, 'id': project_id})
 
 
+@app.route('/api/project/<project_id>/generate_summary', methods=['POST'])
+def generate_project_summary(project_id):
+    """Use Claude to pick an emoji and write a one-line summary for the project."""
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+
+    body = request.get_json(silent=True) or {}
+    overwrite_emoji = bool(body.get('overwrite_emoji'))
+
+    name = p.get('name') or project_id
+    description = (p.get('description') or '').strip()
+    domain = p.get('domain') or 'general'
+    activity = p.get('activity_log', [])[:5]
+    activity_str = '\n'.join(f"- {a.get('msg', '')}" for a in activity if a.get('msg'))
+
+    prompt = (
+        "You are generating a project profile for a dashboard. "
+        "Return ONLY a JSON object (no markdown, no code fences, no other text) "
+        "with exactly two fields:\n"
+        '- "emoji": a single emoji character that matches the project theme\n'
+        '- "summary": one short sentence (12-20 words) describing what the project is about\n\n'
+        f"Project name: {name}\n"
+        f"Description: {description or '(none)'}\n"
+        f"Domain: {domain}\n"
+        f"Recent activity:\n{activity_str or '(no activity yet)'}\n\n"
+        'Example: {"emoji":"\u26bd","summary":"Tracks soccer match results and ranks teams across league tables."}'
+    )
+
+    model = CONFIG.get('condense_model', '') or 'haiku'
+    cmd = ['claude', '-p', prompt, '--model', model, '--output-format', 'json',
+           '--dangerously-skip-permissions']
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            timeout=30,
+            creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'generation timed out after 30s'}), 504
+    except FileNotFoundError:
+        return jsonify({'error': 'claude CLI not found'}), 500
+
+    if result.returncode != 0:
+        return jsonify({'error': f'claude exited {result.returncode}: {(result.stderr or result.stdout)[:200]}'}), 500
+
+    # Parse Claude CLI's JSON envelope -> model's JSON content
+    try:
+        envelope = json.loads(result.stdout)
+        content = (envelope.get('result') or '').strip()
+        # Strip optional ```json fences if the model added them despite instructions
+        if content.startswith('```'):
+            lines = content.splitlines()
+            if lines and lines[0].startswith('```'):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == '```':
+                lines = lines[:-1]
+            content = '\n'.join(lines).strip()
+        data = json.loads(content)
+    except (json.JSONDecodeError, KeyError, AttributeError) as e:
+        return jsonify({
+            'error': f'could not parse model output: {e}',
+            'raw': (result.stdout or '')[:500],
+        }), 500
+
+    emoji = (data.get('emoji') or '').strip()
+    summary = (data.get('summary') or '').strip()
+
+    if emoji and (overwrite_emoji or not p.get('emoji')):
+        p['emoji'] = emoji
+    if summary:
+        p['summary'] = summary
+    p['last_updated'] = now_iso()
+    save_project(project_id, p)
+
+    return jsonify({
+        'ok': True,
+        'emoji': p.get('emoji', ''),
+        'summary': p.get('summary', ''),
+    })
+
+
 @app.route('/api/project/<project_id>', methods=['DELETE'])
 def delete_project(project_id):
     filepath = DATA_DIR / f'{project_id}.json'
