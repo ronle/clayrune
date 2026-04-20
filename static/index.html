@@ -761,6 +761,11 @@
   .card-section { padding: 16px 18px 16px 22px; border-bottom: 1px solid var(--border); }
   .card-section:last-child { border-bottom: none; }
   .description { color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+  .project-summary {
+    color: var(--text); font-size: 14px; line-height: 1.5;
+    font-style: italic; opacity: 0.9;
+    padding-left: 10px; border-left: 2px solid var(--accent);
+  }
   .section-title {
     font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
     color: var(--text-faint); margin-bottom: 10px; font-weight: 600;
@@ -3196,6 +3201,9 @@ function modalContentHTML(p) {
           <button class="modal-menu-item" onclick="editProjectEmoji('${esc(p.id)}')">
             <span class="menu-icon">&#x1F642;</span> ${p.emoji ? `${p.emoji} Change Emoji` : 'Set Emoji'}
           </button>
+          <button class="modal-menu-item" onclick="generateProjectProfile('${esc(p.id)}')">
+            <span class="menu-icon">&#x2728;</span> ${p.summary ? 'Regenerate' : 'Auto-Generate'} Profile
+          </button>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'enter-sub-${esc(p.id)}')">
             <span class="menu-icon">&#x21B5;</span> Enter Key ${enterKeyMode === 'enter' ? '<span style="margin-left:4px;color:var(--accent);font-size:11px">sends</span>' : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">new line</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
@@ -3261,6 +3269,7 @@ function modalContentHTML(p) {
         >
         ${p.project_path ? `<button class="btn-import" onclick="importFromProject('${esc(p.id)}')" title="Import from CHANGELOG.md">Import</button>` : ''}
       </div>
+      ${p.summary ? `<div class="project-summary" style="margin-top:8px">${esc(p.summary)}</div>` : ''}
       ${p.description ? `<div class="description" style="margin-top:8px">${esc(p.description)}</div>` : ''}
     </div>
     <div class="card-summary">
@@ -3610,6 +3619,30 @@ async function pickEmoji(emoji) {
     });
     await refreshSilent();
   } catch(e) {}
+}
+
+async function generateProjectProfile(projectId, opts) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  const p = allProjects.find(x => x.id === projectId);
+  if (!p) return;
+  const overwrite = !!(opts && opts.overwriteEmoji);
+  showToast('Generating project profile...', 3000);
+  try {
+    const r = await fetch(API_BASE + `/api/project/${projectId}/generate_summary`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ overwrite_emoji: overwrite })
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      showToast('Profile generation failed: ' + (data.error || r.status), 6000);
+      return;
+    }
+    showToast(`Profile updated ${data.emoji || ''}`, 3000);
+    await refreshSilent();
+  } catch(e) {
+    showToast('Profile generation failed: ' + e.message, 6000);
+  }
 }
 
 async function deleteProject(projectId) {
