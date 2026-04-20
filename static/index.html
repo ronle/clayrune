@@ -490,6 +490,12 @@
     padding: 14px 14px 8px 14px;
   }
   .card-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card-avatar {
+    font-size: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; flex-shrink: 0; overflow: hidden;
+    background: var(--surface2); border-radius: 6px;
+  }
+  body.compact .card-avatar { font-size: 13px; width: 20px; height: 20px; }
   .project-name { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: 0.1px; line-height: 1.2; }
   .domain-tag {
     font-size: 10px; padding: 2px 8px; border-radius: 4px;
@@ -2286,6 +2292,33 @@
     transition: opacity 0.15s;
   }
   .cmd-overlay.visible { opacity: 1; pointer-events: auto; }
+  .emoji-picker-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.15s;
+  }
+  .emoji-picker-overlay.visible { opacity: 1; pointer-events: auto; }
+  .emoji-picker {
+    width: 360px; max-width: 90vw;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 12px; padding: 14px 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .epk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; color: var(--text); font-weight: 600; font-size: 13px; }
+  .epk-clear { background: transparent; color: var(--text-dim); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; }
+  .epk-clear:hover { color: var(--red); border-color: var(--red); }
+  .epk-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .epk-cell {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; aspect-ratio: 1; font-size: 22px; line-height: 1;
+    background: transparent; border: 1px solid transparent; border-radius: 8px;
+    cursor: pointer; transition: all 0.1s;
+  }
+  .epk-cell:hover { background: var(--surface2); border-color: var(--border); transform: scale(1.1); }
   .cmd-palette {
     width: 520px;
     background: var(--surface);
@@ -2646,6 +2679,17 @@
 <div id="hm-worker-popover" class="hm-worker-popover hidden" onmouseenter="cancelHideHmPopover()" onmouseleave="scheduleHideHmPopover()"></div>
 
 <!-- Command Palette -->
+<!-- Emoji picker overlay -->
+<div class="emoji-picker-overlay" id="emoji-picker-overlay" onclick="if(event.target===this)closeEmojiPicker()">
+  <div class="emoji-picker">
+    <div class="epk-header">
+      <span>Pick an emoji</span>
+      <button class="epk-clear" id="epk-clear-btn">Remove</button>
+    </div>
+    <div class="epk-grid" id="epk-grid"></div>
+  </div>
+</div>
+
 <div class="cmd-overlay" id="cmd-overlay" onclick="if(event.target===this)toggleCommandPalette()">
   <div class="cmd-palette">
     <div class="cmd-input-row">
@@ -2973,6 +3017,7 @@ function tileHTML(p, slotIndex) {
   <div class="card ${sc}" data-id="${esc(p.id)}" data-slot="${slotIndex !== undefined ? slotIndex : ''}"${cardBgStyle}>
     <div class="card-header">
       <div class="card-title-row">
+        ${p.emoji ? `<span class="card-avatar">${esc(p.emoji)}</span>` : ''}
         <span class="project-name">${esc(p.name||p.id)}</span>
         <span class="domain-tag" style="background:${domCfg.bg};color:${domCfg.color}">${esc(domCfg.label||p.domain||'general')}</span>
       </div>
@@ -3147,6 +3192,9 @@ function modalContentHTML(p) {
           </button>
           <button class="modal-menu-item" onclick="editProjectDescription('${esc(p.id)}')">
             <span class="menu-icon">&#x270E;</span> ${p.description ? 'Edit' : 'Add'} Description
+          </button>
+          <button class="modal-menu-item" onclick="editProjectEmoji('${esc(p.id)}')">
+            <span class="menu-icon">&#x1F642;</span> ${p.emoji ? `${p.emoji} Change Emoji` : 'Set Emoji'}
           </button>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'enter-sub-${esc(p.id)}')">
             <span class="menu-icon">&#x21B5;</span> Enter Key ${enterKeyMode === 'enter' ? '<span style="margin-left:4px;color:var(--accent);font-size:11px">sends</span>' : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">new line</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
@@ -3520,6 +3568,48 @@ function editProjectDescription(projectId) {
       await refreshSilent();
     } catch(e) {}
   })();
+}
+
+const EMOJI_CHOICES = [
+  '\u26bd', '\ud83c\udfc0', '\ud83c\udfc8', '\ud83c\udfbe', '\ud83c\udfaf', '\ud83c\udfae', '\ud83c\udfa8',
+  '\ud83d\udcca', '\ud83d\udcc8', '\ud83d\udcb0', '\ud83d\udcb3', '\ud83c\udfe6', '\ud83d\udcbc', '\ud83d\udcc5',
+  '\ud83d\ude80', '\u2728', '\u26a1', '\ud83d\udd25', '\ud83c\udf1f', '\ud83d\udca1', '\ud83c\udfaf',
+  '\ud83e\udd16', '\ud83e\uddd1\u200d\ud83d\udcbb', '\ud83d\udee0\ufe0f', '\ud83d\udd27', '\u2699\ufe0f', '\ud83d\udcbb', '\ud83d\udce1',
+  '\ud83d\udcdd', '\ud83d\udcda', '\ud83d\udd0d', '\ud83d\udce8', '\ud83d\udcac', '\ud83d\udce3', '\ud83d\udccc',
+  '\ud83c\udf31', '\ud83c\udf3f', '\ud83c\udf3c', '\ud83c\udf34', '\ud83c\udf0d', '\ud83c\udf0a', '\ud83c\udf1e',
+  '\ud83e\uddd1\u200d\ud83c\udf73', '\ud83c\udf55', '\u2615', '\ud83c\udf70', '\ud83c\udf4e', '\ud83c\udf47', '\ud83c\udf53',
+  '\ud83d\udc36', '\ud83d\udc31', '\ud83e\udd81', '\ud83d\udc3c', '\ud83e\udd89', '\ud83d\udc19', '\ud83e\udd84',
+];
+let _emojiPickerProjectId = null;
+
+function editProjectEmoji(projectId) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  const p = allProjects.find(x => x.id === projectId);
+  if (!p) return;
+  _emojiPickerProjectId = projectId;
+  const grid = document.getElementById('epk-grid');
+  grid.innerHTML = EMOJI_CHOICES.map(e => `<button class="epk-cell" onclick="pickEmoji('${e}')">${e}</button>`).join('');
+  document.getElementById('epk-clear-btn').onclick = () => pickEmoji('');
+  document.getElementById('emoji-picker-overlay').classList.add('visible');
+}
+
+function closeEmojiPicker() {
+  document.getElementById('emoji-picker-overlay').classList.remove('visible');
+  _emojiPickerProjectId = null;
+}
+
+async function pickEmoji(emoji) {
+  const projectId = _emojiPickerProjectId;
+  closeEmojiPicker();
+  if (!projectId) return;
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ emoji })
+    });
+    await refreshSilent();
+  } catch(e) {}
 }
 
 async function deleteProject(projectId) {
