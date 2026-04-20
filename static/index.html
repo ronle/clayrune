@@ -557,9 +557,14 @@
     display: flex; flex-direction: column; gap: 4px;
     overflow: hidden;
   }
-  .tile-task {
-    font-size: 12px; line-height: 1.4; color: var(--text-dim);
+  .tile-summary {
+    font-size: 13px; line-height: 1.4; color: var(--text);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  body.compact .tile-summary { font-size: 11px; -webkit-line-clamp: 2; }
+  .tile-task {
+    font-size: 11px; line-height: 1.4; color: var(--text-faint);
+    display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
   }
   .tile-task.blocked-text { color: var(--red-text); }
   .tile-task.empty, .tile-task.idle { color: var(--text-faint); }
@@ -3063,6 +3068,73 @@ const FRIENDLY_TO_VOICE = {
   idle:    'status_parked',
 };
 
+// Build a one-sentence plain-English status line for a project tile, driven
+// by friendlyStatus(). Falls back to p.summary (profile-generated) for idle
+// projects with no recent activity, so the tile still reads as meaningful.
+function friendlySummary(p) {
+  if (!p) return '';
+  const fs = friendlyStatus(p);
+  const live = computeLiveStatus(p.id) || {};
+  const isCasual = currentVoice === 'casual';
+  const clip = (s, n) => { s = String(s || '').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+
+  const sessions = agentHistory.filter(h => h.projectId === p.id && !isHivemindWorker(h));
+  const runningSess = sessions.find(h => h.status === 'running' || h.status === 'idle');
+  const erroredSess = sessions.find(h => h.status === 'error');
+  const completedSess = sessions.find(h => h.status === 'completed');
+  const taskOf = s => clip((s && s.task) || '', 60);
+
+  const hmData = hivemindCache[p.id];
+  const activeHm = hmData && hmData.hiveminds && hmData.hiveminds.find(h => h.status === 'running' || h.status === 'active');
+
+  if (fs === 'working') {
+    if (activeHm) {
+      const ws = activeHm._workstreams || [];
+      const done = ws.filter(w => w.status === 'completed').length;
+      const goal = clip(activeHm.goal || activeHm.title || 'the plan', 50);
+      return isCasual
+        ? `Making progress on ${goal} — ${done} of ${ws.length} done.`
+        : `In progress on ${goal} (${done}/${ws.length} complete).`;
+    }
+    const task = taskOf(runningSess) || 'the current task';
+    return isCasual ? `Working on ${task}. I'll let you know when it's ready.` : `In progress: ${task}.`;
+  }
+
+  if (fs === 'asking') {
+    const cache = runningSess ? (agentStatusCache[runningSess.sessionId] || {}) : {};
+    if (cache.waitingForPlanApproval) {
+      return isCasual
+        ? `I have a plan ready — take a look and tell me to go ahead.`
+        : `Awaiting plan approval. Review and approve to proceed.`;
+    }
+    return isCasual
+      ? `I need a quick answer from you before I can keep going.`
+      : `Awaiting input to proceed.`;
+  }
+
+  if (fs === 'stuck') {
+    if (p.blocked) {
+      const reason = clip(p.blocked_reason, 60);
+      return isCasual ? `Stuck — ${reason || 'something is blocking me'}.` : `Blocked: ${reason || 'unresolved dependency'}.`;
+    }
+    const task = taskOf(erroredSess) || 'the last task';
+    return isCasual ? `Hit a snag with ${task}. Could use your help.` : `Error on ${task}. Intervention required.`;
+  }
+
+  if (fs === 'done') {
+    const task = taskOf(completedSess);
+    if (task) {
+      return isCasual ? `All done with ${task}. Take a look when you can.` : `Completed: ${task}.`;
+    }
+    return isCasual ? `All caught up for now.` : `All tasks completed.`;
+  }
+
+  // idle — prefer generated profile summary, else generic rest line
+  if (p.summary) return clip(p.summary, 140);
+  if (p.description) return clip(p.description, 140);
+  return isCasual ? `Resting — ready whenever you are.` : `Idle. No active tasks.`;
+}
+
 function tileHTML(p, slotIndex) {
   const sc = `status-${p.status||'unknown'}`;
   const fs = friendlyStatus(p);
@@ -3075,9 +3147,12 @@ function tileHTML(p, slotIndex) {
     ? `<span class="agent-running-badge">${esc(vl('agent_running'))}</span>` : '';
 
   const live = computeLiveStatus(p.id);
-  const taskText = p.blocked
+  const summaryText = esc(friendlySummary(p));
+  const techLine = p.blocked
     ? `<div class="tile-task blocked-text">${esc(p.blocked_reason||'Blocked')}</div>`
-    : `<div class="tile-task ${live.currentTaskClass}">${esc(live.currentTask)}</div>`;
+    : (live.currentTask && live.currentTask !== 'Idle'
+        ? `<div class="tile-task ${live.currentTaskClass}">${esc(live.currentTask)}</div>`
+        : '');
 
   const cardBgStyle = p.modal_color ? ` style="background:${p.modal_color.bg}"` : '';
 
@@ -3095,7 +3170,8 @@ function tileHTML(p, slotIndex) {
       </div>
     </div>
     <div class="tile-body">
-      ${taskText}
+      ${summaryText ? `<div class="tile-summary">${summaryText}</div>` : ''}
+      ${techLine}
       ${live.nextAction !== '\u2014' ? `<div class="tile-next ${live.nextActionClass}">${esc(live.nextAction)}</div>` : ''}
     </div>
     <div class="tile-footer">
