@@ -838,6 +838,18 @@ def update_backlog_item(project_id, item_id):
     return jsonify({'ok': True, 'item': item})
 
 
+@app.route('/api/project/<project_id>/backlog/<item_id>/note', methods=['POST'])
+def add_backlog_note(project_id, item_id):
+    data = request.get_json() or {}
+    text = (data.get('text') or '').strip()
+    if not text:
+        return jsonify({'error': 'text required'}), 400
+    agent_code = (data.get('agent_code') or 'user').strip() or 'user'
+    if _append_note_to_backlog_item(project_id, item_id, text, agent_code):
+        return jsonify({'ok': True})
+    return jsonify({'error': 'item not found'}), 404
+
+
 @app.route('/api/project/<project_id>/backlog/<item_id>', methods=['DELETE'])
 def delete_backlog_item(project_id, item_id):
     p = load_project(project_id)
@@ -1287,6 +1299,94 @@ def _agent_todo_ref(session_key, content):
     return f"agent:{h}"
 
 
+def _append_note_to_backlog_item(project_id, item_id, text, agent_code='user'):
+    """Append a dated, signed note to a backlog item. Returns True on success."""
+    text = (text or '').strip()
+    if not text or not project_id or not item_id:
+        return False
+    with _backlog_sync_lock:
+        try:
+            p = load_project(project_id)
+        except Exception:
+            return False
+        if p is None:
+            return False
+        for it in p.get('backlog', []) or []:
+            if it.get('id') == item_id:
+                notes = it.setdefault('notes', [])
+                notes.append({
+                    'ts': now_iso(),
+                    'agent_code': (agent_code or 'user')[:32],
+                    'text': text[:2000],
+                })
+                if len(notes) > 50:
+                    it['notes'] = notes[-50:]
+                it['updated_at'] = now_iso()
+                p['last_updated'] = now_iso()
+                try:
+                    save_project(project_id, p)
+                except Exception:
+                    return False
+                return True
+        return False
+
+
+def _auto_snapshot_notes_on_turn(session):
+    """At a turn boundary, append the last substantive assistant text as a note
+    on every in_progress agent-sourced backlog item owned by this session."""
+    try:
+        sk = (session.get('claude_session_id')
+              or session.get('id')
+              or session.get('session_id'))
+        pid = session.get('project_id')
+        if not sk or not pid:
+            return
+        lines = session.get('log_lines', []) or []
+        start = session.get('_last_result_log_index', 0)
+        session['_last_result_log_index'] = len(lines)
+        if start >= len(lines):
+            return
+        fragments = []
+        for ln in lines[start:]:
+            s = (ln or '').strip()
+            if not s or s.startswith('['):
+                continue
+            fragments.append(s)
+        if not fragments:
+            return
+        summary = ' '.join(fragments)[:300].strip()
+        if len(summary) < 20:
+            return
+        with _backlog_sync_lock:
+            try:
+                p = load_project(pid)
+            except Exception:
+                return
+            if p is None:
+                return
+            agent_code = sk[:8] if isinstance(sk, str) else 'agent'
+            updated = False
+            now = now_iso()
+            for it in p.get('backlog', []) or []:
+                if (it.get('agent_session_id') == sk
+                        and it.get('agent_status') == 'in_progress'):
+                    notes = it.setdefault('notes', [])
+                    if notes and notes[-1].get('text') == summary:
+                        continue
+                    notes.append({'ts': now, 'agent_code': agent_code, 'text': summary})
+                    if len(notes) > 50:
+                        it['notes'] = notes[-50:]
+                    updated = True
+            if updated:
+                p['last_updated'] = now
+                try:
+                    save_project(pid, p)
+                except Exception:
+                    return
+    except Exception:
+        pass
+
+
 def _sync_todowrite_to_backlog(project_id, session_key, todos):
     """Upsert a TodoWrite list into the project's backlog.
 
@@ -1476,6 +1576,7 @@ def _read_agent_stream(proc, session):
                         session['cost_usd'] = msg['cost_usd']
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
+                    _auto_snapshot_notes_on_turn(session)
             except json.JSONDecodeError:
                 session['log_lines'].append(line)
                 session['last_output_time'] = _time.time()
@@ -1606,6 +1707,7 @@ def _read_agent_stream_b(proc, session):
                         session['cost_usd'] = msg['cost_usd']
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
+                    _auto_snapshot_notes_on_turn(session)
                     # Turn boundary — process stays alive
                     session['status'] = 'idle'
                     session['last_status_change_time'] = _time.time()

@@ -898,6 +898,26 @@
   .agent-badge.in-progress::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: agent-pulse 1.6s infinite; }
   @keyframes agent-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.3); } }
   .agent-activity-line { font-size: 11px; color: var(--green-text); font-style: italic; margin-top: 2px; }
+  .notes-btn {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px; cursor: pointer;
+    background: transparent; border: 1px solid var(--border2); color: var(--text-dim);
+  }
+  .notes-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .notes-btn.has-notes { border-color: var(--accent); color: var(--accent); }
+  .notes-panel { display: none; margin-top: 6px; padding: 6px 8px; background: var(--surface2); border-radius: 3px; }
+  .notes-panel.open { display: block; }
+  .notes-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+  .backlog-note { font-size: 11px; color: var(--text-dim); line-height: 1.4; word-break: break-word; }
+  .backlog-note .note-meta { color: var(--text-faint); font-family: var(--mono, monospace); font-size: 10px; margin-right: 6px; }
+  .note-input-row { display: flex; gap: 4px; }
+  .note-input-row input {
+    flex: 1; font-size: 11px; padding: 3px 6px; background: var(--bg);
+    border: 1px solid var(--border2); border-radius: 3px; color: var(--text);
+  }
+  .note-input-row button {
+    font-size: 11px; padding: 3px 8px; background: var(--accent-dim); color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;
+  }
 
   .backlog-check {
     width: 16px; height: 16px; border: 1.5px solid var(--border2);
@@ -2803,6 +2823,7 @@ let activeFilter = 'all';
 let showDoneMap = {};
 let modalSearchQuery = {};  // projectId → search filter string
 let openAttPanels = new Set();
+let openNotesPanels = new Set();
 let undoStack = [];  // [{type, projectId, itemId, data, label}]
 let modalActiveTab = {};  // projectId → 'backlog' | 'agent' | 'agent-log' | 'activity'
 let textareaHeights = {}; // textarea id → height string (persists user resize across refreshes)
@@ -3272,6 +3293,9 @@ function modalContentHTML(p) {
         <button class="att-btn ${(item.attachments||[]).length > 0 ? 'has-atts' : ''}"
           onclick="toggleAttPanel(event,'${esc(p.id)}','${esc(item.id)}')"
           title="Attachments">📎${(item.attachments||[]).length > 0 ? ' '+item.attachments.length : ''}</button>
+        <button class="notes-btn ${(item.notes||[]).length > 0 ? 'has-notes' : ''}"
+          onclick="toggleNotesPanel(event,'${esc(p.id)}','${esc(item.id)}')"
+          title="Notes">📝${(item.notes||[]).length > 0 ? ' '+item.notes.length : ''}</button>
         <button class="backlog-del" onclick="deleteBacklogItem(event,'${esc(p.id)}','${esc(item.id)}')" title="Delete">✕</button>
       </div>
       <div class="att-panel${openAttPanels.has(item.id) ? ' open' : ''}" id="att-${esc(item.id)}">
@@ -3286,6 +3310,16 @@ function modalContentHTML(p) {
         </div>
         <div class="att-list" id="attlist-${esc(item.id)}">
           ${(item.attachments||[]).map(a => attHTML(a, p.id, item.id)).join('')}
+        </div>
+      </div>
+      <div class="notes-panel${openNotesPanels.has(item.id) ? ' open' : ''}" id="notes-${esc(item.id)}">
+        <div class="notes-list" id="noteslist-${esc(item.id)}">
+          ${(item.notes||[]).map(n => noteHTML(n)).join('')}
+        </div>
+        <div class="note-input-row">
+          <input type="text" id="noteinput-${esc(item.id)}" placeholder="Add a note (date + user/agent code auto-prefixed)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();submitNote('${esc(p.id)}','${esc(item.id)}')}">
+          <button onclick="submitNote('${esc(p.id)}','${esc(item.id)}')">Add</button>
         </div>
       </div>
     </div>`}).join('');
@@ -3633,7 +3667,7 @@ function closeModalById(modalId) {
 
   if (entry.projectId && !modalId.startsWith('__')) {
     const p = allProjects.find(x => x.id === entry.projectId);
-    if (p && p.backlog) p.backlog.forEach(item => openAttPanels.delete(item.id));
+    if (p && p.backlog) p.backlog.forEach(item => { openAttPanels.delete(item.id); openNotesPanels.delete(item.id); });
   }
 
   if (focusedModalId === modalId) {
@@ -4862,6 +4896,53 @@ function toggleAttPanel(e, projectId, itemId) {
     panel.classList.toggle('open');
     if (panel.classList.contains('open')) openAttPanels.add(itemId);
     else openAttPanels.delete(itemId);
+  }
+}
+
+function noteHTML(n) {
+  const ts = (n && n.ts) ? String(n.ts).slice(0, 10) : '';
+  const code = esc(n && n.agent_code || 'user');
+  const text = esc(n && n.text || '');
+  return `<div class="backlog-note"><span class="note-meta">${esc(ts)} · ${code} ·</span>${text}</div>`;
+}
+
+function toggleNotesPanel(e, projectId, itemId) {
+  e.stopPropagation();
+  const panel = document.getElementById('notes-'+itemId);
+  if (panel) {
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) {
+      openNotesPanels.add(itemId);
+      const input = document.getElementById('noteinput-'+itemId);
+      if (input) setTimeout(() => input.focus(), 50);
+    } else {
+      openNotesPanels.delete(itemId);
+    }
+  }
+}
+
+async function submitNote(projectId, itemId) {
+  const input = document.getElementById('noteinput-'+itemId);
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.disabled = true;
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/backlog/${itemId}/note`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text, agent_code: 'user' }),
+    });
+    if (res.ok) {
+      input.value = '';
+      openNotesPanels.add(itemId);
+      await refreshProjectBacklog(projectId);
+    }
+  } catch(e) {
+  } finally {
+    input.disabled = false;
+    const refreshedInput = document.getElementById('noteinput-'+itemId);
+    if (refreshedInput) refreshedInput.focus();
   }
 }
 
