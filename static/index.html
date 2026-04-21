@@ -881,6 +881,23 @@
   .backlog-item.priority-high   { border-left-color: var(--red); }
   .backlog-item.priority-normal { border-left-color: var(--border2); }
   .backlog-item.priority-low    { border-left-color: var(--text-faint); opacity: 0.7; }
+  .backlog-item.agent-source { background: var(--surface2); border-left-color: var(--accent); }
+  .backlog-item.agent-in-progress {
+    border-left-color: var(--green);
+    box-shadow: inset 2px 0 0 var(--green);
+    background: var(--green-dim);
+  }
+  .backlog-item.agent-in-progress .backlog-text { color: var(--green-text); font-weight: 600; }
+  .agent-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    background: var(--accent-dim); color: var(--accent);
+    font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+  }
+  .agent-badge.in-progress { background: var(--green-dim); color: var(--green-text); }
+  .agent-badge.in-progress::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: agent-pulse 1.6s infinite; }
+  @keyframes agent-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.3); } }
+  .agent-activity-line { font-size: 11px; color: var(--green-text); font-style: italic; margin-top: 2px; }
 
   .backlog-check {
     width: 16px; height: 16px; border: 1.5px solid var(--border2);
@@ -3209,22 +3226,48 @@ function modalContentHTML(p) {
       <span class="log-msg">${esc(e.msg||'')}</span>
     </div>`).join('');
 
-  const visibleItems = [...openItems, ...(showDone ? doneItems : [])];
-  const backlogItemsHTML = visibleItems.map(item => `
-    <div class="backlog-item ${item.status==='done'?'done':''} priority-${item.priority||'normal'}" data-item-id="${esc(item.id)}">
+  // Sort: in_progress agent items first, then other agent-open, then user-open, then done
+  const rank = it => {
+    if (it.status === 'done') return 3;
+    if (it.agent_status === 'in_progress') return 0;
+    if ((it.source || '').startsWith('agent:')) return 1;
+    return 2;
+  };
+  const visibleItems = [...openItems, ...(showDone ? doneItems : [])].slice().sort((a,b) => rank(a) - rank(b));
+  const backlogItemsHTML = visibleItems.map(item => {
+    const isAgent = (item.source || '').startsWith('agent:');
+    const isInProgress = item.agent_status === 'in_progress';
+    const extraClasses = [
+      item.status==='done' ? 'done' : '',
+      `priority-${item.priority||'normal'}`,
+      isAgent ? 'agent-source' : '',
+      isInProgress ? 'agent-in-progress' : '',
+    ].filter(Boolean).join(' ');
+    const agentBadgeHTML = isAgent
+      ? `<span class="agent-badge${isInProgress ? ' in-progress' : ''}" title="Added by agent (${esc(item.source)})">${isInProgress ? 'doing' : 'agent'}</span>`
+      : '';
+    const activityLine = (isInProgress && item.agent_activity)
+      ? `<div class="agent-activity-line">${esc(item.agent_activity)}</div>`
+      : '';
+    return `
+    <div class="backlog-item ${extraClasses}" data-item-id="${esc(item.id)}">
       <button class="backlog-check" onclick="toggleDone(event,'${esc(p.id)}','${esc(item.id)}','${item.status}')" title="${item.status==='done'?'Reopen':'Mark done'}">
         ${item.status==='done' ? '✓' : ''}
       </button>
-      <span class="backlog-text" contenteditable="true" spellcheck="true"
-        onblur="saveBacklogText(event,'${esc(p.id)}','${esc(item.id)}')"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
-      >${esc(item.text)}</span>
+      <div style="flex:1;min-width:0">
+        <span class="backlog-text" contenteditable="true" spellcheck="true"
+          onblur="saveBacklogText(event,'${esc(p.id)}','${esc(item.id)}')"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+        >${esc(item.text)}</span>
+        ${activityLine}
+      </div>
       <div class="backlog-meta">
+        ${agentBadgeHTML}
         <span class="priority-badge priority-${item.priority||'normal'}"
           onclick="cyclePriority(event,'${esc(p.id)}','${esc(item.id)}','${item.priority||'normal'}')"
           title="Click to change priority">${item.priority||'normal'}</span>
         ${item.github_issue_number ? `<a class="gh-issue-link" href="https://github.com/${esc(p.github_repo||'')}/issues/${item.github_issue_number}" target="_blank" rel="noopener" title="View on GitHub">#${item.github_issue_number}</a>` : ''}
-        ${item.source && item.source !== 'dashboard' ? `<span class="backlog-source">${esc(item.source)}</span>` : ''}
+        ${item.source && item.source !== 'dashboard' && !isAgent ? `<span class="backlog-source">${esc(item.source)}</span>` : ''}
         ${p.project_path && item.status !== 'done' ? `<button class="backlog-dispatch" onclick="dispatchBacklogItem(event,'${esc(p.id)}','${esc(item.id)}')" title="Send to agent">▶</button>` : ''}
         <button class="att-btn ${(item.attachments||[]).length > 0 ? 'has-atts' : ''}"
           onclick="toggleAttPanel(event,'${esc(p.id)}','${esc(item.id)}')"
@@ -3245,7 +3288,7 @@ function modalContentHTML(p) {
           ${(item.attachments||[]).map(a => attHTML(a, p.id, item.id)).join('')}
         </div>
       </div>
-    </div>`).join('');
+    </div>`}).join('');
 
   const undoBtn = undoStack.length && undoStack[undoStack.length-1].projectId === p.id
     ? `<button class="btn-undo" onclick="performUndo(event)" title="Undo ${undoStack[undoStack.length-1].label}">↩ Undo</button>`
@@ -5995,6 +6038,10 @@ function connectAgentStream(projectId, sessionId) {
             if (el) el.textContent = '';
           }
         }
+        // Agent wrote a TodoWrite → server synced into backlog → refresh that project's backlog live
+        if (msg.text && msg.text.startsWith('[backlog: synced')) {
+          refreshProjectBacklog(projectId);
+        }
       } else if (msg.type === 'question' && msg.questions) {
         renderAgentQuestion(sessionId, projectId, msg.questions);
       } else if (msg.type === 'turn_complete') {
@@ -6676,6 +6723,20 @@ async function stopAgent(projectId, sessionId) {
     }
   }
   refreshSilent();
+}
+
+// Refresh a single project's backlog in-place (used when agent TodoWrite syncs mid-stream)
+async function refreshProjectBacklog(projectId) {
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/backlog`);
+    if (!res.ok) return;
+    const backlog = await res.json();
+    const p = allProjects.find(x => x.id === projectId);
+    if (p) {
+      p.backlog = backlog;
+      refreshModalById(projectId);
+    }
+  } catch(e) {}
 }
 
 // Fetch all agent sessions for a project on modal open / page boot

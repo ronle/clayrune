@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import os
 import uuid
@@ -1270,6 +1271,96 @@ def _build_agent_context(project):
     return "\n\n".join(parts)
 
 
+# ── Agent → backlog sync (TodoWrite interception) ───────────────────────────
+# When an agent calls the TodoWrite tool, we upsert its todo list into the
+# project's backlog so that in-flight tasks survive agent crashes / reboots.
+# Items are keyed by (session, content-hash) so repeated TodoWrite calls in the
+# same session update the same rows rather than duplicating.
+
+_backlog_sync_lock = threading.Lock()
+
+
+def _agent_todo_ref(session_key, content):
+    """Stable dedup key for a TodoWrite item within a session."""
+    norm = (content or '').strip().lower()
+    h = hashlib.md5(f"{session_key}|{norm}".encode('utf-8')).hexdigest()[:12]
+    return f"agent:{h}"
+
+
+def _sync_todowrite_to_backlog(project_id, session_key, todos):
+    """Upsert a TodoWrite list into the project's backlog.
+
+    TodoWrite is called with the agent's full current task list each time,
+    so we upsert every item and leave items no longer present untouched
+    (the user can clean them up; we don't auto-delete agent context).
+
+    session_key: stable identifier (claude_session_id preferred) so the same
+                 logical session updates the same rows across TodoWrite calls.
+    todos: list of {content, status, activeForm} dicts from tool_input.
+    """
+    if not project_id or not session_key or not todos or not isinstance(todos, list):
+        return 0
+    with _backlog_sync_lock:
+        try:
+            p = load_project(project_id)
+        except Exception:
+            return 0
+        if p is None:
+            return 0
+        backlog = p.setdefault('backlog', [])
+        existing_by_ref = {i.get('agent_ref'): i for i in backlog if i.get('agent_ref')}
+        now = now_iso()
+        touched = 0
+
+        for td in todos:
+            if not isinstance(td, dict):
+                continue
+            content = (td.get('content') or '').strip()
+            if not content:
+                continue
+            agent_status = td.get('status', 'pending')  # pending | in_progress | completed
+            active_form = (td.get('activeForm') or '').strip()
+            ref = _agent_todo_ref(session_key, content)
+            backlog_status = 'done' if agent_status == 'completed' else 'open'
+
+            if ref in existing_by_ref:
+                item = existing_by_ref[ref]
+                item['text'] = content
+                item['status'] = backlog_status
+                item['agent_status'] = agent_status
+                item['agent_activity'] = active_form if agent_status == 'in_progress' else ''
+                item['updated_at'] = now
+                if backlog_status == 'done' and not item.get('done_at'):
+                    item['done_at'] = now
+                elif backlog_status == 'open':
+                    item['done_at'] = None
+            else:
+                backlog.insert(0, {
+                    'id': str(uuid.uuid4())[:8],
+                    'text': content,
+                    'priority': 'normal',
+                    'status': backlog_status,
+                    'created_at': now,
+                    'updated_at': now,
+                    'done_at': now if backlog_status == 'done' else None,
+                    'source': 'agent:todowrite',
+                    'agent_ref': ref,
+                    'agent_session_id': session_key,
+                    'agent_status': agent_status,
+                    'agent_activity': active_form if agent_status == 'in_progress' else '',
+                    'attachments': [],
+                })
+            touched += 1
+
+        if touched:
+            p['last_updated'] = now
+            try:
+                save_project(project_id, p)
+            except Exception:
+                return 0
+        return touched
+
+
 def _format_tool_activity(name, inp):
     """Format a tool_use block into a compact activity line."""
     if name in ('Read', 'Edit', 'Write'):
@@ -1292,6 +1383,16 @@ def _format_tool_activity(name, inp):
         qs = inp.get('questions', [])
         preview = qs[0].get('question', '')[:60] if qs else ''
         return f'[tool: AskUserQuestion] {preview}'
+    elif name == 'TodoWrite':
+        todos = inp.get('todos', []) or []
+        total = len(todos)
+        done = sum(1 for t in todos if isinstance(t, dict) and t.get('status') == 'completed')
+        in_prog = next((t.get('content', '') for t in todos
+                        if isinstance(t, dict) and t.get('status') == 'in_progress'), '')
+        summary = f'{done}/{total}'
+        if in_prog:
+            summary += f' — now: {in_prog[:60]}'
+        return f'[tool: TodoWrite] {summary}'
     else:
         return f'[tool: {name}]'
 
@@ -1337,6 +1438,19 @@ def _read_agent_stream(proc, session):
                                     session['plan_file'] = session['_last_md_file']
                                 session['waiting_for_plan_approval'] = True
                                 session['log_lines'].append('[Plan mode exit detected — waiting for user approval]')
+                            elif tool_name == 'TodoWrite':
+                                try:
+                                    sk = (session.get('claude_session_id')
+                                          or session.get('id')
+                                          or session.get('session_id'))
+                                    n = _sync_todowrite_to_backlog(
+                                        session.get('project_id'), sk,
+                                        tool_input.get('todos', []))
+                                    if n:
+                                        session['log_lines'].append(
+                                            f'[backlog: synced {n} item(s) from TodoWrite]')
+                                except Exception as e:
+                                    session['log_lines'].append(f'[backlog-sync error: {e}]')
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
                                 session['waiting_for_question'] = True
@@ -1456,6 +1570,19 @@ def _read_agent_stream_b(proc, session):
                                     session['plan_file'] = session['_last_md_file']
                                 session['waiting_for_plan_approval'] = True
                                 session['log_lines'].append('[Plan mode exit detected — waiting for user approval]')
+                            elif tool_name == 'TodoWrite':
+                                try:
+                                    sk = (session.get('claude_session_id')
+                                          or session.get('id')
+                                          or session.get('session_id'))
+                                    n = _sync_todowrite_to_backlog(
+                                        session.get('project_id'), sk,
+                                        tool_input.get('todos', []))
+                                    if n:
+                                        session['log_lines'].append(
+                                            f'[backlog: synced {n} item(s) from TodoWrite]')
+                                except Exception as e:
+                                    session['log_lines'].append(f'[backlog-sync error: {e}]')
                             elif tool_name == 'AskUserQuestion':
                                 session.setdefault('pending_questions', []).append(tool_input)
                                 session['waiting_for_question'] = True

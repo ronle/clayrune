@@ -152,6 +152,18 @@ async def _read_responses(session):
                     elif isinstance(block, ToolUseBlock):
                         session.append_line(
                             _format_tool_activity(block.name, block.input))
+                        if block.name == 'TodoWrite':
+                            try:
+                                from server import _sync_todowrite_to_backlog
+                                sk = session.claude_session_id or session.session_id
+                                n = _sync_todowrite_to_backlog(
+                                    session.project_id, sk,
+                                    (block.input or {}).get('todos', []))
+                                if n:
+                                    session.append_line(
+                                        f'[backlog: synced {n} item(s) from TodoWrite]')
+                            except Exception as e:
+                                session.append_line(f'[backlog-sync error: {e}]')
                     elif isinstance(block, ThinkingBlock) and block.thinking:
                         session.append_line(f'[thinking] {block.thinking[:200]}...')
 
