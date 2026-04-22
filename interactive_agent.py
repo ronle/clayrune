@@ -289,8 +289,40 @@ dialogue. They value your reasoning and analysis, not just your actions.
 """
 
 
+_VOICE_BEHAVIOR = """
+## Voice Conversation Mode
+
+This session is being carried out as a spoken voice conversation. Your replies
+will be read aloud to the user through text-to-speech, and their messages are
+transcribed from speech. You are a conversation partner, not a screen-reader.
+
+Rules for every reply:
+- Keep replies to 1-3 short, natural spoken sentences. No walls of text.
+- Never output code blocks, file paths, URLs, pipe tables, markdown headings,
+  bullet lists, or asterisk emphasis. They sound terrible read aloud.
+- If the answer genuinely needs code or a long list, SAY SO briefly and offer
+  to show it on screen. Example: "I'd suggest adding a voice toggle — want me
+  to show you the diff on screen?" Then wait.
+- Skip narrating tool calls. Don't say "I'm going to run Grep to search for X."
+  Just do it, then tell the user the finding in one sentence.
+- Don't summarize what you just said or what you're about to say. Just say it.
+- Contractions and plain conversational English. You're talking, not writing.
+- If you're asked something you're unsure about, say "I'm not sure" — briefly.
+
+When the user asks for something that would normally require a long structured
+answer (architecture explanation, code review, multi-step plan), give the
+headline verbally in one sentence and ask whether to put the full detail on
+screen.
+"""
+
+# Prefix added to user messages to reinforce voice-mode behavior per turn.
+# Invisible to the user in the UI (stripped before echoing).
+VOICE_MODE_PREFIX = "[voice-reply] "
+
+
 def create_interactive_session(project_id, project_path, task, system_prompt='',
-                                model='', max_turns=None, resume_id=None):
+                                model='', max_turns=None, resume_id=None,
+                                voice_mode=False):
     """Create a new interactive session and send the first message.
 
     Returns the session_id.
@@ -299,6 +331,8 @@ def create_interactive_session(project_id, project_path, task, system_prompt='',
 
     # Prepend interactive behavior instructions to the system prompt
     full_prompt = _INTERACTIVE_BEHAVIOR + '\n' + (system_prompt or '')
+    if voice_mode:
+        full_prompt = _VOICE_BEHAVIOR + '\n' + full_prompt
 
     options = ClaudeAgentOptions(
         cwd=project_path,
@@ -342,10 +376,15 @@ def send_interactive_message(session_id, message):
     if session.status == 'stopped':
         raise ValueError('session is stopped')
 
-    session.append_line(f'\n> {message}\n')
+    # The voice-mode prefix is a hint for Claude, not for the visible transcript.
+    display_message = message
+    if display_message.startswith(VOICE_MODE_PREFIX):
+        display_message = display_message[len(VOICE_MODE_PREFIX):]
+
+    session.append_line(f'\n> {display_message}\n')
     session.output_queue.put({
         'type': 'user_echo',
-        'text': message,
+        'text': display_message,
     })
 
     asyncio.run_coroutine_threadsafe(_send_query(session, message), _sdk_loop)

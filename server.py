@@ -3174,11 +3174,15 @@ def interactive_dispatch(project_id):
         return jsonify({'error': 'message required'}), 400
 
     resume_id = data.get('resume_id', '')
+    voice_mode = bool(data.get('voice_mode'))
     model = p.get('agent_model') or CONFIG.get('agent_model', '')
     max_turns = CONFIG.get('agent_max_turns')
 
     # Build context same as Mode A/B so the agent knows about the project
     context = _build_agent_context(p)
+
+    if voice_mode:
+        task = _ia.VOICE_MODE_PREFIX + task
 
     try:
         session_id = _ia.create_interactive_session(
@@ -3189,6 +3193,7 @@ def interactive_dispatch(project_id):
             model=model,
             max_turns=max_turns,
             resume_id=resume_id or None,
+            voice_mode=voice_mode,
         )
     except Exception as e:
         print(f"[interactive] {project_id}: dispatch error: {e}")
@@ -3205,8 +3210,12 @@ def interactive_send(project_id):
     data = request.get_json() or {}
     session_id = data.get('session_id', '')
     message = data.get('message', '').strip()
+    voice_mode = bool(data.get('voice_mode'))
     if not session_id or not message:
         return jsonify({'error': 'session_id and message required'}), 400
+
+    if voice_mode:
+        message = _ia.VOICE_MODE_PREFIX + message
 
     try:
         _ia.send_interactive_message(session_id, message)
@@ -3265,6 +3274,73 @@ def interactive_status(project_id):
             'log_lines': s.log_lines[-200:],
         })
     return jsonify({'sessions': result})
+
+
+# ── Voice: local STT via faster-whisper ──────────────────────────────────────
+
+_whisper_model = None
+_whisper_lock = threading.Lock()
+_whisper_model_size = os.environ.get('MC_WHISPER_MODEL', 'base')  # tiny|base|small|medium|large-v3
+
+
+def _get_whisper():
+    """Lazy-load the faster-whisper model. First call downloads (~150MB for base)."""
+    global _whisper_model
+    if _whisper_model is not None:
+        return _whisper_model
+    with _whisper_lock:
+        if _whisper_model is None:
+            from faster_whisper import WhisperModel
+            print(f"[stt] loading faster-whisper model '{_whisper_model_size}' (CPU int8)")
+            t0 = _time.time()
+            _whisper_model = WhisperModel(
+                _whisper_model_size, device='cpu', compute_type='int8')
+            print(f"[stt] model loaded in {_time.time()-t0:.1f}s")
+    return _whisper_model
+
+
+@app.route('/api/stt', methods=['POST'])
+def stt_transcribe():
+    """Transcribe an uploaded audio blob using local faster-whisper.
+
+    Accepts multipart/form-data with field 'audio' (webm/ogg/wav/mp3).
+    Returns {'ok': True, 'text': '...', 'language': 'en', 'duration': 3.2}.
+    """
+    f = request.files.get('audio')
+    if not f:
+        return jsonify({'error': 'audio file required (field "audio")'}), 400
+
+    # Write to temp file — faster-whisper decodes via PyAV from a path or file-like
+    import tempfile
+    suffix = '.' + (f.filename.rsplit('.', 1)[-1] if '.' in (f.filename or '') else 'webm')
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        f.save(tmp.name)
+        tmp.close()
+        model = _get_whisper()
+        language = request.args.get('lang') or None  # None = auto-detect
+        segments, info = model.transcribe(
+            tmp.name,
+            language=language,
+            beam_size=1,           # greedy — fastest, fine for short utterances
+            vad_filter=True,       # skip leading/trailing silence
+            vad_parameters={'min_silence_duration_ms': 300},
+        )
+        text = ''.join(seg.text for seg in segments).strip()
+        return jsonify({
+            'ok': True,
+            'text': text,
+            'language': info.language,
+            'duration': info.duration,
+        })
+    except Exception as e:
+        print(f"[stt] transcription error: {e}")
+        return jsonify({'error': f'transcription failed: {e}'}), 500
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
 
 
 # ── Terminal session management ───────────────────────────────────────────────

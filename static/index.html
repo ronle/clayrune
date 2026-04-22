@@ -1429,6 +1429,38 @@
   .btn-dispatch:hover { background: var(--green); color: var(--bg); }
   .btn-dispatch:disabled { opacity: 0.4; cursor: not-allowed; }
 
+  .btn-voice {
+    background: transparent; border: 1px solid var(--text-faint);
+    color: var(--text-dim); font-size: 14px; padding: 6px 10px;
+    border-radius: 5px; cursor: pointer; transition: all 0.15s;
+    flex-shrink: 0; line-height: 1;
+  }
+  .btn-voice:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-voice.active {
+    background: var(--accent-dim); border-color: var(--accent);
+    color: var(--accent);
+  }
+  .btn-voice.recording {
+    background: #d14; border-color: #d14; color: #fff;
+    animation: voice-pulse 1.2s ease-in-out infinite;
+  }
+  .btn-voice.transcribing {
+    border-color: var(--accent); color: var(--accent); opacity: 0.6;
+  }
+  @keyframes voice-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(221, 17, 68, 0.6); }
+    50%      { box-shadow: 0 0 0 6px rgba(221, 17, 68, 0); }
+  }
+  .voice-speaking-indicator {
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--accent); font-size: 11px; font-weight: 500;
+    margin-left: 8px;
+  }
+  .voice-speaking-indicator::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); animation: voice-pulse 1.2s ease-in-out infinite;
+  }
+
   .session-picker { margin-bottom: 10px; }
   .session-picker-label {
     font-size: 11px; color: var(--text-faint); margin-bottom: 6px;
@@ -5656,6 +5688,14 @@ function agentPanelHTML(p) {
               onkeydown="handleInputEnter(event,()=>${interactiveSessions.has(activeSessionId) ? `sendInteractive('${esc(p.id)}','${esc(activeSessionId)}')` : `sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')`},'${esc(p.id)}')"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
+            ${interactiveSessions.has(activeSessionId) ? `
+              <button class="btn-voice ${voiceModeOn.has(activeSessionId) ? 'active' : ''}"
+                title="${voiceModeOn.has(activeSessionId) ? 'Voice mode ON — replies are spoken, messages get voice formatting' : 'Toggle voice conversation mode (spoken replies)'}"
+                onclick="toggleVoiceMode('${esc(p.id)}','${esc(activeSessionId)}')">${voiceModeOn.has(activeSessionId) ? '&#128266;' : '&#128263;'}</button>
+              <button class="btn-voice mic-btn-${esc(activeSessionId)}"
+                title="Click to talk — click again to stop and send"
+                onclick="toggleMic('${esc(p.id)}','${esc(activeSessionId)}')">&#127908;</button>
+            ` : ''}
             <button class="btn-dispatch" onclick="${interactiveSessions.has(activeSessionId) ? `sendInteractive('${esc(p.id)}','${esc(activeSessionId)}')` : `sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')`}">Send</button>
           </div>
         </div>` : '';
@@ -5893,6 +5933,9 @@ async function dispatchAgent(projectId) {
 let agentSSEWatchdogs = {};  // sessionId → timer ID
 let followupTimeouts = {};  // sessionId → { timerId, projectId }
 let interactiveSessions = new Set();  // session IDs that are Mode C (interactive)
+let voiceModeOn = new Set();  // session IDs with voice mode toggled on
+let voiceRecorders = {};  // sessionId → { recorder, stream, chunks, state }
+let voiceTTSBuffers = {};  // sessionId → { pending: '', speaking: bool }
 
 // ── Interactive (Mode C) ──────────────────────────────────────────────────
 
@@ -5948,7 +5991,7 @@ async function sendInteractive(projectId, sessionId) {
     await fetch(API_BASE + `/api/project/${projectId}/agent/interactive/send`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ session_id: sessionId, message })
+      body: JSON.stringify({ session_id: sessionId, message, voice_mode: voiceModeOn.has(sessionId) })
     });
     // Reconnect SSE for the new turn's output
     connectInteractiveStream(projectId, sessionId);
@@ -5956,6 +5999,143 @@ async function sendInteractive(projectId, sessionId) {
     buf.push(`[send error: ${e.message}]`);
     refreshModalById(projectId);
   }
+}
+
+// ── Voice conversation: STT (faster-whisper) + TTS (browser SpeechSynthesis) ──
+
+function toggleVoiceMode(projectId, sessionId) {
+  if (voiceModeOn.has(sessionId)) {
+    voiceModeOn.delete(sessionId);
+    // Stop any in-flight TTS
+    try { window.speechSynthesis.cancel(); } catch(e) {}
+    voiceTTSBuffers[sessionId] = { pending: '', speaking: false };
+  } else {
+    voiceModeOn.add(sessionId);
+    voiceTTSBuffers[sessionId] = { pending: '', speaking: false };
+    // First speak a short ping so browser unlocks the synthesis voice
+    try {
+      const u = new SpeechSynthesisUtterance('Voice mode on.');
+      u.rate = 1.05;
+      window.speechSynthesis.speak(u);
+    } catch(e) {}
+  }
+  refreshModalById(projectId);
+}
+
+async function toggleMic(projectId, sessionId) {
+  const state = voiceRecorders[sessionId];
+  if (state && state.recorder && state.recorder.state === 'recording') {
+    // Stop recording — onstop handler will transcribe and send
+    state.recorder.stop();
+    return;
+  }
+
+  // Start recording
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch(e) {
+    alert('Microphone access denied: ' + e.message);
+    return;
+  }
+
+  // Cancel any speaking TTS — user is about to talk (barge-in)
+  try { window.speechSynthesis.cancel(); } catch(e) {}
+  const ttsBuf = voiceTTSBuffers[sessionId];
+  if (ttsBuf) { ttsBuf.pending = ''; ttsBuf.speaking = false; }
+
+  const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+             : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+  const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  const chunks = [];
+  recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+  recorder.onstop = async () => {
+    // Stop mic hardware
+    try { stream.getTracks().forEach(t => t.stop()); } catch(e) {}
+    const btn = document.querySelector(`.mic-btn-${sessionId}`);
+    if (btn) { btn.classList.remove('recording'); btn.classList.add('transcribing'); }
+
+    const blob = new Blob(chunks, { type: mime || 'audio/webm' });
+    if (blob.size < 1000) {
+      if (btn) btn.classList.remove('transcribing');
+      delete voiceRecorders[sessionId];
+      return;  // too short — ignore
+    }
+
+    try {
+      const fd = new FormData();
+      fd.append('audio', blob, 'mic.webm');
+      const res = await fetch(API_BASE + '/api/stt', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!data.ok || !data.text) {
+        if (btn) btn.classList.remove('transcribing');
+        delete voiceRecorders[sessionId];
+        return;
+      }
+      // Fill input + auto-send
+      const input = document.getElementById(`agent-followup-${sessionId}`);
+      if (input) input.value = data.text;
+      if (btn) btn.classList.remove('transcribing');
+      delete voiceRecorders[sessionId];
+      await sendInteractive(projectId, sessionId);
+    } catch(e) {
+      if (btn) btn.classList.remove('transcribing');
+      delete voiceRecorders[sessionId];
+      alert('Transcription failed: ' + e.message);
+    }
+  };
+
+  voiceRecorders[sessionId] = { recorder, stream, chunks, mime };
+  recorder.start();
+  const btn = document.querySelector(`.mic-btn-${sessionId}`);
+  if (btn) btn.classList.add('recording');
+}
+
+// Feed streamed text into SpeechSynthesis one sentence at a time, so
+// playback starts ~1s after the agent begins replying instead of after
+// the whole turn completes.
+const _sentenceSplitRe = /([.!?]+["')\]]*\s+|[\n]{2,})/;
+
+function speakStreamedText(sessionId, newText) {
+  if (!voiceModeOn.has(sessionId) || !newText) return;
+  if (!voiceTTSBuffers[sessionId]) voiceTTSBuffers[sessionId] = { pending: '', speaking: false };
+  const buf = voiceTTSBuffers[sessionId];
+  buf.pending += newText;
+
+  // Extract complete sentences from buf.pending and queue them
+  while (true) {
+    const m = buf.pending.match(_sentenceSplitRe);
+    if (!m) break;
+    const endIdx = m.index + m[0].length;
+    const sentence = buf.pending.slice(0, endIdx).trim();
+    buf.pending = buf.pending.slice(endIdx);
+    if (sentence) _queueSpeak(sessionId, sentence);
+  }
+}
+
+function flushSpeakBuffer(sessionId) {
+  const buf = voiceTTSBuffers[sessionId];
+  if (!buf) return;
+  const remaining = buf.pending.trim();
+  buf.pending = '';
+  if (remaining) _queueSpeak(sessionId, remaining);
+}
+
+function _queueSpeak(sessionId, text) {
+  // Strip markdown/code artifacts that sound bad read aloud
+  const cleaned = text
+    .replace(/```[\s\S]*?```/g, ' ')         // fenced code
+    .replace(/`([^`]+)`/g, '$1')              // inline code
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // markdown links → text
+    .replace(/[*_#>]+/g, '')                  // md emphasis/headings
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned || cleaned.length < 2) return;
+
+  const u = new SpeechSynthesisUtterance(cleaned);
+  u.rate = 1.05;
+  u.pitch = 1.0;
+  window.speechSynthesis.speak(u);
 }
 
 function connectInteractiveStream(projectId, sessionId) {
@@ -5979,6 +6159,15 @@ function connectInteractiveStream(projectId, sessionId) {
       for (const block of (msg.content || [])) {
         if (block.type === 'text' && block.text) {
           buf.push(block.text);
+          // Fallback TTS: only speak here if text_delta didn't already deliver
+          // this turn's text (some SDK/config paths skip partial streaming).
+          if (voiceModeOn.has(sessionId)) {
+            const ttsBuf = voiceTTSBuffers[sessionId];
+            if (!ttsBuf || !ttsBuf.gotStreamingThisTurn) {
+              speakStreamedText(sessionId, block.text + ' ');
+              flushSpeakBuffer(sessionId);
+            }
+          }
         } else if (block.type === 'tool_use') {
           const preview = (block.input && block.input.command) || (block.input && block.input.file_path) || (block.input && block.input.pattern) || JSON.stringify(block.input || {}).slice(0, 80);
           buf.push(`[tool: ${block.name}] ${preview}`);
@@ -5997,11 +6186,22 @@ function connectInteractiveStream(projectId, sessionId) {
       } else {
         buf.push(msg.text);
       }
+      // Feed TTS one sentence at a time as tokens arrive
+      if (voiceModeOn.has(sessionId)) {
+        if (!voiceTTSBuffers[sessionId]) voiceTTSBuffers[sessionId] = { pending: '', speaking: false };
+        voiceTTSBuffers[sessionId].gotStreamingThisTurn = true;
+        speakStreamedText(sessionId, msg.text);
+      }
       refreshModalById(projectId);
 
     } else if (msg.type === 'result') {
       buf.push(`[turn complete — ${msg.subtype}${msg.cost_usd ? ` · $${msg.cost_usd.toFixed(4)}` : ''}]`);
       agentStatusCache[sessionId] = { ...(agentStatusCache[sessionId] || {}), status: 'idle', cost_usd: msg.cost_usd };
+      // Flush any partial-sentence tail into TTS, then reset per-turn flag
+      if (voiceModeOn.has(sessionId)) {
+        flushSpeakBuffer(sessionId);
+        if (voiceTTSBuffers[sessionId]) voiceTTSBuffers[sessionId].gotStreamingThisTurn = false;
+      }
       refreshModalById(projectId);
       renderAgentConsole();
       es.close();

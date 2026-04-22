@@ -1,3 +1,4 @@
 flask>=3.0.0
 pywebview>=5.0
 pythonnet>=3.0.0
+faster-whisper>=1.2.0
