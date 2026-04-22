@@ -1,5 +1,71 @@
 # Mission Control — Changelog
 
+## [2026-04-22] — Voice Conversation Mode for Interactive Sessions
+
+### Voice Mode (STT + TTS) for Mode C
+Mode C (interactive) sessions can now be driven by voice end-to-end: click the
+speaker icon to toggle voice mode, click the mic icon to talk. The agent's
+replies are spoken back a sentence at a time as tokens arrive, so playback
+starts ~1 s after the agent begins responding instead of waiting for the full
+turn. Voice mode is strictly a Mode C feature — Mode A/B sessions don't have
+the SDK-level hooks needed to stream text for TTS.
+
+- **`_VOICE_BEHAVIOR` system prompt** (`interactive_agent.py`): prepended to
+  the usual `_INTERACTIVE_BEHAVIOR` when `voice_mode=True`. Instructs the
+  agent to reply in 1–3 short spoken sentences, skip code blocks / paths /
+  tables / markdown headings / bullet lists / asterisk emphasis, skip tool
+  narration, and offer to "show on screen" when a structured answer is
+  unavoidable. This is what makes voice conversations feel conversational
+  instead of a screen-reader reading a doc.
+- **`VOICE_MODE_PREFIX = "[voice-reply] "`**: prepended to every user message
+  while voice mode is on. Reinforces the voice behavior per turn (system
+  prompts can drift over long sessions). Stripped from the visible transcript
+  in `send_interactive_message()` so the user sees only their actual words.
+
+### Local STT via faster-whisper
+- **New `POST /api/stt` endpoint** (`server.py`): accepts multipart
+  `audio` blob (WebM/Opus from MediaRecorder by default), returns
+  `{ok, text, language, duration}`.
+- **Lazy model load**: `faster_whisper.WhisperModel` is loaded on first
+  request, cached module-level behind `_whisper_lock`. First call downloads
+  ~150 MB for the `base` model.
+- **Model size via `MC_WHISPER_MODEL` env var**: `tiny|base|small|medium|large-v3`.
+  Default `base`. CPU + int8 quantization — no GPU needed, no cloud call.
+- **VAD filter enabled** (`min_silence_duration_ms=300`) to skip leading/
+  trailing silence from the mic blob. `beam_size=1` (greedy) — fine for short
+  utterances and keeps latency low.
+
+### Frontend: mic + speaker buttons on interactive sessions
+- Two icon buttons appear next to the chat textarea only for Mode C sessions
+  (`interactiveSessions.has(activeSessionId)`):
+  - **Speaker** → `toggleVoiceMode()`: toggles voice mode for this session,
+    speaks a short "Voice mode on." ping so the browser unlocks the
+    `speechSynthesis` voice (required on first user gesture).
+  - **Mic** → `toggleMic()`: first click starts recording via
+    `MediaRecorder(getUserMedia({audio:true}))`; second click stops, POSTs
+    blob to `/api/stt`, fills the input with the transcript, and auto-sends.
+- CSS states: `.btn-voice.active` (voice mode on), `.btn-voice.recording`
+  (red pulsing during record), `.btn-voice.transcribing` (busy during STT).
+- **TTS streaming**: `speakStreamedText(sessionId, text)` buffers incoming
+  text chunks, splits on sentence boundaries (`[.!?]+` followed by whitespace
+  or double-newline), queues each complete sentence to
+  `window.speechSynthesis.speak()`. `flushSpeakBuffer()` drains the tail at
+  turn end. `_queueSpeak()` strips markdown/code artifacts before speaking
+  (fenced + inline code, markdown links, `*`/`_`/`#`/`>` marks, collapse
+  whitespace).
+- **Per-turn streaming flag** `voiceTTSBuffers[sid].gotStreamingThisTurn`:
+  when the SDK emits `text_delta` events, streaming TTS takes over and the
+  fallback in the `assistant`-message branch skips speaking the same text
+  twice. Reset to `false` on every `result` message.
+- **Barge-in**: opening the mic cancels any in-flight `speechSynthesis` and
+  clears the TTS buffer, so the user can interrupt cleanly.
+- `voiceModeOn: Set<sessionId>`, `voiceRecorders: {sessionId → {...}}`,
+  `voiceTTSBuffers: {sessionId → {pending, speaking, gotStreamingThisTurn}}`.
+
+### Known gap (not addressed in this commit)
+- `_queueSpeak()` does not set `utterance.voice`, so the OS default voice is
+  used. Voice selection UI is the next piece.
+
 ## [2026-04-17] — Interactive Mode (Mode C), Session Persistence & Expired Session Recovery
 
 ### Interactive Agent Mode (Mode C) — SDK-Based Conversational Sessions
