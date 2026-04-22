@@ -1461,6 +1461,30 @@
     background: var(--accent); animation: voice-pulse 1.2s ease-in-out infinite;
   }
 
+  .voice-settings-panel {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 8px 10px; margin: 0 0 6px 0;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 12px; color: var(--text-dim);
+  }
+  .voice-settings-panel label {
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .voice-settings-panel select {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-size: 12px; padding: 3px 6px; border-radius: 4px;
+    max-width: 240px;
+  }
+  .voice-settings-panel input[type=range] { width: 110px; }
+  .voice-settings-panel .voice-rate-value {
+    color: var(--text); font-variant-numeric: tabular-nums; min-width: 30px;
+  }
+  .voice-settings-panel .btn-preview {
+    background: transparent; border: 1px solid var(--accent); color: var(--accent);
+    padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;
+  }
+  .voice-settings-panel .btn-preview:hover { background: var(--accent-dim); }
+
   .session-picker { margin-bottom: 10px; }
   .session-picker-label {
     font-size: 11px; color: var(--text-faint); margin-bottom: 6px;
@@ -5678,6 +5702,7 @@ function agentPanelHTML(p) {
     const chatInput = (isInteractive || st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle' || st === 'error')
       ? `${guardianBanner}<div class="agent-chat-input">
           ${followupPreviews}
+          ${isInteractive ? voiceSettingsPanelHTML(p.id, activeSessionId) : ''}
           <div class="agent-chat-input-row agent-drop-zone"
               ondragover="handleAgentDragOver(event,this)"
               ondragenter="handleAgentDragOver(event,this)"
@@ -5695,6 +5720,9 @@ function agentPanelHTML(p) {
               <button class="btn-voice mic-btn-${esc(activeSessionId)}"
                 title="Click to talk — click again to stop and send"
                 onclick="toggleMic('${esc(p.id)}','${esc(activeSessionId)}')">&#127908;</button>
+              <button class="btn-voice ${voiceSettingsOpen.has(activeSessionId) ? 'active' : ''}"
+                title="Voice settings — choose voice and speaking rate"
+                onclick="toggleVoiceSettings('${esc(p.id)}','${esc(activeSessionId)}')">&#9881;</button>
             ` : ''}
             <button class="btn-dispatch" onclick="${interactiveSessions.has(activeSessionId) ? `sendInteractive('${esc(p.id)}','${esc(activeSessionId)}')` : `sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')`}">Send</button>
           </div>
@@ -5936,6 +5964,35 @@ let interactiveSessions = new Set();  // session IDs that are Mode C (interactiv
 let voiceModeOn = new Set();  // session IDs with voice mode toggled on
 let voiceRecorders = {};  // sessionId → { recorder, stream, chunks, state }
 let voiceTTSBuffers = {};  // sessionId → { pending: '', speaking: bool }
+let voiceSettingsOpen = new Set();  // sessionIds with the TTS settings panel open
+let ttsSettings = {
+  voiceURI: localStorage.getItem('ttsVoiceURI') || '',
+  rate: parseFloat(localStorage.getItem('ttsRate') || '1.05'),
+};
+let _availableVoices = [];  // cached list, refreshed on voiceschanged
+
+function _loadTTSVoices() {
+  if (!window.speechSynthesis) return;
+  const list = window.speechSynthesis.getVoices() || [];
+  _availableVoices = list.slice().sort((a, b) => {
+    const aEn = a.lang && a.lang.startsWith('en') ? 0 : 1;
+    const bEn = b.lang && b.lang.startsWith('en') ? 0 : 1;
+    return aEn - bEn || a.name.localeCompare(b.name);
+  });
+}
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  _loadTTSVoices();
+  window.speechSynthesis.onvoiceschanged = () => {
+    _loadTTSVoices();
+    // Re-render any modal that has the settings panel open
+    if (voiceSettingsOpen.size) refreshModal();
+  };
+}
+
+function _getTTSVoice() {
+  if (!ttsSettings.voiceURI || !_availableVoices.length) return null;
+  return _availableVoices.find(v => v.voiceURI === ttsSettings.voiceURI) || null;
+}
 
 // ── Interactive (Mode C) ──────────────────────────────────────────────────
 
@@ -6015,8 +6072,12 @@ function toggleVoiceMode(projectId, sessionId) {
     // First speak a short ping so browser unlocks the synthesis voice
     try {
       const u = new SpeechSynthesisUtterance('Voice mode on.');
-      u.rate = 1.05;
+      const v = _getTTSVoice();
+      if (v) u.voice = v;
+      u.rate = ttsSettings.rate;
       window.speechSynthesis.speak(u);
+      // The gesture also triggers a voices-list refresh on Chromium
+      if (!_availableVoices.length) _loadTTSVoices();
     } catch(e) {}
   }
   refreshModalById(projectId);
@@ -6133,9 +6194,73 @@ function _queueSpeak(sessionId, text) {
   if (!cleaned || cleaned.length < 2) return;
 
   const u = new SpeechSynthesisUtterance(cleaned);
-  u.rate = 1.05;
+  const v = _getTTSVoice();
+  if (v) u.voice = v;
+  u.rate = ttsSettings.rate;
   u.pitch = 1.0;
   window.speechSynthesis.speak(u);
+}
+
+function toggleVoiceSettings(projectId, sessionId) {
+  if (voiceSettingsOpen.has(sessionId)) voiceSettingsOpen.delete(sessionId);
+  else {
+    voiceSettingsOpen.add(sessionId);
+    // Chromium quirk: voices list is sometimes empty until first getVoices() call
+    // after a user gesture. This click counts.
+    if (!_availableVoices.length) _loadTTSVoices();
+  }
+  refreshModalById(projectId);
+}
+
+function setTTSVoice(uri) {
+  ttsSettings.voiceURI = uri || '';
+  localStorage.setItem('ttsVoiceURI', ttsSettings.voiceURI);
+}
+
+function setTTSRate(rate) {
+  const r = Math.max(0.7, Math.min(1.6, parseFloat(rate) || 1.05));
+  ttsSettings.rate = r;
+  localStorage.setItem('ttsRate', String(r));
+  const el = document.querySelector('.voice-rate-value');
+  if (el) el.textContent = r.toFixed(2);
+}
+
+function previewTTS() {
+  try { window.speechSynthesis.cancel(); } catch(e) {}
+  const v = _getTTSVoice();
+  const sample = v
+    ? `Hi, I'm ${v.name.replace(/\s*\([^)]*\)\s*/g, '').trim()}. This is how I'll sound.`
+    : 'This is your current voice. Pick one from the menu to try a different one.';
+  const u = new SpeechSynthesisUtterance(sample);
+  if (v) u.voice = v;
+  u.rate = ttsSettings.rate;
+  u.pitch = 1.0;
+  window.speechSynthesis.speak(u);
+}
+
+function voiceSettingsPanelHTML(projectId, sessionId) {
+  if (!voiceSettingsOpen.has(sessionId)) return '';
+  // Build options (English first, then the rest)
+  let options = '<option value="">System default</option>';
+  for (const v of _availableVoices) {
+    const sel = v.voiceURI === ttsSettings.voiceURI ? ' selected' : '';
+    const label = `${esc(v.name)} — ${esc(v.lang)}${v.localService ? '' : ' (online)'}`;
+    options += `<option value="${esc(v.voiceURI)}"${sel}>${label}</option>`;
+  }
+  const rate = ttsSettings.rate.toFixed(2);
+  return `<div class="voice-settings-panel">
+    <label>Voice
+      <select onchange="setTTSVoice(this.value)">${options}</select>
+    </label>
+    <label>Rate
+      <input type="range" min="0.7" max="1.6" step="0.05" value="${rate}"
+        oninput="setTTSRate(this.value)">
+      <span class="voice-rate-value">${rate}</span>
+    </label>
+    <button class="btn-preview" onclick="previewTTS()">&#9654; Preview</button>
+    <button class="btn-voice" style="margin-left:auto;padding:3px 8px;font-size:11px;"
+      onclick="toggleVoiceSettings('${esc(projectId)}','${esc(sessionId)}')">Close</button>
+  </div>`;
 }
 
 function connectInteractiveStream(projectId, sessionId) {

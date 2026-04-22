@@ -62,9 +62,27 @@ the SDK-level hooks needed to stream text for TTS.
 - `voiceModeOn: Set<sessionId>`, `voiceRecorders: {sessionId → {...}}`,
   `voiceTTSBuffers: {sessionId → {pending, speaking, gotStreamingThisTurn}}`.
 
-### Known gap (not addressed in this commit)
-- `_queueSpeak()` does not set `utterance.voice`, so the OS default voice is
-  used. Voice selection UI is the next piece.
+### Voice Selection UI
+- **Gear button** next to the mic/speaker: opens a settings panel above the
+  chat input with three controls — voice dropdown, rate slider (0.70–1.60),
+  and a "Preview" button that speaks a sample line in the selected voice.
+- **Voice dropdown**: populated from `window.speechSynthesis.getVoices()`,
+  English voices listed first, then alphabetical. Option label includes the
+  voice name, language tag, and `(online)` marker for non-local voices.
+  `"System default"` entry clears the selection.
+- **Persistence**: `localStorage['ttsVoiceURI']` + `localStorage['ttsRate']`.
+  Settings are **global**, not per session — once you pick a voice, every
+  interactive session in voice mode uses it.
+- **`voiceschanged` handling**: Chromium populates `getVoices()`
+  asynchronously. A `speechSynthesis.onvoiceschanged` listener refreshes the
+  cached list and re-renders any open settings panel. First user gesture
+  (speaker or gear click) also re-polls, because some browsers return an
+  empty list until after the first interaction.
+- **Rate slider**: uses `oninput` for live feedback; the value span updates
+  directly via DOM (no re-render) to avoid focus loss while dragging.
+- **Applied everywhere**: `_queueSpeak()` (streamed reply speech),
+  `toggleVoiceMode()` (the "Voice mode on." unlock ping), and the Preview
+  button all read from `ttsSettings.voiceURI` + `ttsSettings.rate`.
 
 ## [2026-04-17] — Interactive Mode (Mode C), Session Persistence & Expired Session Recovery
 
