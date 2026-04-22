@@ -5964,6 +5964,7 @@ let interactiveSessions = new Set();  // session IDs that are Mode C (interactiv
 let voiceModeOn = new Set();  // session IDs with voice mode toggled on
 let voiceRecorders = {};  // sessionId → { recorder, stream, chunks, state }
 let voiceTTSBuffers = {};  // sessionId → { pending: '', speaking: bool }
+let interactiveStreamedThisTurn = new Set();  // sid if text_delta delivered text this turn (used to skip duplicate assistant-block push)
 let voiceSettingsOpen = new Set();  // sessionIds with the TTS settings panel open
 let ttsSettings = {
   voiceURI: localStorage.getItem('ttsVoiceURI') || '',
@@ -6281,14 +6282,14 @@ function connectInteractiveStream(projectId, sessionId) {
 
     if (msg.type === 'assistant') {
       // Render content blocks
+      const streamed = interactiveStreamedThisTurn.has(sessionId);
       for (const block of (msg.content || [])) {
         if (block.type === 'text' && block.text) {
-          buf.push(block.text);
-          // Fallback TTS: only speak here if text_delta didn't already deliver
-          // this turn's text (some SDK/config paths skip partial streaming).
-          if (voiceModeOn.has(sessionId)) {
-            const ttsBuf = voiceTTSBuffers[sessionId];
-            if (!ttsBuf || !ttsBuf.gotStreamingThisTurn) {
+          // Skip — text_delta already appended this text while streaming.
+          // Only push + speak here as a fallback when no streaming happened.
+          if (!streamed) {
+            buf.push(block.text);
+            if (voiceModeOn.has(sessionId)) {
               speakStreamedText(sessionId, block.text + ' ');
               flushSpeakBuffer(sessionId);
             }
@@ -6311,10 +6312,10 @@ function connectInteractiveStream(projectId, sessionId) {
       } else {
         buf.push(msg.text);
       }
+      interactiveStreamedThisTurn.add(sessionId);
       // Feed TTS one sentence at a time as tokens arrive
       if (voiceModeOn.has(sessionId)) {
         if (!voiceTTSBuffers[sessionId]) voiceTTSBuffers[sessionId] = { pending: '', speaking: false };
-        voiceTTSBuffers[sessionId].gotStreamingThisTurn = true;
         speakStreamedText(sessionId, msg.text);
       }
       refreshModalById(projectId);
@@ -6322,11 +6323,9 @@ function connectInteractiveStream(projectId, sessionId) {
     } else if (msg.type === 'result') {
       buf.push(`[turn complete — ${msg.subtype}${msg.cost_usd ? ` · $${msg.cost_usd.toFixed(4)}` : ''}]`);
       agentStatusCache[sessionId] = { ...(agentStatusCache[sessionId] || {}), status: 'idle', cost_usd: msg.cost_usd };
-      // Flush any partial-sentence tail into TTS, then reset per-turn flag
-      if (voiceModeOn.has(sessionId)) {
-        flushSpeakBuffer(sessionId);
-        if (voiceTTSBuffers[sessionId]) voiceTTSBuffers[sessionId].gotStreamingThisTurn = false;
-      }
+      // Flush any partial-sentence tail into TTS, reset per-turn flag
+      if (voiceModeOn.has(sessionId)) flushSpeakBuffer(sessionId);
+      interactiveStreamedThisTurn.delete(sessionId);
       refreshModalById(projectId);
       renderAgentConsole();
       es.close();
@@ -11022,7 +11021,14 @@ setInterval(refreshScheduleBanner, 60000);
 
 // ── Fallback: poll for missed agent completions every 15s ───────────────────
 setInterval(async () => {
-  const running = agentHistory.filter(h => h.status === 'running' || h.status === 'idle');
+  // Exclude Mode C (interactive) sessions — they live in a separate registry
+  // (interactive_sessions) and don't appear in /agent/status. Including them
+  // here would flip them to 'error' on every poll because serverMap[sid] is
+  // always undefined for them.
+  const running = agentHistory.filter(h =>
+    (h.status === 'running' || h.status === 'idle') &&
+    !interactiveSessions.has(h.sessionId)
+  );
   if (running.length === 0) return;
   const checked = new Set();
   for (const h of running) {
