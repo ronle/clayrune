@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mission Control — Friendly redesign</title>
+<link rel="stylesheet" href="theme.css?v=5">
+<style>
+  html, body { margin: 0; padding: 0; }
+  #root { min-height: 100vh; }
+  .fc-tweaks-toggle {
+    position: fixed; right: 20px; bottom: 20px; z-index: 401;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--ink, #1a1a1a); color: #fff;
+    border: 0; cursor: pointer; font-size: 20px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+  .fc-app.tweaks-open .fc-tweaks-toggle { bottom: auto; top: 20px; }
+</style>
+</head>
+<body data-screen-label="Friendly Mission Control">
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="Primitives.jsx"></script>
+<script type="text/babel" src="CardHome.jsx"></script>
+<script type="text/babel" src="ChatHome.jsx"></script>
+<script type="text/babel" src="TodayList.jsx"></script>
+<script type="text/babel" src="Settings.jsx"></script>
+<script type="text/babel" src="Onboarding.jsx"></script>
+
+<script type="text/babel">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "layout": "home",
+  "tone": "tone-warm",
+  "accent": "#e8824a",
+  "density": "density-cozy",
+  "voice": "casual",
+  "tour": false
+}/*EDITMODE-END*/;
+
+function App() {
+  const [state, setState] = React.useState(TWEAK_DEFAULTS);
+  const [active, setActive] = React.useState('home');
+  const [tweaksOpen, setTweaksOpen] = React.useState(false);
+  const firstCardRef = React.useRef(null);
+  const ctaRef = React.useRef(null);
+  const refs = { 'first-card': firstCardRef, 'cta': ctaRef };
+
+  // Edit mode bridge
+  React.useEffect(() => {
+    const onMsg = (e) => {
+      const d = e.data || {};
+      if (d.type === '__activate_edit_mode')   setTweaksOpen(true);
+      if (d.type === '__deactivate_edit_mode') setTweaksOpen(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  // Persist via host
+  const persist = (next) => {
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits: next }, '*');
+  };
+  const updateState = (updater) => {
+    setState(s => {
+      const next = typeof updater === 'function' ? updater(s) : updater;
+      const diff = {};
+      Object.keys(next).forEach(k => { if (next[k] !== s[k] && k !== 'tour') diff[k] = next[k]; });
+      if (Object.keys(diff).length) persist(diff);
+      return next;
+    });
+  };
+
+  const closeTour = () => updateState(s => ({ ...s, tour: false }));
+
+  const layout = state.layout;
+  const voice = state.voice;
+
+  return (
+    <div className={'fc-app ' + state.tone + ' ' + state.density + (tweaksOpen ? ' tweaks-open' : '')}
+         style={{ '--accent': state.accent, '--accent-ink': contrastInk(state.accent) }}>
+      <div className={'fc-shell' + (layout === 'chat' ? ' no-sidebar' : '')}>
+        {layout !== 'chat' && <window.Sidebar active={active} onNav={setActive} voice={voice} variant={layout} />}
+        <main className="fc-main">
+          {active === 'settings'
+            ? <window.SettingsPage state={state} updateState={updateState} />
+            : <>
+                {layout === 'home'  && <window.CardHomeLayout voice={voice} refs={refs} />}
+                {layout === 'chat'  && <window.ChatHomeLayout voice={voice} />}
+                {layout === 'today' && <window.TodayListLayout voice={voice} />}
+              </>
+          }
+        </main>
+      </div>
+
+      {state.tour && <window.OnboardingTour onClose={closeTour} refs={refs} />}
+
+      <window.TweaksPanel state={state} setState={updateState} />
+      <button className="fc-tweaks-toggle" onClick={() => setTweaksOpen(o => !o)} title="Tweaks">⚙</button>
+    </div>
+  );
+}
+
+function contrastInk(hex) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6 ? '#1a1a1a' : '#ffffff';
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
