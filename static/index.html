@@ -9308,11 +9308,12 @@ function openNewProjectForm() {
       <div class="form-group">
         <label>Project Path (optional)</label>
         <div style="display:flex;gap:6px;align-items:center">
-          <input type="text" id="new-proj-path" placeholder="C:\\Users\\...\\MyProject" style="flex:1"
+          <input type="text" id="new-proj-path" placeholder="Leave blank to auto-create a folder" style="flex:1"
                  onkeydown="if(event.key==='Enter'){event.preventDefault();browseTo(this.value)}">
           <button class="btn-add" style="padding:6px 14px;font-size:12px;white-space:nowrap"
                   onclick="toggleFolderBrowser()" id="browse-toggle-btn">Browse</button>
         </div>
+        <div class="hint">If blank, a dedicated folder will be created under your auto-workspace base. Each project needs its own folder.</div>
         <div id="folder-browser" style="display:none;margin-top:8px">
           <div id="folder-breadcrumb" class="folder-breadcrumb"></div>
           <div id="folder-listing" class="folder-listing"></div>
@@ -9564,7 +9565,7 @@ async function createProject() {
       body: JSON.stringify({ name, domain, status: 'active', project_path: path })
     });
     const data = await res.json();
-    if (!data.ok) { alert(data.error || 'Failed to create project'); return; }
+    if (!res.ok || !data.ok) { alert(data.error || 'Failed to create project'); return; }
     newProjDomain = 'general';
     closeModalById('__new_project');
     await refreshSilent();
@@ -9723,6 +9724,10 @@ async function _renderSettings() {
       <div class="settings-row">
         <div><div class="settings-label">Projects Base</div><div class="settings-hint">Root directory for project file browsing</div></div>
         ${textInput('projects_base', cfg.projects_base)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Auto Workspace Base</div><div class="settings-hint">Folder where new projects without a path get their dedicated subfolder</div></div>
+        ${textInput('auto_workspace_base', cfg.auto_workspace_base || '')}
       </div>
       <div class="settings-row">
         <div><div class="settings-label">Shared Rules Path</div><div class="settings-hint">Path to global SHARED_RULES.md</div></div>

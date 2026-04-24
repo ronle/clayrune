@@ -133,6 +133,7 @@ def _load_config():
         'port': 5199,
         'shared_rules_path': str(_DATA_ROOT / 'data' / 'SHARED_RULES.md'),
         'projects_base': str(Path.home()),
+        'auto_workspace_base': str(Path.home() / 'MissionControl'),
         'agent_model': '',
         'agent_max_turns': 0,
         'agent_permission_mode': '',
@@ -620,8 +621,49 @@ def update_project(project_id):
         return jsonify({'error': 'no data'}), 400
 
     filepath = DATA_DIR / f'{project_id}.json'
-    existing = json.loads(filepath.read_text(encoding='utf-8')) if filepath.exists() else {'id': project_id}
+    is_new = not filepath.exists()
+    existing = json.loads(filepath.read_text(encoding='utf-8')) if not is_new else {'id': project_id}
     existing.setdefault('backlog', [])
+
+    # ── Auto-create a dedicated workspace folder when creating a project with no path.
+    if is_new:
+        provided_path = (data.get('project_path') or '').strip()
+        if not provided_path:
+            base = Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+                candidate = base / project_id
+                n = 1
+                while candidate.exists():
+                    candidate = base / f'{project_id}_{n}'
+                    n += 1
+                candidate.mkdir(parents=True, exist_ok=True)
+                data['project_path'] = str(candidate)
+            except Exception as e:
+                return jsonify({'error': f'could not create workspace folder: {e}'}), 500
+
+    # ── Prevent two projects from sharing the same folder.
+    candidate_path = (data.get('project_path') or '').strip()
+    if candidate_path:
+        try:
+            resolved = str(Path(candidate_path).resolve()).lower() if os.name == 'nt' else str(Path(candidate_path).resolve())
+        except Exception:
+            resolved = candidate_path
+        for pf in DATA_DIR.glob('*.json'):
+            if pf.stem == project_id or pf.stem.endswith('_agent_log'):
+                continue
+            try:
+                with open(pf, encoding='utf-8') as f:
+                    other = json.load(f)
+                op = (other.get('project_path') or '').strip()
+                if not op:
+                    continue
+                other_resolved = str(Path(op).resolve()).lower() if os.name == 'nt' else str(Path(op).resolve())
+                if other_resolved == resolved:
+                    name = other.get('name') or pf.stem
+                    return jsonify({'error': f'Path already used by project "{name}". Each project needs its own folder.'}), 409
+            except Exception:
+                continue
 
     for k, v in data.items():
         if k not in ('log_msg', 'backlog'):

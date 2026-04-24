@@ -1,5 +1,17 @@
 # Mission Control — Changelog
 
+## [2026-04-23b] — Auto-create project folder on new project
+
+### Auto workspace folder
+- **New projects with no path get their own folder.** On `POST /api/project/<id>`, if this is the project's first write and `project_path` is blank, server creates `<auto_workspace_base>/<project_id>/` and assigns it. Collisions get `_1`, `_2`, etc. suffixes.
+- **Each project needs its own folder.** On any write that sets `project_path`, server scans other project JSONs and rejects with **409** if the resolved path already belongs to another project. Windows paths compared case-insensitively.
+- **`auto_workspace_base` config key** (default: `~/MissionControl`). Exposed in Settings → Paths & Server as "Auto Workspace Base".
+
+### New-Project form copy
+- Path placeholder changed from `C:\Users\...\MyProject` to `Leave blank to auto-create a folder`.
+- Inline hint under the field: *"If blank, a dedicated folder will be created under your auto-workspace base. Each project needs its own folder."*
+- `createProject()` now surfaces server errors correctly by checking `res.ok` in addition to `data.ok` (so the 409 path-collision message reaches the user).
+
 ## [2026-04-23] — Tile Redesign, Mode-C/Audio Split, Favicon, Cross-Project Backlog
 
 ### Tile redesign (design-handoff aligned)
