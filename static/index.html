@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mission Control</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8824a'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Nunito,Inter,sans-serif' font-weight='800' font-size='18' fill='%23ffffff'%3EM%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#e8824a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Nunito:wght@600;700;800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
@@ -399,7 +401,7 @@
   /* ── TILE CARD (grid view) ─────────────────────────────────────── */
   .card {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 2px solid var(--border);
     border-radius: 14px;
     overflow: hidden;
     transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
@@ -411,7 +413,9 @@
     user-select: none;
   }
   body.tone-warm .card,
-  body.tone-warm .list-row { border: 1.5px solid var(--border2); }
+  body.tone-warm .list-row,
+  body.tone-editorial .card,
+  body.tone-editorial .list-row { border: 2px solid var(--border2); }
   /* Status-aware border for "needs attention" states (no left stripe).
      !important so they override the per-project color set inline on .card. */
   .card.status-blocked,  .card.friendly-stuck  { border-color: var(--red) !important; }
