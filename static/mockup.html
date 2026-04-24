@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mission Control — UI Redesign Mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── RESET & BASE ──────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  height: 100vh;
+  display: flex;
+}
+
+/* ── COLOR SYSTEM (refined — fewer competing colors) ──── */
+:root {
+  --bg:          #0c0e14;
+  --surface:     #14171f;
+  --surface2:    #1a1e28;
+  --surface3:    #222733;
+  --border:      #252a38;
+  --border2:     #333a4d;
+  --text:        #e8ecf4;
+  --text-dim:    #8e99ae;
+  --text-faint:  #556070;
+  --accent:      #5b9ef5;
+  --accent-dim:  #1a3a6a;
+  --accent-soft: #3a6bb5;
+  --green:       #34d399;
+  --green-dim:   #163326;
+  --green-text:  #6ee7b7;
+  --amber:       #f0b429;
+  --amber-dim:   #3a2e10;
+  --amber-text:  #fcd34d;
+  --red:         #f06060;
+  --red-dim:     #3a1616;
+  --red-text:    #fca5a5;
+  --sidebar-w:   52px;
+  --sidebar-exp: 220px;
+  --header-h:    48px;
+}
+
+/* ── SIDEBAR ──────────────────────────────────────────── */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: width 0.2s ease;
+  overflow: hidden;
+  z-index: 200;
+}
+.sidebar:hover, .sidebar.expanded {
+  width: var(--sidebar-exp);
+}
+.sidebar-logo {
+  height: var(--header-h);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar-logo .logo-icon {
+  width: 24px; height: 24px;
+  background: var(--accent);
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 13px; color: #fff;
+  flex-shrink: 0;
+}
+.sidebar-logo .logo-text {
+  font-size: 13px; font-weight: 700; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--accent);
+  white-space: nowrap; opacity: 0;
+  transition: opacity 0.15s;
+}
+.sidebar:hover .logo-text, .sidebar.expanded .logo-text { opacity: 1; }
+
+.sidebar-nav { flex: 1; padding: 8px 0; overflow-y: auto; }
+.sidebar-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px; margin: 1px 6px; border-radius: 6px;
+  color: var(--text-dim); cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap; font-size: 13px; font-weight: 500;
+}
+.sidebar-item:hover { background: var(--surface2); color: var(--text); }
+.sidebar-item.active { background: var(--accent-dim); color: var(--accent); }
+.sidebar-item .si-icon {
+  width: 24px; height: 24px; display: flex;
+  align-items: center; justify-content: center;
+  font-size: 16px; flex-shrink: 0;
+}
+.sidebar-item .si-label {
+  opacity: 0; transition: opacity 0.15s;
+}
+.sidebar:hover .si-label, .sidebar.expanded .si-label { opacity: 1; }
+.sidebar-divider { height: 1px; background: var(--border); margin: 8px 14px; }
+
+.sidebar-projects { padding: 4px 0; }
+.sidebar-project {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 14px; margin: 1px 6px; border-radius: 6px;
+  cursor: pointer; transition: background 0.12s;
+  white-space: nowrap;
+}
+.sidebar-project:hover { background: var(--surface2); }
+.sidebar-project .sp-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.sidebar-project .sp-name {
+  font-size: 12px; color: var(--text-dim); font-weight: 500;
+  opacity: 0; transition: opacity 0.15s;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.sidebar:hover .sp-name, .sidebar.expanded .sp-name { opacity: 1; }
+
+/* ── MAIN AREA ────────────────────────────────────────── */
+.main-area {
+  flex: 1; display: flex; flex-direction: column;
+  min-width: 0; overflow: hidden;
+}
+
+/* ── HEADER (slim) ────────────────────────────────────── */
+.header {
+  height: var(--header-h);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.header-left { display: flex; align-items: center; gap: 16px; }
+.header-breadcrumb {
+  font-size: 13px; color: var(--text-dim); font-weight: 500;
+}
+.header-breadcrumb strong { color: var(--text); font-weight: 600; }
+
+.header-right { display: flex; align-items: center; gap: 12px; }
+.header-search {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 6px;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text-faint); font-size: 12px; cursor: pointer;
+  transition: border-color 0.15s;
+}
+.header-search:hover { border-color: var(--border2); }
+.header-search kbd {
+  font-family: 'Inter', sans-serif; font-size: 10px;
+  background: var(--surface3); padding: 1px 5px; border-radius: 3px;
+  color: var(--text-faint); border: 1px solid var(--border2);
+}
+
+.metric-pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 5px;
+  font-size: 11px; font-weight: 600; color: var(--text-dim);
+  background: var(--surface2);
+}
+.metric-pill .mp-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+}
+.metric-pill .mp-value { color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+.live-badge {
+  display: flex; align-items: center; gap: 5px;
+  color: var(--green-text); font-size: 10px;
+  font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+}
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 2.5s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+/* ── METRICS ROW (replaces stats bar) ─────────────────── */
+.metrics-row {
+  display: flex; align-items: center; gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.metric-card {
+  flex: 1; padding: 10px 20px;
+  border-right: 1px solid var(--border);
+  cursor: pointer; transition: background 0.12s;
+}
+.metric-card:last-child { border-right: none; }
+.metric-card:hover { background: var(--surface2); }
+.metric-card .mc-label {
+  font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600; margin-bottom: 3px;
+}
+.metric-card .mc-value {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  display: flex; align-items: baseline; gap: 6px;
+}
+.metric-card .mc-value .mc-unit { font-size: 11px; color: var(--text-dim); font-weight: 500; }
+.metric-card .mc-trend {
+  font-size: 10px; margin-top: 2px; font-weight: 600;
+}
+.mc-trend.up { color: var(--green-text); }
+.mc-trend.down { color: var(--red-text); }
+
+/* ── CONTENT AREA ─────────────────────────────────────── */
+.content-area {
+  flex: 1; display: flex; overflow: hidden;
+}
+.content-main {
+  flex: 1; overflow-y: auto; padding: 16px 20px;
+  min-width: 0;
+}
+
+/* ── TOOLBAR (replaces filter row — inline) ───────────── */
+.toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.toolbar-left { display: flex; align-items: center; gap: 8px; }
+.toolbar-right { display: flex; align-items: center; gap: 8px; }
+
+.view-toggle {
+  display: flex; background: var(--surface2); border-radius: 6px;
+  border: 1px solid var(--border); overflow: hidden;
+}
+.view-toggle button {
+  background: none; border: none; color: var(--text-faint);
+  padding: 5px 10px; font-size: 13px; cursor: pointer;
+  transition: all 0.12s;
+}
+.view-toggle button.active { background: var(--accent-dim); color: var(--accent); }
+.view-toggle button:hover:not(.active) { color: var(--text-dim); }
+
+.filter-dropdown {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 6px;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: border-color 0.15s;
+}
+.filter-dropdown:hover { border-color: var(--border2); color: var(--text); }
+.filter-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 4px;
+  background: var(--accent-dim); color: var(--accent);
+  font-size: 11px; font-weight: 600;
+}
+.filter-pill .fp-x { cursor: pointer; opacity: 0.6; }
+.filter-pill .fp-x:hover { opacity: 1; }
+
+.btn-new {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 14px; border-radius: 6px;
+  background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 600; border: none;
+  cursor: pointer; transition: opacity 0.12s;
+}
+.btn-new:hover { opacity: 0.9; }
+
+/* ── TILE GRID VIEW ───────────────────────────────────── */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  position: relative;
+  aspect-ratio: 5 / 4;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+}
+.tile::before {
+  content: ''; position: absolute;
+  left: 0; top: 0; bottom: 0; width: 3px;
+}
+.tile.s-active::before { background: var(--green); }
+.tile.s-blocked::before { background: var(--red); }
+.tile.s-waiting::before { background: var(--amber); }
+.tile.s-parked::before { background: var(--text-faint); }
+.tile:hover { border-color: var(--border2); box-shadow: 0 4px 16px rgba(0,0,0,0.3); transform: translateY(-1px); }
+
+.tile-header {
+  padding: 14px 14px 8px 16px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.tile-title-row { display: flex; align-items: center; gap: 8px; }
+.tile-name {
+  font-size: 14px; font-weight: 700; color: var(--text);
+  line-height: 1.2; letter-spacing: 0.1px;
+}
+.tile-domain {
+  font-size: 9px; padding: 2px 6px; border-radius: 3px;
+  letter-spacing: 0.6px; text-transform: uppercase; font-weight: 700;
+  white-space: nowrap;
+}
+.tile-status-row { display: flex; align-items: center; gap: 6px; }
+.tile-status {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px;
+  font-weight: 600; letter-spacing: 0.3px;
+}
+.tile-status.s-active { background: var(--green-dim); color: var(--green-text); }
+.tile-status.s-blocked { background: var(--red-dim); color: var(--red-text); }
+.tile-status.s-waiting { background: var(--amber-dim); color: var(--amber-text); }
+.tile-status.s-parked { background: var(--surface3); color: var(--text-faint); }
+.tile-agent-badge {
+  font-size: 9px; padding: 2px 7px; border-radius: 10px;
+  background: var(--green-dim); color: var(--green-text);
+  font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  animation: pulse 2s infinite;
+}
+
+.tile-body {
+  flex: 1; padding: 0 14px 0 16px;
+  display: flex; flex-direction: column; gap: 4px;
+  overflow: hidden;
+}
+.tile-task {
+  font-size: 12px; line-height: 1.4; color: var(--text-dim);
+  display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+.tile-task.running { color: var(--green-text); }
+.tile-task.idle { color: var(--text-faint); }
+.tile-next {
+  font-size: 10px; color: var(--text-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.tile-footer {
+  padding: 8px 14px 10px 16px;
+  display: flex; align-items: center; gap: 6px;
+  margin-top: auto;
+}
+.tile-backlog-badge {
+  font-size: 9px; padding: 2px 7px; border-radius: 3px;
+  background: var(--amber-dim); color: var(--amber-text); font-weight: 600;
+}
+.tile-time {
+  font-size: 10px; color: var(--text-faint);
+  margin-left: auto; font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── LIST VIEW ────────────────────────────────────────── */
+.list-view { display: flex; flex-direction: column; gap: 1px; }
+.list-header {
+  display: grid;
+  grid-template-columns: 3px 200px 80px 1fr 1fr 100px 80px;
+  gap: 12px; padding: 8px 16px;
+  font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.list-row {
+  display: grid;
+  grid-template-columns: 3px 200px 80px 1fr 1fr 100px 80px;
+  gap: 12px; padding: 10px 16px;
+  align-items: center;
+  background: var(--surface);
+  border-radius: 6px;
+  cursor: pointer; transition: background 0.12s;
+}
+.list-row:hover { background: var(--surface2); }
+.list-row .lr-indicator {
+  width: 3px; height: 24px; border-radius: 2px;
+}
+.list-row .lr-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.list-row .lr-status {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px;
+  font-weight: 600; text-align: center; width: fit-content;
+}
+.list-row .lr-task {
+  font-size: 12px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.list-row .lr-next {
+  font-size: 11px; color: var(--text-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.list-row .lr-agent {
+  font-size: 10px; color: var(--text-faint); text-align: center;
+}
+.list-row .lr-agent.running { color: var(--green-text); font-weight: 600; }
+.list-row .lr-updated {
+  font-size: 10px; color: var(--text-faint);
+  font-family: 'JetBrains Mono', monospace; text-align: right;
+}
+
+/* ── FEED COLUMN (refined) ────────────────────────────── */
+.feed-col {
+  width: 320px; flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  background: var(--surface);
+  overflow: hidden;
+}
+.feed-header {
+  padding: 12px 16px;
+  font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.feed-header .fh-toggle {
+  font-size: 14px; cursor: pointer; color: var(--text-faint);
+  transition: color 0.12s;
+}
+.feed-header .fh-toggle:hover { color: var(--text); }
+.feed-entries {
+  flex: 1; overflow-y: auto; padding: 8px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.feed-entry {
+  padding: 10px 12px; border-radius: 6px;
+  border-left: 2px solid transparent;
+  transition: background 0.12s, border-color 0.12s;
+  cursor: pointer;
+}
+.feed-entry:hover { background: var(--surface2); border-left-color: var(--accent); }
+.feed-entry .fe-project {
+  font-size: 11px; font-weight: 600; color: var(--text);
+  margin-bottom: 2px;
+}
+.feed-entry .fe-msg {
+  font-size: 11px; color: var(--text-dim); line-height: 1.4;
+}
+.feed-entry .fe-time {
+  font-size: 10px; color: var(--text-faint); margin-top: 3px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── COMMAND PALETTE ──────────────────────────────────── */
+.cmd-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 20vh;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.15s;
+}
+.cmd-overlay.visible { opacity: 1; pointer-events: auto; }
+.cmd-palette {
+  width: 520px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  overflow: hidden;
+  transform: translateY(-10px) scale(0.98);
+  transition: transform 0.15s ease;
+}
+.cmd-overlay.visible .cmd-palette { transform: translateY(0) scale(1); }
+.cmd-input-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.cmd-input-row .ci-icon { font-size: 16px; color: var(--text-faint); }
+.cmd-input {
+  flex: 1; background: none; border: none; outline: none;
+  font-family: 'Inter', sans-serif; font-size: 15px;
+  color: var(--text); font-weight: 500;
+}
+.cmd-input::placeholder { color: var(--text-faint); }
+.cmd-results { max-height: 320px; overflow-y: auto; padding: 6px; }
+.cmd-group-label {
+  font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600;
+  padding: 8px 12px 4px;
+}
+.cmd-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 6px;
+  cursor: pointer; transition: background 0.1s;
+}
+.cmd-item:hover, .cmd-item.selected { background: var(--accent-dim); }
+.cmd-item .ci-icon { font-size: 15px; color: var(--text-dim); width: 20px; text-align: center; }
+.cmd-item .ci-text { font-size: 13px; color: var(--text); font-weight: 500; }
+.cmd-item .ci-hint {
+  margin-left: auto; font-size: 10px; color: var(--text-faint);
+  font-family: 'JetBrains Mono', monospace;
+}
+.cmd-footer {
+  padding: 8px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 16px;
+  font-size: 10px; color: var(--text-faint);
+}
+.cmd-footer kbd {
+  font-family: 'Inter', sans-serif; font-size: 9px;
+  background: var(--surface3); padding: 1px 4px; border-radius: 2px;
+  border: 1px solid var(--border2);
+}
+
+/* ── MOCK MODAL (condensed header) ────────────────────── */
+.mock-modal {
+  position: fixed; top: 60px; right: 40px;
+  width: 560px; height: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  z-index: 500;
+  display: none; flex-direction: column;
+  overflow: hidden;
+}
+.mock-modal.visible { display: flex; }
+.mm-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.mm-header-left { display: flex; align-items: center; gap: 10px; }
+.mm-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.mm-path { font-size: 11px; color: var(--text-faint); }
+.mm-header-right { display: flex; align-items: center; gap: 8px; }
+.mm-btn {
+  background: none; border: none; color: var(--text-faint);
+  font-size: 14px; cursor: pointer; padding: 4px;
+  transition: color 0.12s;
+}
+.mm-btn:hover { color: var(--text); }
+
+.mm-status-bar {
+  display: flex; align-items: center; gap: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0; font-size: 12px;
+}
+.mm-status-item {
+  flex: 1; padding: 8px 16px;
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.mm-status-item:last-child { border-right: none; }
+.mm-status-label {
+  font-size: 9px; letter-spacing: 0.6px; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600;
+}
+.mm-status-value {
+  font-size: 12px; color: var(--text-dim); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mm-status-value.running { color: var(--green-text); }
+
+.mm-tabs {
+  display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.mm-tab {
+  padding: 8px 16px; font-size: 12px; font-weight: 500;
+  color: var(--text-faint); cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.12s;
+}
+.mm-tab:hover { color: var(--text-dim); }
+.mm-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.mm-body {
+  flex: 1; overflow-y: auto; padding: 16px;
+}
+.mm-placeholder {
+  color: var(--text-faint); font-size: 12px;
+  text-align: center; padding: 40px 0;
+}
+
+/* ── SCROLLBAR ────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border2); }
+
+/* ── ANNOTATION BADGES ────────────────────────────────── */
+.annotation {
+  position: absolute;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  z-index: 1000;
+  pointer-events: none;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+</style>
+</head>
+<body>
+
+<!-- ── SIDEBAR ──────────────────────────────────────── -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">M</div>
+    <span class="logo-text">Mission Ctrl</span>
+  </div>
+  <div class="sidebar-nav">
+    <div class="sidebar-item active">
+      <span class="si-icon">&#x25A6;</span>
+      <span class="si-label">Dashboard</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="si-icon">&#x23F1;</span>
+      <span class="si-label">Scheduler</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="si-icon">&#x2699;</span>
+      <span class="si-label">Settings</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="si-icon">&#x1F4DC;</span>
+      <span class="si-label">Shared Rules</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="si-icon">&#x2630;</span>
+      <span class="si-label">Processes</span>
+    </div>
+    <div class="sidebar-divider"></div>
+    <div style="padding:4px 14px;opacity:0;transition:opacity 0.15s" class="sidebar-section-label">
+      <span style="font-size:10px;letter-spacing:0.8px;text-transform:uppercase;color:var(--text-faint);font-weight:600">Projects</span>
+    </div>
+    <div class="sidebar-projects">
+      <div class="sidebar-project">
+        <div class="sp-dot" style="background:var(--green)"></div>
+        <span class="sp-name">Fl3 V2</span>
+      </div>
+      <div class="sidebar-project">
+        <div class="sp-dot" style="background:var(--green)"></div>
+        <span class="sp-name">Mission Control</span>
+      </div>
+      <div class="sidebar-project">
+        <div class="sp-dot" style="background:var(--amber)"></div>
+        <span class="sp-name">Prism Engine</span>
+      </div>
+      <div class="sidebar-project">
+        <div class="sp-dot" style="background:var(--text-faint)"></div>
+        <span class="sp-name">Doc Generator</span>
+      </div>
+      <div class="sidebar-project">
+        <div class="sp-dot" style="background:var(--red)"></div>
+        <span class="sp-name">Auth Service</span>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- ── MAIN AREA ───────────────────────────────────── -->
+<div class="main-area">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <span class="header-breadcrumb"><strong>Dashboard</strong> &middot; 5 projects</span>
+    </div>
+    <div class="header-right">
+      <div class="header-search" onclick="toggleCmd()">
+        <span>Search or command...</span>
+        <kbd>Ctrl+K</kbd>
+      </div>
+      <div class="metric-pill">
+        <div class="mp-dot" style="background:var(--green)"></div>
+        <span>3 agents</span>
+      </div>
+      <div class="metric-pill">
+        <span class="mp-value">$4.82</span>
+        <span>today</span>
+      </div>
+      <div class="live-badge"><div class="live-dot"></div>Live</div>
+    </div>
+  </div>
+
+  <!-- Metrics Row -->
+  <div class="metrics-row">
+    <div class="metric-card">
+      <div class="mc-label">Active Agents</div>
+      <div class="mc-value">3 <span class="mc-unit">/ 5 projects</span></div>
+      <div class="mc-trend up">+2 since yesterday</div>
+    </div>
+    <div class="metric-card">
+      <div class="mc-label">Cost Today</div>
+      <div class="mc-value">$4.82 <span class="mc-unit">USD</span></div>
+      <div class="mc-trend down">-12% vs avg</div>
+    </div>
+    <div class="metric-card">
+      <div class="mc-label">Tasks Completed</div>
+      <div class="mc-value">14 <span class="mc-unit">this session</span></div>
+      <div class="mc-trend up">6 in last hour</div>
+    </div>
+    <div class="metric-card">
+      <div class="mc-label">Errors</div>
+      <div class="mc-value">1 <span class="mc-unit">needs attention</span></div>
+      <div class="mc-trend" style="color:var(--amber-text)">Auth Service — timeout</div>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content-area">
+    <div class="content-main">
+
+      <!-- Toolbar (replaces filter row) -->
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <div class="view-toggle">
+            <button class="active" onclick="showGrid()" title="Grid view">&#x25A6;</button>
+            <button onclick="showList()" title="List view">&#x2630;</button>
+          </div>
+          <div class="filter-dropdown" onclick="this.querySelector('.fd-menu').classList.toggle('visible')">
+            <span>&#x25BC;</span> Filter
+          </div>
+          <div class="filter-pill">Active <span class="fp-x">&times;</span></div>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn-new">+ New Project</button>
+        </div>
+      </div>
+
+      <!-- Grid View -->
+      <div class="tile-grid" id="grid-view">
+        <!-- Tile 1: Active with agent -->
+        <div class="tile s-active" onclick="document.getElementById('mock-modal').classList.add('visible')">
+          <div class="tile-header">
+            <div class="tile-title-row">
+              <span class="tile-name">Fl3 V2</span>
+              <span class="tile-domain" style="background:#163326;color:#6ee7b7">Fullstack</span>
+            </div>
+            <div class="tile-status-row">
+              <span class="tile-status s-active">active</span>
+              <span class="tile-agent-badge">Agent</span>
+            </div>
+          </div>
+          <div class="tile-body">
+            <div class="tile-task running">Hivemind: 4/6 done, 2 active — Refactor auth module</div>
+            <div class="tile-next">Next: Implement rate limiting middleware</div>
+          </div>
+          <div class="tile-footer">
+            <span class="tile-backlog-badge">3 open</span>
+            <span class="tile-time">2m ago</span>
+          </div>
+        </div>
+
+        <!-- Tile 2: Active with agent -->
+        <div class="tile s-active">
+          <div class="tile-header">
+            <div class="tile-title-row">
+              <span class="tile-name">Mission Control</span>
+              <span class="tile-domain" style="background:#1a3a6a;color:#5b9ef5">DevTools</span>
+            </div>
+            <div class="tile-status-row">
+              <span class="tile-status s-active">active</span>
+              <span class="tile-agent-badge">Agent</span>
+            </div>
+          </div>
+          <div class="tile-body">
+            <div class="tile-task running">Fix hivemind workstream auto-completion</div>
+            <div class="tile-next">UI redesign mockup</div>
+          </div>
+          <div class="tile-footer">
+            <span class="tile-backlog-badge">5 open</span>
+            <span class="tile-time">just now</span>
+          </div>
+        </div>
+
+        <!-- Tile 3: Waiting -->
+        <div class="tile s-waiting">
+          <div class="tile-header">
+            <div class="tile-title-row">
+              <span class="tile-name">Prism Engine</span>
+              <span class="tile-domain" style="background:#3a2e10;color:#fcd34d">ML</span>
+            </div>
+            <div class="tile-status-row">
+              <span class="tile-status s-waiting">waiting</span>
+            </div>
+          </div>
+          <div class="tile-body">
+            <div class="tile-task" style="color:var(--accent)">Awaiting plan approval</div>
+            <div class="tile-next">Add transformer attention visualization</div>
+          </div>
+          <div class="tile-footer">
+            <span class="tile-backlog-badge">8 open</span>
+            <span class="tile-time">15m ago</span>
+          </div>
+        </div>
+
+        <!-- Tile 4: Active idle -->
+        <div class="tile s-active">
+          <div class="tile-header">
+            <div class="tile-title-row">
+              <span class="tile-name">Doc Generator</span>
+              <span class="tile-domain" style="background:var(--surface3);color:var(--text-dim)">Utility</span>
+            </div>
+            <div class="tile-status-row">
+              <span class="tile-status s-active">active</span>
+            </div>
+          </div>
+          <div class="tile-body">
+            <div class="tile-task idle">Idle</div>
+            <div class="tile-next">Generate API docs from OpenAPI spec</div>
+          </div>
+          <div class="tile-footer">
+            <span class="tile-backlog-badge">2 open</span>
+            <span class="tile-time">1h ago</span>
+          </div>
+        </div>
+
+        <!-- Tile 5: Blocked -->
+        <div class="tile s-blocked">
+          <div class="tile-header">
+            <div class="tile-title-row">
+              <span class="tile-name">Auth Service</span>
+              <span class="tile-domain" style="background:#3a1616;color:#fca5a5">Backend</span>
+            </div>
+            <div class="tile-status-row">
+              <span class="tile-status s-blocked">blocked</span>
+            </div>
+          </div>
+          <div class="tile-body">
+            <div class="tile-task" style="color:var(--red-text)">Error: OAuth token refresh failed</div>
+            <div class="tile-next">Fix token refresh endpoint</div>
+          </div>
+          <div class="tile-footer">
+            <span class="tile-backlog-badge">4 open</span>
+            <span class="tile-time">32m ago</span>
+          </div>
+        </div>
+
+        <!-- Tile 6: Parked -->
+        <div class="tile s-parked">
+          <div class="tile-header">
+            <div class="tile-title-row">
+              <span class="tile-name">Landing Page</span>
+              <span class="tile-domain" style="background:var(--surface3);color:var(--text-dim)">Frontend</span>
+            </div>
+            <div class="tile-status-row">
+              <span class="tile-status s-parked">parked</span>
+            </div>
+          </div>
+          <div class="tile-body">
+            <div class="tile-task idle">Done: Hero section A/B test</div>
+          </div>
+          <div class="tile-footer">
+            <span class="tile-time">2d ago</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- List View (hidden by default) -->
+      <div class="list-view" id="list-view" style="display:none">
+        <div class="list-header">
+          <span></span>
+          <span>Project</span>
+          <span>Status</span>
+          <span>Current Task</span>
+          <span>Next Up</span>
+          <span>Agent</span>
+          <span style="text-align:right">Updated</span>
+        </div>
+        <div class="list-row">
+          <div class="lr-indicator" style="background:var(--green)"></div>
+          <div class="lr-name">Fl3 V2</div>
+          <div class="lr-status s-active" style="background:var(--green-dim);color:var(--green-text)">active</div>
+          <div class="lr-task" style="color:var(--green-text)">Hivemind: 4/6 done, 2 active</div>
+          <div class="lr-next">Rate limiting middleware</div>
+          <div class="lr-agent running">Running</div>
+          <div class="lr-updated">2m</div>
+        </div>
+        <div class="list-row">
+          <div class="lr-indicator" style="background:var(--green)"></div>
+          <div class="lr-name">Mission Control</div>
+          <div class="lr-status s-active" style="background:var(--green-dim);color:var(--green-text)">active</div>
+          <div class="lr-task" style="color:var(--green-text)">Fix hivemind auto-completion</div>
+          <div class="lr-next">UI redesign mockup</div>
+          <div class="lr-agent running">Running</div>
+          <div class="lr-updated">now</div>
+        </div>
+        <div class="list-row">
+          <div class="lr-indicator" style="background:var(--amber)"></div>
+          <div class="lr-name">Prism Engine</div>
+          <div class="lr-status" style="background:var(--amber-dim);color:var(--amber-text)">waiting</div>
+          <div class="lr-task" style="color:var(--accent)">Awaiting plan approval</div>
+          <div class="lr-next">Attention visualization</div>
+          <div class="lr-agent" style="color:var(--accent)">Idle</div>
+          <div class="lr-updated">15m</div>
+        </div>
+        <div class="list-row">
+          <div class="lr-indicator" style="background:var(--green)"></div>
+          <div class="lr-name">Doc Generator</div>
+          <div class="lr-status s-active" style="background:var(--green-dim);color:var(--green-text)">active</div>
+          <div class="lr-task idle" style="color:var(--text-faint)">Idle</div>
+          <div class="lr-next">API docs from OpenAPI spec</div>
+          <div class="lr-agent">—</div>
+          <div class="lr-updated">1h</div>
+        </div>
+        <div class="list-row">
+          <div class="lr-indicator" style="background:var(--red)"></div>
+          <div class="lr-name">Auth Service</div>
+          <div class="lr-status" style="background:var(--red-dim);color:var(--red-text)">blocked</div>
+          <div class="lr-task" style="color:var(--red-text)">OAuth token refresh failed</div>
+          <div class="lr-next">Fix refresh endpoint</div>
+          <div class="lr-agent" style="color:var(--red-text)">Error</div>
+          <div class="lr-updated">32m</div>
+        </div>
+        <div class="list-row">
+          <div class="lr-indicator" style="background:var(--text-faint)"></div>
+          <div class="lr-name">Landing Page</div>
+          <div class="lr-status" style="background:var(--surface3);color:var(--text-faint)">parked</div>
+          <div class="lr-task" style="color:var(--text-dim)">Done: Hero section A/B test</div>
+          <div class="lr-next">—</div>
+          <div class="lr-agent">—</div>
+          <div class="lr-updated">2d</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Feed Column -->
+    <div class="feed-col">
+      <div class="feed-header">
+        Activity Feed
+        <span class="fh-toggle" title="Collapse feed">&#x276E;</span>
+      </div>
+      <div class="feed-entries">
+        <div class="feed-entry">
+          <div class="fe-project">Mission Control</div>
+          <div class="fe-msg">Agent completed: Fix hivemind workstream auto-completion</div>
+          <div class="fe-time">just now</div>
+        </div>
+        <div class="feed-entry">
+          <div class="fe-project">Fl3 V2</div>
+          <div class="fe-msg">Hivemind workstream ws_003 completed — auth module refactored</div>
+          <div class="fe-time">2m ago</div>
+        </div>
+        <div class="feed-entry">
+          <div class="fe-project">Prism Engine</div>
+          <div class="fe-msg">Agent entered plan mode — awaiting approval</div>
+          <div class="fe-time">15m ago</div>
+        </div>
+        <div class="feed-entry">
+          <div class="fe-project">Auth Service</div>
+          <div class="fe-msg" style="color:var(--red-text)">Agent error: OAuth token refresh failed after 3 retries</div>
+          <div class="fe-time">32m ago</div>
+        </div>
+        <div class="feed-entry">
+          <div class="fe-project">Mission Control</div>
+          <div class="fe-msg">Added compact tile density toggle</div>
+          <div class="fe-time">45m ago</div>
+        </div>
+        <div class="feed-entry">
+          <div class="fe-project">Fl3 V2</div>
+          <div class="fe-msg">Hivemind workstream ws_002 completed — API endpoints updated</div>
+          <div class="fe-time">1h ago</div>
+        </div>
+        <div class="feed-entry">
+          <div class="fe-project">Doc Generator</div>
+          <div class="fe-msg">Agent completed: Updated TypeScript type definitions</div>
+          <div class="fe-time">1.5h ago</div>
+        </div>
+        <div class="feed-entry">
+          <div class="fe-project">Mission Control</div>
+          <div class="fe-msg">Plan approved — implementing live status display</div>
+          <div class="fe-time">2h ago</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── COMMAND PALETTE ──────────────────────────────── -->
+<div class="cmd-overlay" id="cmd-overlay" onclick="if(event.target===this)toggleCmd()">
+  <div class="cmd-palette">
+    <div class="cmd-input-row">
+      <span class="ci-icon">&#x1F50D;</span>
+      <input class="cmd-input" placeholder="Type a command or search..." autofocus id="cmd-input">
+    </div>
+    <div class="cmd-results">
+      <div class="cmd-group-label">Projects</div>
+      <div class="cmd-item selected">
+        <span class="ci-icon">&#x25CF;</span>
+        <span class="ci-text">Open Fl3 V2</span>
+        <span class="ci-hint">active</span>
+      </div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x25CF;</span>
+        <span class="ci-text">Open Mission Control</span>
+        <span class="ci-hint">active</span>
+      </div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x25CF;</span>
+        <span class="ci-text">Open Prism Engine</span>
+        <span class="ci-hint">waiting</span>
+      </div>
+      <div class="cmd-group-label">Actions</div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x25B6;</span>
+        <span class="ci-text">Dispatch Agent</span>
+        <span class="ci-hint">ctrl+d</span>
+      </div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x2B;</span>
+        <span class="ci-text">New Project</span>
+        <span class="ci-hint">ctrl+n</span>
+      </div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x23F1;</span>
+        <span class="ci-text">Open Scheduler</span>
+      </div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x2699;</span>
+        <span class="ci-text">Settings</span>
+      </div>
+      <div class="cmd-group-label">View</div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x25A6;</span>
+        <span class="ci-text">Grid View</span>
+      </div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x2630;</span>
+        <span class="ci-text">List View</span>
+      </div>
+      <div class="cmd-item">
+        <span class="ci-icon">&#x1F5D4;</span>
+        <span class="ci-text">Minimize All</span>
+      </div>
+    </div>
+    <div class="cmd-footer">
+      <span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> navigate</span>
+      <span><kbd>Enter</kbd> select</span>
+      <span><kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── MOCK MODAL (condensed header demo) ──────────── -->
+<div class="mock-modal" id="mock-modal">
+  <div class="mm-header">
+    <div class="mm-header-left">
+      <span class="mm-name">Fl3 V2</span>
+      <span class="mm-path">~/projects/fl3-v2</span>
+    </div>
+    <div class="mm-header-right">
+      <button class="mm-btn" title="Memory">&#x1F4DD;</button>
+      <button class="mm-btn" title="Rules">&#x1F4CB;</button>
+      <button class="mm-btn" title="More">&#x22EE;</button>
+      <button class="mm-btn" onclick="document.getElementById('mock-modal').classList.remove('visible')" title="Close">&times;</button>
+    </div>
+  </div>
+  <div class="mm-status-bar">
+    <div class="mm-status-item">
+      <div class="mm-status-label">Current task</div>
+      <div class="mm-status-value running">Hivemind: 4/6 done, 2 active</div>
+    </div>
+    <div class="mm-status-item">
+      <div class="mm-status-label">Next up</div>
+      <div class="mm-status-value">Rate limiting middleware</div>
+    </div>
+  </div>
+  <div class="mm-tabs">
+    <div class="mm-tab active">Agent</div>
+    <div class="mm-tab">Backlog <span style="font-size:10px;background:var(--amber-dim);color:var(--amber-text);padding:1px 5px;border-radius:3px;margin-left:4px">3</span></div>
+    <div class="mm-tab">Agent Log</div>
+    <div class="mm-tab">Plans</div>
+    <div class="mm-tab">Hivemind</div>
+  </div>
+  <div class="mm-body">
+    <div class="mm-placeholder">
+      <div style="color:var(--green-text);font-size:11px;font-weight:600;margin-bottom:8px">&#x25CF; Agent Running</div>
+      <div style="color:var(--text-dim);font-size:12px;line-height:1.6;text-align:left;max-width:400px;margin:0 auto">
+        <div style="padding:4px 0;border-bottom:1px solid var(--border)">[tool: Read] src/auth/middleware.ts</div>
+        <div style="padding:4px 0;border-bottom:1px solid var(--border)">[tool: Edit] src/auth/middleware.ts — added rate limiter</div>
+        <div style="padding:4px 0;border-bottom:1px solid var(--border)">Implementing token bucket algorithm for rate limiting...</div>
+        <div style="padding:4px 0;color:var(--text-faint)">The rate limiter uses a sliding window approach with configurable burst capacity...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Command palette toggle
+function toggleCmd() {
+  document.getElementById('cmd-overlay').classList.toggle('visible');
+  if (document.getElementById('cmd-overlay').classList.contains('visible')) {
+    setTimeout(() => document.getElementById('cmd-input').focus(), 100);
+  }
+}
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    toggleCmd();
+  }
+  if (e.key === 'Escape') {
+    document.getElementById('cmd-overlay').classList.remove('visible');
+    document.getElementById('mock-modal').classList.remove('visible');
+  }
+});
+
+// View toggle
+function showGrid() {
+  document.getElementById('grid-view').style.display = '';
+  document.getElementById('list-view').style.display = 'none';
+  document.querySelectorAll('.view-toggle button').forEach((b,i) => {
+    b.classList.toggle('active', i === 0);
+  });
+}
+function showList() {
+  document.getElementById('grid-view').style.display = 'none';
+  document.getElementById('list-view').style.display = '';
+  document.querySelectorAll('.view-toggle button').forEach((b,i) => {
+    b.classList.toggle('active', i === 1);
+  });
+}
+
+// Sidebar section labels
+const sidebar = document.getElementById('sidebar');
+const sectionLabel = sidebar.querySelector('.sidebar-section-label');
+sidebar.addEventListener('mouseenter', () => { if(sectionLabel) sectionLabel.style.opacity = '1'; });
+sidebar.addEventListener('mouseleave', () => { if(sectionLabel) sectionLabel.style.opacity = '0'; });
+</script>
+
+</body>
+</html>
