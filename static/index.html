@@ -5511,15 +5511,26 @@ function agentPanelHTML(p) {
     } else if (!(p.id in pendingResumeId)) {
       pendingResumeId[p.id] = getDefaultResumeId(p.id);
     }
+    // Also load .jsonl-derived conversation list (captures interrupted sessions)
+    if (!conversationsCache[p.id]) {
+      loadConversations(p.id);
+    }
   }
   const picker = noActiveTab ? sessionPickerHTML(p.id) : '';
 
   // Resume indicator (shown when a prior session is selected)
   const resumeId = pendingResumeId[p.id] || null;
   const resumeIndicator = (noActiveTab && resumeId) ? (() => {
-    const entries = agentLogCache[p.id] || [];
-    const entry = entries.find(e => e.claude_session_id === resumeId);
-    const label = entry ? (entry.task || '').substring(0, 50) : resumeId.substring(0, 12);
+    const convos = conversationsCache[p.id] || [];
+    const convo = convos.find(c => c.claude_session_id === resumeId);
+    let label;
+    if (convo) {
+      label = (convo.label || convo.last_user || convo.first_user || '').substring(0, 60);
+    } else {
+      const entries = agentLogCache[p.id] || [];
+      const entry = entries.find(e => e.claude_session_id === resumeId);
+      label = entry ? (entry.task || '').substring(0, 50) : resumeId.substring(0, 12);
+    }
     return `<div class="resume-indicator">Resuming: ${esc(label)} <span class="ri-clear" onclick="selectResumeSession('${esc(p.id)}','')">clear</span></div>`;
   })() : '';
 
@@ -5739,50 +5750,72 @@ function selectResumeSession(projectId, claudeSessionId) {
 }
 
 function sessionPickerHTML(projectId) {
-  const entries = agentLogCache[projectId] || [];
-  // Filter to entries with a claude_session_id (exclude hivemind workers)
-  const resumable = entries.filter(e => e.claude_session_id && !e.hivemind_ws_id);
-  if (resumable.length === 0) return '';
+  // Prefer transcript-derived conversations (survives reboots, includes interrupted sessions).
+  // Fall back to the completion log if the endpoint hasn't returned yet.
+  const convos = conversationsCache[projectId] || [];
+  const logEntries = agentLogCache[projectId] || [];
 
-  // Exclude sessions already running in open tabs for this project
+  // Running sessions already visible as tabs — exclude from picker
   const runningSessions = getProjectSessions(projectId);
   const runningResumeIds = new Set(
-    runningSessions
-      .filter(h => h.resumedFrom)
-      .map(h => h.resumedFrom)
+    runningSessions.filter(h => h.resumedFrom).map(h => h.resumedFrom)
   );
 
-  const availableAll = resumable.filter(e => !runningResumeIds.has(e.claude_session_id));
-  // Deduplicate by claude_session_id (keep first/most recent entry per session)
-  const seen = new Set();
-  const available = availableAll.filter(e => {
-    if (seen.has(e.claude_session_id)) return false;
-    seen.add(e.claude_session_id);
-    return true;
-  });
+  // Build unified list keyed by claude_session_id. Convo entries win (richer metadata).
+  const byId = new Map();
+  for (const c of convos) {
+    const csid = c.claude_session_id;
+    if (!csid || runningResumeIds.has(csid)) continue;
+    byId.set(csid, {
+      csid,
+      label: (c.label || c.last_user || c.first_user || '').trim() || '(empty conversation)',
+      status: c.status || '',
+      ts: c.ts_relative || '',
+      turns: c.turns || 0,
+      source: 'transcript',
+    });
+  }
+  for (const e of logEntries) {
+    const csid = e.claude_session_id;
+    if (!csid || e.hivemind_ws_id || runningResumeIds.has(csid) || byId.has(csid)) continue;
+    byId.set(csid, {
+      csid,
+      label: (e.task || '').trim() || 'Session',
+      status: e.status || '',
+      ts: e.ts_relative || e.ts || '',
+      turns: e.num_turns || 0,
+      source: 'log',
+    });
+  }
+
+  const available = Array.from(byId.values());
   if (available.length === 0) return '';
 
   const selected = pendingResumeId[projectId] || null;
 
-  const opts = available.slice(0, 8).map(e => {
-    const csid = e.claude_session_id;
+  const opts = available.slice(0, 12).map(item => {
+    const csid = item.csid;
     const isSelected = selected === csid;
-    const task = (e.task || '').substring(0, 60) || 'Session';
-    const time = e.ts_relative || e.ts || '';
+    const label = item.label.substring(0, 80);
+    const statusDot = item.status
+      ? `<span class="agent-status-dot ${esc(item.status)}" title="${esc(item.status)}"></span>`
+      : '';
+    const meta = [item.ts, item.turns ? `${item.turns} turn${item.turns !== 1 ? 's' : ''}` : '']
+      .filter(Boolean).join(' · ');
     return `<div class="session-picker-opt ${isSelected ? 'selected' : ''}"
       onclick="selectResumeSession('${esc(projectId)}','${esc(csid)}')"
-      title="${esc(e.task || '')}">
+      title="${esc(item.label)}">
       <div class="sp-radio"></div>
       <div class="sp-label">
-        <div class="sp-task">${esc(task)}</div>
-        <div class="sp-meta">${esc(time)}</div>
+        <div class="sp-task">${statusDot}${esc(label)}</div>
+        <div class="sp-meta">${esc(meta)}</div>
       </div>
     </div>`;
   }).join('');
 
   const freshSelected = !selected;
   return `<div class="session-picker">
-    <div class="session-picker-label">Session context</div>
+    <div class="session-picker-label">Resume a prior conversation (label = user's last message)</div>
     <div class="session-picker-options">
       <div class="session-picker-opt ${freshSelected ? 'selected' : ''}"
         onclick="selectResumeSession('${esc(projectId)}','')">
@@ -5802,11 +5835,26 @@ function closeAgentTab(projectId, sessionId) {
   }
   if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
 
+  // Zero-gap picker update: snapshot csid + last user line BEFORE we nuke local
+  // state, upsert into conversationsCache so the picker reflects the close
+  // immediately. Then reload from server to reconcile (authoritative status / ts).
+  const cached = agentStatusCache[sessionId] || {};
+  const histEntry = agentHistory.find(h => h.sessionId === sessionId);
+  const csid = cached.claudeSessionId || (histEntry && histEntry.resumedFrom) || '';
+  if (csid) {
+    const lastUser = _lastUserFromBuffer(sessionId) || (histEntry && histEntry.task) || '';
+    upsertConversationCache(projectId, csid, lastUser, 'stopped');
+  }
+
   // Kill process + remove session from backend
   fetch(API_BASE + `/api/project/${projectId}/agent/session`, {
     method: 'DELETE',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ session_id: sessionId })
+  }).then(() => {
+    // Reconcile the optimistic cache entry with the authoritative list (real
+    // ts, real turn count, real status from the transcript).
+    loadConversations(projectId);
   }).catch(() => {});
 
   // Remove from frontend state
@@ -5863,9 +5911,16 @@ async function dispatchAgent(projectId) {
     const displayTask = task || 'Continue where we left off.';
     const prefix = resumeId ? `> [resuming prior session] ${displayTask}` : `> ${displayTask}`;
     agentOutputBuffers[sessionId] = [prefix];
-    agentStatusCache[sessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString() };
+    agentStatusCache[sessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '' };
     agentHistory.unshift({ projectId, sessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null });
     activeAgentTab[projectId] = sessionId;
+
+    // Zero-gap: if resuming a known prior conversation, patch its last_user now.
+    // For a fresh session, we don't know the claude_session_id yet; it will be
+    // populated by the next fetchAgentStatus tick and picked up on sendFollowup.
+    if (resumeId && task) {
+      upsertConversationCache(projectId, resumeId, task, 'running');
+    }
 
     refreshModal();
     renderAgentConsole();
@@ -6005,7 +6060,9 @@ function connectAgentStream(projectId, sessionId) {
         delete sseRetryCount[sessionId];
         if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
         delete agentLogCache[projectId];  // invalidate so fresh data (with claude_session_id) loads
+        delete conversationsCache[projectId];  // refresh transcript-based list too
         if (agentLogOpen[projectId]) loadAgentLog(projectId);  // re-fetch if panel is open
+        loadConversations(projectId);
         refreshModal();
         renderAgentConsole();
         refreshSilent();
@@ -6018,7 +6075,9 @@ function connectAgentStream(projectId, sessionId) {
         delete sseRetryCount[sessionId];
         if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
         delete agentLogCache[projectId];  // invalidate so fresh data loads
+        delete conversationsCache[projectId];
         if (agentLogOpen[projectId]) loadAgentLog(projectId);  // re-fetch if panel is open
+        loadConversations(projectId);
         refreshModal();
         renderAgentConsole();
       } else if (msg.type === 'guardian') {
@@ -6538,6 +6597,15 @@ async function sendFollowup(projectId, sessionId) {
     echoEl.scrollTop = echoEl.scrollHeight;
   }
 
+  // Zero-gap picker update: reflect the newest user message in conversationsCache
+  // so when this session later becomes non-running (stops / ends), the picker
+  // already shows the real last line without waiting for a reload.
+  {
+    const cachedForConvo = agentStatusCache[sessionId] || {};
+    const csid = cachedForConvo.claudeSessionId || '';
+    if (csid) upsertConversationCache(projectId, csid, message, 'running');
+  }
+
   // Upload any pasted images and build final message
   const imageKey = 'fu_' + sessionId;
   const imagePaths = await uploadAgentImages(imageKey);
@@ -6689,7 +6757,7 @@ async function fetchAgentStatus(projectId) {
       if (stoppedAt && (Date.now() - stoppedAt >= 15000)) {
         delete _recentlyStoppedSessions[sid];
       }
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '' };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
       }
@@ -6740,6 +6808,7 @@ async function fetchAgentStatus(projectId) {
 // ── Agent Log Panel ──────────────────────────────────────────────────────────
 
 let agentLogCache = {};  // project_id → entries[]
+let conversationsCache = {};  // project_id → [{claude_session_id, status, label, last_user, first_user, turns, ts_relative, ...}]
 let agentLogOpen = {};   // project_id → bool
 let continueInputOpen = {};  // entryId → true (tracks which continue input is expanded)
 
@@ -6810,6 +6879,66 @@ async function loadAgentLog(projectId) {
     }
     refreshModal();
   } catch(e) {}
+}
+
+async function loadConversations(projectId) {
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/conversations?limit=20`);
+    conversationsCache[projectId] = await res.json();
+    refreshModal();
+  } catch(e) {}
+}
+
+// Optimistically upsert a conversation entry so the picker reflects the user's
+// latest message without waiting for a server round-trip. Called from close /
+// followup; a background loadConversations() reconciles with authoritative data.
+function upsertConversationCache(projectId, claudeSessionId, lastUser, status) {
+  if (!projectId || !claudeSessionId) return;
+  const list = conversationsCache[projectId] || (conversationsCache[projectId] = []);
+  const nowMs = Date.now();
+  const label = (lastUser || '').trim();
+  const idx = list.findIndex(c => c.claude_session_id === claudeSessionId);
+  if (idx >= 0) {
+    const e = list[idx];
+    if (label) {
+      e.last_user = label;
+      e.label = label;
+      if (!e.first_user) e.first_user = label;
+    }
+    if (status) e.status = status;
+    e.turns = (e.turns || 0) + (label ? 1 : 0);
+    e.ts_relative = 'just now';
+    e.mtime = nowMs / 1000;
+    list.splice(idx, 1);
+    list.unshift(e);
+  } else {
+    list.unshift({
+      claude_session_id: claudeSessionId,
+      mc_session_id: '',
+      status: status || 'stopped',
+      label: label || '(empty conversation)',
+      last_user: label,
+      first_user: label,
+      turns: label ? 1 : 0,
+      size: 0,
+      mtime: nowMs / 1000,
+      ts: '',
+      ts_relative: 'just now',
+      live: false,
+    });
+  }
+}
+
+// Scan the output buffer backward for the most recent user prompt line (local-echo
+// format: "> <text>"). Used to reconstruct last_user when closing a tab.
+function _lastUserFromBuffer(sessionId) {
+  const buf = agentOutputBuffers[sessionId] || [];
+  for (let i = buf.length - 1; i >= 0; i--) {
+    const line = buf[i] || '';
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith('> ')) return trimmed.slice(2).trim();
+  }
+  return '';
 }
 
 // ── Plans tab ─────────────────────────────────────────────────────────────────

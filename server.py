@@ -141,7 +141,7 @@ def _load_config():
         'user_name': '',
         'agent_name': '',
         'use_streaming_agent': False,
-        'condense_threshold_kb': 15,
+        'condense_threshold_kb': 30,
         'condense_model': '',
         'condense_enabled': True,
         'agent_channels': '',
@@ -217,6 +217,100 @@ def _session_too_large(project_path, claude_session_id):
         except OSError:
             pass
     return False, 0
+
+
+def _extract_user_text(msg_field):
+    """Extract plain user text from a jsonl message field, skipping tool_result blocks."""
+    if not isinstance(msg_field, dict) or msg_field.get('role') != 'user':
+        return ''
+    content = msg_field.get('content', '')
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        texts = []
+        for block in content:
+            if isinstance(block, dict) and block.get('type') == 'text':
+                texts.append(str(block.get('text', '')))
+        return ' '.join(t.strip() for t in texts if t).strip()
+    return ''
+
+
+def _recent_claude_transcripts(project_path, limit=5):
+    """Scan ~/.claude/projects/<encoded>/*.jsonl for a project.
+
+    Returns [{session_id, mtime, first_user, last_user, turns, size}] sorted by mtime desc.
+    Covers both `_`→`-` encodings, dedups by filename.
+    """
+    if not project_path:
+        return []
+    try:
+        resolved = str(Path(project_path).resolve())
+    except Exception:
+        return []
+    encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
+    candidates = [CLAUDE_HOME / encoded]
+    encoded_alt = encoded.replace('_', '-')
+    if encoded_alt != encoded:
+        candidates.append(CLAUDE_HOME / encoded_alt)
+
+    seen = set()
+    files = []
+    for d in candidates:
+        if not d.exists():
+            continue
+        try:
+            for f in d.glob('*.jsonl'):
+                if f.name in seen:
+                    continue
+                seen.add(f.name)
+                try:
+                    files.append((f, f.stat().st_mtime))
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    files.sort(key=lambda x: x[1], reverse=True)
+    files = files[:limit]
+
+    results = []
+    for f, mtime in files:
+        first_user = ''
+        last_user = ''
+        turns = 0
+        try:
+            with open(f, 'r', encoding='utf-8', errors='replace') as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    if obj.get('type') != 'user':
+                        continue
+                    text = _extract_user_text(obj.get('message', {}))
+                    if not text:
+                        continue
+                    turns += 1
+                    if not first_user:
+                        first_user = text
+                    last_user = text
+        except Exception:
+            pass
+        try:
+            size = f.stat().st_size
+        except OSError:
+            size = 0
+        results.append({
+            'session_id': f.stem,
+            'mtime': mtime,
+            'first_user': first_user[:300],
+            'last_user': last_user[:300],
+            'turns': turns,
+            'size': size,
+        })
+    return results
 
 
 def _native_memory_path(project_path):
@@ -484,7 +578,7 @@ def _should_condense(project, include_claude_md=False):
                     combined += claude_md.stat().st_size
                 except OSError:
                     pass
-    threshold = CONFIG.get('condense_threshold_kb', 15) * 1024
+    threshold = CONFIG.get('condense_threshold_kb', 30) * 1024
     return combined > threshold
 
 
@@ -1292,6 +1386,14 @@ def _build_agent_context(project):
         "IMPORTANT — Questions: When you need to ask the user questions, use the AskUserQuestion tool. "
         "Mission Control will intercept the questions and present them as an interactive form. "
         "The user's answers will be sent as a follow-up message to resume the conversation.",
+        f"Backlog: This project has a Mission Control backlog (prioritized task list with notes, "
+        f"attachments, and status). When the user says \"backlog\", \"backlog items\", \"the list\", "
+        f"or similar, they mean THIS list — do NOT grep the filesystem. "
+        f"Read it: curl -s http://localhost:{port}/api/project/{pid}/backlog "
+        f"Update an item: curl -s -X PATCH http://localhost:{port}/api/project/{pid}/backlog/<item_id> "
+        f'-H "Content-Type: application/json" -d \'{{"status":"done"}}\' '
+        f"(status values: open, in_progress, blocked, done). "
+        f"Add a note: POST /api/project/{pid}/backlog/<item_id>/note with {{\"text\":\"...\"}}.",
         f"Hivemind: You can launch multi-agent coordinated analysis on this project. "
         f"To create a hivemind, call: curl -s -X POST http://localhost:{port}/api/hivemind/create "
         f'-H "Content-Type: application/json" '
@@ -1308,15 +1410,53 @@ def _build_agent_context(project):
         lines = [f"  - {e.get('ts','')}: {e.get('msg','')}" for e in log]
         parts.append("Recent activity:\n" + "\n".join(lines))
 
-    # Recent agent sessions (for continuity if prior conversation hung)
-    agent_log = _load_agent_log(project['id'])[:3]
-    if agent_log:
+    # Recent conversations — read directly from .jsonl transcripts so interrupted
+    # sessions (never reached completion log) are still discoverable. Display the
+    # LAST user message, not the first, since the first is usually a meta prompt
+    # (context condensation, boot text) that the user won't recognize.
+    project_path = project.get('project_path', '')
+    convos = _recent_claude_transcripts(project_path, limit=5) if project_path else []
+    if convos:
+        live_by_csid = {}
+        try:
+            for s in agent_sessions.values():
+                if s.get('project_id') != project['id']:
+                    continue
+                csid = s.get('claude_session_id', '')
+                if csid:
+                    live_by_csid[csid] = s.get('status', 'unknown')
+        except Exception:
+            pass
+        log_by_csid = {}
+        try:
+            for e in _load_agent_log(project['id']):
+                csid = e.get('claude_session_id', '')
+                if csid and csid not in log_by_csid:
+                    log_by_csid[csid] = e.get('status', '')
+        except Exception:
+            pass
         sess_lines = []
-        for e in agent_log:
-            csid = e.get('claude_session_id', '')
-            sid_part = f" | claude -r {csid}" if csid else ''
-            sess_lines.append(f"  - [{e.get('status','')}] {e.get('task','')[:60]}{sid_part}")
-        parts.append("Recent agent sessions (use 'claude -r <id>' to resume a prior conversation):\n" + "\n".join(sess_lines))
+        for c in convos:
+            sid = c['session_id']
+            st = live_by_csid.get(sid) or log_by_csid.get(sid) or (
+                'interrupted' if c['turns'] > 0 else 'empty'
+            )
+            label = c['last_user'] or c['first_user'] or '(empty)'
+            label = ' '.join(label.split())[:80]
+            sess_lines.append(f"  - [{st}] {label} | claude -r {sid}")
+        parts.append(
+            "Recent conversations (use 'claude -r <id>' to resume any of these — "
+            "label is the user's LAST message):\n" + "\n".join(sess_lines)
+        )
+    else:
+        agent_log = _load_agent_log(project['id'])[:3]
+        if agent_log:
+            sess_lines = []
+            for e in agent_log:
+                csid = e.get('claude_session_id', '')
+                sid_part = f" | claude -r {csid}" if csid else ''
+                sess_lines.append(f"  - [{e.get('status','')}] {e.get('task','')[:60]}{sid_part}")
+            parts.append("Recent agent sessions (use 'claude -r <id>' to resume a prior conversation):\n" + "\n".join(sess_lines))
 
     ct = project.get('current_task', '')
     if ct:
@@ -1997,7 +2137,7 @@ def _log_agent_completion(session):
                 mem_path.write_text(new_content, encoding='utf-8')
 
                 # Archive overflow: if file exceeds 10KB, keep last 20 entries, archive the rest
-                if len(new_content.encode('utf-8')) > 10 * 1024:
+                if len(new_content.encode('utf-8')) > 20 * 1024:
                     marker = '## Session Log'
                     idx = new_content.find(marker)
                     if idx >= 0:
@@ -2110,7 +2250,7 @@ def _check_context_budget(project, appended_prompt):
             pass
     sizes['prompt'] = len(appended_prompt.encode('utf-8'))
     total = sum(sizes.values())
-    if total > 20 * 1024:
+    if total > 40 * 1024:
         parts = ', '.join(f'{k}: {v/1024:.1f}k' for k, v in sizes.items())
         # Actively trigger condensation instead of just warning
         if _should_condense(project, include_claude_md=True):
@@ -2142,27 +2282,35 @@ def _dispatch_condense(project):
     claude_md_big = False
     if claude_md_path and claude_md_path.exists():
         try:
-            claude_md_big = claude_md_path.stat().st_size > 8 * 1024  # > 8KB
+            claude_md_big = claude_md_path.stat().st_size > 15 * 1024  # > 15KB
         except OSError:
             pass
 
     prompt_parts = [
         "You are a memory housekeeping agent. Your ONLY job is to condense the project context files "
         "so they stay concise and effective.\n",
-        f"## MEMORY.md condensation\n"
+        f"## MEMORY.md condensation — target under 15KB\n"
         f"1. Read {mem_path}\n"
         f"2. Read {archive_path} (if it exists)\n"
-        "3. Preserve ALL curated/manually-written sections (anything NOT under '## Session Log') verbatim.\n"
-        "4. Extract useful insights from session log entries and fold them into organized knowledge sections "
-        "(e.g., ## Architecture, ## Patterns, ## Gotchas). Merge with existing sections if present.\n"
-        "5. Keep only the last 5 session log entries in the Session Log section.\n"
-        f"6. Write the condensed result back to {mem_path}. Target: under 8KB total.\n"
-        f"7. Delete {archive_path} when done (if it exists).\n",
+        "3. First-line tactics (use these before touching curated prose):\n"
+        "   - If a '## Session Log' section exists: keep only the last 5 entries; fold useful insights "
+        "from the rest into the matching curated knowledge sections.\n"
+        "   - Move older session log overflow into the archive file.\n"
+        "4. If still over 15KB after step 3, tighten the curated sections themselves:\n"
+        "   - Merge overlapping sections (e.g., two sections covering the same subsystem).\n"
+        "   - Drop stale 'as of YYYY-MM-DD' notes whose content has clearly been superseded by a later section.\n"
+        "   - Remove redundant examples and excessive prose; keep the fact, cut the narration.\n"
+        "   - Collapse bullet lists that restate the same idea.\n"
+        "5. DO NOT lose hard-won facts. Preserve verbatim: file paths, line numbers, function/class names, "
+        "config keys, exact numeric thresholds, API signatures, command snippets, and any 'gotcha' warnings.\n"
+        f"6. Write the condensed result back to {mem_path}. Target under 15KB; if after honest tightening "
+        f"the file is still slightly over, that is acceptable — do NOT delete critical facts just to hit a number.\n"
+        f"7. Delete {archive_path} when done (if it exists and its contents have been folded in).\n",
     ]
 
     if claude_md_big:
         prompt_parts.append(
-            f"\n## CLAUDE.md condensation\n"
+            f"\n## CLAUDE.md condensation — target under 15KB\n"
             f"8. Read {claude_md_path}\n"
             "9. This file contains project instructions and context that Claude CLI loads natively. "
             "Condense it while preserving ALL critical information:\n"
@@ -2171,7 +2319,8 @@ def _dispatch_condense(project):
             "   - Remove redundant examples, excessive formatting, and verbose explanations.\n"
             "   - Compress session logs / historical notes into brief summaries.\n"
             "   - Preserve code snippets, API references, and config patterns exactly.\n"
-            f"10. Write the condensed result back to {claude_md_path}. Target: under 8KB.\n"
+            f"10. Write the condensed result back to {claude_md_path}. Target under 15KB; do NOT "
+            f"strip critical rules just to hit a number.\n"
         )
 
     prompt_parts.append(
@@ -5139,6 +5288,84 @@ def get_agent_log(project_id):
         entry['ts_relative'] = time_ago(entry.get('ts'))
         entry['started_relative'] = time_ago(entry.get('started_at'))
     return jsonify(log)
+
+
+@app.route('/api/project/<project_id>/conversations')
+def get_project_conversations(project_id):
+    """Return recent Claude Code conversations for a project, read from .jsonl transcripts.
+
+    Survives server reboots, captures interrupted / mid-flight sessions that never
+    landed in the agent completion log. Enriched with live status + completion-log
+    status, and label defaults to the user's LAST message.
+    """
+    try:
+        limit = int(request.args.get('limit', 10))
+    except Exception:
+        limit = 10
+    limit = max(1, min(limit, 50))
+
+    p = load_project(project_id)
+    if not p:
+        return jsonify([])
+    project_path = p.get('project_path', '')
+    convos = _recent_claude_transcripts(project_path, limit=limit)
+
+    live_by_csid = {}
+    for s in agent_sessions.values():
+        if s.get('project_id') != project_id:
+            continue
+        csid = s.get('claude_session_id', '')
+        if csid:
+            live_by_csid[csid] = {
+                'status': s.get('status', 'unknown'),
+                'session_id': s.get('session_id', ''),
+                'task': s.get('task', ''),
+            }
+
+    log_by_csid = {}
+    for e in _load_agent_log(project_id):
+        csid = e.get('claude_session_id', '')
+        if csid and csid not in log_by_csid:
+            log_by_csid[csid] = e
+
+    from datetime import datetime, timezone
+    out = []
+    for c in convos:
+        sid = c['session_id']
+        live = live_by_csid.get(sid)
+        log_entry = log_by_csid.get(sid, {})
+        if live:
+            status = live['status']
+            mc_session_id = live.get('session_id', '')
+        elif log_entry:
+            status = log_entry.get('status', 'completed')
+            mc_session_id = log_entry.get('session_id', '')
+        else:
+            status = 'interrupted' if c['turns'] > 0 else 'empty'
+            mc_session_id = ''
+
+        label = c['last_user'] or c['first_user'] or '(empty)'
+        label = ' '.join(label.split())
+
+        try:
+            ts_iso = datetime.fromtimestamp(c['mtime'], tz=timezone.utc).isoformat()
+        except Exception:
+            ts_iso = ''
+        out.append({
+            'claude_session_id': sid,
+            'mc_session_id': mc_session_id,
+            'status': status,
+            'label': label,
+            'first_user': c['first_user'],
+            'last_user': c['last_user'],
+            'turns': c['turns'],
+            'size': c['size'],
+            'mtime': c['mtime'],
+            'ts': ts_iso,
+            'ts_relative': time_ago(ts_iso) if ts_iso else '',
+            'live': bool(live),
+        })
+    return jsonify(out)
 
 
 @app.route('/api/project/<project_id>/plans')

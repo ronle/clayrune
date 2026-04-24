@@ -1,5 +1,37 @@
 # Mission Control — Changelog
 
+## [2026-04-24] — Transcript-derived Conversations + Zero-gap Resume Picker
+
+### Why
+- The "Recent agent sessions" list (both in system prompts for new agents and in the Resume picker) was sourced from the completion log `<pid>_agent_log.json`. That log only records sessions that end cleanly, so interrupted / hung / crashed / in-flight sessions never appeared on restart — exactly the conversations the user most needs to recover after a reboot.
+- Labels were the *first* user message (`task`), almost always a boot / condensation prompt the user doesn't recognize. The user's *last* message is the meaningful memory anchor.
+
+### Source of truth: Claude Code's `.jsonl` transcripts
+Claude Code already writes every conversation to disk as `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`. Those files survive server reboots. Mission Control now reads them directly.
+
+### Backend (`server.py`)
+- **`_extract_user_text(msg_field)`** — returns plain user text from a transcript line, skipping tool_result blocks. Handles both string and list content forms.
+- **`_recent_claude_transcripts(project_path, limit=5)`** — scans `~/.claude/projects/<encoded>/*.jsonl`, covers both `_`→`-` encoding variants, dedups by filename, extracts `first_user` / `last_user` / `turns` per file, sorted by mtime desc.
+- **`build_claude_context`** "Recent agent sessions" block replaced with a transcript-derived "Recent conversations" block. Label now shows the user's *last* message; status enriched from live `agent_sessions` → `_agent_log` → `'interrupted'` fallback. Old log-only block kept as fallback when `project_path` is blank.
+- **New endpoint `GET /api/project/<pid>/conversations?limit=20`** — returns `[{claude_session_id, mc_session_id, status, label, last_user, first_user, turns, size, mtime, ts, ts_relative, live}]`.
+
+### Frontend (`static/index.html`)
+- **`conversationsCache[projectId]`** + **`loadConversations(projectId)`** — fetched on agent-panel render; invalidated alongside `agentLogCache` on SSE `result`/`error` + on tab close.
+- **`sessionPickerHTML`** rewritten to merge transcript list with the completion log (transcript wins). Shows status dot, last-user label, turn count. Now surfaces interrupted / mid-flight sessions.
+- **Resume indicator** reads the label from the transcript cache first.
+- **`agentStatusCache[sid].claudeSessionId`** — populated from `/api/project/<pid>/agent/status` so the frontend knows each live session's Claude session id.
+
+### Zero-gap picker updates
+The picker reflects the user's latest message *without* waiting for a server round-trip:
+- **`upsertConversationCache(projectId, claudeSessionId, lastUser, status)`** — in-place patch of `conversationsCache`: updates `last_user` / `label` / `status`, bumps `ts_relative='just now'`, moves entry to top, increments `turns`.
+- **`_lastUserFromBuffer(sessionId)`** — reconstructs the last user prompt by scanning `agentOutputBuffers` backward for the local-echo `"> …"` line.
+- **`closeAgentTab`** — before nuking local state, snapshots `claudeSessionId` + last user line and upserts (`status='stopped'`). Then the backend `DELETE` chains `loadConversations(projectId)` to reconcile with authoritative data (~200 ms later).
+- **`sendFollowup`** — after local echo, upserts with `status='running'`. When the session later stops, the picker already has the real last line.
+- **`dispatchAgent`** with resume — seeds `claudeSessionId = resumeId` in the status cache and upserts immediately so the resumption's prompt shows up in the picker even before the first SSE event.
+
+### Known limitation
+Fresh sessions don't have a `claude_session_id` locally until the next status-fetch tick (~≤2 s after first SSE event). Closing a brand-new tab before that tick skips the optimistic upsert and relies on `loadConversations` only — still fast, just not zero-gap.
+
 ## [2026-04-23b] — Auto-create project folder on new project
 
 ### Auto workspace folder
