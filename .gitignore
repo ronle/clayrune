@@ -42,3 +42,18 @@ nul
 
 # Session / personal
 .claude_session_context.md
+
+# Logs
+*.log
+
+# Release artifacts
+MissionControl-*.zip
+
+# Design handoff archives (keep extracted docs, ignore zips)
+docs/*.zip
+
+# Runtime hivemind data
+data/hiveminds/
+
+# Local test fixtures
+test_upload.txt
