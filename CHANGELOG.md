@@ -1,5 +1,43 @@
 # Mission Control — Changelog
 
+## [2026-04-23] — Tile Redesign, Mode-C/Audio Split, Favicon, Cross-Project Backlog
+
+### Tile redesign (design-handoff aligned)
+- **Flat surface background.** Removed the per-project `modal_color.bg` tint + color-mix/backdrop-filter transparency that made tiles look blobby. Every tile now uses `var(--surface)` like the rest of the app.
+- **Project Color → border color.** The color selected in a project's three-dot menu ("Color") now paints the tile's border via inline `style="border-color:..."`. Border width normalized to **2 px** in all three tones (Dark, Warm, Editorial); Warm and Editorial use the stronger `--border2` line token for better definition on light backgrounds.
+- **Status borders still win.** `.card.friendly-stuck` / `.card.friendly-asking` border rules now carry `!important` so red/amber status indication overrides the inline project color.
+- **Flexible tile height.** Dropped fixed `aspect-ratio: 5/4`. Grid now uses `grid-auto-rows: 1fr` + `align-items: stretch` so every row sizes to the tallest tile — long titles (e.g. "DayTrading — Engulfing Dashboard") no longer clip the summary or backlog badges. `min-height: 200px` floor (140 px in compact mode).
+- **Scoped status-pill rules.** `.status-active / .status-blocked / .status-waiting / .status-parked / .status-unknown` rules were bare selectors and were bleeding green/amber/red backgrounds onto the `.card` element (the card also has these classes). Rescoped to `.status-pill.status-*` so only the pill chip is tinted.
+
+### Favicon
+- Inline SVG data-URI favicon: rounded square in brand accent `#e8824a` with a bold white **M** (Nunito/Inter). Matches the design handoff's `.fc-brand-mark`. Added `<meta name="theme-color" content="#e8824a">` so mobile browser chrome matches.
+
+### Cross-project Backlog view
+- New sidebar nav item "Backlog" (`sidebarNav('backlog')` → `openAllBacklog()`).
+- Modal `__all_backlog` aggregates backlog items across every project with filters: text search, status (Open / Done / All), priority (High / Normal / Low / All).
+- Each row shows the owning project name in accent color; clicking a row jumps to that project's modal and scrolls the item into view.
+- Preserves existing badges: `agent` / `doing` source tags, priority pill, notes count.
+
+### Advanced-features toggles (off by default)
+- Settings → new "Advanced features" section. Hides under-development or power-user surface by default:
+  - Token usage counter (header pill)
+  - Tool call lines (`[tool: Read]` / `[tool: ExitPlanMode]` markers in agent output)
+  - GitHub sync badges (issue links, `#N` badges)
+  - Agent Log tab (per-project history)
+  - Memory & Rules menu entries (inside three-dot)
+- Stored in `localStorage` as `mc_advanced_flags`; applied via `body.adv-hide-*` classes and `!important` display:none rules.
+- Rationale: keeps the first-run surface simple; matches design handoff's philosophy of a friendly, minimal dashboard.
+
+### Metrics row removed
+- Deleted the 4-card metrics strip (Active Agents / Cost / Tasks Completed / Errors). The header's agent-count pill already conveys "active" count; cost/errors can be surfaced on demand rather than permanently eating vertical space.
+- Removed associated CSS (`.metrics-row`, `.metric-card`, `.mc-value`, etc.), mobile overrides, `renderStats()` metrics code path, and `VOICE_LABELS.metric_*` entries.
+
+### Mode-C & audio work moved to a side branch
+- **`mode-c-audio` branch** now owns all voice-conversation work (STT via faster-whisper, TTS via Web Speech API, voice-selection UI, voice-behavior prompt, per-turn dedup) plus the Mode-C duplication/ERROR-status fixes. Pushed to origin.
+- **`master`** reverted to remove Mode C entirely — `interactive_agent.py` deleted, `/api/interactive*` endpoints stripped, Chat button and all `interactiveSessions` / `voiceMode` frontend code removed (auto-merge handled everything except the file delete, which was resolved by accepting the removal).
+- Rationale: Mode C and voice are still flaky. Keeping them off master unblocks shipping polish work without waiting on their stabilization. They can be re-merged from `mode-c-audio` once they're solid.
+- Today's tile redesign was committed on master first, then the Mode-C revert layered on top. Final master state: fast-forward of `origin/master` — no force-push.
+
 ## [2026-04-16] — Tauri Launcher, CORS, AskUserQuestion Race Fix & Resume Recovery
 
 ### Tauri Launcher: Silent Server Death Fix
