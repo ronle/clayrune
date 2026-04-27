@@ -146,6 +146,7 @@ def _load_config():
         'condense_enabled': True,
         'agent_channels': '',
         'agent_remote_control': False,
+        'agent_revive_from_log': True,
     }
     if CONFIG_PATH.exists():
         try:
@@ -2073,6 +2074,163 @@ def _save_agent_log(project_id, log):
     filepath.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
+def _revive_from_agent_log(project_id, session_id, message, p):
+    """Revive a finalized/purged session by spawning a fresh process with -r <claude_session_id>.
+
+    Looks up the most recent agent_log entry whose session_id matches; if it has a
+    claude_session_id we can resume from, builds a new session dict that reuses the
+    same session_id so the frontend's UI tab stays addressed.
+
+    Roll back: set CONFIG['agent_revive_from_log'] = False (the only call site checks
+    this flag before calling). Or delete this function and the gated block in
+    agent_followup.
+
+    Returns the new session dict on success, None if not revivable (no matching
+    log entry, no claude_session_id, missing project_path, or spawn failure).
+    """
+    if not CONFIG.get('agent_revive_from_log', True):
+        return None
+
+    log = _load_agent_log(project_id)
+    entry = next((e for e in log if e.get('session_id') == session_id), None)
+    if not entry:
+        return None
+    claude_sid = entry.get('claude_session_id')
+    if not claude_sid:
+        return None
+
+    pp = p.get('project_path', '')
+    if not pp or not Path(pp).is_dir():
+        return None
+
+    use_streaming = p.get('use_streaming_agent', CONFIG.get('use_streaming_agent', False))
+
+    too_large, size_bytes = _session_too_large(pp, claude_sid)
+    resume_flags = []
+    context = None
+    revival_msg = message
+    if too_large:
+        size_mb = size_bytes / (1024 * 1024)
+        context = _build_agent_context(p)
+        revival_msg = (f"[Resuming a previous conversation that grew too large to "
+                       f"resume directly ({size_mb:.0f} MB). Start fresh but continue "
+                       f"the user's request below.]\n\n{message}")
+    else:
+        resume_flags = ['-r', claude_sid]
+
+    mgr = get_manager(project_id)
+    mgr.ensure_guardian()
+    user_label = CONFIG.get('user_name') or 'User'
+    revive_note = f'[Session revived from agent log — resuming claude_session={claude_sid[:12]}]'
+
+    if use_streaming:
+        cmd = ['claude', *resume_flags, *_build_claude_flags(p, streaming=True)]
+        if not resume_flags and context:
+            cmd.extend(['--append-system-prompt', context])
+        try:
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, cwd=pp,
+                text=True, encoding='utf-8', errors='replace',
+                creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+            )
+        except Exception as e:
+            print(f"[revive] {project_id}: spawn failed: {e}")
+            return None
+        threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+        _register_process(proc, 'Agent revived (B)', 'agent', session_id, project_id, message[:80])
+
+        session = {
+            'proc': proc,
+            'status': 'running',
+            'task': entry.get('task', ''),
+            'log_lines': [revive_note, f"\n> {user_label}: {message}\n"],
+            'started_at': now_iso(),
+            'session_id': session_id,
+            'project_id': project_id,
+            'mode': 'B',
+            'stdin_lock': threading.Lock(),
+            'process_alive': True,
+            'last_output_time': _time.time(),
+            'last_status_change_time': _time.time(),
+            'guardian_state': None,
+            'recovery_attempts': 0,
+            'last_recovery_time': 0,
+            'pending_recovery_message': None,
+            'circuit_breaker_tripped': False,
+            'claude_session_id': claude_sid,
+            '_resume_id': claude_sid,
+            '_dispatch_time': _time.time(),
+            'usage': entry.get('usage', {}),
+            'cost_usd': entry.get('cost_usd', 0),
+            'num_turns': entry.get('num_turns', 0),
+        }
+        with mgr.lock:
+            agent_sessions[session_id] = session
+            mgr.session_ids.add(session_id)
+        threading.Thread(target=_read_agent_stream_b, args=(proc, session), daemon=True).start()
+        stdin_msg = json.dumps({"type": "user", "message": {"role": "user", "content": revival_msg}}) + '\n'
+        with session['stdin_lock']:
+            try:
+                proc.stdin.write(stdin_msg)
+                proc.stdin.flush()
+            except Exception as e:
+                session['log_lines'].append(f'[stdin write error on revive: {e}]')
+        print(f"[revive] {project_id}: Mode B revived session {session_id} via -r {claude_sid[:12]}")
+        return session
+
+    # Mode A
+    if resume_flags:
+        cmd = ['claude', *resume_flags, '-p', revival_msg, *_build_claude_flags(p)]
+    else:
+        if not context:
+            context = _build_agent_context(p)
+        cmd = ['claude', '-p', revival_msg, *_build_claude_flags(p),
+               '--append-system-prompt', context]
+    try:
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, cwd=pp,
+            text=True, encoding='utf-8', errors='replace',
+            creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+        )
+    except Exception as e:
+        print(f"[revive] {project_id}: spawn failed: {e}")
+        return None
+    threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+    _register_process(proc, 'Agent revived (A)', 'agent', session_id, project_id, message[:80])
+
+    session = {
+        'proc': proc,
+        'status': 'running',
+        'task': entry.get('task', ''),
+        'log_lines': [revive_note, f"\n> {user_label}: {message}\n"],
+        'started_at': now_iso(),
+        'session_id': session_id,
+        'project_id': project_id,
+        'mode': 'A',
+        'last_output_time': _time.time(),
+        'last_status_change_time': _time.time(),
+        'guardian_state': None,
+        'recovery_attempts': 0,
+        'last_recovery_time': 0,
+        'pending_recovery_message': None,
+        'circuit_breaker_tripped': False,
+        'claude_session_id': claude_sid,
+        '_resume_id': claude_sid,
+        '_dispatch_time': _time.time(),
+        'usage': entry.get('usage', {}),
+        'cost_usd': entry.get('cost_usd', 0),
+        'num_turns': entry.get('num_turns', 0),
+    }
+    with mgr.lock:
+        agent_sessions[session_id] = session
+        mgr.session_ids.add(session_id)
+    threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True).start()
+    print(f"[revive] {project_id}: Mode A revived session {session_id} via -r {claude_sid[:12]}")
+    return session
+
+
 def _log_agent_completion(session):
     """Save a summary entry when an agent session finishes."""
     project_id = session.get('project_id')
@@ -2663,6 +2821,20 @@ def agent_followup(project_id):
         return jsonify({'error': 'session_id required'}), 400
 
     _respawn_b = None  # set if Mode B needs to respawn outside lock
+
+    # Pre-check: if session is gone from agent_sessions (server restart, tab close,
+    # 24h purge), try reviving from agent_log via -r <claude_session_id>.
+    # Roll back: set CONFIG['agent_revive_from_log'] = False.
+    mgr_pre = get_manager(project_id)
+    with mgr_pre.lock:
+        _has_session = (session_id in agent_sessions
+                        and agent_sessions[session_id].get('project_id') == project_id)
+    if not _has_session:
+        revived = _revive_from_agent_log(project_id, session_id, message, p)
+        if revived:
+            _log_agent_activity(project_id, f"Agent revived from log: {message[:100]}")
+            return jsonify({'ok': True, 'session_id': session_id, 'revived': True})
+        # No revivable entry — fall through to original 404 below.
 
     with get_manager(project_id).lock:
         existing = agent_sessions.get(session_id)
@@ -3591,27 +3763,42 @@ def list_processes():
     """Return all tracked processes with live status."""
     result = []
     with process_tracker_lock:
-        for pid, entry in tracked_processes.items():
-            proc = entry.get('proc')
-            if proc is not None:
-                alive = proc.poll() is None
-                exit_code = proc.poll()
-            else:
-                # External process — check via OS
-                alive = _pid_is_alive(entry['pid'])
-                exit_code = None
-            result.append({
-                'pid': entry['pid'],
-                'name': entry['name'],
-                'type': entry['type'],
-                'session_id': entry['session_id'],
-                'project_id': entry['project_id'],
-                'project_name': entry['project_name'],
-                'command_preview': entry['command_preview'],
-                'started_at': entry['started_at'],
-                'alive': alive,
-                'exit_code': exit_code,
-            })
+        snapshot = list(tracked_processes.items())
+    for pid, entry in snapshot:
+        proc = entry.get('proc')
+        if proc is not None:
+            alive = proc.poll() is None
+            exit_code = proc.poll()
+        else:
+            # External process — check via OS
+            alive = _pid_is_alive(entry['pid'])
+            exit_code = None
+        # Cross-reference agent/housekeeping entries to the matching session so the UI
+        # can show running/idle/error/stopped distinct from raw process liveness.
+        agent_status = None
+        entry_type = entry.get('type', '')
+        sid = entry.get('session_id', '')
+        if sid and entry_type in ('agent', 'housekeeping'):
+            session = agent_sessions.get(sid)
+            if session:
+                agent_status = session.get('status')
+        elif sid and entry_type == 'terminal':
+            term = terminal_sessions.get(sid)
+            if term:
+                agent_status = term.get('status')
+        result.append({
+            'pid': entry['pid'],
+            'name': entry['name'],
+            'type': entry_type,
+            'session_id': sid,
+            'project_id': entry['project_id'],
+            'project_name': entry['project_name'],
+            'command_preview': entry['command_preview'],
+            'started_at': entry['started_at'],
+            'alive': alive,
+            'exit_code': exit_code,
+            'agent_status': agent_status,
+        })
     result.sort(key=lambda x: (0 if x['alive'] else 1, x.get('started_at', '')))
     return jsonify(result)
 

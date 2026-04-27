@@ -1,5 +1,68 @@
 # Mission Control — Changelog
 
+## [2026-04-27e] — Revive finalized agent sessions from agent_log on follow-up
+
+### Symptom
+Press Stop on a Mode B agent, type a follow-up, hit send → "session not found" → frontend flips to `error` → permanent dead end. Same trap whenever an `agent_sessions` entry was gone but the conversation transcript still existed (server restart, 24 h scheduler purge, manual tab close, etc.).
+
+### Why it happened
+`/api/project/<id>/agent/followup` only looked in the in-memory `agent_sessions` dict. If the entry was missing, it returned 404 — even though `data/<id>_agent_log.json` typically still held the same `session_id` mapped to a resumable `claude_session_id`. The follow-up's `-r` resume path (already wired for `process_alive=False`) never got a chance to fire because the session vanished before the lookup.
+
+### Fix (`server.py`)
+- New `_revive_from_agent_log(project_id, session_id, message, p)` (placed right after `_save_agent_log`): looks up the most recent matching log entry, grabs its `claude_session_id`, spawns a fresh process with `-r <claude_sid>` (or `--append-system-prompt` fallback if the transcript is too large), and reuses the same `session_id` so the frontend's open UI tab stays addressed.
+- `agent_followup` now does a pre-check: if the session_id is missing from `agent_sessions`, it tries `_revive_from_agent_log` *before* returning 404. On success it returns `{ok:true, revived:true}`; the frontend's existing `connectAgentStream` reconnect handles the SSE resume.
+- Both Mode A and Mode B handled. Stream reader threads (`_read_agent_stream` / `_read_agent_stream_b`) are reused as-is.
+- New config flag `agent_revive_from_log` (default `True`) gates the behavior.
+
+### Rollback
+Three options, increasing in cost:
+1. **Toggle off**: edit `data/config.json` and add `"agent_revive_from_log": false`. Restart MC. Behavior reverts to "session not found" → frontend `error`. No code changes needed.
+2. **Remove the call site**: delete the pre-check block in `agent_followup` (the `_has_session` block right above the existing `with get_manager(project_id).lock:` line). The helper function stays but is unused.
+3. **Full revert**: also delete `_revive_from_agent_log` (the function added after `_save_agent_log`).
+
+### Edge cases worth watching
+- A revival creates a *new* `agent_log` entry when the new process eventually finalizes — the same `session_id` will appear multiple times in `agent_log`, newest first. The lookup picks the newest, so chained revivals work.
+- If the original session was Mode A and the project's `use_streaming_agent` has since been flipped to True (or vice-versa), the revived session uses the *current* setting. The Claude transcript itself doesn't care which mode reads it.
+- A revived session with `claude_session_id` whose `.jsonl` is now > 5 MB will start fresh and prepend a context note (same auto-fresh path used elsewhere).
+- Tab-close (`closeAgentTab` → DELETE `/agent/session`) intentionally finalizes; subsequent follow-ups to that session will *also* now revive it. If that's undesirable, add an "intentionally closed" marker to the log entry and skip those in the helper.
+
+## [2026-04-27d] — Pin chat to bottom on first open
+
+Follow-up to 2026-04-27c: the new "respect user scroll" guard was *too* respectful — newly-opened agent chats started at the top because their initial `scrollTop` was 0, which `_isAgentOutputPinned` treats as "user scrolled up". Added a `dataset.scrollInitialized` flag on each agent-output element. Until that flag is set, the next scroll-to-bottom is forced (treating the mount as fresh); after the first successful pin, normal "respect user scroll" behavior takes over. Applied in `sizeAgentChat`, `appendAgentLine`, and `updateConsoleOutput`.
+
+## [2026-04-27c] — Stop yanking the agent chat back to the bottom while user is scrolled up
+
+### Symptom
+Scrolling up in an agent's chat output to read earlier text would snap back to the bottom every couple seconds, even when the agent wasn't producing new output. Modal refreshes (status polling tick, focus events) re-ran `sizeAgentChat`, which unconditionally wrote `out.scrollTop = out.scrollHeight`.
+
+### Fix (`static/index.html`)
+- New `_isAgentOutputPinned(el)` helper: true when the user is within 80 px of the bottom.
+- All agent-output auto-scrolls now capture the pinned state *before* mutating the DOM and only scroll when the user was already pinned. Touched: `appendAgentLine` (3 sites), `sizeAgentChat`, plan-approve / stuck-plan banners, `renderAgentQuestion`, and `updateConsoleOutput` (the bottom console strip).
+- User-initiated echoes (`approvePlan` confirmation, `sendFollowup`) intentionally still snap to the bottom — the user just took an action and wants to see the result.
+
+## [2026-04-27b] — Process Manager: agent status column
+
+`/api/processes` now joins each tracked process to its `agent_sessions` (or `terminal_sessions`) entry and returns an `agent_status` field. The Process Manager UI renders a colored pill (`running` / `idle` / `error` / `stopped` / `completed`) next to each row, so it's clear which "alive" agent process is actively working vs sitting idle waiting for a follow-up.
+
+- Server (`server.py:list_processes`): snapshot tracked_processes under the lock, then look up `agent_sessions[sid].status` outside the lock; falls back to alive/exited for non-agent rows.
+- Frontend (`refreshProcessList`): new `Status` column, `.process-status-pill` styled green/orange/red/gray.
+
+## [2026-04-27] — Free idle SSE slots so Settings / Process Manager / Agent Log stop hanging
+
+### Symptom
+Settings menu, Process Manager, and the Agent Log tab would occasionally get stuck on "Loading..." forever. New agent dispatches under projects that already had agents would silently appear to do nothing. The pattern correlated with how many projects had agents running or idle in the background.
+
+### Root cause
+Chromium / WebView2 caps HTTP/1.1 connections at **6 per origin**. Mission Control opened one long-lived `EventSource` per session whose status was `running` *or* `idle`, and Mode B turn completion didn't close that stream — only a terminal `status` event did. Once 4–6 idle agents accumulated their SSE sockets, ordinary fetches like `/api/processes`, `/api/config`, and `/api/project/<id>/agent_log` queued behind those streams indefinitely.
+
+### Fix (`static/index.html`)
+- **`turn_complete` handler (~line 6033)**: now closes the `EventSource`, deletes it from `agentEventSources`, clears `sseRetryCount`, and stops the watchdog. The agent process stays alive — only the browser-side socket is released.
+- **`fetchAgentStatus` auto-reconnect (~line 6770)**: only reconnects SSE for sessions whose status is `running`. Idle sessions wait for a follow-up to reopen the stream.
+- **`sendFollowup`**: already calls `connectAgentStream` after the POST resolves (line 6664-6667), so the reconnect path was already correct — idle sessions stream output normally on the next message, after a sub-second reconnect.
+
+### Tradeoff
+First output line on a follow-up arrives ~200-500 ms later than before (one SSE handshake), in exchange for never running out of browser connection slots regardless of how many idle agents are open.
+
 ## [2026-04-24] — Transcript-derived Conversations + Zero-gap Resume Picker
 
 ### Why

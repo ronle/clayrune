@@ -1006,6 +1006,18 @@
     font-family: 'Inter', sans-serif; transition: all 0.15s;
   }
   .btn-kill-process:hover { background: var(--red); color: #fff; }
+  .process-status-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.3px;
+    text-transform: uppercase; line-height: 1.4;
+    background: var(--surface3); color: var(--text-faint);
+    border: 1px solid var(--border);
+  }
+  .process-status-pill.st-running { background: rgba(46,160,67,0.15); color: var(--green); border-color: rgba(46,160,67,0.4); }
+  .process-status-pill.st-idle { background: rgba(232,130,74,0.12); color: var(--accent); border-color: rgba(232,130,74,0.35); }
+  .process-status-pill.st-error { background: rgba(220,68,68,0.15); color: var(--red-text); border-color: rgba(220,68,68,0.4); }
+  .process-status-pill.st-stopped, .process-status-pill.st-completed,
+  .process-status-pill.st-exited, .process-status-pill.st-dead { background: var(--surface3); color: var(--text-faint); }
   .process-empty {
     padding: 24px; text-align: center; color: var(--text-faint); font-size: 13px;
   }
@@ -4160,6 +4172,11 @@ function sizeAgentChat(win, sessionId) {
   const scrollBody = win.querySelector('.modal-scroll-body');
   const chat = win.querySelector('.agent-chat');
   const out = document.getElementById(`agent-output-${sessionId}`);
+  // Capture pinned state BEFORE the resize so we don't snap a scrolled-up user
+  // back to the bottom every time the modal refreshes. A freshly-mounted output
+  // (no `scrollInitialized` flag) always pins so the chat opens at the bottom.
+  const freshMount = out && !out.dataset.scrollInitialized;
+  const wasPinned = out ? (freshMount || _isAgentOutputPinned(out)) : true;
   if (!scrollBody || !chat) return;
   scrollBody.style.overflow = 'hidden';
   // Constrain the tab content and agent panel to fill scroll body exactly
@@ -4178,9 +4195,12 @@ function sizeAgentChat(win, sessionId) {
   }
   const chatHeight = Math.max(120, available - used - 8);
   chat.style.height = chatHeight + 'px';
-  if (out) {
+  if (out && wasPinned) {
     out.scrollTop = out.scrollHeight;
-    requestAnimationFrame(() => { out.scrollTop = out.scrollHeight; });
+    requestAnimationFrame(() => {
+      out.scrollTop = out.scrollHeight;
+      if (freshMount && out.scrollHeight > 0) out.dataset.scrollInitialized = '1';
+    });
   }
 }
 
@@ -6032,7 +6052,9 @@ function connectAgentStream(projectId, sessionId) {
         renderAgentQuestion(sessionId, projectId, msg.questions);
       } else if (msg.type === 'turn_complete') {
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
-        // Mode B: turn finished but process still alive — do NOT close SSE
+        // Mode B: turn finished, process still alive. We close the SSE here to free
+        // a browser per-origin connection slot (Chromium caps at 6 over HTTP/1.1).
+        // sendFollowup() reconnects on the next message; agent process is unaffected.
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = 'idle';
           agentStatusCache[sessionId].waitingForPlanApproval = false;
@@ -6042,6 +6064,10 @@ function connectAgentStream(projectId, sessionId) {
         }
         updateHistoryStatus(sessionId, 'idle');
         updateAgentStatusUI(sessionId, 'idle');
+        es.close();
+        delete agentEventSources[sessionId];
+        delete sseRetryCount[sessionId];
+        if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
         refreshModal();
         renderAgentConsole();
       } else if (msg.type === 'status') {
@@ -6273,9 +6299,19 @@ function expandAgentOutput(sessionId) {
   refreshModal();
 }
 
+// "Pinned to bottom" detection: only auto-scroll when the user is already within
+// ~80 px of the bottom. Otherwise leave their scroll position alone — they're
+// reading earlier output and don't want to be yanked back.
+function _isAgentOutputPinned(el) {
+  if (!el) return true;
+  return (el.scrollHeight - el.scrollTop - el.clientHeight) < 80;
+}
+
 function appendAgentLine(sessionId, text) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el) return;
+  const freshMount = !el.dataset.scrollInitialized;
+  const wasPinned = freshMount || _isAgentOutputPinned(el);
   el.style.display = 'block';
 
   // Split multi-line text blocks into individual lines
@@ -6305,7 +6341,7 @@ function appendAgentLine(sessionId, text) {
       block.className = 'hl-table-pre';
       block.innerHTML = block._rawLines.map(l => formatTableLine(esc(l))).join('\n');
     }
-    el.scrollTop = el.scrollHeight;
+    if (wasPinned) el.scrollTop = el.scrollHeight;
     return;
   }
   // Blank lines inside a table: keep them in the table block
@@ -6313,7 +6349,7 @@ function appendAgentLine(sessionId, text) {
     const last = el.lastElementChild;
     if (last && (last.classList.contains('hl-table') || last.classList.contains('hl-table-pre'))) {
       last._rawLines.push(text);
-      el.scrollTop = el.scrollHeight;
+      if (wasPinned) el.scrollTop = el.scrollHeight;
       return;
     }
   }
@@ -6332,7 +6368,10 @@ function appendAgentLine(sessionId, text) {
     div.innerHTML = formatAgentText(text);
   }
   el.appendChild(div);
-  el.scrollTop = el.scrollHeight;
+  if (wasPinned) {
+    el.scrollTop = el.scrollHeight;
+    if (freshMount && el.scrollHeight > 0) el.dataset.scrollInitialized = '1';
+  }
 
   // Plan detection: [tool: ExitPlanMode] signals end of plan
   if (text.trim() === '[tool: ExitPlanMode]') {
@@ -6367,7 +6406,7 @@ function appendAgentLine(sessionId, text) {
           <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>
           <button style="background:var(--bg2);color:var(--text);border:1px solid var(--border2);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer" onclick="collapseIntoPlanButton('${esc(sessionId)}',this.closest('.agent-output'))">Collapse Plan</button>`;
         el.appendChild(approveRow);
-        el.scrollTop = el.scrollHeight;
+        if (wasPinned) el.scrollTop = el.scrollHeight;
       }
     }
 
@@ -6382,7 +6421,7 @@ function appendAgentLine(sessionId, text) {
       warn.style.cssText = 'background:var(--amber-dim);border:1px solid var(--amber);color:var(--amber-text);padding:8px 12px;border-radius:6px;margin:6px 0;font-size:12px;line-height:1.5;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
       warn.innerHTML = `&#x26A0; Agent is stuck trying to exit plan mode.${pid ? ` <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>` : ''}`;
       el.appendChild(warn);
-      el.scrollTop = el.scrollHeight;
+      if (wasPinned) el.scrollTop = el.scrollHeight;
       exitPlanModeCount[sessionId] = 0; // Reset so it doesn't spam
     }
 
@@ -6458,6 +6497,7 @@ let _aqCounter = 0;
 function renderAgentQuestion(sessionId, projectId, questions) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el || !questions || !questions.length) return;
+  const wasPinned = _isAgentOutputPinned(el);
   const formId = `aq-${sessionId}-${_aqCounter++}`;
 
   const container = document.createElement('div');
@@ -6491,7 +6531,7 @@ function renderAgentQuestion(sessionId, projectId, questions) {
 
   container.innerHTML = html;
   el.appendChild(container);
-  el.scrollTop = el.scrollHeight;
+  if (wasPinned) el.scrollTop = el.scrollHeight;
 
   // Show/hide "Other" text field on radio change
   container.querySelectorAll('input[type="radio"]').forEach(radio => {
@@ -6764,7 +6804,11 @@ async function fetchAgentStatus(projectId) {
       if (!agentHistory.find(h => h.sessionId === sid)) {
         agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '' });
       }
-      if (s.status === 'running' || s.status === 'idle') {
+      // Only auto-connect SSE for actively-running sessions. Idle sessions don't
+      // produce output until a follow-up arrives, so holding a live socket just
+      // burns one of Chromium's 6 per-origin connection slots. sendFollowup()
+      // reopens the stream when the user sends a new message.
+      if (s.status === 'running') {
         connectAgentStream(projectId, sid);
       }
     }
@@ -8191,6 +8235,8 @@ function renderAgentConsole() {
 function updateConsoleOutput(sessionId) {
   const el = document.getElementById(`ac-output-${sessionId}`);
   if (!el) return;
+  const freshMount = !el.dataset.scrollInitialized;
+  const wasPinned = freshMount || _isAgentOutputPinned(el);
   const lines = agentOutputBuffers[sessionId] || [];
   const lastEntry = lines[lines.length - 1];
   if (!lastEntry) return;
@@ -8235,7 +8281,10 @@ function updateConsoleOutput(sessionId) {
     }
     el.appendChild(div);
   }
-  el.scrollTop = el.scrollHeight;
+  if (wasPinned) {
+    el.scrollTop = el.scrollHeight;
+    if (freshMount && el.scrollHeight > 0) el.dataset.scrollInitialized = '1';
+  }
 }
 
 function timeAgoShort(ts) {
@@ -10170,6 +10219,7 @@ async function refreshProcessList() {
         <th>PID</th>
         <th>Name</th>
         <th>Project</th>
+        <th>Status</th>
         <th>Task / Command</th>
         <th>Duration</th>
         <th style="width:50px"></th>
@@ -10177,11 +10227,15 @@ async function refreshProcessList() {
       <tbody>${processes.map(p => {
         const dotClass = p.alive ? 'alive' : (p.exit_code === 0 ? 'exited' : 'dead');
         const dur = _formatDuration(p.started_at);
+        const statusLabel = p.agent_status
+          ? p.agent_status
+          : (p.alive ? 'running' : (p.exit_code === 0 ? 'exited' : 'dead'));
         return `<tr>
           <td><span class="process-status-dot ${dotClass}" title="${p.alive ? 'Running' : 'Exited (' + p.exit_code + ')'}"></span></td>
           <td style="font-family:var(--mono);font-size:11px">${p.pid}</td>
           <td>${esc(p.name)}</td>
           <td>${esc(p.project_name || p.project_id || '\u2014')}</td>
+          <td><span class="process-status-pill st-${esc(statusLabel)}">${esc(statusLabel)}</span></td>
           <td title="${esc(p.command_preview || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.command_preview || '\u2014')}</td>
           <td>${dur}</td>
           <td>${p.alive ? `<button class="btn-kill-process" onclick="killTrackedProcess(${p.pid})">Kill</button>` : ''}</td>
