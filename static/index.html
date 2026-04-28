@@ -6639,17 +6639,6 @@ function appendAgentLine(sessionId, text) {
     return;
   }
 
-  // Auto-scroll policy: only pin to bottom for fresh mount (chat opens at the
-  // last row) and for user-action lines (the user's own typed prompt or queued
-  // follow-up — they want to see what they just submitted). Agent output —
-  // regular text, tool calls, status, errors, tables — does NOT auto-scroll
-  // when the user is at the bottom: new content lands just below view, and the
-  // user reads it top-to-bottom by scrolling down naturally instead of being
-  // yanked to the end of a long response.
-  const _trim = text.trimStart();
-  const isUserAction = _trim.startsWith('> ');
-  const shouldPin = wasPinned && (freshMount || isUserAction);
-
   // Group consecutive table lines into a single styled block
   if (isTableLine(text)) {
     let block = el.lastElementChild;
@@ -6668,8 +6657,7 @@ function appendAgentLine(sessionId, text) {
       block.className = 'hl-table-pre';
       block.innerHTML = block._rawLines.map(l => formatTableLine(esc(l))).join('\n');
     }
-    if (shouldPin) el.scrollTop = el.scrollHeight;
-    if (freshMount && el.scrollHeight > 0) el.dataset.scrollInitialized = '1';
+    if (wasPinned) el.scrollTop = el.scrollHeight;
     return;
   }
   // Blank lines inside a table: keep them in the table block
@@ -6677,7 +6665,7 @@ function appendAgentLine(sessionId, text) {
     const last = el.lastElementChild;
     if (last && (last.classList.contains('hl-table') || last.classList.contains('hl-table-pre'))) {
       last._rawLines.push(text);
-      if (shouldPin) el.scrollTop = el.scrollHeight;
+      if (wasPinned) el.scrollTop = el.scrollHeight;
       return;
     }
   }
@@ -6696,12 +6684,10 @@ function appendAgentLine(sessionId, text) {
     div.innerHTML = formatAgentText(text);
   }
   el.appendChild(div);
-  if (shouldPin) {
+  if (wasPinned) {
     el.scrollTop = el.scrollHeight;
+    if (freshMount && el.scrollHeight > 0) el.dataset.scrollInitialized = '1';
   }
-  // Always set the initialized flag once content has actually rendered, so the
-  // *next* call doesn't keep treating itself as a fresh mount and pinning.
-  if (freshMount && el.scrollHeight > 0) el.dataset.scrollInitialized = '1';
 
   // Plan detection: [tool: ExitPlanMode] signals end of plan
   if (text.trim() === '[tool: ExitPlanMode]') {
