@@ -1,5 +1,36 @@
 # Mission Control — Changelog
 
+## [2026-04-28b] — Stop the agent chat from drifting up a few lines every poll
+
+### Symptom
+Every few seconds the conversation window jumped a few lines above where it had been. Worse when the user had dragged the chat-input separator to make the textarea taller.
+
+### Root cause
+The agent-panel header (`<div style="display:flex;...flex-wrap:wrap">` containing the status dot + label + Stop + token badge + activity ticker + plan-file btn + popout) is wrap-enabled. The `token-badge` text changes every second as elapsed time updates ("1m 30s" → "1m 31s") — when its rendered width crosses the wrap threshold by even a pixel, the row flips between 1-line and 2-line layout, changing the header height by ~24 px.
+
+`sizeAgentChat` runs on every `refreshModalById` call (status polling tick, focus, etc.) and computes `used = Σ panel.children.offsetHeight (excluding chat) + paddings`. When the header flipped layout, `used` shifted by 24 px, `chat.style.height = available - used - 8` shifted, the `.agent-output`'s `clientHeight` (`flex: 1` inside chat) shifted, and the auto-scroll branch — `if (wasPinned) out.scrollTop = out.scrollHeight` — re-snapped to bottom on a smaller/larger viewport. Result: the visible content appeared to drift up or down by a few lines on every poll. With the textarea dragged taller, output was smaller, so the same 24 px shift was a bigger fraction of view → more obvious.
+
+### Fix (`static/index.html`, `sizeAgentChat`)
+- Guard the height write: only set `chat.style.height` if the new value differs from the existing one by more than 4 px. Steady-state polls become no-ops; legitimate resizes still apply.
+- Auto-scroll only fires when the chat height actually changed (or on fresh mount). The `requestAnimationFrame` follow-up is also gated on fresh mount, since the post-frame re-snap was masking the same drift.
+
+### What this does NOT fix
+- The header itself can still wrap. If you want to *prevent* the wrap entirely, set `flex-wrap: nowrap` on the status bar or hide the activity ticker on narrow modals. Out of scope here — the goal was just to stop the wrap from cascading into the chat scroll.
+- `appendAgentLine` is unchanged. New SSE output still pins the user to bottom (when they're already there). Only the polling-driven re-pin is gone.
+
+### Rollback
+Revert `sizeAgentChat`'s tail block back to:
+```js
+chat.style.height = chatHeight + 'px';
+if (out && wasPinned) {
+  out.scrollTop = out.scrollHeight;
+  requestAnimationFrame(() => {
+    out.scrollTop = out.scrollHeight;
+    if (freshMount && out.scrollHeight > 0) out.dataset.scrollInitialized = '1';
+  });
+}
+```
+
 ## [2026-04-28] — Backfill agent_log from Claude transcripts on startup
 
 ### Symptom

@@ -4482,13 +4482,30 @@ function sizeAgentChat(win, sessionId) {
     used += parseFloat(panelStyle.paddingTop) + parseFloat(panelStyle.paddingBottom);
   }
   const chatHeight = Math.max(120, available - used - 8);
-  chat.style.height = chatHeight + 'px';
-  if (out && wasPinned) {
-    out.scrollTop = out.scrollHeight;
-    requestAnimationFrame(() => {
+  // Guard: only write chat.style.height if it actually changed by more than a
+  // few pixels. Polling-driven calls were oscillating chatHeight by ~24px when
+  // the agent-panel-header (flex-wrap) flipped between 1- and 2-line layouts as
+  // the token-badge elapsed-time text changed width each second. Each oscillation
+  // shifted .agent-output's clientHeight, which made the conversation visibly
+  // jump up/down by a few lines every poll. Skipping no-op writes avoids the
+  // cascade entirely.
+  const currentChatHeight = parseFloat(chat.style.height);
+  const heightChanged = isNaN(currentChatHeight) || Math.abs(chatHeight - currentChatHeight) > 4;
+  if (heightChanged) {
+    chat.style.height = chatHeight + 'px';
+  }
+  if (out) {
+    if (freshMount) {
       out.scrollTop = out.scrollHeight;
-      if (freshMount && out.scrollHeight > 0) out.dataset.scrollInitialized = '1';
-    });
+      requestAnimationFrame(() => {
+        out.scrollTop = out.scrollHeight;
+        if (out.scrollHeight > 0) out.dataset.scrollInitialized = '1';
+      });
+    } else if (heightChanged && wasPinned) {
+      // Only re-pin to bottom when the chat height actually changed; otherwise
+      // leave scrollTop alone so the user's reading position is stable.
+      out.scrollTop = out.scrollHeight;
+    }
   }
 }
 
