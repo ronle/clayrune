@@ -1,5 +1,151 @@
 # Mission Control — Changelog
 
+## [2026-04-28] — Backfill agent_log from Claude transcripts on startup
+
+### Symptom
+Sessions that ran for hours via the MC interface but were still mid-flight when the server was restarted disappeared from the Agent Log tab. The Claude transcript on disk was intact, but Mission Control had no record of the session because `_log_agent_completion()` only runs from the stream reader's `finally` block — and that block never fires when the Python process is killed before the agent ends. The user observed this after talking to MC overnight on mobile, then restarting the desktop app the next morning: the session was gone from Agent Log even though the conversation transcript still existed.
+
+### Why it happened
+MC's `<pid>_agent_log.json` is the only data source for the Agent Log tab. It is written exclusively by `_log_agent_completion()`, called from the Mode A and Mode B stream readers when their `proc.wait()` returns. A killed server process kills the reader threads before they reach that call. The Claude transcript in `~/.claude/projects/<encoded-cwd>/<csid>.jsonl` survives because Claude Code writes line-by-line, but MC's "I dispatched this" record was strictly in-memory until finalization. This also blocks `_revive_from_agent_log` (added in `[2026-04-27e]`) from finding the session: with no log entry, there's nothing to revive from.
+
+### Fix (`server.py`)
+- **New `_backfill_agent_log_from_transcripts(project_id, project)`** (placed right above `_revive_from_agent_log`): scans `~/.claude/projects/<encoded-cwd>/*.jsonl` for the project, compares each transcript's `claude_session_id` (the .jsonl filename) against the set of `claude_session_id`s already in `<pid>_agent_log.json`, and inserts a synthesized entry for any missing transcript newer than the configured age cutoff. Entries are tagged `synthesized: True` and `status: 'interrupted'`. `session_id` is left empty (MC never owned them); the "Continue" button in the Agent Log tab keys off `claude_session_id` so it still works.
+- **New `_backfill_all_agent_logs()`** iterates every project and runs the per-project backfill. Called once at server startup in a daemon thread so `app.run()` isn't blocked.
+- **Three new config flags**:
+  - `agent_log_backfill_enabled` (default `True`) — gates the whole feature.
+  - `agent_log_backfill_max_per_project` (default `200`) — caps how many transcripts to scan per project.
+  - `agent_log_backfill_max_age_days` (default `60`) — only synthesize entries for transcripts modified within this window. Older transcripts stay invisible to keep the Agent Log focused on recent work.
+
+### Verification
+Dry-run against `mission_control_agent_log.json` (291 existing entries, 41 known `claude_session_id`s) found 25 missing transcripts within the 60-day window, including `03ffec41-b384-4bcd-88a5-c2c066e9a308` — the overnight conversation that prompted this fix. After server restart, those 25 will appear in the Mission Control project's Agent Log tab with their first user message as the task label, last user message as the summary, real turn counts, and `[interrupted]` status.
+
+### Edge cases worth watching
+- **Synthesized entries are NOT revivable via `_revive_from_agent_log`**: that helper looks up by MC `session_id`, and synthesized entries leave `session_id` empty (since MC never owned the session). The "Continue" button in the Agent Log tab is the supported path and works because it keys off `claude_session_id`. If you want synthesized entries to be revivable too, give them a fresh `session_id = 'synth-' + csid[:8]` and the existing revive lookup will find them — left out of this commit because synthesized sessions in flight could still be running in another MC process and we don't want to fight over them.
+- **Duplicate entries on later finalization**: if a synthesized entry's session is still alive in another MC process and that process eventually finalizes it, `_log_agent_completion` will insert a *new* entry with the same `claude_session_id`. They coexist; the latest entry sorts to the top, the synthesized entry stays as historical record. Acceptable for now.
+- **System-reminder noise in last_user labels**: `_extract_user_text` returns the raw user text including `<system-reminder>` blocks attached by the harness. Some synthesized entries' summaries will start with `<system-reminder>...`. Pre-existing issue (the Resume Picker shows the same data) — punted to a future polish pass.
+- **Performance**: 200-transcript cap × O(turns) per scan. On a project with 35 transcripts the dry-run completed in well under a second. Scales to a few hundred projects fine.
+
+### Rollback
+Three options, increasing in cost:
+1. **Toggle off**: edit `data/config.json`, add `"agent_log_backfill_enabled": false`. Restart MC. The synthesized entries from prior boots stay in the log files (you can identify them by `synthesized: true` and remove them by hand if desired); no new synthesis happens.
+2. **Remove the call site**: delete the `threading.Thread(target=_backfill_all_agent_logs, ...)` line in `if __name__ == '__main__'`. Helpers stay but are unused.
+3. **Full revert**: also delete `_backfill_agent_log_from_transcripts` and `_backfill_all_agent_logs` (the two functions added right above `_revive_from_agent_log`).
+
+## [2026-04-27i] — Race-condition consolidation, Phase 2: server-decides + idempotent Stop
+
+Phase 2 of the structural rewrite. Phase 1 (`[2026-04-27h]`) gated stale state emissions at the source. Phase 2 removes the frontend's role as a state-decision-maker entirely.
+
+### Pattern being killed
+The frontend used to read its own (potentially stale) `agentStatusCache[sessionId].status` to choose between `/agent/followup` and `/agent/interrupt`. When the cache disagreed with the server (which is exactly what races produce), the wrong endpoint got called and the server had to compensate. Same idea for the Stop button: cache-aware visibility, error response when "agent not running", optimistic cache writes that conflicted with reality.
+
+### Server changes (`server.py`)
+- **New endpoint `POST /api/project/<pid>/agent/send`** is the only intent endpoint the frontend calls now. Inside `get_manager(pid).lock`, it reads live `agent_sessions[session_id].status` and routes:
+  - missing session (or no session_id) → revive from `agent_log` if possible, else dispatch fresh
+  - `status == 'running'` → `agent_interrupt` (atomic stop+resume, Phase 1's `_interrupting` gate already in place)
+  - any other status → `agent_followup` (queues for Mode A, stdin-write for Mode B, respawns purged sessions via `_revive_from_agent_log`)
+  Response is the upstream handler's response with a `route` field appended (`'interrupt'` / `'followup'` / `'revive'` / `'dispatch'`) for debugging.
+- **`/agent/stop` is now idempotent.** Pressing Stop on a session that's already stopped, missing, or in any non-running state returns `200 {ok: true, already_stopped: true, reason: <state>}` instead of 400/404. The frontend can call it without first checking cached status.
+- **New SSE event `turn_start`** emitted by `/agent/stream` whenever `session['status']` transitions into `'running'`. Without it, the FE (which no longer flips status optimistically) would have no way to learn a new turn began until `turn_complete` fired at the end. `turn_start` is non-terminal — the SSE handler updates UI but does NOT close the stream.
+- The existing `/agent/dispatch`, `/agent/followup`, `/agent/interrupt` endpoints are kept as internal helpers (still used by cron, scheduler, hivemind, and called by `/agent/send` itself). Frontend no longer calls them directly for the input box / interrupt flow.
+
+### Frontend changes (`static/index.html`)
+- **`sendFollowup` simplified.** Removed: the `currentStatus` read, the `useInterrupt` branch, the endpoint selection, the optimistic `agentStatusCache[sessionId].status = 'running'` write, the `updateHistoryStatus`/`updateAgentStatusUI` to `'running'`. Kept: prompt history, image upload, echo line, guardian guards, followup timeout. New behavior: always POST `/agent/send`, let the server pick the route, let SSE deliver the status flip via the new `turn_start` event.
+- **`stopAgent` simplified.** Removed: optimistic `agentStatusCache[sessionId].status = 'stopped'`, optimistic `updateHistoryStatus(sessionId, 'stopped')`, the immediate `refreshModal`/`renderAgentConsole`. Kept: SSE close (so reconnect picks up post-stop state cleanly), timeout cancel, `_recentlyStoppedSessions` marker. Server's idempotent `/agent/stop` makes the button safe to spam.
+- **New SSE handler `turn_start`** updates `agentStatusCache[sessionId].status = 'running'` and refreshes UI without closing the stream.
+
+### Net effect
+- Frontend has zero state-decision logic for the agent-send flow. All routing happens server-side under the lock.
+- Cache-vs-server desync (the root of #6, #13, #16) becomes architecturally impossible for these flows: the FE doesn't hold a state opinion that can desync. Cache is reactive-only.
+- Adding a new state (e.g. "queued", "recovering", "interrupting") becomes a single branch in `agent_send` — no new endpoint, no FE change.
+
+### What this does NOT remove
+- Other optimistic UI updates outside the agent-send path (e.g. backlog edits, project status changes) are unaffected; those have their own desync risks but are out of scope.
+- The Phase 1 single-emit gate (`_session_owned_by`, `_interrupting` flag) is still required — Phase 2 routes work fine, but the SSE stream still needs Phase 1 to suppress dying-thread emissions. The two phases are complementary.
+
+### Server restart required
+Both Phase 1 and Phase 2 changes are server-side. The running Flask process (started 2026-04-24) won't pick them up until restart.
+
+### Rollback
+1. **Cheapest** (revert behaviour, keep code): in `static/index.html` `sendFollowup`, change `'/agent/send'` back to `'/agent/followup'`. Stop button reverts to working as before because the server's idempotent change is backward-compatible (a `200 {already_stopped: true}` response still triggers the FE's existing "ok" path).
+2. **Clean**: also delete the `/api/project/<project_id>/agent/send` route in `server.py`, the `turn_start` emit block in `/agent/stream`, and the `turn_start` handler in `static/index.html`. Restore the `currentStatus`/`useInterrupt` logic and the optimistic cache writes in `sendFollowup`/`stopAgent`. Restore `/agent/stop`'s 404/400 responses.
+
+## [2026-04-27h] — Race-condition consolidation, Phase 1: single-emit gate
+
+After 16 distinct race-condition fixes accumulated in this codebase, the user asked for a structural fix instead of another point patch. The pattern across most of them is: **a thread (usually a stream reader's `finally` block) emits authoritative session state (`status`, `process_alive`, terminal events) for a session it no longer owns**, because either (a) a follow-up replaced the proc, or (b) an interrupt is mid-flight (kill issued, new proc not yet spawned).
+
+Phase 1 consolidates the identity check into one helper and closes the kill-→-respawn gap that #16 was abusing. Fixes #1, #2, and #16 from the inventory in MEMORY.md ("Mode B reader's stale process_alive flag", "AskUserQuestion guardian race", "Interrupt-resume stale-status emit"). Phase 2 (server-as-only-source-of-truth on the frontend) is *not* in this commit — it's the larger refactor and deserves its own pass.
+
+### What changed (`server.py`)
+- **`_session_owned_by(session, my_proc)`** helper added next to `_read_agent_stream`. Returns True iff `my_proc` is still the live proc for this session AND the session is not mid-interrupt. All places that previously did `session.get('proc') is my_proc` (or its negation) in the agent stream readers now go through this helper.
+- **`agent_interrupt`** now sets `session['_interrupting'] = True` *under the lock, before* killing the old proc. The respawn thread clears it (`session.pop('_interrupting', None)`) under the lock immediately after `session['proc'] = new_proc`. The exception path also clears the flag, so a respawn failure doesn't leave the session permanently gated.
+- **Stream readers** (Mode A `_read_agent_stream` + Mode B `_read_agent_stream_b`):
+  - Loop-break check (`if session.get('proc') is not my_proc: break`) → `if not _session_owned_by(session, my_proc): break`.
+  - Exception block's "should I log?" gate → `_session_owned_by(...)`.
+  - `finally` block's "should I emit terminal status?" gate → `_session_owned_by(...)`. This is the gate that fixes #16: between the old proc dying and the new one being assigned, `_interrupting=True`, so the dying reader's `finally` skips the `status='error'`/`status='completed'` write that was flipping the UI to "stopped".
+- **Terminal session reader** (`_read_terminal_stream`) was *not* changed — it operates on a different `session` dict (`terminal_sessions`), has no interrupt path, and the existing `proc is my_proc` check is correct there.
+
+### Why this is structural, not another point fix
+The previous 15 race fixes were each "spot the bug, add a check at one site". This one consolidates the check itself. Any future code path that wants to emit session state from a thread can call `_session_owned_by(session, my_proc)` and get correct behavior, including during interrupt-resume, without reasoning about which proc is current. New emit sites added later are forced to confront ownership at the type-system level (you can't emit without a `my_proc` in scope, and you can't be sure of ownership without the helper).
+
+### Phase 2 (deferred): frontend trust-server-only
+Currently `sendFollowup` does optimistic `agentStatusCache[sessionId].status = 'running'` writes before the server confirms. When the server's truth conflicts (e.g., the interrupt-resume gap, or a 404 from a purged session), the cache stays wrong. Phase 2 will drop optimistic writes — UI status flips only when an SSE `status` event arrives. The local "echo" line for the user's typed message stays, since that's a UI affordance, not a state claim. Deferred because it touches roughly a dozen sites in `static/index.html` and benefits from Phase 1 having stabilized the server side first.
+
+### Server restart required
+The new code is in `server.py`; the running Flask process (started 2026-04-24) won't pick it up until restart. Old in-flight sessions survive restart via `_revive_from_agent_log` from `[2026-04-27e]`.
+
+### Rollback
+1. **Cheapest** (revert behaviour, keep code): in `_session_owned_by`, change the body to `return session.get('proc') is my_proc` — drop the `_interrupting` check. The flag still gets set/cleared but is no longer consulted; behaviour reverts to pre-`[h]`.
+2. **Clean**: replace each call site of `_session_owned_by(session, my_proc)` with the original `session.get('proc') is my_proc` (or its negation), delete the helper, delete the three `_interrupting` set/pop sites in `agent_interrupt`.
+
+## [2026-04-27g] — Mobile UI iteration: tabs into 3-dot menu, compact bottom bar, modal trim
+
+Follow-up tightening of the mobile UI from `[2026-04-27f]`, driven by Galaxy Z Fold 7 cover-screen testing (~410 px CSS width).
+
+### What changed (`static/index.html`)
+- **Modal tab bar moved into the three-dot menu on mobile**. The 6 tabs (Agent / Backlog / Agent Log / Plans / Activity / Hivemind) are injected at the top of `.modal-menu-dropdown` inside a `<div class="mc-tabs-in-menu">` block. Each menu item calls `_mcMenuSwitchTab(projectId, tab)` — a thin wrapper that closes the open dropdown and delegates to `switchModalTab`. The active tab is highlighted with `--accent-dim` background. The original `.modal-tab-bar` at the top of the modal is `display: none` on mobile. Desktop unchanged.
+- **Three-dot menu readability** (mobile only): items 13 → 15 px, padding 10/16 → 12/18 px, icons 16 px, sub-items 14 px. `min-width: 240px`. `max-height: calc(100dvh - 120px)` with `overflow-y: auto` + thin scrollbar so the menu can scroll when tabs + Status + Color + Memory + Rules + Pop-out + Delete overflow the viewport.
+- **Modal header trim** (mobile only): hides the domain tag, the status-pill + relative-time row (now classed `.modal-status-row` on the inline div), the project summary, and the standalone `.card-summary` grid below the header. Added `.modal-status-row` class to the inline `<div>` in `modalContentHTML`. Padding tightened to `6px 14px 4px 16px`. What remains: project name input + 3-dot / minimize / close.
+- **Per-session sub-tabs row + "+ New" stay inline**: `.agent-tab-bar` is now `flex-wrap: nowrap; overflow-x: auto` on mobile (was wrapping when two long session names + the New button overflowed), each `.agent-tab` capped at `max-width: 110px`, both tabs and `.agent-tab-new` get `flex-shrink: 0` and small horizontal padding.
+- **Hide noisy session metrics on mobile**: `.token-badge` (elapsed · tokens · cached · turns), `.agent-activity` (live activity ticker), `.btn-popout`, `.btn-hm-dash` all `display: none` at ≤960 px. The status row then collapses to just `agent-status-dot` + label + `Stop` button.
+- **Bottom tab bar shrunk** from ~60 → ~52 px tall: padding `8/12/14` → `4/8/6`, icons 22 → 18 px, label gap 3 → 1, FAB 44 → 36 px with `margin-top: -12px` (was `-16`) and `box-shadow: 0 2px 0` (was `0 3px 0`). Looks balanced on the Z Fold cover screen and similar narrow phones.
+- **Modal/console offsets re-aligned to 52 px**: `.modal-content`, `.modal-window`, `.agent-console`, and the `@media (hover:none),(pointer:coarse)` modal sizing all use `calc(100dvh - 52px)` / `bottom: 52px`. This eliminates the phantom `===` line that was visible below the modal when the modal extended further than the tab bar's actual height.
+- **Modal corner-resize grip + chat-resize handle hidden on mobile**: `.modal-content::after { display: none }`, `.modal-content { resize: none }`, `.agent-chat-separator { display: none }`. None of them are usable on a touch screen.
+- **Home tab actually goes home now**: `sidebarNav('dashboard')` had no handler — only updated active-state. On mobile (`innerWidth <= 960`) it now closes every entry in `openModals` so tapping Home from inside a project modal returns to the project grid. Desktop behaviour unchanged.
+
+### Galaxy Z Fold 7 / "Desktop site" gotcha
+The cover screen is ~410 px CSS wide, but **Chrome and Samsung Internet often default to "Desktop site" mode on foldables**, which fakes a ~980 px viewport — causing `@media (max-width: 960px)` to never fire. Toggle off "Desktop site" in the browser menu to see the mobile UI. Documented in MEMORY.md.
+
+### Files
+- `static/index.html`: ~80 net new CSS lines inside the existing `MOBILE FRIENDLY UI` block + `@media (hover: none),(pointer: coarse)` updates; `_mcMenuSwitchTab` helper added beside `switchModalTab`; tab-list `<div class="mc-tabs-in-menu">` injected into `modalContentHTML`'s menu dropdown; `modal-status-row` class added to the inline header div.
+
+### Rollback
+The cheapest and clean rollback paths from `[2026-04-27f]` still work — they delete the entire `MOBILE FRIENDLY UI` CSS block, which now contains all of these tightening rules too. The `_mcMenuSwitchTab` helper and the `mc-tabs-in-menu` block in `modalContentHTML` are inert on desktop (the section is `display: none` at >960 px), so leaving them in place after a partial rollback is harmless.
+
+## [2026-04-27f] — Mobile UI: friendly app bar, filter pills, rounded cards, FAB tab bar
+
+Adapted the mobile design system handoff (`Mission Control Design System (1).zip`, `ui_kits/mobile/`) into the dashboard at ≤960 px widths. All changes are additive, scoped to a single CSS block and a couple of HTML/JS hooks — desktop is untouched.
+
+### What changed (`static/index.html`)
+- **App bar** (`#mobile-app-bar`): new `<div class="mc-app-bar">` above the project grid with an eyebrow line ("Monday afternoon"), display heading ("Hi 👋"), and circular avatar button (initials, taps to Settings). The slim desktop `.header` is hidden on mobile (it had no useful content there once the metric pill / search were already hidden at ≤600 px).
+- **Filter pills row** (`#mobile-filter-pills`): horizontal-scroll row of pills — `Needs you`, `All`, `Working`, `Done`, `Resting` — each with a count derived from `friendlyStatus(p)`. `Needs you` is amber-bordered to flag attention. Clicks call `setFilter(...)`. `filterProjects()` was extended to handle the new `urgent` value (waiting + blocked + asking + stuck) and the existing `completed` status.
+- **Project tile restyle**: tiles get 18 px corners, 1.5 px text-colored border, a 4 px solid drop-offset shadow (warm/editorial) or soft shadow (dark), 40 px rounded-square emoji avatar, and a chip-style status pill (rounded, colored bg, dot). Asking → amber border + amber drop shadow; Stuck → red border + red drop shadow. The desktop `::before` accent strip is suppressed (the shadow carries the cue). Domain tag and per-tile "agent running" badge are hidden on mobile (the chip already conveys it).
+- **Bottom tab bar redesign**: 5 slots (Home / Backlog / **+ FAB** / Activity / Settings) instead of the old 4. Center FAB is a circular accent-colored button with a 3 px solid drop-offset shadow that floats above the bar (`margin-top: -16px`). Tapping the FAB calls `openNewProjectForm()`. `sidebarNav()`'s active-class loop now uses each tab's `data-nav` attribute instead of its index, so reorders are safe.
+- **Agent console / modal sizing** bumped from `48px` to `64px` to fit the taller FAB tab bar (later re-tightened to 52 px in `[2026-04-27g]` after shrinking the bar).
+- New JS: `renderMobileAppBar()` (eyebrow + greeting + avatar initials) and `renderMobileFilterPills()` (count + active state). Both bail when `window.innerWidth > 960`. Wired into `render()` and re-run on `window.resize`.
+
+### What was deliberately *not* taken from the handoff
+- Lockscreen-notifications screen: no native push surface in MC.
+- Chat composer / Orchestrator chat screen: superseded by the existing per-project agent panel.
+- New-project wizard suggestion grid: MC has a real `openNewProjectForm()` flow.
+
+### Tone behaviour
+The block applies in all tones; the warm/editorial palettes match the design 1:1, dark inherits the same layout with palette-appropriate shadows. The accent color (FAB / active pill / avatar) follows the user's chosen `data-accent` — pick `sunset` in Settings → Appearance to see the orange-on-cream look from the handoff exactly.
+
+### Rollback
+1. **Cheapest** (hide everything): in `static/index.html`, change `@media (max-width: 960px)` on the `MOBILE FRIENDLY UI` block (search "MOBILE FRIENDLY UI") to `@media (max-width: 0)`. Tiles/tab bar revert to pre-change desktop styling instantly.
+2. **Clean**: delete the `MOBILE FRIENDLY UI` CSS block (the one starting at the comment "MOBILE FRIENDLY UI (≤960px, all tones)") + the closing `@media (min-width: 961px) { .mc-app-bar, .mc-pill-row { display: none !important; } }` rule directly after it.
+3. **Full revert**: also delete the `<div class="mc-app-bar">` and `<div class="mc-pill-row">` HTML inside `.content-main`, restore the old 4-tab `<div class="bottom-tab-bar">` HTML (`Dashboard / Scheduler / Settings / Processes`), revert `sidebarNav()`'s tab-bar loop to the index-based version, drop `renderMobileAppBar` / `renderMobileFilterPills` and their `render()` / resize hooks, and remove the `urgent` / `completed` branches from `filterProjects()`.
+
 ## [2026-04-27e] — Revive finalized agent sessions from agent_log on follow-up
 
 ### Symptom

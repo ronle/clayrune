@@ -147,6 +147,9 @@ def _load_config():
         'agent_channels': '',
         'agent_remote_control': False,
         'agent_revive_from_log': True,
+        'agent_log_backfill_enabled': True,
+        'agent_log_backfill_max_per_project': 200,
+        'agent_log_backfill_max_age_days': 60,
     }
     if CONFIG_PATH.exists():
         try:
@@ -1680,6 +1683,30 @@ def _format_tool_activity(name, inp):
         return f'[tool: {name}]'
 
 
+# ── Single-emit gate ─────────────────────────────────────────────────────────
+# Phase 1 of the 2026-04-27 race-condition consolidation: every place that
+# wanted to write session['status'] / 'process_alive' / emit a status event
+# from a stream-reader thread now goes through this one check. Returns True
+# iff `my_proc` is still the authoritative process for this session AND the
+# session isn't mid-interrupt (kill in flight, new proc not yet registered).
+#
+# Rationale: the old `session.get('proc') is my_proc` check was correct as
+# far as it went, but `agent_interrupt` kills the old proc BEFORE the new
+# one is spawned and registered, so the old reader's finally block could
+# still pass that check during the kill→respawn gap and emit a stale
+# terminal status (`error`/`completed`) that flipped the UI to "stopped".
+# The `_interrupting` flag closes that gap: it is set under the lock at the
+# top of `agent_interrupt`, cleared under the lock when the new proc is
+# assigned to `session['proc']`. While set, the old reader's writes are
+# discarded, the new reader's writes are still legitimate (it always passes
+# `proc is session['proc']`).
+def _session_owned_by(session, my_proc):
+    """True iff `my_proc` is still the authoritative proc for this session."""
+    if session.get('_interrupting'):
+        return False
+    return session.get('proc') is my_proc
+
+
 def _read_agent_stream(proc, session):
     """Reader thread: captures stdout lines into session log_lines."""
     # Snapshot the proc we were launched with so we can detect if a follow-up
@@ -1687,8 +1714,9 @@ def _read_agent_stream(proc, session):
     my_proc = proc
     try:
         for raw_line in proc.stdout:
-            # If session proc changed, a follow-up superseded us — stop writing.
-            if session.get('proc') is not my_proc:
+            # If session proc changed (or interrupt in flight), a follow-up
+            # superseded us — stop writing.
+            if not _session_owned_by(session, my_proc):
                 break
             line = raw_line.rstrip('\n\r')
             if not line:
@@ -1766,7 +1794,7 @@ def _read_agent_stream(proc, session):
     except Exception as e:
         # Only log stream errors if we're still the active reader
         # and the process wasn't intentionally killed (question/stop)
-        if session.get('proc') is my_proc:
+        if _session_owned_by(session, my_proc):
             if not session.get('waiting_for_question') and session.get('status') not in ('stopped',):
                 session['log_lines'].append(f"[stream error: {e}]")
     finally:
@@ -1774,9 +1802,10 @@ def _read_agent_stream(proc, session):
         _unregister_process(proc.pid)
         # Acquire per-project lock to prevent race with agent_stop setting 'stopped'
         with get_manager(session['project_id']).lock:
-            # Only update session status if we're still the active reader.
-            # If a follow-up replaced us, the new reader owns status updates.
-            if session.get('proc') is my_proc:
+            # Single-emit gate: only update session status if we still own it.
+            # Covers normal replacement (new proc assigned) AND in-flight interrupt
+            # (kill issued, new proc not yet spawned — `_interrupting` flag set).
+            if _session_owned_by(session, my_proc):
                 # Never overwrite 'stopped' — that's a user-initiated terminal state
                 if session['status'] == 'running':
                     if session.get('waiting_for_question'):
@@ -1824,7 +1853,7 @@ def _read_agent_stream_b(proc, session):
     my_proc = proc
     try:
         for raw_line in proc.stdout:
-            if session.get('proc') is not my_proc:
+            if not _session_owned_by(session, my_proc):
                 break
             line = raw_line.rstrip('\n\r')
             if not line:
@@ -1901,7 +1930,7 @@ def _read_agent_stream_b(proc, session):
             if len(session['log_lines']) > 2000:
                 session['log_lines'] = session['log_lines'][-1500:]
     except Exception as e:
-        if session.get('proc') is my_proc:
+        if _session_owned_by(session, my_proc):
             if not session.get('waiting_for_question') and session.get('status') not in ('stopped',):
                 session['log_lines'].append(f"[stream error: {e}]")
     finally:
@@ -1909,9 +1938,10 @@ def _read_agent_stream_b(proc, session):
         _unregister_process(proc.pid)
         # Acquire per-project lock to prevent race with agent_stop setting 'stopped'
         with get_manager(session['project_id']).lock:
-            if session.get('proc') is my_proc:
-                # Only update process_alive if WE are still the active reader.
-                # If a respawn replaced us, the new reader owns this flag.
+            # Single-emit gate (see _session_owned_by). Skip when interrupt
+            # is in flight — the new reader will set process_alive=True/status
+            # legitimately and there's no point flipping it False between.
+            if _session_owned_by(session, my_proc):
                 session['process_alive'] = False
                 # Never overwrite 'stopped' — that's a user-initiated terminal state
                 if session['status'] in ('running', 'idle'):
@@ -2072,6 +2102,102 @@ def _load_agent_log(project_id):
 def _save_agent_log(project_id, log):
     filepath = DATA_DIR / f'{project_id}_agent_log.json'
     filepath.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _backfill_agent_log_from_transcripts(project_id, project):
+    """Synthesize agent_log entries for Claude transcripts that have no matching log row.
+
+    Scenario this fixes: a session is dispatched via MC, runs for hours, but the server
+    is restarted before the stream reader's `finally` block can call _log_agent_completion().
+    The Claude transcript on disk survives but MC has no record of it — so the Agent Log
+    tab is empty for that session and `_revive_from_agent_log` can't find it either.
+
+    Walks the project's transcript directory, compares each .jsonl filename to the set of
+    claude_session_ids already in <pid>_agent_log.json, and inserts a synthesized entry for
+    any missing transcript newer than `agent_log_backfill_max_age_days`. Synthesized entries
+    are tagged with `synthesized: True` and `status: 'interrupted'`.
+
+    Roll back: set CONFIG['agent_log_backfill_enabled'] = False, restart MC.
+    """
+    if not CONFIG.get('agent_log_backfill_enabled', True):
+        return 0
+    pp = (project or {}).get('project_path', '')
+    if not pp or not Path(pp).is_dir():
+        return 0
+
+    max_n = int(CONFIG.get('agent_log_backfill_max_per_project', 200))
+    max_age_days = int(CONFIG.get('agent_log_backfill_max_age_days', 60))
+    cutoff_ts = _time.time() - max_age_days * 86400
+
+    transcripts = _recent_claude_transcripts(pp, limit=max_n)
+    if not transcripts:
+        return 0
+
+    log = _load_agent_log(project_id)
+    known_csids = {e.get('claude_session_id') for e in log if e.get('claude_session_id')}
+
+    added = 0
+    for t in transcripts:
+        csid = t.get('session_id')  # this is the .jsonl filename / claude_session_id
+        if not csid or csid in known_csids:
+            continue
+        if t.get('mtime', 0) < cutoff_ts:
+            continue
+        try:
+            ts_iso = datetime.fromtimestamp(t['mtime'], tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+        except Exception:
+            ts_iso = now_iso()
+        first_user = t.get('first_user', '') or ''
+        last_user = t.get('last_user', '') or ''
+        log.insert(0, {
+            'ts': ts_iso,
+            'task': first_user[:300],
+            'status': 'interrupted',
+            'summary': last_user[:1000],
+            'session_id': '',  # MC never owned this session — leave empty so revival creates a new sid
+            'claude_session_id': csid,
+            'started_at': ts_iso,
+            'usage': {},
+            'cost_usd': 0,
+            'num_turns': t.get('turns', 0),
+            'plan_file': '',
+            'hivemind_id': '',
+            'hivemind_ws_id': '',
+            'hivemind_role': '',
+            'synthesized': True,
+        })
+        added += 1
+
+    if added:
+        log.sort(key=lambda e: e.get('ts', ''), reverse=True)
+        _save_agent_log(project_id, log)
+        print(f"[backfill] {project_id}: added {added} synthesized log entr{'y' if added == 1 else 'ies'} from transcripts")
+    return added
+
+
+def _backfill_all_agent_logs():
+    """Run agent_log backfill across every project. Called once at server startup.
+
+    Wrapped in a thread by the caller so it doesn't block app.run().
+    """
+    if not CONFIG.get('agent_log_backfill_enabled', True):
+        return
+    try:
+        projects = load_projects()
+    except Exception as e:
+        print(f"[backfill] load_projects failed: {e}")
+        return
+    total = 0
+    for p in projects:
+        pid = p.get('id')
+        if not pid:
+            continue
+        try:
+            total += _backfill_agent_log_from_transcripts(pid, p)
+        except Exception as e:
+            print(f"[backfill] {pid}: {e}")
+    if total:
+        print(f"[backfill] done: {total} synthesized entr{'y' if total == 1 else 'ies'} across {len(projects)} project(s)")
 
 
 def _revive_from_agent_log(project_id, session_id, message, p):
@@ -2723,6 +2849,89 @@ def agent_dispatch(project_id):
     return jsonify({'ok': True, 'session_id': session_id})
 
 
+@app.route('/api/project/<project_id>/agent/send', methods=['POST'])
+def agent_send(project_id):
+    """Single user-intent endpoint. The server reads live session state
+    under the per-project lock and routes to the correct internal handler:
+
+      - no session_id, or session missing  → revive from agent_log if possible,
+                                              else dispatch fresh
+      - session exists, status == 'running' → interrupt-and-resume (atomic)
+      - session exists, any other status    → followup (queues for Mode A,
+                                              writes stdin for Mode B,
+                                              respawns purged sessions)
+
+    Frontend never picks the route. It just sends intent. Phase 2 of the
+    2026-04-27 race-condition consolidation — see CHANGELOG `[2026-04-27i]`.
+    """
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    pp = p.get('project_path', '')
+    if not pp or not Path(pp).is_dir():
+        return jsonify({'error': 'project_path not set'}), 400
+
+    data = request.get_json() or {}
+    message = (data.get('message') or '').strip()
+    session_id = (data.get('session_id') or '').strip()
+    if not message:
+        return jsonify({'error': 'message required'}), 400
+
+    # Decision under the lock — this is the ONLY place that picks the route.
+    with get_manager(project_id).lock:
+        session = agent_sessions.get(session_id) if session_id else None
+        if session and session.get('project_id') != project_id:
+            session = None  # session belongs to a different project — ignore
+        if not session:
+            decision = 'fresh_or_revive'
+        elif session.get('status') == 'running':
+            decision = 'interrupt'
+        else:
+            decision = 'followup'
+
+    # Route to the appropriate handler. Each does its own lock acquisition
+    # for the actual mutation; the decision above is just to pick the path.
+    # The existing handlers read `request.get_json()` themselves; they get
+    # the same body we got. We tag the response so the frontend can log the
+    # route taken (useful for debugging; FE doesn't act on it).
+    if decision == 'interrupt':
+        resp = agent_interrupt(project_id)
+    elif decision == 'followup':
+        resp = agent_followup(project_id)
+    else:  # fresh_or_revive
+        if session_id:
+            try:
+                revived = _revive_from_agent_log(project_id, session_id, message, p)
+            except Exception as e:
+                revived = None
+                _log_agent_activity(project_id, f"Revive error in /send: {e}")
+            if revived:
+                return jsonify({'ok': True, 'session_id': session_id,
+                                'revived': True, 'route': 'revive'})
+        # Otherwise dispatch a fresh session
+        try:
+            new_session_id = _dispatch_agent_internal(project_id, message)
+        except ValueError as e:
+            code = 404 if 'not found' in str(e) else 400
+            return jsonify({'error': str(e)}), code
+        except FileNotFoundError:
+            return jsonify({'error': 'Claude CLI not found.'}), 500
+        except Exception as e:
+            return jsonify({'error': f'dispatch failed: {e}'}), 500
+        return jsonify({'ok': True, 'session_id': new_session_id, 'route': 'dispatch'})
+
+    # Tag the upstream response with the route we took. Flask Response objects
+    # support get_json(); we rebuild and return.
+    try:
+        body = resp.get_json(silent=True) or {}
+        if isinstance(body, dict):
+            body.setdefault('route', decision)
+            return jsonify(body), resp.status_code
+    except Exception:
+        pass
+    return resp
+
+
 @app.route('/api/project/<project_id>/agent/stream')
 def agent_stream(project_id):
     """SSE endpoint streaming agent output for a specific session."""
@@ -2740,6 +2949,12 @@ def agent_stream(project_id):
         tick = 0
         idle_sent = False  # track whether we've sent turn_complete for current idle
         last_guardian_state = None
+        # Phase 2 (2026-04-27): the FE no longer flips status optimistically,
+        # so we need to tell it when a new turn starts (status: idle -> running)
+        # so the UI reflects reality without closing the stream. Sent as
+        # `turn_start` so the existing `status` handler (which closes on
+        # terminal states) is unaffected.
+        last_emitted_status = None
         while True:
             session['_last_sse_poll_time'] = _time.time()
             lines = session['log_lines']
@@ -2756,6 +2971,12 @@ def agent_stream(project_id):
                 session['pending_questions'] = []
 
             status = session['status']
+
+            # Emit a `turn_start` event whenever status transitions INTO 'running'.
+            # FE relies on this for the running-state UI flip post-Phase-2.
+            if status == 'running' and last_emitted_status != 'running':
+                yield f"data: {json.dumps({'type': 'turn_start', 'status': 'running'})}\n\n"
+            last_emitted_status = status
 
             if is_mode_b:
                 if status == 'idle' and not idle_sent:
@@ -3127,20 +3348,24 @@ def agent_stop(project_id):
     if not session_id:
         return jsonify({'error': 'session_id required'}), 400
 
-    # Acquire per-project lock ONLY to update status and grab the proc reference.
-    # Do NOT hold the lock during kill/wait — those can block for seconds.
+    # Idempotent: pressing Stop is always safe — if there's nothing to stop,
+    # we return 200 with `already_stopped: true` instead of an error. This lets
+    # the frontend treat the button as "ensure stopped" rather than reasoning
+    # about cached status. (Phase 2 of the 2026-04-27 race consolidation.)
+    proc = None
     with get_manager(project_id).lock:
         session = agent_sessions.get(session_id)
         if not session or session['project_id'] != project_id:
-            return jsonify({'error': 'session not found'}), 404
+            return jsonify({'ok': True, 'already_stopped': True, 'reason': 'no session'})
         if session['status'] not in ('running', 'idle', 'error'):
-            return jsonify({'error': 'agent not running'}), 400
+            return jsonify({'ok': True, 'already_stopped': True, 'reason': session['status']})
         proc = _stop_session(session, session_id)
 
-    # Kill outside the lock — taskkill can take seconds on Windows
-    _kill_proc_background(proc)
+    if proc is not None:
+        # Kill outside the lock — taskkill can take seconds on Windows
+        _kill_proc_background(proc)
+        _log_agent_activity(project_id, "Agent stopped by user")
 
-    _log_agent_activity(project_id, "Agent stopped by user")
     return jsonify({'ok': True})
 
 
@@ -3173,6 +3398,13 @@ def agent_interrupt(project_id):
 
         old_proc = session['proc']
         claude_sid = session.get('claude_session_id')
+
+        # Mark as interrupting BEFORE killing the old proc. The old reader's
+        # finally block will see this flag (via _session_owned_by) and skip
+        # all status / process_alive writes, eliminating the stale-status
+        # flash that flipped the UI to "stopped" between kill and respawn.
+        # Cleared by the respawn thread once the new proc replaces session['proc'].
+        session['_interrupting'] = True
 
         # Stop the current process
         session['log_lines'].append('[Agent interrupted by user]')
@@ -3240,6 +3472,9 @@ def agent_interrupt(project_id):
                     session['proc'] = proc
                     session['process_alive'] = True
                     session['stdin_lock'] = threading.Lock()
+                    # New proc is now the authoritative one — clear the
+                    # interrupt gate so its reader's writes are accepted.
+                    session.pop('_interrupting', None)
 
                 threading.Thread(target=_read_agent_stream_b,
                                  args=(proc, session), daemon=True).start()
@@ -3275,6 +3510,8 @@ def agent_interrupt(project_id):
                                   session_id, project_id, message[:80])
                 with get_manager(project_id).lock:
                     session['proc'] = proc
+                    # New proc is now authoritative — clear the interrupt gate.
+                    session.pop('_interrupting', None)
 
                 threading.Thread(target=_read_agent_stream,
                                  args=(proc, session), daemon=True).start()
@@ -3284,6 +3521,9 @@ def agent_interrupt(project_id):
             session['status'] = 'error'
             session['last_status_change_time'] = _time.time()
             session['process_alive'] = False
+            # Clear the interrupt gate on failure too — otherwise the session
+            # stays permanently gated and no future reader can update status.
+            session.pop('_interrupting', None)
 
     threading.Thread(target=_do_respawn, daemon=True).start()
 
@@ -6639,5 +6879,10 @@ if __name__ == '__main__':
     _start_scheduler()
     _start_hivemind_orchestrator()
     _start_session_guardian()
+    # Backfill agent_log from Claude transcripts: makes mid-flight sessions that
+    # never finalized (server killed before stream reader's finally) visible in
+    # the Agent Log tab. Runs once, in the background, so app.run() isn't blocked.
+    # Roll back: set agent_log_backfill_enabled = false in data/config.json.
+    threading.Thread(target=_backfill_all_agent_logs, daemon=True).start()
     print(f"Mission Control running at http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

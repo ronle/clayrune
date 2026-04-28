@@ -633,15 +633,11 @@
     .modal-content {
       resize: none;
       min-width: 0; min-height: 200px;
-      max-width: 100vw; max-height: calc(100dvh - 48px);
-      width: 100vw; height: calc(100dvh - 48px);
+      max-width: 100vw; max-height: calc(100dvh - 52px);
+      width: 100vw; height: calc(100dvh - 52px);
       border-radius: 0;
     }
-    .modal-content::after {
-      content: ''; width: 18px; height: 18px; bottom: 4px; right: 4px;
-      border-right: 3px solid var(--text-faint); border-bottom: 3px solid var(--text-faint);
-      opacity: 0.6;
-    }
+    .modal-content::after { display: none; } /* corner-grip useless without a mouse */
   }
 
   .modal-window-controls {
@@ -1193,28 +1189,72 @@
     .sidebar { display: none; }
     .feed-col { display: none; }
     .bottom-tab-bar { display: flex !important; }
-    .agent-console { left: 0 !important; bottom: 48px; }
+    .agent-console { left: 0 !important; bottom: 52px; }
     .card-summary { display: none !important; }
     .modal-content {
-      max-width: 100vw; max-height: calc(100dvh - 48px);
-      width: 100vw; height: calc(100dvh - 48px);
+      max-width: 100vw; max-height: calc(100dvh - 52px);
+      width: 100vw; height: calc(100dvh - 52px);
       border-radius: 0;
     }
-    .modal-window { max-height: calc(100dvh - 48px); }
+    .modal-window { max-height: calc(100dvh - 52px); }
     .tile-task, .tile-next { display: none; }
     /* ── Modal compaction for mobile ─────────────────────────── */
-    .modal-header { padding: 10px 16px 8px 20px !important; }
+    .modal-header { padding: 6px 14px 4px 16px !important; }
     .modal-header .path-row { display: none !important; }
     .modal-header .description { display: none !important; }
-    .modal-tab-bar { padding: 0 10px !important; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .modal-tab { padding: 7px 10px 5px !important; font-size: 10px !important; }
-    .agent-panel { padding: 8px 10px 8px 14px !important; }
+    .modal-header .modal-status-row { display: none !important; }
+    .modal-header .project-summary { display: none !important; }
+    .modal-header .domain-tag { display: none !important; }
+    .modal-header .card-title-row { margin-bottom: 0 !important; }
+    .modal-content > .card-summary { display: none !important; }
+    /* Modal tabs move into the three-dot menu on mobile */
+    .modal-tab-bar { display: none !important; }
+    .agent-panel { padding: 6px 10px 6px 12px !important; }
     .agent-panel-header { margin-bottom: 4px !important; }
     .agent-panel-header .section-title { display: none !important; }
-    .agent-tab-bar { gap: 0 !important; }
-    .agent-tab { padding: 5px 8px !important; font-size: 11px !important; }
+    /* Per-session tabs row: single-line horizontal scroll, "+ New" stays inline */
+    .agent-tab-bar {
+      gap: 4px !important; flex-wrap: nowrap !important;
+      overflow-x: auto !important; -webkit-overflow-scrolling: touch;
+      margin-bottom: 6px !important; padding-bottom: 2px !important;
+    }
+    .agent-tab-bar::-webkit-scrollbar { display: none; }
+    .agent-tab { padding: 4px 8px !important; font-size: 11px !important; max-width: 110px !important; flex-shrink: 0 !important; }
+    .agent-tab-new { padding: 4px 8px !important; font-size: 11px !important; flex-shrink: 0 !important; white-space: nowrap; }
+    /* Per-session metrics (elapsed · tokens · turns) hidden on mobile — too noisy on a small screen */
+    .token-badge { display: none !important; }
+    .agent-activity { display: none !important; }
     .card-section { padding: 8px 10px 8px 14px !important; }
     .btn-popout { display: none !important; }
+    .btn-hm-dash { display: none !important; }
+    /* Hide desktop-only chrome: chat resize handle, modal corner-resize grip */
+    .agent-chat-separator { display: none !important; }
+    .modal-content { resize: none !important; }
+    .modal-content::after { display: none !important; }
+  }
+  /* Modal three-dot menu: tab section is mobile-only */
+  @media (min-width: 961px) {
+    .mc-tabs-in-menu { display: none !important; }
+  }
+  /* Larger, scrollable three-dot menu on mobile (tap targets + readability) */
+  @media (max-width: 960px) {
+    .modal-menu-dropdown {
+      min-width: 240px !important;
+      max-height: calc(100dvh - 120px);
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
+    }
+    .modal-menu-dropdown::-webkit-scrollbar { width: 4px; }
+    .modal-menu-dropdown::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+    .modal-menu-item {
+      font-size: 15px !important; padding: 12px 18px !important;
+      gap: 12px !important;
+    }
+    .modal-menu-item .menu-icon { font-size: 16px !important; width: 20px !important; }
+    .modal-menu-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 700; }
+    .modal-menu-item.active .menu-icon { color: var(--accent); }
+    .modal-menu-sub-item {
+      font-size: 14px !important; padding: 10px 18px 10px 50px !important;
+    }
   }
   @media (max-width: 768px) {
     .projects-col { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
@@ -1265,6 +1305,164 @@
   }
   .bottom-tab-item.active { color: var(--accent); }
   .bottom-tab-item .bti-icon { font-size: 18px; margin-bottom: 2px; }
+
+  /* ── MOBILE FRIENDLY UI (≤960px, all tones) ─────────────────────
+     Adapted from the mobile design system handoff. All rules below
+     activate only at mobile widths. The warm light tone matches the
+     design 1:1; dark/editorial tones inherit the same layout with
+     palette-appropriate shadows. Rollback: delete this block + its
+     companion HTML/JS (see CHANGELOG.md). */
+  @media (max-width: 960px) {
+    .header { display: none; }
+    .schedule-banner { margin-top: 0; }
+    .content-main { padding: 0 0 80px; }
+    .toolbar { display: none; }
+    .projects-col { padding: 0 16px 16px; gap: 12px; }
+    .feed-expand-tab { display: none !important; }
+
+    /* App bar — eyebrow + greeting + avatar */
+    .mc-app-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 22px 18px 10px;
+    }
+    .mc-app-bar .mc-greet { flex: 1; min-width: 0; }
+    .mc-app-bar .mc-eyebrow {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-faint);
+    }
+    .mc-app-bar h1 {
+      font-family: 'Nunito', 'Inter', sans-serif; font-weight: 800;
+      font-size: 24px; line-height: 1.1; margin: 2px 0 0; color: var(--text);
+      letter-spacing: -0.01em;
+    }
+    .mc-avatar-btn {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      display: grid; place-items: center; font-weight: 700; font-size: 13px;
+      border: 1.5px solid var(--text); cursor: pointer; flex-shrink: 0;
+    }
+
+    /* Filter pills row */
+    .mc-pill-row {
+      display: flex; gap: 6px; padding: 4px 16px 14px;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+    }
+    .mc-pill-row::-webkit-scrollbar { display: none; }
+    .mc-pill {
+      flex-shrink: 0; padding: 7px 14px; border-radius: 999px;
+      background: var(--surface); border: 1.5px solid var(--border2);
+      font-size: 13px; font-weight: 600; color: var(--text-dim);
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: inherit; cursor: pointer; line-height: 1.2;
+    }
+    .mc-pill .count { font-size: 11px; opacity: 0.7; }
+    .mc-pill.active {
+      background: var(--text); color: var(--surface); border-color: var(--text);
+    }
+    .mc-pill.urgent {
+      border-color: var(--amber); color: var(--amber-text);
+      background: var(--amber-dim);
+    }
+    .mc-pill.urgent.active {
+      background: var(--amber); color: var(--surface); border-color: var(--amber);
+    }
+
+    /* Friendly card restyle (re-uses existing .card markup from tileHTML) */
+    .card {
+      border-radius: 18px !important;
+      border: 1.5px solid var(--border2) !important;
+      box-shadow: 0 4px 0 rgba(0, 0, 0, 0.18);
+      padding: 14px 14px 12px;
+      min-height: 0;
+      aspect-ratio: auto;
+    }
+    body.tone-warm .card,
+    body.tone-editorial .card {
+      border-color: var(--text) !important;
+      box-shadow: 0 4px 0 rgba(32, 28, 22, 0.10);
+    }
+    .card.friendly-asking,
+    .card.status-waiting {
+      border-color: var(--amber) !important;
+      box-shadow: 0 4px 0 var(--amber);
+    }
+    .card.friendly-stuck,
+    .card.status-blocked {
+      border-color: var(--red) !important;
+      box-shadow: 0 4px 0 var(--red);
+    }
+    .card.friendly-asking::before,
+    .card.friendly-stuck::before { display: none; } /* shadow carries the cue */
+
+    .card-header { padding: 0 0 8px; gap: 11px; flex-direction: row !important; align-items: center; }
+    .card-title-row { flex: 1; min-width: 0; gap: 11px; align-items: center; flex-wrap: nowrap; }
+    .card-avatar {
+      width: 40px !important; height: 40px !important; font-size: 20px !important;
+      border-radius: 12px;
+      background: var(--surface3);
+      border: 1.5px solid var(--border2);
+    }
+    body.tone-warm .card-avatar,
+    body.tone-editorial .card-avatar { border-color: var(--text); }
+    .project-name {
+      font-size: 15px !important; font-weight: 700;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+    }
+    .card .domain-tag { display: none; }
+    .card .agent-running-badge { display: none; } /* status chip carries the info */
+
+    /* Status chip — pill with colored dot */
+    .card .status-pill {
+      padding: 4px 10px !important; border-radius: 999px !important;
+      font-size: 11px !important; font-weight: 700; letter-spacing: 0.04em;
+      gap: 5px; flex-shrink: 0; align-self: center !important;
+    }
+    .card .status-pill .status-dot { width: 6px; height: 6px; }
+
+    .card .tile-body { padding: 0; gap: 8px; }
+    .card .tile-summary {
+      font-size: 14px !important; color: var(--text); line-height: 1.45;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .card .tile-footer {
+      padding: 10px 0 0 !important; border-top: 0; gap: 10px;
+    }
+    .card .backlog-badge {
+      font-size: 10px !important; padding: 3px 8px !important; border-radius: 999px !important;
+      background: var(--surface3); color: var(--text-dim); border: 0;
+    }
+    .card .time-ago {
+      font-size: 11px !important; color: var(--text-faint);
+    }
+
+    /* Bottom tab bar — 5 slots, center FAB. Compact (~52px tall incl. FAB lift) */
+    .bottom-tab-bar {
+      display: grid !important; grid-template-columns: repeat(5, 1fr);
+      padding: 4px 8px 6px;
+      border-top: 1.5px solid var(--border);
+    }
+    .bottom-tab-item {
+      flex-direction: column; gap: 1px;
+      padding: 3px 0; font-size: 9px; font-weight: 600; line-height: 1.1;
+    }
+    .bottom-tab-item .bti-icon { font-size: 18px; margin: 0; line-height: 1; }
+    .bottom-tab-item.active { color: var(--accent); }
+    .bottom-tab-item.fab .bti-icon {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      display: grid; place-items: center;
+      font-size: 22px; font-weight: 800; line-height: 1;
+      border: 1.5px solid var(--text);
+      box-shadow: 0 2px 0 var(--text);
+      margin-top: -12px;
+    }
+    .bottom-tab-item.fab { color: var(--accent); }
+  }
+  /* Hide the mobile-only scaffolding outside mobile widths */
+  @media (min-width: 961px) {
+    .mc-app-bar, .mc-pill-row { display: none !important; }
+  }
 
   /* ATTACHMENTS */
   .att-btn {
@@ -2703,6 +2901,16 @@
   <!-- Content Area -->
   <div class="content-area">
     <div class="content-main">
+      <!-- Mobile app bar (≤960px, warm tone only) -->
+      <div class="mc-app-bar" id="mobile-app-bar">
+        <div class="mc-greet">
+          <div class="mc-eyebrow" id="mc-eyebrow">Mission Control</div>
+          <h1 id="mc-greeting">Hi <span aria-hidden="true">&#x1F44B;</span></h1>
+        </div>
+        <div class="mc-avatar-btn" id="mc-avatar-btn" onclick="sidebarNav('settings')" title="Settings">MC</div>
+      </div>
+      <!-- Mobile filter pill row -->
+      <div class="mc-pill-row" id="mobile-filter-pills"></div>
       <!-- Toolbar -->
       <div class="toolbar">
         <div class="toolbar-left">
@@ -2784,19 +2992,22 @@
   </div>
 </div>
 
-<!-- Bottom Tab Bar (mobile) -->
+<!-- Bottom Tab Bar (mobile) — 5 slots, center FAB -->
 <div class="bottom-tab-bar" id="bottom-tab-bar">
-  <div class="bottom-tab-item active" onclick="sidebarNav('dashboard')">
-    <span class="bti-icon">&#x25A6;</span>Dashboard
+  <div class="bottom-tab-item active" data-nav="dashboard" onclick="sidebarNav('dashboard')">
+    <span class="bti-icon">&#x1F3E0;</span>Home
   </div>
-  <div class="bottom-tab-item" onclick="sidebarNav('scheduler')">
-    <span class="bti-icon">&#x23F1;</span>Scheduler
+  <div class="bottom-tab-item" data-nav="backlog" onclick="sidebarNav('backlog')">
+    <span class="bti-icon">&#x2630;</span>Backlog
   </div>
-  <div class="bottom-tab-item" onclick="sidebarNav('settings')">
+  <div class="bottom-tab-item fab" data-nav="new" onclick="openNewProjectForm()" title="New project">
+    <span class="bti-icon">+</span>New
+  </div>
+  <div class="bottom-tab-item" data-nav="processes" onclick="sidebarNav('processes')">
+    <span class="bti-icon">&#x1F4EC;</span>Activity
+  </div>
+  <div class="bottom-tab-item" data-nav="settings" onclick="sidebarNav('settings')">
     <span class="bti-icon">&#x2699;</span>Settings
-  </div>
-  <div class="bottom-tab-item" onclick="sidebarNav('processes')">
-    <span class="bti-icon">&#x2630;</span>Processes
   </div>
 </div>
 
@@ -2903,7 +3114,56 @@ function buildSlotArray(filteredIds) {
   return slots;
 }
 
-function render() { renderStats(); renderProjects(); renderListView(); renderFeed(); renderSidebarProjects(); applyViewMode(); if (openModals.has('__all_backlog')) renderAllBacklog(); }
+function render() { renderStats(); renderProjects(); renderListView(); renderFeed(); renderSidebarProjects(); applyViewMode(); renderMobileAppBar(); renderMobileFilterPills(); if (openModals.has('__all_backlog')) renderAllBacklog(); }
+
+// ── Mobile UI: app bar greeting + filter pills (≤960px, warm tone) ──────────
+function renderMobileAppBar() {
+  if (window.innerWidth > 960) return;
+  const eyebrow = document.getElementById('mc-eyebrow');
+  if (!eyebrow) return;
+  const now = new Date();
+  const day = now.toLocaleDateString(undefined, { weekday: 'long' });
+  const h = now.getHours();
+  const part = h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+  eyebrow.textContent = `${day} ${part}`;
+  // Avatar initials: from configured display name, else "MC"
+  const name = (_globalConfig && (_globalConfig.user_display_name || _globalConfig.user_name)) || '';
+  const initials = name
+    ? name.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
+    : 'MC';
+  const av = document.getElementById('mc-avatar-btn');
+  if (av) av.textContent = initials;
+}
+
+function renderMobileFilterPills() {
+  const row = document.getElementById('mobile-filter-pills');
+  if (!row) return;
+  if (window.innerWidth > 960) { row.innerHTML = ''; return; }
+  const counts = { all: allProjects.length, urgent: 0, working: 0, done: 0, idle: 0 };
+  allProjects.forEach(p => {
+    const fs = friendlyStatus(p);
+    if (fs === 'asking' || fs === 'stuck') counts.urgent++;
+    if (fs === 'working') counts.working++;
+    if (fs === 'done') counts.done++;
+    if (fs === 'idle') counts.idle++;
+  });
+  const af = activeFilter || 'all';
+  const pills = [
+    { id: 'urgent',    label: 'Needs you', count: counts.urgent,  cls: 'urgent' },
+    { id: 'all',       label: 'All',       count: counts.all,     cls: '' },
+    { id: 'active',    label: 'Working',   count: counts.working, cls: '' },
+    { id: 'completed', label: 'Done',      count: counts.done,    cls: '' },
+    { id: 'parked',    label: 'Resting',   count: counts.idle,    cls: '' },
+  ];
+  row.innerHTML = pills.map(p => {
+    if (!p.count && p.id !== 'all' && af !== p.id) return '';
+    const active = af === p.id;
+    return `<button class="mc-pill ${p.cls} ${active ? 'active' : ''}" onclick="setFilter('${p.id}')">${esc(p.label)}${p.count ? ` <span class="count">${p.count}</span>` : ''}</button>`;
+  }).join('');
+}
+
+// Re-render on resize so mobile-only blocks appear/disappear cleanly
+window.addEventListener('resize', () => { renderMobileAppBar(); renderMobileFilterPills(); });
 
 function renderStats() {
   const runningAgents = agentHistory.filter(h => h.status === 'running' || h.status === 'idle').length;
@@ -2927,7 +3187,9 @@ function renderDomainFilters() {
 
 function filterProjects() {
   if (activeFilter === 'all') return allProjects;
-  if (['active','blocked','waiting','parked'].includes(activeFilter))
+  if (activeFilter === 'urgent')
+    return allProjects.filter(p => p.status === 'waiting' || p.status === 'blocked' || friendlyStatus(p) === 'asking' || friendlyStatus(p) === 'stuck');
+  if (['active','blocked','waiting','parked','completed'].includes(activeFilter))
     return allProjects.filter(p => p.status === activeFilter);
   return allProjects.filter(p => p.domain === activeFilter);
 }
@@ -3316,6 +3578,27 @@ function modalContentHTML(p) {
         <button class="modal-minimize" onclick="minimizeModal('${esc(p.id)}')" title="Minimize">&#x2015;</button>
         <button class="modal-close" onclick="closeModalById('${esc(p.id)}')" title="Close">&#10005;</button>
         <div class="modal-menu-dropdown" id="modal-menu-${esc(p.id)}">
+          <div class="mc-tabs-in-menu">
+            <button class="modal-menu-item${activeTab==='agent'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','agent')">
+              <span class="menu-icon">&#x25A0;</span> Agent
+            </button>
+            <button class="modal-menu-item${activeTab==='backlog'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','backlog')">
+              <span class="menu-icon">&#x2630;</span> Backlog${openItems.length ? `<span class="tab-badge" style="margin-left:auto">${openItems.length}</span>` : ''}
+            </button>
+            <button class="modal-menu-item${activeTab==='agent-log'?' active':''}" data-tab-name="agent-log" onclick="_mcMenuSwitchTab('${esc(p.id)}','agent-log')">
+              <span class="menu-icon">&#x1F4DC;</span> Agent Log
+            </button>
+            <button class="modal-menu-item${activeTab==='plans'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','plans')">
+              <span class="menu-icon">&#x1F4CB;</span> Plans
+            </button>
+            <button class="modal-menu-item${activeTab==='activity'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','activity')">
+              <span class="menu-icon">&#x23F1;</span> Activity
+            </button>
+            <button class="modal-menu-item${activeTab==='hivemind'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','hivemind')">
+              <span class="menu-icon">&#x2B21;</span> Hivemind
+            </button>
+            <div class="modal-menu-sep"></div>
+          </div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'status-sub-${esc(p.id)}')">
             <span class="menu-icon">&#x25CF;</span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
@@ -3447,7 +3730,7 @@ function modalContentHTML(p) {
         >
         ${(() => { const cfg = getDomainConfig(p.domain||'general'); return `<span class="domain-tag" style="background:${cfg.bg};color:${cfg.color}">${esc(cfg.label||p.domain||'general')}</span>`; })()}
       </div>
-      <div style="display:flex;align-items:center;gap:10px">
+      <div class="modal-status-row" style="display:flex;align-items:center;gap:10px">
         <span class="status-pill ${sc}">${esc(vl('status_' + (p.status||'unknown')))}</span>
         <span class="time-ago">${esc(p.last_updated_relative||'')}</span>
       </div>
@@ -3902,7 +4185,13 @@ function toggleDensity() {
 
 // ── Sidebar Navigation ──────────────────────────────────────────────────────
 function sidebarNav(target) {
-  if (target === 'scheduler') openScheduler();
+  if (target === 'dashboard') {
+    // On mobile, "Home" = back to project grid → close any open modals
+    if (window.innerWidth <= 960 && typeof openModals !== 'undefined' && openModals.size) {
+      Array.from(openModals.keys()).forEach(id => closeModalById(id));
+    }
+  }
+  else if (target === 'scheduler') openScheduler();
   else if (target === 'settings') openSettings();
   else if (target === 'shared-rules') openSharedRulesEditor();
   else if (target === 'processes') openProcessManager();
@@ -3911,10 +4200,9 @@ function sidebarNav(target) {
   document.querySelectorAll('.sidebar-item').forEach(i =>
     i.classList.toggle('active', i.dataset.nav === target)
   );
-  // Update active state in bottom tab bar
-  document.querySelectorAll('.bottom-tab-item').forEach((b, idx) => {
-    const navs = ['dashboard','scheduler','settings','processes'];
-    b.classList.toggle('active', navs[idx] === target);
+  // Update active state in bottom tab bar (uses data-nav attribute)
+  document.querySelectorAll('.bottom-tab-item').forEach(b => {
+    b.classList.toggle('active', b.dataset.nav === target);
   });
 }
 
@@ -6050,6 +6338,17 @@ function connectAgentStream(projectId, sessionId) {
         }
       } else if (msg.type === 'question' && msg.questions) {
         renderAgentQuestion(sessionId, projectId, msg.questions);
+      } else if (msg.type === 'turn_start') {
+        // Phase 2 (2026-04-27): server tells us a new turn started so we can
+        // flip the status UI without optimistic cache writes in sendFollowup.
+        if (agentStatusCache[sessionId]) {
+          agentStatusCache[sessionId].status = 'running';
+          agentStatusCache[sessionId].waitingForPlanApproval = false;
+        }
+        updateHistoryStatus(sessionId, 'running');
+        updateAgentStatusUI(sessionId, 'running');
+        refreshModal();
+        renderAgentConsole();
       } else if (msg.type === 'turn_complete') {
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Mode B: turn finished, process still alive. We close the SSE here to free
@@ -6655,42 +6954,32 @@ async function sendFollowup(projectId, sessionId) {
   const previewContainer = input.closest('.agent-chat-input')?.querySelector('.agent-image-previews');
   if (previewContainer) previewContainer.remove();
 
-  // Capture status BEFORE optimistic update — needed to choose endpoint
-  const currentStatus = (agentStatusCache[sessionId] || {}).status;
+  // Phase 2 of 2026-04-27 race consolidation: frontend never reads cached
+  // status to pick the route. We always POST /agent/send and let the server
+  // read live session state under the lock to decide between interrupt /
+  // followup / revive / dispatch. UI status flips only when SSE delivers a
+  // status event — no optimistic cache writes here.
 
-  // Optimistically update status to running before API returns
-  if (agentStatusCache[sessionId]) {
-    agentStatusCache[sessionId].status = 'running';
-    delete agentStatusCache[sessionId].usage;
-    delete agentStatusCache[sessionId].cost_usd;
-  }
-  updateHistoryStatus(sessionId, 'running');
-  updateAgentStatusUI(sessionId, 'running');
-
-  // If agent is currently running, use interrupt endpoint (atomic stop+resume)
-  // instead of queueing a followup that won't be seen until the turn ends.
-  const useInterrupt = currentStatus === 'running';
-  const endpoint = useInterrupt
-    ? `/api/project/${projectId}/agent/interrupt`
-    : `/api/project/${projectId}/agent/followup`;
-
-  // Close existing SSE before interrupt — server will kill the old process
-  if (useInterrupt && agentEventSources[sessionId]) {
+  // Close existing SSE so a fresh connection picks up the new server-side
+  // process (interrupt-resume kills+respawns; followup may also respawn for
+  // a purged session). The server will produce the new event stream.
+  if (agentEventSources[sessionId]) {
     agentEventSources[sessionId].close();
     delete agentEventSources[sessionId];
     if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
   }
 
-  // Fire the API call without blocking — SSE will deliver the response
-  fetch(API_BASE + endpoint, {
+  // Fire the API call. Server decides the route. SSE delivers the result.
+  fetch(API_BASE + `/api/project/${projectId}/agent/send`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ message: fullMessage, session_id: sessionId })
   }).then(r => r.json()).then(data => {
     if (!data.ok && !data.queued) {
-      console.error('Follow-up failed:', data.error);
+      console.error('Send failed:', data.error);
     }
-    // If queued, update the echo to show queued status
+    // If queued (Mode A follow-up while previous turn still running),
+    // mark the echo so the user knows it isn't going out yet.
     if (data.queued) {
       const el = document.getElementById(`agent-output-${sessionId}`);
       if (el) {
@@ -6701,11 +6990,14 @@ async function sendFollowup(projectId, sessionId) {
         }
       }
     }
-    // Reconnect SSE after server confirms (agent process is now started/restarted)
-    if (!agentEventSources[sessionId]) {
-      connectAgentStream(projectId, sessionId);
+    // If the server dispatched a fresh session under a new id (no live
+    // session_id was provided, or the prior one was purged), point the UI
+    // at the new session so SSE connects there.
+    const targetSessionId = data.session_id || sessionId;
+    if (!agentEventSources[targetSessionId]) {
+      connectAgentStream(projectId, targetSessionId);
     }
-  }).catch(e => console.error('Follow-up error:', e));
+  }).catch(e => console.error('Send error:', e));
 
   // Start followup response timeout — if no output in 20s, warn user
   if (followupTimeouts[sessionId]) clearTimeout(followupTimeouts[sessionId].timerId);
@@ -6724,18 +7016,17 @@ async function sendFollowup(projectId, sessionId) {
 const _recentlyStoppedSessions = {};  // sessionId → timestamp when stopped
 
 async function stopAgent(projectId, sessionId) {
+  // Phase 2: no optimistic cache writes. Server is idempotent — pressing
+  // Stop on an already-stopped session returns 200 with already_stopped:true.
+  // Status flip happens when SSE delivers the terminal status event.
   if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
-  // Immediately update UI — don't wait for server response
-  if (agentStatusCache[sessionId]) agentStatusCache[sessionId].status = 'stopped';
-  updateHistoryStatus(sessionId, 'stopped');
   _recentlyStoppedSessions[sessionId] = Date.now();
+  // Close SSE so the next reconnect picks up the post-stop state cleanly.
   if (agentEventSources[sessionId]) {
     agentEventSources[sessionId].close();
     delete agentEventSources[sessionId];
   }
   if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
-  refreshModal();
-  renderAgentConsole();
 
   // Fire the stop request with a timeout — server kill can take seconds
   const controller = new AbortController();
@@ -8453,6 +8744,13 @@ async function openRulesModal(projectId) {
 }
 
 // ── Tab switch ──────────────────────────────────────────────────────────────
+
+// Mobile: invoked from the modal three-dot menu to switch tabs and close the menu
+function _mcMenuSwitchTab(projectId, tab) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.modal-menu-sub.open').forEach(d => d.classList.remove('open'));
+  switchModalTab(projectId, tab);
+}
 
 function switchModalTab(projectId, tab) {
   modalActiveTab[projectId] = tab;
