@@ -1,5 +1,32 @@
 # Mission Control — Changelog
 
+## [2026-04-28c] — Don't yank to bottom while the agent is streaming a response
+
+### Why
+When the user was already at the bottom of the chat and the agent started streaming a reply, every new line auto-snapped scrollTop to `scrollHeight`. By the time the response was finished the user was looking at the *last* line of a long answer, and had to manually scroll up to find where the response began. Reverse of how anyone reads — start at the top, scroll down.
+
+### New policy in `appendAgentLine` (`static/index.html`)
+- **Fresh mount**: pin to bottom — chat opens at the last row, same as before.
+- **User-action lines** (anything starting with `> ` — the user's own typed prompt, queued follow-up, plan-approval echo): pin to bottom, so the user sees what they just submitted.
+- **Agent output** (regular text, tool calls, status markers, errors, tables): do **not** auto-scroll, even when the user is pinned. New content lands just below view; the user scrolls down to read it top-to-bottom at their own pace.
+
+### Net effect
+- Open a chat → bottom (unchanged).
+- Send a follow-up → echo `> Ron: ...` snaps to bottom (unchanged).
+- Agent starts streaming the answer → scroll stays at the top of the new content. User scrolls down naturally. No more "land at the punchline first."
+- User scrolled up reading older content → still nothing yanks them (unchanged from `[2026-04-27c]`).
+
+### Implementation note
+Single guard in `appendAgentLine`: `shouldPin = wasPinned && (freshMount || text.startsWith('> '))`. Replaces the three previous unconditional `if (wasPinned) el.scrollTop = el.scrollHeight` sites (table, blank-in-table, regular). The fresh-mount initialization flag `dataset.scrollInitialized` is now set on first content render regardless of whether we scrolled, so the *next* call doesn't keep treating itself as a fresh mount.
+
+### Not changed
+- `updateConsoleOutput` (the bottom-bar floating console) still pins on every line. That surface is only ~3 visible rows; auto-pin makes more sense there.
+- `_isAgentOutputPinned` threshold (80 px) is unchanged.
+- Plan-approval echo and follow-up echo paths (direct DOM manipulation in `approvePlan` / `sendFollowup`) still scroll to bottom — they bypass `appendAgentLine` and were already correct.
+
+### Rollback
+In `appendAgentLine`, revert `if (shouldPin)` back to `if (wasPinned)` at all three call sites, and remove the `isUserAction` / `shouldPin` lines. Or revert this commit entirely.
+
 ## [2026-04-28b] — Stop the agent chat from drifting up a few lines every poll
 
 ### Symptom
