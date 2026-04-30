@@ -42,17 +42,17 @@ In the Google Cloud Console with the `CLAYRUNE` project selected:
 |---|---|
 | Firebase project ID | `clayrune-49e57` |
 | Auth domain | `clayrune-49e57.firebaseapp.com` |
-| Web API key | `AIzaSyCcBU0GKtnKgNw3EiNYoMri6OVdnW8188s` (public; safe to commit — Firebase web apiKeys are not secrets, security comes from token verification + auth rules) |
+| Web API key | *Set via Cloud Run env var `FB_API_KEY`. Read live with: `gcloud run services describe control-plane --region=us-central1 --project=clayrune --format='value(spec.template.spec.containers[0].env)' \| grep FB_API_KEY`. Or recover from the Firebase console: https://console.firebase.google.com/project/clayrune-49e57/settings/general → Your apps → Clayrune → SDK setup and configuration. (Firebase web apiKeys aren't secrets in the security sense — they're embedded in browser JS — but we keep the value out of the repo to avoid GitHub secret-scanner noise.)* |
 | Console URL | https://console.firebase.google.com/project/clayrune-49e57 |
 | Web app ID | `1:491711103821:web:9d61d99da11dbf6da2ed04` |
 | Sender ID | `491711103821` |
 
-**Cloud Run env vars set:**
+**Cloud Run env vars set** (replace `<FB_API_KEY>` with the value from the Firebase console — see "Web API key" row above):
 
 ```bash
 gcloud run services update control-plane \
   --region=us-central1 --project=clayrune \
-  --update-env-vars="FB_API_KEY=AIzaSyCcBU0GKtnKgNw3EiNYoMri6OVdnW8188s,FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com,FB_PROJECT_ID=clayrune-49e57"
+  --update-env-vars="FB_API_KEY=<FB_API_KEY>,FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com,FB_PROJECT_ID=clayrune-49e57"
 ```
 
 **Important:** `FB_PROJECT_ID` MUST be set explicitly because Cloud Run's `GOOGLE_CLOUD_PROJECT` env var is `clayrune` (the GCP project), not `clayrune-49e57` (the Firebase project). Without `FB_PROJECT_ID`, `firebase_admin.auth.verify_id_token()` rejects all ID tokens with `aud != clayrune`.
