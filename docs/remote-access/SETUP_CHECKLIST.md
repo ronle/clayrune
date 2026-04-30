@@ -87,13 +87,68 @@ After you have the token from §5:
   - [ ] `Logs Writer`
   - [ ] `Secret Manager Secret Accessor` (or scope to the specific secret from §6)
 
-## 8. Workload Identity Federation (for GitHub Actions, defer)
+## 8. Workload Identity Federation (for GitHub Actions)
 
-Only needed when CI deploys are wired up. Not blocking v1 dev.
+✅ **Done 2026-04-30** for `clayrune` + `ronle/mission-control`.
 
-- [ ] Cloud Console → IAM & Admin → Workload Identity Federation → Create pool + provider for GitHub.
-- [ ] Bind the `control-plane-sa` to the WIF principal.
-- [ ] Output the provider resource name + service account email — those go into GitHub Actions vars.
+Reference snapshot — what was created and why. Use this as the source-of-truth recipe if you ever need to rebuild it from scratch (e.g. recovering a lost project) or extend it (e.g. adding a second repo).
+
+**Resources created:**
+
+| Resource | Identifier | Purpose |
+|---|---|---|
+| Service account | `ci-control-plane@clayrune.iam.gserviceaccount.com` | The identity GitHub Actions impersonates to deploy |
+| Workload Identity Pool | `gh-actions-pool` (location `global`) | Container for OIDC providers |
+| OIDC provider | `github` on the pool above | Trusts GitHub's OIDC issuer; restricted to `assertion.repository_owner == "ronle"` |
+| Pool resource path | `projects/189381911926/locations/global/workloadIdentityPools/gh-actions-pool/providers/github` | Goes into the workflow file as `WIF_PROVIDER` |
+
+**Roles granted to the SA on project `clayrune`:**
+
+- `roles/run.admin` — deploy Cloud Run revisions
+- `roles/iam.serviceAccountUser` — act as the runtime SA bound to the service
+- `roles/artifactregistry.writer` — push images to `mc-cloud` repo
+- `roles/cloudbuild.builds.editor` — submit Cloud Build builds
+- `roles/storage.objectAdmin` — Cloud Build needs to write source bundles
+
+**Repo binding:**
+
+The SA grants `roles/iam.workloadIdentityUser` to:
+```
+principalSet://iam.googleapis.com/projects/189381911926/locations/global/workloadIdentityPools/gh-actions-pool/attribute.repository/ronle/mission-control
+```
+This means *only* GitHub Actions runs originating from `ronle/mission-control` can mint tokens for this SA. To allow another repo, create a second binding with that repo's path.
+
+**Reproduce from scratch (PowerShell, against a fresh GCP project):**
+
+```powershell
+$PROJECT  = "clayrune"
+$PROJ_NUM = "189381911926"
+$REPO     = "ronle/mission-control"
+$SA       = "ci-control-plane@$PROJECT.iam.gserviceaccount.com"
+
+# 1. Service account + roles
+gcloud iam service-accounts create ci-control-plane --project=$PROJECT `
+  --display-name="CI control plane deployer"
+foreach ($role in 'roles/run.admin','roles/iam.serviceAccountUser','roles/artifactregistry.writer','roles/cloudbuild.builds.editor','roles/storage.objectAdmin') {
+  gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$SA" --role=$role --condition=None
+}
+
+# 2. WIF pool + OIDC provider
+gcloud iam workload-identity-pools create gh-actions-pool --location=global --project=$PROJECT
+gcloud iam workload-identity-pools providers create-oidc github `
+  --project=$PROJECT --location=global --workload-identity-pool=gh-actions-pool `
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" `
+  --attribute-condition="assertion.repository_owner == 'ronle'" `
+  --issuer-uri="https://token.actions.githubusercontent.com"
+
+# 3. Allow the repo to impersonate the SA
+gcloud iam service-accounts add-iam-policy-binding $SA `
+  --project=$PROJECT --role=roles/iam.workloadIdentityUser `
+  --member="principalSet://iam.googleapis.com/projects/$PROJ_NUM/locations/global/workloadIdentityPools/gh-actions-pool/attribute.repository/$REPO" `
+  --condition=None
+```
+
+**Workflow file:** `.github/workflows/deploy-control-plane.yml` — triggers on push to main when `control_plane/**` changes; builds via Cloud Build; deploys to Cloud Run; smoke-tests `/v1/health` on both `api.clayrune.io` and the `*.run.app` URL.
 
 ## 9. Local development tools
 
@@ -170,7 +225,7 @@ These pieces are **already implemented and tested** locally; they activate again
 | `/v1/connect` (browser HTML signin) | After §3 (Firebase) + frontend HTML written | ❌ Stub |
 | `/v1/devices`, `/v1/account`, etc. | After core enrollment is live | ❌ Stub |
 | Cloud Run deployment script | After §1 + §6 + §7 done | ❌ Not started |
-| Workload Identity Federation (CI deploys) | §8 (deferred) | ❌ Not started |
+| Workload Identity Federation (CI deploys) | §8 | ✅ Done 2026-04-30 |
 
 ### What runs locally right now (no setup needed)
 

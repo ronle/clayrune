@@ -1,0 +1,103 @@
+name: Deploy control plane
+
+# Build + deploy the FastAPI control plane to Cloud Run on every push to main
+# that touches its source. Auth via Workload Identity Federation (no JSON
+# service-account keys committed anywhere) — see SETUP_CHECKLIST.md §8 for
+# the one-time GCP setup.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'control_plane/**'
+      - '.github/workflows/deploy-control-plane.yml'
+  # Manual trigger from the Actions tab — useful for redeploying without a
+  # code change (e.g. after rotating a secret bound via --set-secrets).
+  workflow_dispatch:
+
+# Only run one deploy at a time; cancel any in-flight deploy when a newer
+# push arrives so we don't race two `gcloud run deploy` calls into the
+# same revision.
+concurrency:
+  group: deploy-control-plane
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT: clayrune
+  GCP_REGION: us-central1
+  AR_REPO: mc-cloud
+  CR_SERVICE: control-plane
+  WIF_PROVIDER: projects/189381911926/locations/global/workloadIdentityPools/gh-actions-pool/providers/github
+  CI_SA: ci-control-plane@clayrune.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for WIF (mint OIDC token)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.CI_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          # Tag with the short SHA so every deploy is traceable to a commit;
+          # also tag :latest so manual `gcloud run deploy` without a tag works.
+          SHA="${GITHUB_SHA::7}"
+          IMAGE="us-central1-docker.pkg.dev/${GCP_PROJECT}/${AR_REPO}/${CR_SERVICE}"
+          echo "sha_tag=${IMAGE}:${SHA}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build + push image via Cloud Build
+        working-directory: control_plane
+        run: |
+          gcloud builds submit . \
+            --tag "${{ steps.tag.outputs.sha_tag }}" \
+            --project "${GCP_PROJECT}" \
+            --quiet
+          # Re-tag :latest so anyone running plain `gcloud run deploy` without
+          # a --image flag picks up this build. Cheap (no rebuild).
+          gcloud artifacts docker tags add \
+            "${{ steps.tag.outputs.sha_tag }}" \
+            "${{ steps.tag.outputs.latest_tag }}" \
+            --project "${GCP_PROJECT}" \
+            --quiet
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "${CR_SERVICE}" \
+            --image "${{ steps.tag.outputs.sha_tag }}" \
+            --region "${GCP_REGION}" \
+            --project "${GCP_PROJECT}" \
+            --quiet
+
+      - name: Smoke test /v1/health
+        run: |
+          # Use the canonical custom domain; falls back to *.run.app if needed.
+          set -e
+          for URL in https://api.clayrune.io/v1/health https://control-plane-189381911926.us-central1.run.app/v1/health; do
+            echo "--- Probing $URL ---"
+            CODE=$(curl -s -o /tmp/h.json -w '%{http_code}' --max-time 15 "$URL" || echo "000")
+            BODY=$(cat /tmp/h.json 2>/dev/null || echo "")
+            echo "HTTP $CODE — $BODY"
+            if [ "$CODE" = "200" ]; then
+              echo "✓ deploy healthy at $URL"
+              exit 0
+            fi
+          done
+          echo "✗ no endpoint returned 200" >&2
+          exit 1

@@ -1,7 +1,7 @@
 # RESUME HERE — picking up after reboot
 
-**Last updated:** 2026-04-30 (end of "device naming + custom-domain wiring" session)
-**You are here:** Everything from yesterday still works. Path B + per-device naming + auto-cleanup loop are live (deployed v8). Custom domain `api.clayrune.io` is wired but its TLS cert was still pending when the session ended — Google was on its 5-min poll cycle. Cert should be live by AM. Cloud Run URL still works: `https://control-plane-189381911926.us-central1.run.app` (revision `control-plane-00008-s6p`).
+**Last updated:** 2026-04-30 (AM pickup, cert live)
+**You are here:** Everything from yesterday is live. Custom domain `api.clayrune.io` finished provisioning overnight — `Ready=True / CertificateProvisioned=True / DomainRoutable=True`, `GET /v1/health` returns `{"status":"ok"}`. Per-device naming + auto-cleanup loop still working (deployed v8). The friendly URL is the canonical CP entrypoint now: `https://api.clayrune.io/v1`. The `*.run.app` URL still works as a backup.
 
 ---
 
@@ -38,7 +38,7 @@ Close any existing MC first. Then:
 ```powershell
 cd C:\Users\levir\Documents\_claude\mission-control
 
-$env:MC_REMOTE_CP_OVERRIDE   = "https://control-plane-189381911926.us-central1.run.app/v1"
+$env:MC_REMOTE_CP_OVERRIDE   = "https://api.clayrune.io/v1"
 $env:MC_CP_DEV_AUTH          = "1"
 $env:MC_REMOTE_DEV_USERNAME  = "ron"
 $env:MC_REMOTE_DEV_EMAIL     = "leviran1@gmail.com"
@@ -152,7 +152,7 @@ Beyond the Path B backbone, polish work:
 
 | Gap | Workaround |
 |---|---|
-| ~~Custom domain `api.clayrune.io`~~ | **In flight 2026-04-30.** Domain verified in Search Console, Cloud Run mapping created, DNS-only CNAME `api.clayrune.io → ghs.googlehosted.com` live. Cert provisioning was on Google's 5-min poll cycle when the session ended — should be live by morning. CF Origin Rules path was abandoned because Host-header override is gated by paid CF plan; Google-managed cert avoids that and avoids the WAF/proxy entirely (acceptable for the API surface). |
+| ~~Custom domain `api.clayrune.io`~~ | **DONE 2026-04-30 AM.** Cert provisioned overnight, all conditions True. CF Origin Rules path was abandoned (paid CF plan required for Host-header override); Google-managed cert + DNS-only CNAME `api.clayrune.io → ghs.googlehosted.com` is the working setup. CF doesn't proxy this hostname (no WAF), which is acceptable for the API surface. |
 | Browser-mediated enrollment (Firebase signin) | Dev shim via `MC_CP_DEV_AUTH=1` + `X-Dev-User-Email` works fine for solo dev |
 | `/v1/connect` HTML signin page | Stub. Direct API enrollment via `enroll_via_cp()` is the working path today |
 | Public-facing landing page on `clayrune.io` root | Deferred |
