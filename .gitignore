@@ -57,3 +57,19 @@ data/hiveminds/
 
 # Local test fixtures
 test_upload.txt
+
+# Local Claude / IDE-agent state
+.claude/
+
+# Runtime remote-access state — names are scoped to user's CF Access nonces
+data/session_labels.json
+
+# Bundled third-party binaries (cloudflared, future Rust mc-tunnel artifacts)
+# These are fetched at build time, not committed. README + LICENSE stay.
+mc_tunnel/bin/cloudflared
+mc_tunnel/bin/cloudflared.exe
+mc_tunnel/bin/cloudflared-darwin-amd64
+mc_tunnel/bin/cloudflared-darwin-arm64
+mc_tunnel/bin/cloudflared-linux-amd64
+mc_tunnel/bin/cloudflared-linux-arm64
+mc_tunnel/bin/*/cloudflared

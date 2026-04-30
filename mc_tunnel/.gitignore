@@ -1,0 +1,11 @@
+/target
+Cargo.lock
+
+# When build.rs runs with real CLIENT_SECRET_PRIV_HEX env var, it overwrites
+# src/client_secret.rs with a file containing the embedded private key.
+# That MUST NEVER be committed. The placeholder version of this file is
+# version-controlled (the IS_DEV_BUILD = true variant); a real-build version
+# matching IS_DEV_BUILD = false is what we ignore.
+#
+# Discipline: after every release build, run `git checkout src/client_secret.rs`
+# to restore the placeholder before committing.

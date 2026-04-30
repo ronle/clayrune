@@ -1,0 +1,1009 @@
+openapi: 3.1.0
+info:
+  title: Mission Control Remote Access — Control Plane API
+  version: 0.1.0-draft
+  description: |
+    Authoritative HTTP API for `api.PLATFORM_DOMAIN` (the control plane in the
+    MC remote-access architecture).
+
+    Companion narrative: `docs/remote-access/03-control-plane-api.md`.
+    Wire-format details:    `docs/remote-access/02-attestation-protocol.md`.
+    System architecture:    `docs/remote-access/01-architecture.md`.
+
+    The control plane never sees, proxies, or stores user dashboard contents.
+    It is an identity, registry, and Cloudflare orchestration service.
+  contact:
+    name: Mission Control Remote Access
+    email: support@PLATFORM_DOMAIN
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.PLATFORM_DOMAIN/v1
+    description: Production
+  - url: https://api-staging.PLATFORM_DOMAIN/v1
+    description: Staging
+
+tags:
+  - name: public
+    description: Unauthenticated endpoints
+  - name: account
+    description: Browser session (Firebase ID token)
+  - name: attestation
+    description: Device-signed (mc-tunnel)
+  - name: admin
+    description: Operator-only
+
+#───────────────────────────────────────────────────────────────────────────────
+# Security schemes
+#───────────────────────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    FirebaseIdToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Firebase Auth ID token. Audience pinned to project id.
+
+    DeviceSignature:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        `MC-Device device_id="<id>",sig_alg="ed25519"` — body carries a
+        signed envelope (see protocol doc §7). The server fetches the device
+        public key by `device_id`, verifies the wrapper signature, then
+        validates the inner envelope against the 14-step checklist.
+
+    OperatorJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Operator JWT issued via Google IAP. Audience-bound.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, maxLength: 64 }
+      description: Client-generated UUID for safe retry of write requests.
+
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string }
+
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+
+  responses:
+    Error:
+      description: Error envelope (see protocol doc §10 for codes).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unauthorized:
+      description: Auth missing or invalid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RateLimited:
+      description: Too many requests.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  schemas:
+    #─── Common ────────────────────────────────────────────────────────────────
+    ErrorEnvelope:
+      type: object
+      required: [code, message, request_id]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          description: Stable error code (see protocol doc §10 + API doc §7).
+          examples: [bad_signature, rate_limited, version_floor_exceeded]
+        message: { type: string, description: Human-readable, English. Clients localize via code. }
+        request_id: { type: string }
+        retry_after_ms: { type: integer, minimum: 0 }
+        details: { type: object, additionalProperties: true }
+
+    Health:
+      type: object
+      required: [status, build, time]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        build: { type: string, description: Git SHA }
+        time: { type: string, format: date-time }
+        problems:
+          type: array
+          items: { type: string }
+
+    #─── Enrollment ────────────────────────────────────────────────────────────
+    EnrollRequest:
+      type: object
+      required: [device_pub_b64, csrf_nonce, username, os, mc_version]
+      additionalProperties: false
+      properties:
+        device_pub_b64:
+          type: string
+          description: Base64 32-byte Ed25519 public key.
+          pattern: '^[A-Za-z0-9+/=]{43,44}$'
+        csrf_nonce:
+          type: string
+          description: From `/v1/connect`; binds this enrollment to a specific browser flow.
+        username:
+          type: string
+          pattern: '^[a-z0-9](-?[a-z0-9])*$'
+          minLength: 3
+          maxLength: 24
+        device_name:
+          type: string
+          maxLength: 64
+        os:
+          type: string
+          examples: [win32-11-26200, darwin-14-7, linux-ubuntu-2404]
+        mc_version:
+          type: string
+          examples: [1.4.2]
+
+    EnrollResponse:
+      type: object
+      required:
+        - device_id
+        - enrollment_token
+        - username
+        - hostname
+        - control_plane_pubkey_id
+        - min_protocol
+      additionalProperties: false
+      properties:
+        device_id: { type: string }
+        enrollment_token:
+          type: string
+          description: |
+            Base64url 256-bit secret. Returned **only here, only once**. Treat as a
+            credential. Stored server-side as sha256.
+        username: { type: string }
+        hostname: { type: string, examples: [ron.PLATFORM_DOMAIN] }
+        control_plane_pubkey_id: { type: string, examples: [cp-2026a] }
+        min_protocol: { type: integer, minimum: 1 }
+
+    #─── Sign-in ───────────────────────────────────────────────────────────────
+    SigninStartRequest:
+      type: object
+      required: [method]
+      additionalProperties: false
+      properties:
+        method: { type: string, enum: [google, otp] }
+        email:
+          type: string
+          format: email
+          description: Required when method=otp.
+
+    SigninStartResponse:
+      oneOf:
+        - type: object
+          required: [sent, expires_in]
+          properties:
+            sent: { type: boolean, enum: [true] }
+            expires_in: { type: integer }
+        - type: object
+          required: [redirect_url]
+          properties:
+            redirect_url: { type: string, format: uri }
+
+    SigninCompleteRequest:
+      oneOf:
+        - type: object
+          required: [method, email, otp_code]
+          properties:
+            method: { type: string, enum: [otp] }
+            email: { type: string, format: email }
+            otp_code: { type: string, pattern: '^[0-9]{6}$' }
+        - type: object
+          required: [method, code, state]
+          properties:
+            method: { type: string, enum: [google] }
+            code: { type: string }
+            state: { type: string }
+
+    SigninCompleteResponse:
+      type: object
+      required: [id_token, refresh_token, user_id, username, devices_count]
+      additionalProperties: false
+      properties:
+        id_token: { type: string }
+        refresh_token: { type: string }
+        user_id: { type: string }
+        username: { type: string }
+        devices_count: { type: integer }
+
+    #─── Account ───────────────────────────────────────────────────────────────
+    Account:
+      type: object
+      required:
+        - user_id
+        - username
+        - email
+        - tier
+        - created_at
+        - device_cap
+        - bandwidth_quota_period_bytes
+        - bandwidth_used_period_bytes
+      additionalProperties: false
+      properties:
+        user_id: { type: string }
+        username: { type: string }
+        email: { type: string, format: email }
+        tier: { type: string, enum: [free, paid] }
+        created_at: { type: string, format: date-time }
+        device_cap: { type: integer, minimum: 1 }
+        bandwidth_quota_period_bytes: { type: integer }
+        bandwidth_used_period_bytes: { type: integer }
+        username_changeable_after: { type: string, format: date-time }
+
+    UsernameChangeRequest:
+      type: object
+      required: [new_username]
+      additionalProperties: false
+      properties:
+        new_username:
+          type: string
+          pattern: '^[a-z0-9](-?[a-z0-9])*$'
+          minLength: 3
+          maxLength: 24
+
+    UsernameChangeResponse:
+      type: object
+      required: [username, hostname, redirect_until]
+      properties:
+        username: { type: string }
+        hostname: { type: string }
+        redirect_until:
+          type: string
+          format: date-time
+          description: Old hostname will redirect to new until this date.
+
+    #─── Devices ───────────────────────────────────────────────────────────────
+    Device:
+      type: object
+      required:
+        - device_id
+        - device_name
+        - os
+        - mc_version
+        - hostname
+        - online
+        - last_seen
+        - enrolled_at
+      additionalProperties: false
+      properties:
+        device_id: { type: string }
+        device_name: { type: string }
+        os: { type: string }
+        mc_version: { type: string }
+        hostname: { type: string }
+        online: { type: boolean }
+        last_seen: { type: string, format: date-time }
+        enrolled_at: { type: string, format: date-time }
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        is_this_device:
+          type: boolean
+          description: Best-effort hint; correlates IP of requester with online devices.
+
+    DeviceList:
+      type: object
+      required: [devices, tier, device_cap]
+      additionalProperties: false
+      properties:
+        devices:
+          type: array
+          items: { $ref: '#/components/schemas/Device' }
+        tier: { type: string, enum: [free, paid] }
+        device_cap: { type: integer }
+        next_cursor:
+          type: string
+          nullable: true
+
+    DeviceRenameRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+
+    #─── Attestation ───────────────────────────────────────────────────────────
+    NonceResponse:
+      type: object
+      required: [nonce, nonce_id, expires_at]
+      additionalProperties: false
+      properties:
+        nonce:
+          type: string
+          description: Base64 32 random bytes. Single-use.
+        nonce_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+
+    AttestationEnvelope:
+      type: object
+      description: |
+        Inner envelope. Canonical-JSON of this object is what gets signed
+        (twice — by device key and by platform client secret).
+        See protocol doc §7.1.
+      required:
+        - proto
+        - envelope_type
+        - device_pub_b64
+        - device_id
+        - enrollment_token
+        - mc_version
+        - mc_tunnel_version
+        - client_secret_key_id
+        - os
+        - hostname_claim
+        - timestamp
+        - nonce
+        - challenge_response
+      additionalProperties: false
+      properties:
+        proto: { type: integer, enum: [1] }
+        envelope_type: { type: string, enum: [attestation_request] }
+        device_pub_b64: { type: string }
+        device_id: { type: string }
+        enrollment_token: { type: string }
+        mc_version: { type: string }
+        mc_tunnel_version: { type: string }
+        client_secret_key_id:
+          type: string
+          description: |
+            Identifies which platform client-secret keypair signed
+            `client_signature_b64` in the wrapper. Must be in the active set
+            (latest 3 non-revoked entries in `client_secret_keys` collection).
+          examples: [mc-tunnel-2026a]
+        os: { type: string }
+        hostname_claim: { type: string }
+        timestamp: { type: string, format: date-time }
+        nonce: { type: string }
+        challenge_response: { type: string }
+        previous_token_id:
+          type: string
+          nullable: true
+        # Reserved (re-enabled when code-signing returns to scope per 05- §1):
+        build_manifest_id:
+          type: string
+          nullable: true
+        mc_binary_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          nullable: true
+
+    AttestationRequest:
+      type: object
+      description: |
+        Outer wrapper sent on the wire. Server recomputes
+        sha256(canonical-JSON(envelope)) and verifies BOTH signatures:
+        `signature_b64` (device key, proves which user/device) and
+        `client_signature_b64` (platform client secret, proves it's a real
+        platform-issued mc-tunnel — see protocol doc §3.6).
+      required:
+        - envelope
+        - envelope_canonical_sha256
+        - signature_b64
+        - client_signature_b64
+      additionalProperties: false
+      properties:
+        envelope: { $ref: '#/components/schemas/AttestationEnvelope' }
+        envelope_canonical_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        signature_b64:
+          type: string
+          description: Ed25519 signature over `envelope_canonical_sha256` by `device_priv`.
+        client_signature_b64:
+          type: string
+          description: Ed25519 signature over `envelope_canonical_sha256` by `CLIENT_SECRET_PRIV` (baked into mc-tunnel).
+
+    AttestationDirective:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [force_logout, update_required, notify_user, pause, step_up_auth]
+        text: { type: string }
+        seconds: { type: integer }
+        reason: { type: string }
+
+    AttestationCaps:
+      type: object
+      required:
+        - bandwidth_bytes_remaining_period
+        - rate_limit_rps
+        - max_response_bytes
+        - max_concurrent_connections
+      properties:
+        bandwidth_bytes_remaining_period: { type: integer }
+        rate_limit_rps: { type: integer }
+        max_response_bytes: { type: integer }
+        max_concurrent_connections: { type: integer }
+
+    AttestationResponse:
+      type: object
+      required:
+        - envelope_type
+        - result
+        - tunnel_token
+        - tunnel_token_id
+        - tunnel_token_expires_at
+        - next_attestation_after
+        - caps
+        - directives
+      additionalProperties: false
+      properties:
+        envelope_type: { type: string, enum: [attestation_response] }
+        result: { type: string, enum: [ok] }
+        tunnel_token: { type: string }
+        tunnel_token_id: { type: string, format: uuid }
+        tunnel_token_expires_at: { type: string, format: date-time }
+        next_attestation_after: { type: string, format: date-time }
+        caps: { $ref: '#/components/schemas/AttestationCaps' }
+        directives:
+          type: array
+          items: { $ref: '#/components/schemas/AttestationDirective' }
+
+    #─── Admin ─────────────────────────────────────────────────────────────────
+    VersionRegister:
+      type: object
+      description: |
+        Per 05- §1, the per-binary-hash flow is descoped; we register
+        `mc_version` strings, not build IDs. Restored to BuildRegister
+        shape (with `mc_sha256_by_platform`, `signing_key_id`) when
+        code-signing returns to scope.
+      required: [mc_version, min_protocol, released_at]
+      properties:
+        mc_version: { type: string }
+        min_protocol: { type: integer }
+        released_at: { type: string, format: date-time }
+
+    VersionRevoke:
+      type: object
+      properties:
+        revoke_reason: { type: string }
+
+    ClientKeyRegister:
+      type: object
+      description: |
+        Register a platform client-secret pubkey for a `mc-tunnel` release
+        (open-core moat — see protocol doc §3.6). Active set is the latest
+        3 non-revoked entries.
+      required: [key_id, pubkey_b64, mc_tunnel_version, released_at]
+      properties:
+        key_id:
+          type: string
+          examples: [mc-tunnel-2026a]
+        pubkey_b64:
+          type: string
+          description: Base64 32-byte Ed25519 public key.
+        mc_tunnel_version: { type: string }
+        released_at: { type: string, format: date-time }
+
+    ClientKeyRevoke:
+      type: object
+      required: [revoke_reason]
+      properties:
+        revoke_reason:
+          type: string
+          enum: [extracted, expired_rotation, cve, other]
+        notes:
+          type: string
+
+    UserSuspend:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+
+    AdminDeviceQuery:
+      type: object
+      properties:
+        username: { type: string }
+        device_id: { type: string }
+        hostname: { type: string }
+        mc_version: { type: string }
+        online: { type: boolean }
+        last_seen_before: { type: string, format: date-time }
+
+    MaintenanceBroadcast:
+      type: object
+      required: [directive]
+      properties:
+        directive: { $ref: '#/components/schemas/AttestationDirective' }
+        target:
+          type: string
+          enum: [all, by_version, by_user]
+        target_value: { type: string }
+
+#───────────────────────────────────────────────────────────────────────────────
+# Paths
+#───────────────────────────────────────────────────────────────────────────────
+paths:
+  #─── Public ──────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [public]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503': { $ref: '#/components/responses/Error' }
+
+  /connect:
+    get:
+      tags: [public]
+      summary: Enrollment landing page (HTML)
+      security: []
+      parameters:
+        - { name: device_pub, in: query, required: true, schema: { type: string } }
+        - { name: nonce,      in: query, required: true, schema: { type: string } }
+        - { name: redirect,   in: query, required: true, schema: { type: string, enum: ['http://127.0.0.1:5199/api/mc-callback'] } }
+        - { name: username_hint, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: HTML signin page
+          content:
+            text/html:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+
+  /signin/start:
+    post:
+      tags: [public]
+      summary: Begin signin (Google or email OTP)
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SigninStartRequest' }
+      responses:
+        '200':
+          description: Started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SigninStartResponse' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /signin/complete:
+    post:
+      tags: [public]
+      summary: Finalize signin → ID token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SigninCompleteRequest' }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SigninCompleteResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  #─── Account / browser ───────────────────────────────────────────────────────
+  /enroll:
+    post:
+      tags: [account]
+      summary: Bind device pubkey to user account
+      description: |
+        Called by the browser after Firebase signin completes. Provisions the
+        Cloudflare tunnel + DNS + Access app for `<username>.PLATFORM_DOMAIN`.
+        Returns the one-time enrollment_token that MC stores in OS keystore.
+      security:
+        - FirebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnrollRequest' }
+      responses:
+        '200':
+          description: Enrolled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+
+  /account:
+    get:
+      tags: [account]
+      summary: Current account state
+      security:
+        - FirebaseIdToken: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [account]
+      summary: Schedule account deletion (7-day grace)
+      security:
+        - FirebaseIdToken: []
+      parameters:
+        - name: X-Confirm
+          in: header
+          required: true
+          schema: { type: string, enum: [delete-my-account] }
+      responses:
+        '200':
+          description: Deletion scheduled
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /account/username:
+    post:
+      tags: [account]
+      summary: Change username (rate-limited to once per 90 days)
+      security:
+        - FirebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UsernameChangeRequest' }
+      responses:
+        '200':
+          description: Changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsernameChangeResponse' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /devices:
+    get:
+      tags: [account]
+      summary: List user's devices
+      security:
+        - FirebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceList' }
+
+  /devices/{device_id}/rename:
+    post:
+      tags: [account]
+      summary: Rename a device (display name only)
+      security:
+        - FirebaseIdToken: []
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRenameRequest' }
+      responses:
+        '200': { description: Renamed }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /devices/{device_id}/revoke:
+    post:
+      tags: [account]
+      summary: Revoke a device (user-facing copy "Disconnect this PC")
+      security:
+        - FirebaseIdToken: []
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: Revoked }
+        '404': { $ref: '#/components/responses/Error' }
+
+  #─── Attestation ─────────────────────────────────────────────────────────────
+  /nonce:
+    get:
+      tags: [attestation]
+      summary: Issue single-use attestation nonce
+      security:
+        - DeviceSignature: []
+      parameters:
+        - { name: device_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NonceResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /attest:
+    post:
+      tags: [attestation]
+      summary: Verify envelope, issue tunnel token (or directive)
+      description: |
+        The 14-step verification list is in `02-attestation-protocol.md` §7.4.
+        On success, returns a 15-minute Cloudflare tunnel token. On any failure,
+        returns the protocol error code in the `code` field of the error envelope.
+
+        Tunnel token rotation: client should re-attest every 10 minutes
+        (5-minute safety margin before the 15-minute TTL) and pass the previous
+        `tunnel_token_id` in `previous_token_id`.
+      security:
+        - DeviceSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttestationRequest' }
+      responses:
+        '200':
+          description: Attestation accepted; tunnel token issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttestationResponse' }
+        '400':
+          description: Malformed envelope, replay, hash mismatch, etc.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '401':
+          description: bad_signature / unknown_device / bad_enrollment_token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '403':
+          description: revoked_device / device_cap_exceeded / version_floor_exceeded / account_suspended
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '410':
+          description: revoked_build / unknown_build
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503':
+          description: Internal — retry with jitter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  #─── Webhooks ────────────────────────────────────────────────────────────────
+  /webhooks/cloudflare:
+    post:
+      tags: [public]
+      summary: Cloudflare tunnel-event webhook (HMAC-signed)
+      description: |
+        Updates `devices.online` heuristically. Webhook absence does not affect
+        security; attestation is the authoritative signal.
+      security: []
+      parameters:
+        - name: X-Cloudflare-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { description: Acknowledged }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  #─── Admin ───────────────────────────────────────────────────────────────────
+  /admin/versions:
+    post:
+      tags: [admin]
+      summary: Register an mc_version (allowlist entry)
+      description: |
+        Renamed from `/admin/builds` per 05- §1 (per-binary-hash flow descoped).
+        Will be restored to its hash-tracking shape when code-signing returns.
+      security:
+        - OperatorJwt: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VersionRegister' }
+      responses:
+        '200': { description: Registered }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /admin/versions/{mc_version}/revoke:
+    post:
+      tags: [admin]
+      summary: Revoke an mc_version (CVE / kill switch)
+      security:
+        - OperatorJwt: []
+      parameters:
+        - { name: mc_version, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VersionRevoke' }
+      responses:
+        '200': { description: Revoked }
+
+  /admin/client_keys:
+    post:
+      tags: [admin]
+      summary: Register a platform client-secret pubkey (open-core moat)
+      description: |
+        Called by the operator on every mc-tunnel release. Adds the new
+        pubkey to the active set; the oldest non-revoked key drops out
+        once a 4th key is registered. See protocol doc §3.6.
+      security:
+        - OperatorJwt: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClientKeyRegister' }
+      responses:
+        '200': { description: Registered }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /admin/client_keys/{key_id}/revoke:
+    post:
+      tags: [admin]
+      summary: Revoke a client-secret pubkey (suspected leak / extraction)
+      security:
+        - OperatorJwt: []
+      parameters:
+        - { name: key_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClientKeyRevoke' }
+      responses:
+        '200': { description: Revoked. All in-flight tunnels signed by this key fail next attestation. }
+
+  # Deprecated aliases — keep responding to /admin/builds for one transitional release:
+  /admin/builds:
+    post:
+      tags: [admin]
+      deprecated: true
+      summary: '[DEPRECATED] Register a build (use /admin/versions)'
+      security:
+        - OperatorJwt: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VersionRegister' }
+      responses:
+        '200': { description: Registered (forwarded to /admin/versions) }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /admin/builds/{build_manifest_id}/revoke:
+    post:
+      tags: [admin]
+      deprecated: true
+      summary: '[DEPRECATED] Revoke a build (use /admin/versions/{mc_version}/revoke)'
+      security:
+        - OperatorJwt: []
+      parameters:
+        - { name: build_manifest_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VersionRevoke' }
+      responses:
+        '200': { description: Revoked }
+
+  /admin/users/{user_id}/suspend:
+    post:
+      tags: [admin]
+      summary: Suspend user account (abuse response)
+      security:
+        - OperatorJwt: []
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserSuspend' }
+      responses:
+        '200': { description: Suspended }
+
+  /admin/users/{user_id}/unsuspend:
+    post:
+      tags: [admin]
+      summary: Lift account suspension
+      security:
+        - OperatorJwt: []
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Unsuspended }
+
+  /admin/devices:
+    get:
+      tags: [admin]
+      summary: Search devices
+      security:
+        - OperatorJwt: []
+      parameters:
+        - { name: username, in: query, schema: { type: string } }
+        - { name: device_id, in: query, schema: { type: string } }
+        - { name: hostname, in: query, schema: { type: string } }
+        - { name: mc_version, in: query, schema: { type: string } }
+        - { name: online, in: query, schema: { type: boolean } }
+        - { name: last_seen_before, in: query, schema: { type: string, format: date-time } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceList' }
+
+  /admin/maintenance:
+    post:
+      tags: [admin]
+      summary: Broadcast directive (maintenance, force-update, message)
+      security:
+        - OperatorJwt: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MaintenanceBroadcast' }
+      responses:
+        '200': { description: Queued for next attestation cycle }

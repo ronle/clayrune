@@ -10,7 +10,8 @@ import threading
 import time as _time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from flask import Flask, jsonify, send_from_directory, request, send_file, abort, Response
+from flask import Flask, jsonify, send_from_directory, request, send_file, abort, Response, redirect
+import secrets
 
 
 def _resolve_dirs():
@@ -123,6 +124,38 @@ def _hide_windows_delayed(pid):
 app = Flask(__name__, static_folder=STATIC_DIR)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB max upload
 
+# ── Remote-access provider discovery ────────────────────────────────────────
+# Open-source contract (`mc_remote_iface`) is always imported. The proprietary
+# provider (`mc_remote`) auto-registers at import time IF installed alongside.
+# This lets MC core run cleanly with or without remote-access bundled.
+# See `docs/remote-access/07-licensing.md` §4.
+try:
+    import mc_remote_iface  # noqa: F401  (import for side-effect: surface available)
+except Exception as _e:
+    mc_remote_iface = None  # type: ignore[assignment]
+    print(f"[remote-access] mc_remote_iface not available: {_e}", flush=True)
+
+if mc_remote_iface is not None:
+    # Dev stub takes precedence when its env var is set — useful for UI work
+    # without standing up the full proprietary provider. Real builds for end
+    # users never have this set.
+    _dev_stub_active = bool(os.environ.get("MC_DEV_REMOTE_STUB"))
+    if _dev_stub_active:
+        try:
+            from mc_remote_iface.dev_stub import maybe_register_dev_stub
+            if maybe_register_dev_stub():
+                print(f"[remote-access] dev stub registered "
+                      f"(MC_DEV_REMOTE_STUB={os.environ.get('MC_DEV_REMOTE_STUB')})", flush=True)
+        except Exception as _e:
+            print(f"[remote-access] dev stub unavailable: {_e}", flush=True)
+    else:
+        try:
+            import mc_remote  # noqa: F401  (provider self-registers via __init__)
+        except Exception as _e:
+            # Absence is normal in an open-source build with no proprietary
+            # provider installed. Log at info volume only.
+            print(f"[remote-access] no provider installed: {_e}", flush=True)
+
 # ── Configuration ────────────────────────────────────────────────────────────
 
 CONFIG_PATH = _DATA_ROOT / 'config.json'
@@ -200,6 +233,53 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
 CLAUDE_HOME = Path.home() / '.claude' / 'projects'
 _SESSION_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB — resume becomes too slow above this
+
+# Global incognito pseudo-project. Lives at data/projects/_incognito.json with
+# `_is_incognito_project: True`. All sessions dispatched into it are forced
+# incognito. Auto-created on first use.
+INCOGNITO_PROJECT_ID = '_incognito'
+
+
+def _ensure_incognito_project():
+    """Lazily create the global incognito project record + workspace folder.
+
+    Returns the project dict (loaded fresh from disk on each call so callers
+    see any updates the user has made, e.g. renamed it).
+    """
+    fp = DATA_DIR / f'{INCOGNITO_PROJECT_ID}.json'
+    if fp.exists():
+        try:
+            return json.loads(fp.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+    base = Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
+    workspace = base / '_incognito'
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    rec = {
+        'id': INCOGNITO_PROJECT_ID,
+        'name': 'Incognito',
+        'emoji': '\U0001F576️',  # detective/sunglasses face
+        'description': 'Ephemeral scratch space. Sessions here skip MEMORY.md, '
+                       'AGENT_RULES.md, and the agent log. Useful for one-off '
+                       'questions you do not want polluting a project.',
+        'project_path': str(workspace),
+        'status': 'active',
+        'domain': 'general',
+        'activity_log': [],
+        'backlog': [],
+        'current_task': '',
+        'next_action': '',
+        '_is_incognito_project': True,
+        'last_updated': now_iso() if 'now_iso' in globals() else datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+    }
+    try:
+        fp.write_text(json.dumps(rec, indent=2, ensure_ascii=False), encoding='utf-8')
+    except Exception:
+        pass
+    return rec
 
 
 def _session_transcript_path(project_path, claude_session_id):
@@ -1328,8 +1408,20 @@ def agent_upload_image():
 
 # ── Agent endpoints ──────────────────────────────────────────────────────────
 
-def _build_agent_context(project):
-    """Build system prompt context for the agent."""
+def _build_agent_context(project, incognito=False):
+    """Build system prompt context for the agent.
+
+    incognito=True keeps the full project context (rules, memory pointer,
+    recent activity, recent conversations, current task) so the agent knows
+    what's been done and can answer side questions. It only changes the
+    output side: Mission Control will not log the session to the agent log
+    and will not append a summary to project memory on completion. The
+    notice block tells the agent so it doesn't write to MEMORY/rules itself.
+
+    The global incognito pseudo-project (`_is_incognito_project`) doesn't
+    have meaningful "what's been done" context anyway, so this still works
+    naturally — the lack of activity/recent-conversations is just the truth.
+    """
     parts = []
     agent_name = CONFIG.get('agent_name', '')
     user_name = CONFIG.get('user_name', '')
@@ -1341,6 +1433,19 @@ def _build_agent_context(project):
     pp = project.get('project_path', '')
     if pp:
         parts.append(f"Project root: {pp}")
+
+    if incognito:
+        parts.append(
+            "--- INCOGNITO MODE ---\n"
+            "This is an incognito session. You can read everything about the project "
+            "(rules, memory, recent activity, files) so you have full context to answer. "
+            "However, Mission Control will NOT log this session to the agent log and will "
+            "NOT append a summary to MEMORY.md on completion. Treat this as an off-the-record "
+            "side conversation: do not modify MEMORY.md, AGENT_RULES.md, or SHARED_RULES.md "
+            "and do not push commits unless the user explicitly asks. "
+            "Note: Claude still writes a transcript to ~/.claude/projects/, so incognito "
+            "hides this session from Mission Control surfaces, not from disk."
+        )
 
     # Load rules
     if pp:
@@ -2192,6 +2297,9 @@ def _backfill_all_agent_logs():
         pid = p.get('id')
         if not pid:
             continue
+        # Skip the global incognito project — it intentionally has no agent log.
+        if p.get('_is_incognito_project') or pid == INCOGNITO_PROJECT_ID:
+            continue
         try:
             total += _backfill_agent_log_from_transcripts(pid, p)
         except Exception as e:
@@ -2361,6 +2469,12 @@ def _log_agent_completion(session):
     """Save a summary entry when an agent session finishes."""
     project_id = session.get('project_id')
     if not project_id:
+        return
+
+    # Incognito sessions are fully ephemeral from MC's perspective: no agent_log
+    # entry, no memory append, no condense trigger. The Claude transcript on
+    # disk is unaffected (that's outside MC's control).
+    if session.get('incognito'):
         return
 
     # Skip memory append and condense for housekeeping sessions (prevents circular triggers)
@@ -2665,14 +2779,26 @@ def _dispatch_condense(project):
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _dispatch_agent_internal(project_id, task, resume_id=''):
+def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False):
     """Core dispatch logic shared by HTTP endpoint and scheduler.
 
     Returns session_id on success, raises ValueError on error.
+
+    When incognito=True (or the project itself is the global incognito project),
+    MEMORY/AGENT_RULES are skipped from --append-system-prompt and the session
+    is flagged so _log_agent_completion will not write to the agent log or
+    append to MEMORY.md.
     """
     p = load_project(project_id)
     if not p:
-        raise ValueError('project not found')
+        if project_id == INCOGNITO_PROJECT_ID:
+            p = _ensure_incognito_project()
+        else:
+            raise ValueError('project not found')
+
+    # Global incognito project always forces incognito on, regardless of caller.
+    if p.get('_is_incognito_project') or project_id == INCOGNITO_PROJECT_ID:
+        incognito = True
 
     pp = p.get('project_path', '')
     if not pp or not Path(pp).is_dir():
@@ -2704,7 +2830,7 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
             if resume_id:
                 cmd = ['claude', '-r', resume_id, *_build_claude_flags(p, streaming=True)]
             else:
-                context = _build_agent_context(p)
+                context = _build_agent_context(p, incognito=incognito)
                 cmd = ['claude', *_build_claude_flags(p, streaming=True),
                        '--append-system-prompt', context]
 
@@ -2753,6 +2879,7 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
                 'circuit_breaker_tripped': False,
                 '_resume_id': resume_id or None,
                 '_dispatch_time': _time.time(),
+                'incognito': bool(incognito),
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -2764,7 +2891,7 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
             if resume_id:
                 cmd = ['claude', '-r', resume_id, '-p', task, *_build_claude_flags(p)]
             else:
-                context = _build_agent_context(p)
+                context = _build_agent_context(p, incognito=incognito)
                 cmd = ['claude', '-p', task, *_build_claude_flags(p),
                        '--append-system-prompt', context]
 
@@ -2803,6 +2930,7 @@ def _dispatch_agent_internal(project_id, task, resume_id=''):
                 'circuit_breaker_tripped': False,
                 '_resume_id': resume_id or None,
                 '_dispatch_time': _time.time(),
+                'incognito': bool(incognito),
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -2837,8 +2965,9 @@ def agent_dispatch(project_id):
     if not task:
         return jsonify({'error': 'task required'}), 400
     resume_id = data.get('resume_conversation_id', '').strip()
+    incognito = bool(data.get('incognito'))
     try:
-        session_id = _dispatch_agent_internal(project_id, task, resume_id)
+        session_id = _dispatch_agent_internal(project_id, task, resume_id, incognito=incognito)
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code
@@ -2865,6 +2994,8 @@ def agent_send(project_id):
     2026-04-27 race-condition consolidation — see CHANGELOG `[2026-04-27i]`.
     """
     p = load_project(project_id)
+    if not p and project_id == INCOGNITO_PROJECT_ID:
+        p = _ensure_incognito_project()
     if not p:
         return jsonify({'error': 'project not found'}), 404
     pp = p.get('project_path', '')
@@ -2874,6 +3005,11 @@ def agent_send(project_id):
     data = request.get_json() or {}
     message = (data.get('message') or '').strip()
     session_id = (data.get('session_id') or '').strip()
+    incognito = (
+        bool(data.get('incognito'))
+        or bool(p.get('_is_incognito_project'))
+        or project_id == INCOGNITO_PROJECT_ID
+    )
     if not message:
         return jsonify({'error': 'message required'}), 400
 
@@ -2910,7 +3046,7 @@ def agent_send(project_id):
                                 'revived': True, 'route': 'revive'})
         # Otherwise dispatch a fresh session
         try:
-            new_session_id = _dispatch_agent_internal(project_id, message)
+            new_session_id = _dispatch_agent_internal(project_id, message, incognito=incognito)
         except ValueError as e:
             code = 404 if 'not found' in str(e) else 400
             return jsonify({'error': str(e)}), code
@@ -3691,6 +3827,7 @@ def agent_status(project_id):
                 'waiting_for_plan_approval': s.get('waiting_for_plan_approval', False),
                 'guardian_state': s.get('guardian_state'),
                 'circuit_breaker_tripped': s.get('circuit_breaker_tripped', False),
+                'incognito': s.get('incognito', False),
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (
@@ -6839,15 +6976,29 @@ atexit.register(_guardian_stop.set)
 
 
 def _check_port_conflict():
-    """Detect and log if another process is already on our port."""
+    """Refuse to start if another MC is already on our port.
+
+    This used to be a non-fatal warning. It's now fatal because two MCs
+    sharing a port (which Windows allows in some socket configurations)
+    leads to traffic splitting between two `agent_sessions` dicts —
+    requests look like they "migrate" between instances and killing one
+    instance kills agents the other doesn't know about.
+
+    Bypass: set MC_ALLOW_PORT_CONFLICT=1 if you genuinely need two MCs
+    competing for the port (rare; almost always a misconfiguration).
+    """
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.bind(('0.0.0.0', PORT))
         sock.close()
+        return  # Clean — port is free.
     except OSError:
-        # Port in use — find out who
-        if sys.platform == 'win32':
+        pass  # Port in use; identify and possibly abort.
+
+    other_pids: list[str] = []
+    if sys.platform == 'win32':
+        try:
             result = subprocess.run(
                 ['netstat', '-ano'], capture_output=True, text=True, timeout=5)
             pids = set()
@@ -6857,21 +7008,1061 @@ def _check_port_conflict():
                     if parts:
                         pids.add(parts[-1])
             my_pid = str(os.getpid())
-            other_pids = pids - {my_pid}
-            if other_pids:
-                print(f"WARNING: Port {PORT} already in use by PID(s): {', '.join(other_pids)}")
-                print(f"  This process (PID {my_pid}) will conflict — requests may route unpredictably.")
-                print(f"  Kill the other process first, or this instance may cause errors.")
-                # Log to a file for forensic review
-                try:
-                    from datetime import datetime
-                    log_path = Path(_DATA_ROOT) / 'port_conflict.log'
-                    with open(log_path, 'a', encoding='utf-8') as f:
-                        f.write(f"{datetime.utcnow().isoformat()}Z  PID {my_pid} starting, "
-                                f"port {PORT} held by PID(s) {', '.join(other_pids)}  "
-                                f"cmdline: {' '.join(sys.argv)}\n")
-                except Exception:
-                    pass
+            other_pids = sorted(pids - {my_pid})
+        except Exception:
+            pass
+
+    msg_lines = [
+        "",
+        "=" * 72,
+        f"  Mission Control cannot start: port {PORT} is already in use.",
+        "=" * 72,
+    ]
+    if other_pids:
+        msg_lines.append(f"  Held by PID(s): {', '.join(other_pids)}")
+    msg_lines += [
+        "",
+        "  Another MC is likely already running (e.g. via Tauri).",
+        "  Running two MCs at once causes traffic to split between them,",
+        "  duplicates agent sessions, and produces 'unrecoverable error'",
+        "  conditions when one instance shuts down.",
+        "",
+        "  To fix:",
+        f"    1. Stop the other MC first, or",
+        f"    2. Use the already-running instance directly, or",
+        f"    3. Set MC_ALLOW_PORT_CONFLICT=1 if you really need both",
+        f"       (rare; only meaningful for protocol-level testing).",
+        "=" * 72,
+        "",
+    ]
+    print('\n'.join(msg_lines), flush=True)
+
+    # Forensic log
+    try:
+        from datetime import datetime
+        log_path = Path(_DATA_ROOT) / 'port_conflict.log'
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"{datetime.utcnow().isoformat()}Z  PID {os.getpid()} aborting, "
+                    f"port {PORT} held by PID(s) {','.join(other_pids) or 'unknown'}  "
+                    f"cmdline: {' '.join(sys.argv)}\n")
+    except Exception:
+        pass
+
+    if os.environ.get('MC_ALLOW_PORT_CONFLICT') == '1':
+        print(f"[port-conflict] MC_ALLOW_PORT_CONFLICT=1 set — proceeding ANYWAY. "
+              f"You will likely see traffic split between instances.", flush=True)
+        return
+
+    sys.exit(2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local mock control plane (DEV ONLY)
+# ─────────────────────────────────────────────────────────────────────────────
+# When MC_REMOTE_LOCAL_MOCK=1 is set, MC routes /api/_mock/connect as if it
+# were the real PLATFORM_DOMAIN/connect endpoint: pretends Firebase signin
+# succeeded, synthesizes plausible enrollment_token / device_id / hostname,
+# and bounces back to /api/mc-callback. Lets the entire Enable -> browser ->
+# callback -> enrolled flow be exercised before the real GCP control plane
+# exists.
+#
+# To use:
+#   1. Set env: MC_REMOTE_LOCAL_MOCK=1
+#   2. Set env: MC_REMOTE_PLATFORM_DOMAIN=127.0.0.1:5199 (so connect URL points local)
+#      (Note: connect_url() builds https://; for the local mock we deliberately
+#       generate a plain http URL via the dedicated mock helper below.)
+#
+# This block only registers when the flag is set. Production builds with the
+# flag unset have no mock endpoints.
+
+if os.environ.get('MC_REMOTE_LOCAL_MOCK') == '1':
+    # In-memory state for the mock CP
+    _mock_nonces: dict = {}        # nonce_id -> { nonce, expires_at, device_id }
+    _mock_devices: dict = {}       # device_id -> { device_pub_b64, hostname, username }
+    _mock_lock = threading.Lock()
+
+    def _mock_now_iso(offset_s: float = 0.0) -> str:
+        from datetime import datetime, timezone, timedelta
+        return (datetime.now(timezone.utc) + timedelta(seconds=offset_s)) \
+            .isoformat(timespec='seconds').replace('+00:00', 'Z')
+
+    @app.route('/v1/nonce')
+    def _mock_v1_nonce():
+        """Mock CP nonce endpoint (matches `03-` §3.6)."""
+        device_id = request.args.get('device_id', '').strip()
+        if not device_id:
+            return jsonify({'code': 'bad_envelope', 'message': 'device_id required',
+                            'request_id': 'mock'}), 400
+        nonce_id = secrets.token_urlsafe(16)
+        nonce = secrets.token_urlsafe(32)
+        with _mock_lock:
+            _mock_nonces[nonce_id] = {
+                'nonce': nonce,
+                'expires_at': _time.time() + 30,
+                'device_id': device_id,
+                'used': False,
+            }
+        return jsonify({
+            'nonce': nonce,
+            'nonce_id': nonce_id,
+            'expires_at': _mock_now_iso(30),
+        })
+
+    @app.route('/v1/attest', methods=['POST'])
+    def _mock_v1_attest():
+        """Mock CP attest endpoint. Verifies BOTH signatures before issuing
+        a (fake) tunnel token. Implements a subset of the 14+1 verification
+        steps from `02-` §7.4 — enough to exercise the client end-to-end."""
+        import base64 as _b64
+        import hashlib as _hashlib
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            from cryptography.exceptions import InvalidSignature
+            import rfc8785
+        except Exception as e:
+            return jsonify({'code': 'internal_error', 'message': f'mock missing dep: {e}',
+                            'request_id': 'mock'}), 500
+
+        body = request.get_json(silent=True) or {}
+        env = body.get('envelope') or {}
+        canon_hash_hex = body.get('envelope_canonical_sha256', '')
+        sig_b64 = body.get('signature_b64', '')
+        client_sig_b64 = body.get('client_signature_b64', '')
+
+        if not env or not canon_hash_hex or not sig_b64 or not client_sig_b64:
+            return _mock_attest_err('bad_envelope', 400, "Missing envelope fields")
+
+        # Step 2: recompute canonical-JSON sha256
+        try:
+            recomputed = _hashlib.sha256(rfc8785.dumps(env)).hexdigest()
+        except Exception as e:
+            return _mock_attest_err('bad_canonicalization', 400, f"JCS dump failed: {e}")
+        if recomputed != canon_hash_hex:
+            return _mock_attest_err('bad_canonicalization', 400,
+                                    f"Hash mismatch: client={canon_hash_hex} server={recomputed}")
+
+        envelope_hash_bytes = bytes.fromhex(canon_hash_hex)
+
+        # Step 4: device signature verifies
+        try:
+            device_pub_raw = _b64.b64decode(env.get('device_pub_b64', ''))
+            Ed25519PublicKey.from_public_bytes(device_pub_raw).verify(
+                _b64.b64decode(sig_b64), envelope_hash_bytes,
+            )
+        except (InvalidSignature, ValueError) as e:
+            return _mock_attest_err('bad_signature', 401, f"Device sig invalid: {e}")
+
+        # Step 4.5: client signature verifies under the registered key
+        try:
+            from mc_remote import attestation as _att
+            expected_key_id = _att.dev_client_secret_key_id()
+            expected_pub_b64 = _att.dev_client_pubkey_b64()
+        except Exception as e:
+            return _mock_attest_err('internal_error', 500, f"Mock can't import dev client pub: {e}")
+
+        if env.get('client_secret_key_id') != expected_key_id:
+            return _mock_attest_err('unknown_client_key', 401,
+                                    f"key_id {env.get('client_secret_key_id')!r} not in active set")
+        try:
+            client_pub_raw = _b64.b64decode(expected_pub_b64)
+            Ed25519PublicKey.from_public_bytes(client_pub_raw).verify(
+                _b64.b64decode(client_sig_b64), envelope_hash_bytes,
+            )
+        except (InvalidSignature, ValueError) as e:
+            return _mock_attest_err('bad_client_signature', 401, f"Client sig invalid: {e}")
+
+        # Issue a "tunnel token". For the mock, it's just a random string —
+        # we don't run cloudflared. Supervisor treats successful issuance
+        # as proof the tunnel would be up.
+        return jsonify({
+            'envelope_type': 'attestation_response',
+            'result': 'ok',
+            'tunnel_token': f"MOCK_TUNNEL_TOKEN_{secrets.token_urlsafe(24)}",
+            'tunnel_token_id': f"tt_{secrets.token_urlsafe(12)}",
+            'tunnel_token_expires_at': _mock_now_iso(15 * 60),
+            'next_attestation_after': _mock_now_iso(10 * 60),
+            'caps': {
+                'bandwidth_bytes_remaining_period': 5 * 1024 ** 3,
+                'bandwidth_used_period_bytes': 0,
+                'rate_limit_rps': 60,
+                'max_response_bytes': 10 * 1024 ** 2,
+                'max_concurrent_connections': 20,
+            },
+            'directives': [],
+        })
+
+    def _mock_attest_err(code: str, status: int, message: str):
+        return jsonify({'code': code, 'message': message, 'request_id': 'mock'}), status
+
+    @app.route('/api/_mock/connect')
+    def _mock_clayrune_connect():
+        """Dev-only: pretends to be PLATFORM_DOMAIN/connect.
+
+        Skips Firebase signin / username pick / Cloudflare provisioning;
+        immediately redirects to /api/mc-callback with synthesized values.
+        Username defaults to 'devuser' but can be overridden via ?username_hint=.
+        """
+        from urllib.parse import urlencode
+        nonce = request.args.get('nonce', '')
+        username = request.args.get('username_hint', '').strip() or 'devuser'
+        device_pub = request.args.get('device_pub', '')
+
+        # Synthesize what the real CP would return
+        callback_params = {
+            'nonce': nonce,
+            'enrollment_token': f'MOCK_TOKEN_{secrets.token_urlsafe(16)}',
+            'username': username,
+            'device_id': f'dev_mock_{secrets.token_urlsafe(8)}',
+            # Use whatever PLATFORM_DOMAIN the proprietary mc_remote module
+            # was configured with — keeps validator happy (it checks
+            # hostname == <username>.<PLATFORM_DOMAIN>).
+            'hostname': f'{username}.{_mock_platform_domain()}',
+        }
+        return redirect('/api/mc-callback?' + urlencode(callback_params))
+
+    def _mock_platform_domain() -> str:
+        try:
+            from mc_remote import config as _mc_cfg
+            return _mc_cfg.PLATFORM_DOMAIN
+        except Exception:
+            return 'clayrune.io'
+
+    print('[remote-access] LOCAL MOCK control plane enabled at /api/_mock/connect '
+          '(dev only; do not enable in production)', flush=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Remote Access (Mission Control Cloud)
+# ─────────────────────────────────────────────────────────────────────────────
+# Thin Flask layer over whatever RemoteAccessProvider has registered itself
+# via mc_remote_iface. Open-source-safe: if no provider is installed, every
+# /api/remote/* endpoint returns 200 with `provider: null` (status) or 501
+# (action endpoints). The frontend's Settings panel handles either.
+#
+# See `docs/remote-access/07-licensing.md` §4 for the open-core contract.
+
+def _get_remote_provider():
+    """Return the registered RemoteAccessProvider, or None."""
+    if mc_remote_iface is None:
+        return None
+    try:
+        return mc_remote_iface.get_provider()
+    except Exception:
+        return None
+
+
+def _provider_status_dict(p):
+    """Convert ProviderStatus dataclass → dict for JSON response."""
+    s = p.status()
+    caps = p.get_caps()
+    return {
+        'provider': {
+            'name': p.name,
+            'vendor_url': p.vendor_url,
+        },
+        'enrolled': s.enrolled,
+        'online': s.online,
+        'connecting': getattr(s, 'connecting', False),
+        'hostname': s.hostname,
+        'username': s.username,
+        'last_seen': s.last_seen,
+        'error_code': s.error_code,
+        'error_message': s.error_message,
+        'caps': None if caps is None else {
+            'bandwidth_quota_period_bytes': caps.bandwidth_quota_period_bytes,
+            'bandwidth_used_period_bytes': caps.bandwidth_used_period_bytes,
+            'rate_limit_rps': caps.rate_limit_rps,
+            'max_response_bytes': caps.max_response_bytes,
+            'max_concurrent_connections': caps.max_concurrent_connections,
+        },
+    }
+
+
+# ── Per-CF-session "name this device" labels ────────────────────────────────
+# When a browser/phone signs in via CF Access OTP, the first request through
+# the tunnel is intercepted (see `_redirect_unlabeled_cf_session` below) and
+# routed to `/_mc/name-device`. The user picks a friendly name; we store
+# `{nonce → {label, ua, created_at}}` keyed by the CF Access session nonce.
+# `/api/remote/sessions` then enriches CP sessions with the label for that
+# nonce. CF Access doesn't expose user_agent or the device name itself, so
+# this is the only way to give sessions human-meaningful identifiers.
+
+SESSION_LABELS_PATH = _DATA_ROOT / 'data' / 'session_labels.json'
+
+
+def _load_session_labels() -> dict:
+    try:
+        with open(SESSION_LABELS_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_session_labels(d: dict) -> None:
+    SESSION_LABELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SESSION_LABELS_PATH.with_suffix('.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, SESSION_LABELS_PATH)
+
+
+def _set_session_label(nonce: str, label: str, ua: str) -> None:
+    if not nonce:
+        return
+    d = _load_session_labels()
+    existing = d.get(nonce, {}) if isinstance(d.get(nonce), dict) else {}
+    d[nonce] = {
+        'label': label[:80],
+        'ua': (ua or '')[:300],
+        'created_at': existing.get('created_at') or int(_time.time()),
+        'updated_at': int(_time.time()),
+    }
+    _save_session_labels(d)
+
+
+def _cf_session_nonce_from_request() -> str:
+    """Best-effort extraction of the CF Access session nonce.
+
+    Reads the `Cf-Access-Jwt-Assertion` header (preferred) or the
+    `CF_Authorization` cookie. We base64-decode the JWT payload without
+    verifying the signature — the tunnel itself is the auth boundary in our
+    threat model (anyone reaching this MC instance has already passed CF
+    Access OTP). Returns '' if absent or unparseable.
+    """
+    jwt_str = request.headers.get('Cf-Access-Jwt-Assertion', '') or request.cookies.get('CF_Authorization', '')
+    if not jwt_str or jwt_str.count('.') < 2:
+        return ''
+    try:
+        import base64
+        payload_b64 = jwt_str.split('.')[1]
+        # base64url, may need padding
+        padding = '=' * ((4 - len(payload_b64) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + padding))
+        return str(payload.get('nonce') or payload.get('identity_nonce') or '')
+    except Exception:
+        return ''
+
+
+def _is_cf_tunneled_request() -> bool:
+    """True iff this request arrived through CF Access (i.e. via the tunnel).
+
+    Localhost dashboard hits don't have these headers — only requests routed
+    through cloudflared from the public hostname do.
+    """
+    return bool(request.headers.get('Cf-Access-Authenticated-User-Email')
+                or request.headers.get('Cf-Access-Jwt-Assertion'))
+
+
+@app.before_request
+def _redirect_unlabeled_cf_session():
+    """If a tunneled request lacks a stored label for its CF nonce, send the
+    user to the name-device page. Skips API/static/the page itself.
+    """
+    if not _is_cf_tunneled_request():
+        return None
+    path = request.path or '/'
+    # Don't redirect API, static, or the name-device page itself (and its POST endpoint).
+    if (path.startswith('/api/')
+            or path.startswith('/static/')
+            or path.startswith('/_mc/')
+            or path == '/favicon.ico'):
+        return None
+    nonce = _cf_session_nonce_from_request()
+    if not nonce:
+        return None  # nothing to key on; let the request through
+    labels = _load_session_labels()
+    if nonce in labels and (labels[nonce] or {}).get('label'):
+        return None  # already named
+    return redirect('/_mc/name-device', code=302)
+
+
+@app.route('/_mc/name-device')
+def mc_name_device_page():
+    """Serve the 'name this device' form. Pre-fills detected platform/browser
+    from the User-Agent so the user sees what we detected.
+    """
+    ua = request.headers.get('User-Agent', '')
+    nonce = _cf_session_nonce_from_request()
+    email = request.headers.get('Cf-Access-Authenticated-User-Email', '')
+    # Render a tiny standalone HTML page (no dependency on the SPA bundle).
+    html = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Name this device</title>
+  <style>
+    :root { --accent: #e8824a; --bg: #fdfaf6; --fg: #1a1a1a; --muted: #6b6b6b; --border: #e0d8cc; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
+    .wrap { max-width: 440px; margin: 0 auto; padding: 36px 22px; }
+    h1 { font-size: 22px; margin: 0 0 8px; font-weight: 700; }
+    p.lead { color: var(--muted); font-size: 14px; line-height: 1.5; margin: 0 0 18px; }
+    .card { background: white; border: 2px solid var(--border); border-radius: 14px; padding: 18px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+    input { width: 100%; padding: 12px 14px; font-size: 16px; border: 2px solid var(--border); border-radius: 10px; background: white; color: var(--fg); }
+    input:focus { outline: none; border-color: var(--accent); }
+    .detected { font-size: 12px; color: var(--muted); margin: 14px 0 0; padding: 10px 12px; background: #f6f1ea; border-radius: 8px; word-break: break-word; }
+    .detected b { color: var(--fg); }
+    button { width: 100%; margin-top: 16px; padding: 14px; font-size: 16px; font-weight: 600; background: var(--accent); color: white; border: none; border-radius: 10px; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button:hover:not(:disabled) { filter: brightness(1.05); }
+    .err { color: #c0392b; font-size: 13px; margin-top: 10px; min-height: 1em; }
+    .footer { text-align: center; font-size: 11px; color: var(--muted); margin-top: 18px; }
+    .suggest-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .suggest { font-size: 12px; padding: 5px 10px; background: #f6f1ea; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+    .suggest:hover { background: #efe5d6; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Name this device</h1>
+    <p class="lead">So you can tell your sessions apart later. Sign-in expires in 24 hours.</p>
+    <div class="card">
+      <label for="nm">Device name</label>
+      <input id="nm" autofocus placeholder="e.g. My iPhone" maxlength="80" />
+      <div class="suggest-row" id="suggest"></div>
+      <div class="detected">Detected: <b id="det"></b><br><span id="email" style="font-size:11px;opacity:.75"></span></div>
+      <button id="go" disabled>Continue</button>
+      <div class="err" id="err"></div>
+    </div>
+    <div class="footer">Mission Control · Cloudflare Access</div>
+  </div>
+<script>
+const NONCE = __NONCE__;
+const UA    = __UA__;
+const EMAIL = __EMAIL__;
+
+function brief(ua) {
+  let b='Browser', os='';
+  if (/Edg\\//.test(ua)) b='Edge';
+  else if (/CriOS/.test(ua)) b='Chrome';
+  else if (/FxiOS/.test(ua)) b='Firefox';
+  else if (/Chrome\\//.test(ua)) b='Chrome';
+  else if (/Firefox\\//.test(ua)) b='Firefox';
+  else if (/Safari\\//.test(ua)) b='Safari';
+  if (/iPhone/.test(ua)) os='iPhone';
+  else if (/iPad/.test(ua)) os='iPad';
+  else if (/Android/.test(ua)) os='Android';
+  else if (/Windows/.test(ua)) os='Windows';
+  else if (/Mac OS X|Macintosh/.test(ua)) os='Mac';
+  else if (/Linux/.test(ua)) os='Linux';
+  return os ? b+' on '+os : b;
+}
+
+const detEl = document.getElementById('det');
+const emailEl = document.getElementById('email');
+detEl.textContent = brief(UA || navigator.userAgent);
+emailEl.textContent = EMAIL;
+
+// Suggestion chips
+const ua = (UA || navigator.userAgent);
+const sugs = [];
+if (/iPhone/.test(ua))    sugs.push('My iPhone');
+if (/iPad/.test(ua))      sugs.push('My iPad');
+if (/Android/.test(ua))   { sugs.push('My Phone'); sugs.push('My Android'); }
+if (/Windows/.test(ua))   sugs.push('Windows PC');
+if (/Mac OS X|Macintosh/.test(ua)) sugs.push('My Mac');
+sugs.push('Work Laptop'); sugs.push('Home PC');
+const sugRow = document.getElementById('suggest');
+sugs.slice(0,4).forEach(s => {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'suggest'; b.textContent = s;
+  b.onclick = () => { document.getElementById('nm').value = s; checkBtn(); };
+  sugRow.appendChild(b);
+});
+
+const inp = document.getElementById('nm');
+const btn = document.getElementById('go');
+const err = document.getElementById('err');
+function checkBtn() { btn.disabled = !inp.value.trim(); }
+inp.addEventListener('input', checkBtn);
+inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !btn.disabled) submit(); });
+btn.addEventListener('click', submit);
+
+async function submit() {
+  const label = inp.value.trim();
+  if (!label) return;
+  btn.disabled = true; err.textContent = '';
+  try {
+    const r = await fetch('/api/_mc/session-label', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nonce: NONCE, label }),
+    });
+    const j = await r.json();
+    if (r.ok && j.ok) {
+      window.location.href = '/';
+    } else {
+      err.textContent = j.message || ('Could not save (' + r.status + ')');
+      btn.disabled = false;
+    }
+  } catch (e) {
+    err.textContent = 'Network error: ' + e;
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
+"""
+    html = (html
+            .replace('__NONCE__', json.dumps(nonce))
+            .replace('__UA__',    json.dumps(ua))
+            .replace('__EMAIL__', json.dumps(email)))
+    resp = Response(html, mimetype='text/html; charset=utf-8')
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@app.route('/api/_mc/session-label', methods=['POST'])
+def mc_set_session_label():
+    """Record `{nonce → label}`. Only accepts requests that came through CF Access."""
+    if not _is_cf_tunneled_request():
+        return jsonify({'ok': False, 'message': 'Not a tunneled request'}), 403
+    body = request.get_json(silent=True) or {}
+    nonce = (body.get('nonce') or '').strip() or _cf_session_nonce_from_request()
+    label = (body.get('label') or '').strip()
+    if not nonce:
+        return jsonify({'ok': False, 'message': 'No CF session nonce'}), 400
+    if not label:
+        return jsonify({'ok': False, 'message': 'Label required'}), 400
+    ua = request.headers.get('User-Agent', '')
+    _set_session_label(nonce, label, ua)
+    return jsonify({'ok': True, 'nonce': nonce, 'label': label})
+
+
+# ── Auto-revoke unnamed sessions ────────────────────────────────────────────
+# Background loop: every interval, lists CF Access sessions; for any session
+# whose nonce isn't in `session_labels.json` AND is older than the threshold,
+# calls per-session revoke (strict mode — no fallback to revoke-all). Keeps
+# the sessions UI tidy: sessions that didn't go through the name-device flow
+# get cleaned up automatically. Named sessions are never touched.
+
+_ENFORCER_STATE = {
+    'last_run': 0,
+    'last_revoked_count': 0,
+    'last_skipped_count': 0,
+    'last_error': '',
+    'last_per_session_supported': None,  # None=unknown, True/False after a try
+}
+_enforcer_lock = threading.Lock()
+
+
+def _enforce_session_labels_once(force: bool = False) -> dict:
+    """One pass of the label enforcer. Returns a small status dict.
+
+    Called by the daemon loop on a timer + by a manual `/api/remote/sessions/enforce`
+    endpoint. Idempotent.
+    """
+    cfg = CONFIG  # already loaded
+    enabled = bool(cfg.get('auto_revoke_unnamed_sessions', True))
+    threshold = int(cfg.get('auto_revoke_unnamed_after_seconds', 600))
+    if not enabled and not force:
+        return {'ok': True, 'skipped': 'disabled'}
+
+    p = _get_remote_provider()
+    if p is None:
+        return {'ok': True, 'skipped': 'no_provider'}
+    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
+    if not email:
+        return {'ok': True, 'skipped': 'no_email'}
+
+    try:
+        from mc_remote import enrollment as _mc_enrollment, config as _mc_config
+    except Exception as e:
+        return {'ok': False, 'error': f'import_error: {e}'}
+
+    cp_url = _mc_config.control_plane_base_url()
+
+    try:
+        body = _mc_enrollment.list_sessions_via_cp(cp_base_url=cp_url, email=email)
+    except Exception as e:
+        return {'ok': False, 'error': f'list_failed: {e}'}
+
+    if not isinstance(body, dict) or not isinstance(body.get('sessions'), list):
+        return {'ok': True, 'skipped': 'no_sessions_response'}
+    if body.get('error'):
+        return {'ok': True, 'skipped': f'cp_error:{body.get("error")}'}
+
+    labels = _load_session_labels()
+    now = int(_time.time())
+    revoked = []
+    skipped_unsupported = []
+    for s in body['sessions']:
+        nonce = s.get('nonce') or ''
+        sid = s.get('session_id') or ''
+        issued = s.get('issued_at') or 0
+        if not sid or not nonce:
+            continue
+        is_labeled = nonce in labels and (labels[nonce] or {}).get('label')
+        if is_labeled:
+            continue
+        age = now - int(issued) if issued else 0
+        if age < threshold and not force:
+            continue
+        # Strict revoke — no fallback to revoke-all. If CF doesn't support
+        # per-session revoke for this account, we abort rather than nuking
+        # the user's labeled sessions.
+        try:
+            r = _mc_enrollment.revoke_session_via_cp(
+                cp_base_url=cp_url, email=email, session_id=sid, strict=True,
+            )
+            if r.get('ok') and r.get('scope') == 'session':
+                revoked.append({'nonce': nonce, 'short_id': s.get('short_id', '')})
+                _ENFORCER_STATE['last_per_session_supported'] = True
+            elif r.get('error') == 'per_session_unsupported' or r.get('status') == 503:
+                # CF doesn't support per-session for this token. Stop trying.
+                _ENFORCER_STATE['last_per_session_supported'] = False
+                skipped_unsupported.append(nonce)
+                break
+            else:
+                skipped_unsupported.append(nonce)
+        except Exception as e:
+            _ENFORCER_STATE['last_error'] = f'revoke_failed: {e}'
+
+    _ENFORCER_STATE['last_run'] = now
+    _ENFORCER_STATE['last_revoked_count'] = len(revoked)
+    _ENFORCER_STATE['last_skipped_count'] = len(skipped_unsupported)
+    if revoked:
+        print(f"[remote-access] auto-revoked {len(revoked)} unnamed session(s): "
+              f"{[r['short_id'] for r in revoked]}", flush=True)
+    return {
+        'ok': True,
+        'revoked': revoked,
+        'skipped_unsupported': skipped_unsupported,
+        'per_session_supported': _ENFORCER_STATE['last_per_session_supported'],
+    }
+
+
+def _warmup_control_plane():
+    """Fire one GET /v1/health at the configured CP base URL.
+
+    Cloud Run with min-instances=0 cold-starts in 2-5s; without warmup, the
+    user's first click pays that latency. Hitting /health on MC startup means
+    the CP is already warm by the time anyone clicks anything.
+    """
+    try:
+        from mc_remote import config as _mc_config
+    except Exception:
+        return  # provider not installed — nothing to warm
+    try:
+        base = _mc_config.control_plane_base_url()
+    except Exception:
+        return
+    if not base:
+        return
+    url = f"{base.rstrip('/')}/health"
+    try:
+        import requests
+        t0 = _time.monotonic()
+        r = requests.get(url, timeout=15)
+        dt_ms = int((_time.monotonic() - t0) * 1000)
+        print(f"[remote-access] CP warmup {url} -> {r.status_code} in {dt_ms}ms", flush=True)
+    except Exception as e:
+        print(f"[remote-access] CP warmup failed (will not retry): {e}", flush=True)
+
+
+def _session_label_enforcer_loop():
+    """Daemon thread: run the enforcer every N seconds."""
+    interval = max(30, int(CONFIG.get('auto_revoke_check_interval_seconds', 60)))
+    while True:
+        try:
+            with _enforcer_lock:
+                _enforce_session_labels_once()
+        except Exception as e:
+            print(f"[remote-access] enforcer crashed: {e}", flush=True)
+            _ENFORCER_STATE['last_error'] = str(e)
+        _time.sleep(interval)
+
+
+@app.route('/api/remote/sessions/enforce', methods=['POST'])
+def remote_sessions_enforce():
+    """Manually trigger the unnamed-session cleanup. Returns what was revoked."""
+    with _enforcer_lock:
+        body = _enforce_session_labels_once(force=True)
+    body['state'] = dict(_ENFORCER_STATE)
+    return jsonify(body)
+
+
+@app.route('/api/remote/sessions/enforcer-state')
+def remote_sessions_enforcer_state():
+    """Read-only view of the last enforcer run for the Settings panel."""
+    return jsonify(dict(_ENFORCER_STATE))
+
+
+@app.route('/api/remote/status')
+def remote_status():
+    """Status of the registered remote-access provider, or `provider: null`.
+
+    Polled by the Settings panel. Cheap; safe to hit every few seconds.
+    """
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'provider': None})
+    try:
+        return jsonify(_provider_status_dict(p))
+    except Exception as e:
+        return jsonify({
+            'provider': {'name': getattr(p, 'name', 'Unknown'),
+                         'vendor_url': getattr(p, 'vendor_url', '')},
+            'enrolled': False,
+            'online': False,
+            'error_code': 'internal_error',
+            'error_message': f'Provider status() failed: {e}',
+        }), 200
+
+
+@app.route('/api/remote/enable', methods=['POST'])
+def remote_enable():
+    """Begin enrollment. Launches the OS browser server-side and also returns
+    the URL so the frontend can fall back to a manual-copy display.
+
+    Server-side launch (via Python's webbrowser module) is required because
+    Tauri / WebView2 silently blocks `window.open()` calls that aren't
+    direct user-gesture navigations.
+    """
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider'}), 501
+    try:
+        url = p.begin_enrollment()
+    except NotImplementedError as e:
+        return jsonify({'error': 'not_implemented', 'message': str(e)}), 501
+    except Exception as e:
+        return jsonify({'error': 'internal_error', 'message': str(e)}), 500
+
+    # Some providers (notably the dev stub) signal "no real browser needed —
+    # we're done already" by returning a `data:` URL or a URL with the
+    # `mc-no-browser` query flag. Skip the launch in those cases.
+    skip_browser = (
+        url.startswith('data:')
+        or url.startswith('mc://')
+        or 'mc-no-browser=1' in url
+    )
+
+    launched = False if skip_browser else _launch_browser_for_user(url)
+
+    return jsonify({
+        'ok': True,
+        'enrollment_url': url,
+        'launched': launched,
+        'skip_browser': skip_browser,
+    })
+
+
+def _launch_browser_for_user(url: str) -> bool:
+    """Open `url` in the user's default browser. Returns True on success.
+
+    Windows: os.startfile(url) → ShellExecuteW(open). Most reliable across
+    elevation contexts, Tauri-spawned subprocesses, and headless services.
+
+    macOS / Linux: subprocess.Popen of `open` / `xdg-open` respectively.
+    """
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(url)  # type: ignore[attr-defined]
+            return True
+        if sys.platform == "darwin":
+            import subprocess
+            subprocess.Popen(["open", url], close_fds=True)
+            return True
+        # Linux / BSD
+        import subprocess
+        subprocess.Popen(["xdg-open", url], close_fds=True)
+        return True
+    except Exception as e:
+        print(f"[remote-access] _launch_browser_for_user failed: {e}", flush=True)
+        return False
+
+
+@app.route('/api/remote/disable', methods=['POST'])
+def remote_disable():
+    """Stop the tunnel. Keeps credentials so re-enable is fast."""
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider'}), 501
+    try:
+        p.disable()
+    except NotImplementedError as e:
+        return jsonify({'error': 'not_implemented', 'message': str(e)}), 501
+    except Exception as e:
+        return jsonify({'error': 'internal_error', 'message': str(e)}), 500
+    return jsonify({'ok': True})
+
+
+@app.route('/api/remote/resume', methods=['POST'])
+def remote_resume():
+    """Reverse of /api/remote/disable: restart the tunnel for an already-enrolled
+    device. No re-enrollment, no new keypair, no new CF resources.
+    """
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider'}), 501
+    try:
+        p.resume()
+    except NotImplementedError as e:
+        return jsonify({'error': 'not_implemented', 'message': str(e)}), 501
+    except RuntimeError as e:
+        # e.g. "Cannot resume: no enrolled device."
+        return jsonify({'error': 'not_enrolled', 'message': str(e)}), 409
+    except Exception as e:
+        return jsonify({'error': 'internal_error', 'message': str(e)}), 500
+    return jsonify({'ok': True})
+
+
+@app.route('/api/remote/devices')
+def remote_devices():
+    """Proxy GET /v1/devices on the configured CP for the authenticated user.
+
+    For dev-auth, reads MC_REMOTE_DEV_EMAIL from the env (same one used at enrollment).
+    Returns the CP's response directly, plus the local device_id so the frontend
+    can highlight "this device" in the list.
+    """
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider', 'devices': []}), 501
+
+    try:
+        from mc_remote import enrollment as _mc_enrollment, device_keys, config
+    except Exception as e:
+        return jsonify({'error': 'import_error', 'message': str(e), 'devices': []}), 500
+
+    # Email + identity
+    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
+    if not email:
+        return jsonify({'error': 'no_email', 'message': 'MC_REMOTE_DEV_EMAIL not set',
+                        'devices': []}), 503
+    try:
+        identity = device_keys.load_identity()
+    except Exception:
+        identity = None
+    this_device_id = identity.device_id if identity else None
+
+    body = _mc_enrollment.list_devices_via_cp(
+        cp_base_url=config.control_plane_base_url(),
+        email=email,
+        this_device_id=this_device_id,
+    )
+    return jsonify(body)
+
+
+@app.route('/api/remote/sessions')
+def remote_sessions():
+    """Proxy GET /v1/sessions on the configured CP for the authenticated user."""
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider', 'sessions': []}), 501
+    try:
+        from mc_remote import enrollment as _mc_enrollment, config
+    except Exception as e:
+        return jsonify({'error': 'import_error', 'message': str(e), 'sessions': []}), 500
+    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
+    if not email:
+        return jsonify({'error': 'no_email', 'message': 'MC_REMOTE_DEV_EMAIL not set',
+                        'sessions': []}), 503
+    body = _mc_enrollment.list_sessions_via_cp(
+        cp_base_url=config.control_plane_base_url(),
+        email=email,
+    )
+    # Enrich each session with its locally-stored device label (if any).
+    # Match by full nonce; fall back to short_id if CP is on an older version.
+    try:
+        if isinstance(body, dict) and isinstance(body.get('sessions'), list):
+            labels = _load_session_labels()
+            short_index = {n[-6:]: lab for n, lab in labels.items() if isinstance(lab, dict) and n}
+            for s in body['sessions']:
+                nonce = s.get('nonce') or ''
+                lab = labels.get(nonce) if nonce else None
+                if not lab:
+                    lab = short_index.get(s.get('short_id') or '')
+                if isinstance(lab, dict) and lab.get('label'):
+                    s['label'] = lab.get('label')
+                    s['ua'] = lab.get('ua') or ''
+    except Exception as _e:
+        print(f"[remote-access] session label enrichment failed: {_e}", flush=True)
+    return jsonify(body)
+
+
+@app.route('/api/remote/sessions/<session_id>/label', methods=['POST'])
+def remote_session_label(session_id):
+    """Retroactively label any CF Access session by full session_id.
+
+    Local-only endpoint (called by the desktop dashboard); does NOT require
+    a CF Access tunneled request the way `/api/_mc/session-label` does.
+    Extracts the nonce from the trailing `_sessions_<nonce>` suffix of the
+    session_id (CF's canonical name format).
+    """
+    body = request.get_json(silent=True) or {}
+    label = (body.get('label') or '').strip()
+    if not label:
+        return jsonify({'ok': False, 'message': 'Label required'}), 400
+    # session_id format: <account>_<user>_sessions_<nonce>
+    marker = '_sessions_'
+    idx = session_id.rfind(marker)
+    if idx < 0:
+        return jsonify({'ok': False, 'message': 'Could not parse nonce from session_id'}), 400
+    nonce = session_id[idx + len(marker):]
+    if not nonce:
+        return jsonify({'ok': False, 'message': 'Empty nonce'}), 400
+    _set_session_label(nonce, label, '')  # no UA available retroactively
+    return jsonify({'ok': True, 'nonce': nonce, 'label': label})
+
+
+@app.route('/api/remote/sessions/<session_id>/revoke', methods=['POST'])
+def remote_session_revoke(session_id):
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider'}), 501
+    try:
+        from mc_remote import enrollment as _mc_enrollment, config
+    except Exception as e:
+        return jsonify({'error': 'import_error', 'message': str(e)}), 500
+    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
+    if not email:
+        return jsonify({'error': 'no_email'}), 503
+    body = _mc_enrollment.revoke_session_via_cp(
+        cp_base_url=config.control_plane_base_url(),
+        email=email,
+        session_id=session_id,
+    )
+    return jsonify(body)
+
+
+@app.route('/api/remote/sessions/revoke-all', methods=['POST'])
+def remote_sessions_revoke_all():
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider'}), 501
+    try:
+        from mc_remote import enrollment as _mc_enrollment, config
+    except Exception as e:
+        return jsonify({'error': 'import_error', 'message': str(e)}), 500
+    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
+    if not email:
+        return jsonify({'error': 'no_email'}), 503
+    body = _mc_enrollment.revoke_all_sessions_via_cp(
+        cp_base_url=config.control_plane_base_url(),
+        email=email,
+    )
+    return jsonify(body)
+
+
+@app.route('/api/remote/disconnect', methods=['POST'])
+def remote_disconnect():
+    """Revoke this device on the platform; clear local credentials."""
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider'}), 501
+    try:
+        p.disconnect_this_device()
+    except NotImplementedError as e:
+        return jsonify({'error': 'not_implemented', 'message': str(e)}), 501
+    except Exception as e:
+        return jsonify({'error': 'internal_error', 'message': str(e)}), 500
+    return jsonify({'ok': True})
+
+
+# ── Endpoints called by mc-tunnel and the enrollment browser flow ────────────
+# These exist so the proprietary provider has fixed integration points it can
+# rely on. Until a real provider is wired in, both return placeholder responses.
+
+@app.route('/api/tunnel-handshake')
+def tunnel_handshake():
+    """Localhost handshake from `mc-tunnel`. See attestation protocol §5.2.
+
+    The proprietary provider, when wired up, replaces this handler with one
+    that verifies the shared secret and returns the device challenge JSON.
+    Without a provider, returns 503 so `mc-tunnel` exits cleanly.
+    """
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider', 'remote_access_enabled': False}), 503
+    # Provider hasn't installed a custom handler yet — placeholder until wired.
+    return jsonify({'error': 'not_implemented'}), 501
+
+
+def _mc_callback_html(title: str, body: str, *, status: int = 200, accent: str = "#10b981") -> Response:
+    """Render the friendly post-enrollment page shown to the user's browser."""
+    safe_title = title.replace("<", "&lt;").replace(">", "&gt;")
+    return Response(
+        f"""<!doctype html>
+<html><head><meta charset='utf-8'><title>Mission Control Cloud</title>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+          background: #fafaf7; color: #1f2937; margin: 0; min-height: 100vh;
+          display: flex; align-items: center; justify-content: center; padding: 24px; }}
+  .card {{ background: #fff; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.04);
+           padding: 40px 32px; max-width: 480px; width: 100%; text-align: center; }}
+  .badge {{ width: 56px; height: 56px; border-radius: 14px; background: {accent}22;
+            color: {accent}; display: inline-flex; align-items: center; justify-content: center;
+            font-size: 28px; margin-bottom: 20px; border: 2px solid {accent}55; }}
+  h1 {{ font-size: 22px; margin: 0 0 8px; font-weight: 700; }}
+  p {{ font-size: 15px; line-height: 1.55; color: #4b5563; margin: 0 0 14px; }}
+  .hint {{ font-size: 13px; color: #6b7280; margin-top: 20px; padding-top: 16px;
+           border-top: 1px solid #f0eee8; }}
+</style></head>
+<body><div class='card'>
+  <div class='badge'>{'✓' if status == 200 else '!'}</div>
+  <h1>{safe_title}</h1>
+  {body}
+  <p class='hint'>You can close this window and return to Mission Control.</p>
+</div></body></html>""",
+        status=status,
+        mimetype='text/html; charset=utf-8',
+    )
+
+
+@app.route('/api/mc-callback')
+def mc_callback():
+    """Browser redirect target at the end of enrollment.
+
+    Calls the registered provider's enrollment.complete() with the query
+    params from the control plane. Renders a friendly success/failure page.
+    See `02-attestation-protocol.md` §6.1 step 7.
+    """
+    p = _get_remote_provider()
+    if p is None:
+        return _mc_callback_html(
+            "Remote access isn't available",
+            "<p>Mission Control Cloud isn't installed in this build.</p>",
+            status=404, accent="#9ca3af",
+        )
+
+    # The proprietary provider's enrollment module owns this validation.
+    # We ask the provider for it via a dunder-ish hook so MC core stays
+    # provider-agnostic. If the provider doesn't expose one, fall back
+    # to the canonical mc_remote.enrollment.complete().
+    try:
+        from mc_remote import enrollment as _mc_enrollment  # type: ignore
+    except Exception as e:
+        return _mc_callback_html(
+            "Remote access isn't fully wired yet",
+            f"<p>Couldn't reach the enrollment module ({e}).</p>",
+            status=500, accent="#ef4444",
+        )
+
+    result = _mc_enrollment.complete(request.args.to_dict(flat=True))
+
+    if result.get("ok"):
+        identity = result["identity"]
+        host = identity.hostname
+        return _mc_callback_html(
+            "You're connected!",
+            f"<p>Mission Control is reachable from anywhere at:</p>"
+            f"<p style='font-family:JetBrains Mono,Consolas,monospace;font-size:14px;color:#1f2937;"
+            f"background:#f3f4f6;padding:10px 14px;border-radius:8px;display:inline-block'>"
+            f"https://{host}</p>",
+        )
+
+    return _mc_callback_html(
+        "Sign-in didn't complete",
+        f"<p>{result.get('message', 'Unknown error')}</p>"
+        f"<p style='font-size:12px;color:#9ca3af'>Code: {result.get('error', 'unknown')}</p>",
+        status=400, accent="#ef4444",
+    )
 
 
 if __name__ == '__main__':
@@ -6879,10 +8070,23 @@ if __name__ == '__main__':
     _start_scheduler()
     _start_hivemind_orchestrator()
     _start_session_guardian()
+    # Ensure the global incognito pseudo-project exists so it shows up in
+    # /api/projects without the FE needing a first-touch bootstrap.
+    try:
+        _ensure_incognito_project()
+    except Exception as e:
+        print(f"[incognito] bootstrap failed: {e}")
     # Backfill agent_log from Claude transcripts: makes mid-flight sessions that
     # never finalized (server killed before stream reader's finally) visible in
     # the Agent Log tab. Runs once, in the background, so app.run() isn't blocked.
     # Roll back: set agent_log_backfill_enabled = false in data/config.json.
     threading.Thread(target=_backfill_all_agent_logs, daemon=True).start()
+    # Auto-cleanup unnamed CF Access sessions (per-session revoke, strict mode).
+    # Roll back: set auto_revoke_unnamed_sessions=false in data/config.json.
+    threading.Thread(target=_session_label_enforcer_loop, daemon=True).start()
+    # Cloud Run cold-start mitigation: hit /v1/health on startup so the user's
+    # first interaction (Enable / Resume / Disconnect) hits a warm CP instance.
+    # Cheap; idempotent; safe even if remote-access provider is absent.
+    threading.Thread(target=_warmup_control_plane, daemon=True).start()
     print(f"Mission Control running at http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

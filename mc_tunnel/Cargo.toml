@@ -1,0 +1,40 @@
+[package]
+name = "mc-tunnel"
+version = "0.1.0-dev"
+edition = "2021"
+publish = false
+description = "Mission Control Cloud — proprietary tunnel client. PROPRIETARY AND CONFIDENTIAL."
+license = "LicenseRef-Proprietary"
+
+[[bin]]
+name = "mc-tunnel"
+path = "src/main.rs"
+
+# v1 dependencies — kept minimal to make reverse-engineering harder.
+[dependencies]
+tokio        = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync"] }
+reqwest      = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+serde_jcs    = "0.1"            # canonical JSON (RFC 8785) for envelope hashing
+ed25519-dalek = "2"
+sha2         = "0.10"
+base64       = "0.22"
+rand         = "0.8"
+tracing      = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap         = { version = "4", features = ["derive"] }
+zeroize      = { version = "1", features = ["zeroize_derive"] }
+sysinfo      = "0.31"           # parent-PID liveness check
+
+[build-dependencies]
+# `client_secret.rs` is generated at build time from CLIENT_SECRET_KEY_ID +
+# CLIENT_SECRET_PRIV env vars set by the build pipeline (`05-` §3.1).
+# See build.rs.
+
+[profile.release]
+opt-level     = "z"             # smaller binary, raises reverse-eng cost slightly
+lto           = "fat"
+codegen-units = 1
+strip         = "symbols"       # critical: do not ship symbols
+panic         = "abort"

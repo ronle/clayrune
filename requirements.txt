@@ -1,3 +1,11 @@
 flask>=3.0.0
 pywebview>=5.0
 pythonnet>=3.0.0
+
+# ── Remote access (proprietary mc_remote module) ─────────────────────────────
+# These are required only when mc_remote is bundled. The open-source MC
+# build runs fine without them. Listed here so dev installs get them.
+cryptography>=43.0
+keyring>=25.0
+requests>=2.31.0
+rfc8785>=0.1.4
