@@ -6,7 +6,7 @@
 Cloud Run state:
 - Custom domain: `https://api.clayrune.io/v1` (canonical), `*.run.app` URL also works.
 - Latest revision: `control-plane-00011-b2h` (env-var update); image: `:5aa7d12` then `:59cb1fb` from CI auto-deploys.
-- Env vars set: `FB_API_KEY=AIzaSyCcBU0GKtnKgNw3EiNYoMri6OVdnW8188s`, `FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com`, `FB_PROJECT_ID=clayrune-49e57`.
+- Env vars set: `FB_API_KEY=<see Firebase console / Cloud Run service env>`, `FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com`, `FB_PROJECT_ID=clayrune-49e57`.
 
 Firebase project: `clayrune-49e57` (NOT `clayrune` — Firebase auto-suffixed because the bare name was taken). Lives at https://console.firebase.google.com/project/clayrune-49e57. Google sign-in enabled. App nickname "Clayrune".
 
@@ -57,7 +57,7 @@ This is the pending milestone. It exercises the new browser-mediated signin path
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/v1/connect` page says "Server misconfigured: Firebase apiKey not set" | Cloud Run env vars dropped | Re-run: `gcloud run services update control-plane --region=us-central1 --project=clayrune --update-env-vars="FB_API_KEY=AIzaSyCcBU0GKtnKgNw3EiNYoMri6OVdnW8188s,FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com,FB_PROJECT_ID=clayrune-49e57"` |
+| `/v1/connect` page says "Server misconfigured: Firebase apiKey not set" | Cloud Run env vars dropped | Re-set them — get `FB_API_KEY` from https://console.firebase.google.com/project/clayrune-49e57/settings/general → Your apps → Clayrune → SDK setup, then: `gcloud run services update control-plane --region=us-central1 --project=clayrune --update-env-vars="FB_API_KEY=<paste>,FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com,FB_PROJECT_ID=clayrune-49e57"` |
 | "Sign-in cancelled or failed" popup | Google signin not enabled in Firebase, or browser blocked the popup | Firebase console → Authentication → Sign-in method → Google → Enable + support email |
 | `/v1/signin/complete` returns "Sign-in token invalid: ..." | `firebase_admin` initialized with wrong projectId | `gcloud run services describe control-plane --region=us-central1 --project=clayrune --format="value(spec.template.spec.containers[0].env)"` — confirm `FB_PROJECT_ID=clayrune-49e57` is set |
 | Browser doesn't open at all | `_launch_browser_for_user()` returned False | Copy the URL from MC's stdout/Tauri console, paste into a real browser manually |
