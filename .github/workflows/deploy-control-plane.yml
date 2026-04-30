@@ -62,20 +62,19 @@ jobs:
           echo "sha_tag=${IMAGE}:${SHA}" >> "$GITHUB_OUTPUT"
           echo "latest_tag=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
 
-      - name: Build + push image via Cloud Build
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build + push image
         working-directory: control_plane
         run: |
-          gcloud builds submit . \
-            --tag "${{ steps.tag.outputs.sha_tag }}" \
-            --project "${GCP_PROJECT}" \
-            --quiet
-          # Re-tag :latest so anyone running plain `gcloud run deploy` without
-          # a --image flag picks up this build. Cheap (no rebuild).
-          gcloud artifacts docker tags add \
-            "${{ steps.tag.outputs.sha_tag }}" \
-            "${{ steps.tag.outputs.latest_tag }}" \
-            --project "${GCP_PROJECT}" \
-            --quiet
+          # Build directly on the runner (avoids Cloud Build's source-upload
+          # bucket which has legacy IAM that doesn't match WIF principals),
+          # then push to Artifact Registry. The CI SA has artifactregistry.writer.
+          docker build -t "${{ steps.tag.outputs.sha_tag }}" .
+          docker tag  "${{ steps.tag.outputs.sha_tag }}" "${{ steps.tag.outputs.latest_tag }}"
+          docker push "${{ steps.tag.outputs.sha_tag }}"
+          docker push "${{ steps.tag.outputs.latest_tag }}"
 
       - name: Deploy to Cloud Run
         run: |
