@@ -526,18 +526,24 @@ _FIREBASE_INITIALIZED = False
 def _ensure_firebase_initialized() -> None:
     """Lazy-init the Firebase Admin SDK on first use.
 
-    Cloud Run picks up the runtime SA's Application Default Credentials
-    automatically; no JSON key file. Local dev: `gcloud auth application-default
-    login` once.
+    Reads FB_PROJECT_ID from env so token verification matches the project
+    that issued the token (the Firebase project may be named differently
+    from the GCP project — e.g. our GCP `clayrune` hosts a Firebase project
+    `clayrune-49e57` because the bare name was taken). Without an explicit
+    projectId, firebase_admin falls back to GOOGLE_CLOUD_PROJECT which
+    would reject Firebase-issued tokens whose `aud` is the Firebase project.
     """
     global _FIREBASE_INITIALIZED
     if _FIREBASE_INITIALIZED:
         return
     try:
         import firebase_admin
-        from firebase_admin import credentials as _fb_credentials  # noqa: F401
         if not firebase_admin._apps:
-            firebase_admin.initialize_app()  # uses ADC
+            project_id = os.environ.get("FB_PROJECT_ID", "").strip()
+            if project_id:
+                firebase_admin.initialize_app(options={"projectId": project_id})
+            else:
+                firebase_admin.initialize_app()  # falls back to ADC / GOOGLE_CLOUD_PROJECT
         _FIREBASE_INITIALIZED = True
     except Exception as e:
         log.warning("Firebase Admin SDK init failed: %s", e)
