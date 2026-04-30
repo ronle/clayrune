@@ -520,10 +520,43 @@ def _resolve_user(authorization: Optional[str], dev_email: Optional[str]) -> dic
     })
 
 
+_FIREBASE_INITIALIZED = False
+
+
+def _ensure_firebase_initialized() -> None:
+    """Lazy-init the Firebase Admin SDK on first use.
+
+    Cloud Run picks up the runtime SA's Application Default Credentials
+    automatically; no JSON key file. Local dev: `gcloud auth application-default
+    login` once.
+    """
+    global _FIREBASE_INITIALIZED
+    if _FIREBASE_INITIALIZED:
+        return
+    try:
+        import firebase_admin
+        from firebase_admin import credentials as _fb_credentials  # noqa: F401
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app()  # uses ADC
+        _FIREBASE_INITIALIZED = True
+    except Exception as e:
+        log.warning("Firebase Admin SDK init failed: %s", e)
+        raise
+
+
 def _verify_firebase_token(id_token: str) -> dict:
-    """Stub. Real impl uses firebase_admin.auth.verify_id_token(). v1 raises NotImplementedError
-    so the dev shim is the only path until Firebase is wired (SETUP_CHECKLIST §3)."""
-    raise NotImplementedError("Firebase verification pending; set MC_CP_DEV_AUTH=1 + use X-Dev-User-Email")
+    """Verify a Firebase ID token and return {user_id, email, email_verified}.
+
+    Raises (caught by `_resolve_user`) on any verification failure.
+    """
+    _ensure_firebase_initialized()
+    from firebase_admin import auth as _fb_auth
+    decoded = _fb_auth.verify_id_token(id_token)
+    return {
+        "user_id": decoded.get("uid") or decoded.get("user_id") or decoded.get("sub"),
+        "email": decoded.get("email") or "",
+        "email_verified": bool(decoded.get("email_verified")),
+    }
 
 
 # ─── /v1/enroll ──────────────────────────────────────────────────────────────
@@ -593,42 +626,70 @@ async def enroll(
                              "Sign-in expired or this device wasn't part of it. "
                              "Click 'Connect' again from Mission Control.", rid)
 
-    # 4. Username uniqueness via transaction
+    # 4-7. Common post-auth/post-CSRF provisioning path. Shared with
+    # /v1/signin/complete which has its own auth + CSRF checks.
+    response = await _do_enroll_after_auth(
+        user=user,
+        device_pub_b64=device_pub_b64,
+        csrf_nonce=csrf_nonce,
+        username=username,
+        device_name=(body.get("device_name") or ""),
+        os_str=(body.get("os") or ""),
+        mc_version=(body.get("mc_version") or ""),
+    )
+
+    # 8. Cache for idempotency
+    if idempotency_key:
+        _idem_set(user_id=user["user_id"], key=idempotency_key, value=response)
+
+    return response
+
+
+async def _do_enroll_after_auth(
+    *,
+    user: dict,
+    device_pub_b64: str,
+    csrf_nonce: str,
+    username: str,
+    device_name: str = "",
+    os_str: str = "",
+    mc_version: str = "",
+) -> dict:
+    """Username claim + CF provisioning + Firestore persist. Caller must have
+    already authenticated the user and validated the CSRF nonce.
+
+    Raises HTTPException on any failure (claims released, CF resources rolled back).
+    Returns the JSON-able response dict the protocol expects.
+    """
     if not _claim_username(username, user["user_id"]):
-        return _err_response(409, "username_taken",
-                             "That username is taken. Try another.", rid)
+        raise HTTPException(status_code=409, detail={
+            "code": "username_taken",
+            "message": "That username is taken. Try another.",
+            "request_id": "x",
+        })
 
     zone_root = os.environ.get("CLAYRUNE_PRIMARY_ZONE", "clayrune.io")
     hostname = f"{username}.{zone_root}"
 
-    # 5. Provision Cloudflare resources (ROLLBACK-aware sequence).
-    # Happy path: zero extra CF API calls. Collision recovery: if DNS or
-    # Access app create fails because of a leftover orphan from a previous
-    # incomplete enrollment, run force_cleanup (excluding the resources we
-    # just created) and retry once.
     cf_resources: dict[str, Any] = {}
     try:
         cf = _get_cf_client()
 
-        # 5a. Create the tunnel (random suffix in name → name collisions
-        # essentially impossible)
         tunnel = await cf.create_named_tunnel(name=f"mc-{username}-{secrets.token_urlsafe(4)}")
         cf_resources["tunnel_id"] = tunnel["id"]
         cf_resources["tunnel_token"] = tunnel["token"]
 
-        # 5b. Configure ingress
         await cf.set_tunnel_ingress(
             tunnel_id=tunnel["id"], hostname=hostname,
             service_url="http://localhost:5199",
         )
 
-        # 5c. DNS CNAME — collide on CF code 81053 if a stale CNAME is in zone
         try:
             dns_record = await cf.create_dns_cname(name=username, target_uuid=tunnel["id"])
         except cloudflare.CloudflareAPIError as e:
             if not _is_cf_error_code(e, 81053):
                 raise
-            log.info("rid=%s DNS create collided with stale record; running force_cleanup + retry", rid)
+            log.info("DNS create collided with stale record; running force_cleanup + retry")
             await _force_cleanup_for_hostname(
                 hostname=hostname, username=username,
                 exclude_tunnel_id=cf_resources["tunnel_id"],
@@ -636,7 +697,6 @@ async def enroll(
             dns_record = await cf.create_dns_cname(name=username, target_uuid=tunnel["id"])
         cf_resources["dns_record_id"] = dns_record["id"]
 
-        # 5d. Access app — collide on CF code 11010 if a stale app exists
         try:
             access_app = await cf.create_access_app(
                 hostname=hostname, allowed_email=user["email"],
@@ -644,7 +704,7 @@ async def enroll(
         except cloudflare.CloudflareAPIError as e:
             if not _is_cf_error_code(e, 11010):
                 raise
-            log.info("rid=%s Access app collided with stale app; running force_cleanup + retry", rid)
+            log.info("Access app collided with stale app; running force_cleanup + retry")
             await _force_cleanup_for_hostname(
                 hostname=hostname, username=username,
                 exclude_tunnel_id=cf_resources["tunnel_id"],
@@ -656,40 +716,42 @@ async def enroll(
         cf_resources["access_app_id"] = access_app["id"]
 
     except Exception as e:
-        # Roll back anything created so far. Best-effort.
         log.exception("CF provisioning failed mid-flight; rolling back: %s", e)
         await _rollback_cf_resources(cf_resources)
-        # Also release the username claim
         _release_username(username, user["user_id"])
         if isinstance(e, cloudflare.CloudflareAPIError):
-            return _err_response(503, "provisioning_failed",
-                                 f"Cloudflare provisioning failed: {e}", rid,
-                                 retry_after_ms=5000)
-        return _err_response(503, "internal_error",
-                             f"Provisioning failed: {e}", rid, retry_after_ms=5000)
+            raise HTTPException(status_code=503, detail={
+                "code": "provisioning_failed",
+                "message": f"Cloudflare provisioning failed: {e}",
+                "request_id": "x",
+                "retry_after_ms": 5000,
+            })
+        raise HTTPException(status_code=503, detail={
+            "code": "internal_error",
+            "message": f"Provisioning failed: {e}",
+            "request_id": "x",
+            "retry_after_ms": 5000,
+        })
 
-    # 6. Persist user + device
-    enrollment_token = secrets.token_urlsafe(32)  # 256-bit
+    enrollment_token = secrets.token_urlsafe(32)
     enrollment_token_hash = hashlib.sha256(enrollment_token.encode("utf-8")).hexdigest()
     device_id = "dev_" + secrets.token_urlsafe(12).replace("_", "").replace("-", "")[:16]
 
     now = _dt.datetime.now(_dt.timezone.utc)
     db = fs.db()
 
-    # Persist user (idempotent merge)
     db.collection(fs.COL_USERS).document(user["user_id"]).set({
         "user_id": user["user_id"],
         "email": user["email"],
         "email_hash": hashlib.sha256(user["email"].encode("utf-8")).hexdigest(),
         "username": username,
-        "created_at": now,  # set on first; merge will overwrite — acceptable for v1
+        "created_at": now,
         "tier": "free",
         "device_cap": 2,
         "bandwidth_quota_period_bytes": 5 * 1024 ** 3,
         "bandwidth_used_period_bytes": 0,
     }, merge=True)
 
-    # Persist device
     device_pub_hash = hashlib.sha256(device_pub_b64.encode("utf-8")).hexdigest()
     db.collection(fs.COL_DEVICES).document(device_id).set({
         "device_id": device_id,
@@ -698,9 +760,9 @@ async def enroll(
         "device_pub_hash": device_pub_hash,
         "enrollment_token_hash": enrollment_token_hash,
         "enrollment_token_renewed_at": now,
-        "device_name": (body.get("device_name") or "").strip()[:64] or "Unnamed device",
-        "os": (body.get("os") or "").strip()[:64],
-        "mc_version": (body.get("mc_version") or "").strip()[:32],
+        "device_name": (device_name or "").strip()[:64] or "Unnamed device",
+        "os": (os_str or "").strip()[:64],
+        "mc_version": (mc_version or "").strip()[:32],
         "hostname_claim": hostname,
         "cf_tunnel_uuid": cf_resources["tunnel_id"],
         "cf_tunnel_token": cf_resources["tunnel_token"],
@@ -713,21 +775,14 @@ async def enroll(
         "min_protocol": 1,
     })
 
-    # 7. Build response (matches `03-` §3.5)
-    response = {
+    return {
         "device_id": device_id,
-        "enrollment_token": enrollment_token,  # plaintext, only ever returned here
+        "enrollment_token": enrollment_token,
         "username": username,
         "hostname": hostname,
-        "control_plane_pubkey_id": "cp-2026a",  # placeholder until KMS pin lands
+        "control_plane_pubkey_id": "cp-2026a",
         "min_protocol": 1,
     }
-
-    # 8. Cache for idempotency
-    if idempotency_key:
-        _idem_set(user_id=user["user_id"], key=idempotency_key, value=response)
-
-    return response
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
