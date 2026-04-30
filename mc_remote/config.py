@@ -62,17 +62,25 @@ USER_HOSTNAME_TEMPLATE: str = f"{{username}}.{PLATFORM_DOMAIN}"
 # When MC_REMOTE_LOCAL_MOCK=1, points at the in-process /api/_mock/connect
 # so the full enrollment flow can be exercised without a real control plane.
 def connect_url(device_pub_b64: str, csrf_nonce: str, *, username_hint: str | None = None) -> str:
+    """Browser URL that starts the Firebase-Auth-driven enrollment.
+
+    Points at the control plane's `/v1/connect` HTML page with the device
+    pubkey, CSRF nonce, and MC's loopback callback URL. The page registers
+    the (nonce, pub, callback) tuple via /v1/signin/start and serves Firebase
+    sign-in widgets.
+    """
     from urllib.parse import urlencode
     params = {
-        "device_pub": device_pub_b64,
+        "pub": device_pub_b64,
         "nonce": csrf_nonce,
-        "redirect": MC_CALLBACK_URL,
+        "callback": MC_CALLBACK_URL,
     }
     if username_hint:
         params["username_hint"] = username_hint
     if os.environ.get("MC_REMOTE_LOCAL_MOCK") == "1":
         return f"{MC_LOCAL_BASE_URL}/api/_mock/connect?{urlencode(params)}"
-    return f"https://{PLATFORM_DOMAIN}/connect?{urlencode(params)}"
+    cp = control_plane_base_url()  # already includes /v1
+    return f"{cp}/connect?{urlencode(params)}"
 
 # ─── Local MC integration ────────────────────────────────────────────────────
 # MC's existing Flask server port. Hardcoded — `mc-tunnel` only ever forwards
