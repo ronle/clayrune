@@ -34,14 +34,42 @@ In the Google Cloud Console with the `CLAYRUNE` project selected:
 
 ## 3. Firebase Auth (browser sign-in)
 
-- [ ] Go to <https://console.firebase.google.com>.
-- [ ] **Add Firebase to the existing GCP project** (don't create a new one). Look for a "Add project" → it should let you import `CLAYRUNE`.
-- [ ] In the Firebase project: **Authentication → Get started**.
-- [ ] **Enable sign-in methods**:
-  - [ ] **Google** (recommended primary)
-  - [ ] **Email/password** (fallback for users without Google accounts)
-  - [ ] *(Later)* Email link / OTP for the recovery flow
-- [ ] Note the **Web API key** (Firebase project settings → General). The control plane needs this for verifying ID tokens.
+✅ **Done 2026-04-30.** Firebase project `clayrune-49e57` created (NOT linked to existing GCP `clayrune` — Firebase auto-suffixed because the bare name was taken). Google sign-in enabled. Web app "Clayrune" registered.
+
+**Live values (also set as Cloud Run env vars):**
+
+| Field | Value |
+|---|---|
+| Firebase project ID | `clayrune-49e57` |
+| Auth domain | `clayrune-49e57.firebaseapp.com` |
+| Web API key | `AIzaSyCcBU0GKtnKgNw3EiNYoMri6OVdnW8188s` (public; safe to commit — Firebase web apiKeys are not secrets, security comes from token verification + auth rules) |
+| Console URL | https://console.firebase.google.com/project/clayrune-49e57 |
+| Web app ID | `1:491711103821:web:9d61d99da11dbf6da2ed04` |
+| Sender ID | `491711103821` |
+
+**Cloud Run env vars set:**
+
+```bash
+gcloud run services update control-plane \
+  --region=us-central1 --project=clayrune \
+  --update-env-vars="FB_API_KEY=AIzaSyCcBU0GKtnKgNw3EiNYoMri6OVdnW8188s,FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com,FB_PROJECT_ID=clayrune-49e57"
+```
+
+**Important:** `FB_PROJECT_ID` MUST be set explicitly because Cloud Run's `GOOGLE_CLOUD_PROJECT` env var is `clayrune` (the GCP project), not `clayrune-49e57` (the Firebase project). Without `FB_PROJECT_ID`, `firebase_admin.auth.verify_id_token()` rejects all ID tokens with `aud != clayrune`.
+
+**Sign-in methods enabled:**
+- [x] Google (primary)
+- [ ] Email/password (deferred)
+- [ ] Email link / OTP (deferred)
+
+**Reproduce from scratch (if recreating the Firebase project):**
+
+1. <https://console.firebase.google.com> → Add project → choose existing GCP project (or create new with auto-suffix if name collision).
+2. Skip Google Analytics (not needed for auth).
+3. Authentication → Get started → Sign-in method → Google → Enable, set support email.
+4. Project Overview → `+ Add app` button → `</>` Web → name "Clayrune" → don't enable Hosting → Register.
+5. Copy the `firebaseConfig.apiKey` value.
+6. Set the three env vars on Cloud Run as shown above.
 
 ## 4. Cloudflare account + zone
 
