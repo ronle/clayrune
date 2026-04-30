@@ -323,7 +323,7 @@ In rough priority order:
 
 5. **Browser-mediated enrollment via Firebase Auth** — for the eventual public alpha. Setup is in `SETUP_CHECKLIST.md` §3. Bigger lift (~1-2h) but unblocks anyone who isn't us from enrolling.
 
-6. **CI/CD for Cloud Run** — currently every deploy is manual via `gcloud builds submit`. Wire up a GitHub Actions workflow that builds + deploys on push to main. ~30 min once Workload Identity Federation is set up (SETUP_CHECKLIST §8).
+6. ✅ **CI/CD for Cloud Run** — DONE 2026-04-30 AM. `.github/workflows/deploy-control-plane.yml` builds + deploys via WIF on every push to main that touches `control_plane/**`. Image is built with `docker build` directly on the GitHub runner (NOT `gcloud builds submit`) because Cloud Build's source-upload bucket has legacy IAM that doesn't grant access to WIF principals — the error message misleadingly suggests granting `serviceusage.services.use` but that permission is fine; the bucket itself is the blocker. Direct docker push avoids the bucket entirely. First auto-deploy: revision `control-plane-00009-z4w` from commit `0922dd0`. Tradeoff: ~3-5 min builds vs ~50s in Cloud Build, acceptable.
 
 7. **Re-merge `mode-c-audio` branch** — Mode C interactive agent + voice STT/TTS lives on a separate branch (`mode-c-audio`). Needs rebase onto current master and conflict resolution in `static/index.html` (tile redesign + Advanced-features flags collide).
 

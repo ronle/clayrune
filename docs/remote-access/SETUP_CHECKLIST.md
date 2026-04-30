@@ -148,7 +148,9 @@ gcloud iam service-accounts add-iam-policy-binding $SA `
   --condition=None
 ```
 
-**Workflow file:** `.github/workflows/deploy-control-plane.yml` — triggers on push to main when `control_plane/**` changes; builds via Cloud Build; deploys to Cloud Run; smoke-tests `/v1/health` on both `api.clayrune.io` and the `*.run.app` URL.
+**Workflow file:** `.github/workflows/deploy-control-plane.yml` — triggers on push to main when `control_plane/**` changes; builds the image with `docker build` directly on the GitHub runner (not `gcloud builds submit`); pushes to Artifact Registry; deploys to Cloud Run; smoke-tests `/v1/health` on both `api.clayrune.io` and the `*.run.app` URL.
+
+**Why docker-on-runner instead of Cloud Build:** Cloud Build's source-upload bucket (`<project>_cloudbuild`) has legacy IAM bindings (`projectEditor` / `projectOwner` / `projectViewer`) that don't grant access to WIF principals even when the SA has `cloudbuild.builds.editor` + `serviceusage.serviceUsageAdmin` + `storage.admin` at the bucket level. The error message points at `serviceusage.services.use` which is a misleading red herring. Building on the runner avoids the bucket entirely and only needs `roles/artifactregistry.writer` on the SA (already granted).
 
 ## 9. Local development tools
 
