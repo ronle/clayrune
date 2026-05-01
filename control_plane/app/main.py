@@ -24,8 +24,7 @@ from . import build_info
 from .routes_public import router as public_router
 from .routes_attest import router as attest_router
 from .routes_account import router as account_router
-# Pending implementation:
-# from .routes_admin import router as admin_router
+from .routes_admin import router as admin_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("control_plane")
@@ -51,7 +50,7 @@ app.add_middleware(
 app.include_router(public_router, prefix="/v1")
 app.include_router(attest_router, prefix="/v1")
 app.include_router(account_router, prefix="/v1")
-# app.include_router(admin_router, prefix="/v1/admin")
+app.include_router(admin_router, prefix="/v1/admin")
 
 
 # Flatten HTTPException(detail={"code": ..., "message": ..., ...}) into the

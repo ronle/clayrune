@@ -1,25 +1,38 @@
 # RESUME HERE — picking up after reboot
 
-**Last updated:** 2026-04-30 (mid-day, Firebase Auth wired, awaiting end-to-end test)
-**You are here:** Everything from yesterday is live + custom domain + auto-deploy CI/CD. Firebase Auth flow is now built and the Cloud Run service has the three FB env vars set. Firebase project setup is complete on the user's side (Google signin enabled). **Pending: the actual end-to-end disconnect-and-reconnect test from a fresh MC shell without `MC_CP_DEV_AUTH=1`.** The dev-shim path (current default) still works fine; nothing breaks if you ignore Firebase Auth and keep using the dev path.
+**Last updated:** 2026-04-30 (Firebase Auth + device-token auth fix shipped)
+**You are here:** End-to-end Firebase Auth flow is verified and working. Current enrollment: `ronl.clayrune.io` via real Google signin (no dev-shim env vars). Public-alpha gate unlocked — anyone with a Google account can now enroll. Dev shim still works as a fallback, but is no longer required for normal operation.
 
-Cloud Run state:
-- Custom domain: `https://api.clayrune.io/v1` (canonical), `*.run.app` URL also works.
-- Latest revision: `control-plane-00011-b2h` (env-var update); image: `:5aa7d12` then `:59cb1fb` from CI auto-deploys.
-- Env vars set: `FB_API_KEY=<see Firebase console / Cloud Run service env>`, `FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com`, `FB_PROJECT_ID=clayrune-49e57`.
+**Latest CP revision:** `control-plane-00012-...` (post device-token-auth bug fix, image `:492309a`).
+**Cost today:** $0/month (everything fits free tiers; first paid threshold is CF Access at 50+ users).
 
-Firebase project: `clayrune-49e57` (NOT `clayrune` — Firebase auto-suffixed because the bare name was taken). Lives at https://console.firebase.google.com/project/clayrune-49e57. Google sign-in enabled. App nickname "Clayrune".
+Firebase project: `clayrune-49e57` at https://console.firebase.google.com/project/clayrune-49e57. Google sign-in enabled. Authorized domain: `api.clayrune.io` is in the allow-list (without it, browser shows `auth/unauthorized-domain`).
 
 ---
 
-## ☀️ RESUME CHECKLIST — pick up where we stopped
+## ☀️ RESUME CHECKLIST
 
-### Option A — Keep using the dev-shim path (no risk; current default)
-
-Just relaunch MC normally with the existing env vars:
+### Just relaunch (most common case — Firebase Auth identity is already saved in keystore)
 
 ```powershell
 cd C:\Users\levir\Documents\_claude\mission-control
+$env:MC_REMOTE_CP_OVERRIDE = "https://api.clayrune.io/v1"
+python server.py
+```
+
+That's it. The supervisor reads the existing keystore identity, attests using device-token auth, brings the tunnel up. Settings → Remote Access goes green Online within ~2 sec. No `MC_CP_DEV_AUTH` / `MC_REMOTE_DEV_*` vars needed.
+
+### If you need to fully re-enroll (clean slate)
+
+1. In MC: Settings → Remote Access → **Disconnect**. Frees username, tears down CF resources, wipes local keystore.
+2. Restart MC (same env as above).
+3. Click **Enable Remote Access** → browser opens `/v1/connect` → Sign in with Google → pick username → Connect → green Online.
+
+### Dev-shim fallback (only if Firebase is misbehaving)
+
+Set all four env vars before launch:
+
+```powershell
 $env:MC_REMOTE_CP_OVERRIDE   = "https://api.clayrune.io/v1"
 $env:MC_CP_DEV_AUTH          = "1"
 $env:MC_REMOTE_DEV_USERNAME  = "ron"
@@ -27,99 +40,59 @@ $env:MC_REMOTE_DEV_EMAIL     = "leviran1@gmail.com"
 python server.py
 ```
 
-Settings → Remote Access reappears green Online; existing session keeps working. Nothing changed for this path. Use this if you want to verify yesterday's work is still intact before touching the Firebase flow.
+`/api/remote/{devices,sessions}` will use the dev shim instead of device-token auth. Useful for debugging the CP without touching Firebase.
 
-### Option B — Run the Firebase Auth end-to-end test
+### Auth fallback chain (server.py:_cp_auth_kwargs)
 
-This is the pending milestone. It exercises the new browser-mediated signin path that replaces the dev shim. **DESTRUCTIVE: it disconnects the current `ron` enrollment and re-creates it via real Firebase signin.** If you want to keep the existing enrollment, skip this.
+When MC's `/api/remote/*` routes need to call the CP, they pick auth in this order:
 
-1. **Disconnect** — in MC, Settings → Remote Access → Disconnect. This frees username `ron`, deletes CF tunnel/DNS/Access app, wipes the local keystore.
+1. **Device-token** from keystore (`X-MC-Device-Auth: <device_id>:<enrollment_token>`) — preferred; works after any successful enrollment (Firebase or dev-shim).
+2. **Dev-shim email** from `MC_REMOTE_DEV_EMAIL` env — only when keystore is empty.
+3. Otherwise: 503 with `not_enrolled`.
 
-2. **Restart MC without `MC_CP_DEV_AUTH`** — close MC, reopen with env vars but **omit** the dev-shim ones:
-   ```powershell
-   cd C:\Users\levir\Documents\_claude\mission-control
-   $env:MC_REMOTE_CP_OVERRIDE = "https://api.clayrune.io/v1"
-   Remove-Item Env:MC_CP_DEV_AUTH         -ErrorAction SilentlyContinue
-   Remove-Item Env:MC_REMOTE_DEV_USERNAME -ErrorAction SilentlyContinue
-   Remove-Item Env:MC_REMOTE_DEV_EMAIL    -ErrorAction SilentlyContinue
-   python server.py
-   ```
+### Failure-mode table
 
-3. **Click Enable Remote Access** in MC. Default browser opens to `https://api.clayrune.io/v1/connect?pub=...&nonce=...&callback=http://127.0.0.1:5199/api/mc-callback`. You should see "Connect this Mission Control" with a "Sign in with Google" button.
-
-4. **Sign in with Google** (use `leviran1@gmail.com`). After signin, the page shows a username field. Type "ron" → click Connect.
-
-5. **Browser auto-redirects** to `http://127.0.0.1:5199/api/mc-callback?...` and shows "You're connected!"
-
-6. **Back in MC dashboard**, Settings → Remote Access shows green Online pill. Mobile sign-in to `https://ron.clayrune.io` should work as before.
-
-### What if Option B fails
-
-| Symptom | Likely cause | Fix |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `/v1/connect` page says "Server misconfigured: Firebase apiKey not set" | Cloud Run env vars dropped | Re-set them — get `FB_API_KEY` from https://console.firebase.google.com/project/clayrune-49e57/settings/general → Your apps → Clayrune → SDK setup, then: `gcloud run services update control-plane --region=us-central1 --project=clayrune --update-env-vars="FB_API_KEY=<paste>,FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com,FB_PROJECT_ID=clayrune-49e57"` |
-| "Sign-in cancelled or failed" popup | Google signin not enabled in Firebase, or browser blocked the popup | Firebase console → Authentication → Sign-in method → Google → Enable + support email |
-| `/v1/signin/complete` returns "Sign-in token invalid: ..." | `firebase_admin` initialized with wrong projectId | `gcloud run services describe control-plane --region=us-central1 --project=clayrune --format="value(spec.template.spec.containers[0].env)"` — confirm `FB_PROJECT_ID=clayrune-49e57` is set |
-| Browser doesn't open at all | `_launch_browser_for_user()` returned False | Copy the URL from MC's stdout/Tauri console, paste into a real browser manually |
-| "username_taken" error | The `ron` Disconnect step in (1) didn't fully release the claim | Run `python -m control_plane.force_cleanup --username ron` (CLOUDFLARE_API_TOKEN + FIRESTORE_PROJECT must be set in shell) |
-| "enrollment_intent_invalid" | Browser tab took >15min between /signin/start and /signin/complete | Click Enable Remote Access again to mint a fresh nonce |
+| `/v1/connect` says "Server misconfigured: Firebase apiKey not set" | Cloud Run env vars dropped | Get `FB_API_KEY` from https://console.firebase.google.com/project/clayrune-49e57/settings/general, then `gcloud run services update control-plane --region=us-central1 --project=clayrune --update-env-vars="FB_API_KEY=<paste>,FB_AUTH_DOMAIN=clayrune-49e57.firebaseapp.com,FB_PROJECT_ID=clayrune-49e57"` |
+| Browser shows `Firebase: Error (auth/unauthorized-domain)` | The page hosting signin isn't in Firebase's authorized domains | https://console.firebase.google.com/project/clayrune-49e57/authentication/settings → Authorized domains → Add `api.clayrune.io` |
+| "Sign-in token invalid" on /signin/complete | `firebase_admin` projectId mismatch | `gcloud run services describe control-plane --region=us-central1 --project=clayrune --format="value(spec.template.spec.containers[0].env)"` — confirm `FB_PROJECT_ID=clayrune-49e57` |
+| Settings shows "Couldn't load devices: not_enrolled" | Keystore empty + no dev-shim env | Click Enable Remote Access (Firebase flow) OR set the four dev-shim env vars |
+| "username_taken" on re-enroll | Disconnect didn't fully release the claim (rare) | `python -m control_plane.force_cleanup --username ron` (needs `CLOUDFLARE_API_TOKEN` + `FIRESTORE_PROJECT` env) |
+| "enrollment_intent_invalid" | Browser tab >15 min between `/signin/start` and `/signin/complete` | Click Enable Remote Access again to mint a fresh nonce |
 
 ### Where the code is
 
-- `control_plane/app/routes_public.py` — `/v1/connect` HTML + `/v1/signin/start` + `/v1/signin/complete`
-- `control_plane/app/routes_account.py` — `_verify_firebase_token()` (uses `firebase_admin.auth.verify_id_token()`), `_do_enroll_after_auth()` (shared with `/v1/enroll`)
+- `control_plane/app/routes_public.py` — `/v1/connect` HTML page + `/v1/signin/start` + `/v1/signin/complete`
+- `control_plane/app/routes_account.py` — `_verify_firebase_token` (firebase_admin), `_resolve_user` with three auth paths (Firebase JWT / device-token / dev-shim email), `_do_enroll_after_auth` shared between `/v1/enroll` and `/v1/signin/complete`
 - `mc_remote/config.py` — `connect_url()` builds `<cp>/v1/connect?pub=...&nonce=...&callback=...`
-- `mc_remote/enrollment.py` — `complete()` parses callback query → persists keystore
-- `server.py` — `/api/mc-callback` route renders the success/failure HTML
+- `mc_remote/enrollment.py` — `_auth_headers()` picks device-token over email; all `*_via_cp` helpers accept both
+- `server.py` — `_cp_auth_kwargs()` reads keystore; `/api/remote/{devices,sessions,sessions/<id>/revoke,sessions/revoke-all}` all use it
+- `.github/workflows/deploy-control-plane.yml` — push-to-main auto-deploys via WIF + docker-on-runner
 
 ### What's NOT yet done
 
-- **Operator dashboard** — read-only `/admin` view showing all enrolled devices + sessions across users. ~30 min.
-- **Re-merge `mode-c-audio` branch** — Mode C interactive agent + voice STT/TTS lives on a separate branch; needs rebase + conflict resolution in `static/index.html`.
-- **CF Access Audit Logs scope** — would let us enrich session list with UA/IP/country without the manual "Name this device" page. Token currently lacks this scope.
+- **Operator dashboard** — read-only `/admin` view aggregating Firestore (users + devices) + CF Access (sessions). Useful when there are many users.
+- **Cloud Monitoring dashboard** — request rate / error rate / latency / CPU graphs for the CP. Lets you spot abuse or degradation at a glance.
+- **Re-merge `mode-c-audio` branch** — Mode C interactive agent + voice STT/TTS; needs rebase + `static/index.html` conflict resolution.
+- **Email/password sign-in as a 2nd Firebase provider** — for users without Google accounts.
+- **CF Access Audit Logs scope** — would let us enrich session list with UA/IP/country (avoid the manual "Name this device" page). Needs a token-scope edit.
 
 ---
 
 ## TL;DR — fastest path to a working tunnel after a fresh reboot
 
-The control plane is now on Cloud Run, so you only need **one terminal**: Mission Control itself.
-
-### Terminal 1 — Mission Control
-
-Close any existing MC first. Then:
+One terminal, two env vars, one command:
 
 ```powershell
 cd C:\Users\levir\Documents\_claude\mission-control
-
-$env:MC_REMOTE_CP_OVERRIDE   = "https://api.clayrune.io/v1"
-$env:MC_CP_DEV_AUTH          = "1"
-$env:MC_REMOTE_DEV_USERNAME  = "ron"
-$env:MC_REMOTE_DEV_EMAIL     = "leviran1@gmail.com"
-
-# CRITICAL — make sure these are NOT set:
-Remove-Item Env:MC_REMOTE_LOCAL_MOCK -ErrorAction SilentlyContinue
-Remove-Item Env:MC_DEV_REMOTE_STUB   -ErrorAction SilentlyContinue
-
+$env:MC_REMOTE_CP_OVERRIDE = "https://api.clayrune.io/v1"
 python server.py
 ```
 
-(Or via Tauri host with the same env in the parent shell.)
+Keystore-resident identity (post-Firebase enrollment) drives everything. Supervisor auto-starts on boot, attests via device-token, brings tunnel up. Settings → Remote Access → green Online pill expected within ~2 sec.
 
-**No more `gcloud secrets ...` for `CLOUDFLARE_API_TOKEN`** — that's now bound directly to the Cloud Run service via `--set-secrets`. MC doesn't need to know it.
-
-**No more `FIRESTORE_PROJECT` / `FIRESTORE_DATABASE` env on MC** either — MC only talks to the deployed CP via HTTP; only the CP touches Firestore.
-
-### Terminal 2 — leave free
-
-The supervisor inside MC will spawn `cloudflared.exe` as a subprocess. You'll see its log lines interleaved with MC's stdout. No manual run needed.
-
-### Then in MC
-
-Settings → Remote Access → click **Enable Remote Access**.
-
-If you were already enrolled before the reboot (keystore persists), MC's `mc_remote/__init__.py:_maybe_register` will auto-start the supervisor on boot — no click needed. Just visit the Settings panel and confirm green "Online" pill.
-
-If not enrolled, the click triggers the direct-API path (no browser), provisions real CF resources, persists to keystore, starts the supervisor, spawns cloudflared. Tunnel up in ~5 seconds.
+If you ever need the dev-shim fallback (e.g. testing CP changes without going through Firebase signin), see "Dev-shim fallback" in the RESUME CHECKLIST above.
 
 ---
 
@@ -139,6 +112,15 @@ If not enrolled, the click triggers the direct-API path (no browser), provisions
 
 ## What changed in this session (2026-04-30)
 
+**Major:** Firebase Auth + browser-mediated enrollment shipped + verified end-to-end. Public-alpha gate unlocked. CI/CD via WIF auto-deploys CP on push to main. Custom domain `api.clayrune.io` live.
+
+**Bug fixes:**
+- Device-token auth (`X-MC-Device-Auth`) added to `/v1/devices`, `/v1/sessions`, and the two session-revoke endpoints. MC's local routes now self-authenticate using keystore identity — `MC_REMOTE_DEV_EMAIL` env var no longer required after Firebase enrollment.
+- Cloud Build's source-upload bucket has legacy IAM that doesn't grant access to WIF principals → CI uses `docker build` directly on the runner instead.
+- Per-session CF Access revoke isn't supported for our token (verified via 4 API shapes, all return 405) → strict-mode auto-cleanup loop fails safe; "Sign out everywhere" remains the working tear-down path.
+
+**Earlier in the session (yesterday's polish):**
+
 | Area | Change |
 |---|---|
 | CP `/v1/sessions` | Added `nonce` field to flatten output for joining with MC-side labels (deployed v5/v6) |
@@ -152,6 +134,9 @@ If not enrolled, the click triggers the direct-API path (no browser), provisions
 | Frontend | `refreshRemoteSessions()` leads with `s.label` when present; falls back to clickable "Name this session…" link. Shows parsed UA, relative time, ago/expires, app count |
 | Frontend | New `renameRemoteSession(sid, current)` handler — `prompt()` to enter or rename a label |
 | Frontend | "Clean up unnamed" + "Sign out everywhere" buttons; "Auto-cleanup ran Xm ago · per-session revoke unsupported by CF" status line |
+| Custom domain | `api.clayrune.io` mapped to Cloud Run via Google Search Console verification + DNS-only CNAME → `ghs.googlehosted.com` |
+| CI/CD | `.github/workflows/deploy-control-plane.yml` deploys via WIF + docker-on-runner on push to main when `control_plane/**` changes |
+| Firebase Auth | `/v1/connect` HTML page, `/v1/signin/start`, `/v1/signin/complete`; `_verify_firebase_token` via firebase_admin SDK with explicit `FB_PROJECT_ID` |
 
 **CF reality:** All 4 per-session revoke API shapes return HTTP 405 — CF Access does not expose per-session revoke for our current token/account configuration. The strict-mode auto-loop is wired and safe (will not nuke named sessions) but cannot actually revoke individual unnamed sessions. Workflow: name new sessions via the device-naming page (works), use "Sign out everywhere" for stuck unnamed strays.
 
