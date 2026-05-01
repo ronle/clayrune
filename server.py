@@ -6417,9 +6417,27 @@ def _next_cron_match(cron_expr, after_dt):
 
 
 def _compute_next_run(schedule):
-    """Compute the next run time for a schedule. Returns ISO string or None."""
+    """Compute the next run time for a schedule. Returns UTC ISO string or None.
+
+    Time-of-day fields ("daily" `time` and "cron" expressions) are interpreted
+    in the host's LOCAL timezone — the user enters "09:00" meaning their wall
+    clock, not UTC. The returned ISO string is normalized to UTC (with `Z`
+    suffix) so the scheduler loop and storage stay tz-agnostic.
+
+    Storage choice: ISO+Z is what the loop's `now > next_run` comparison and
+    the frontend's `new Date(...)` call both expect. The frontend already
+    displays `next_run` via `d.getHours()` / `d.getMinutes()` which auto-
+    converts to local — so the user sees their wall clock end-to-end.
+    """
     stype = schedule.get('schedule_type', 'once')
-    now = datetime.now(timezone.utc)
+    # Local-aware "now" — datetime.now() with no arg gives naive local time;
+    # .astimezone() attaches the system tz. Used for daily/cron computations.
+    now_local = datetime.now().astimezone()
+    now_utc = datetime.now(timezone.utc)
+
+    def _to_utc_z(dt):
+        """Normalize a tz-aware datetime to a UTC ISO 8601 string with Z."""
+        return dt.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
 
     if stype == 'once':
         run_at = schedule.get('run_at', '')
@@ -6429,7 +6447,7 @@ def _compute_next_run(schedule):
             dt = datetime.fromisoformat(run_at.replace('Z', '+00:00'))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            return dt.isoformat().replace('+00:00', 'Z') if dt > now else None
+            return _to_utc_z(dt) if dt > now_utc else None
         except Exception:
             return None
 
@@ -6440,16 +6458,15 @@ def _compute_next_run(schedule):
             h, m = int(time_str.split(':')[0]), int(time_str.split(':')[1])
         except Exception:
             h, m = 9, 0
-        # Try today and next 7 days
+        # Build candidates in LOCAL time (matches the user's input intent).
         for offset in range(8):
-            candidate = now.replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=offset)
-            if candidate <= now:
+            candidate = now_local.replace(hour=h, minute=m, second=0, microsecond=0) \
+                                 + timedelta(days=offset)
+            if candidate <= now_local:
                 continue
-            if days:
-                # Python isoweekday: 1=Mon..7=Sun — matches our format
-                if candidate.isoweekday() not in days:
-                    continue
-            return candidate.isoformat().replace('+00:00', 'Z')
+            if days and candidate.isoweekday() not in days:
+                continue
+            return _to_utc_z(candidate)
         return None
 
     elif stype == 'interval':
@@ -6463,25 +6480,24 @@ def _compute_next_run(schedule):
                 if last_dt.tzinfo is None:
                     last_dt = last_dt.replace(tzinfo=timezone.utc)
                 nxt = last_dt + timedelta(minutes=interval_min)
-                if nxt <= now:
-                    # Missed window — run now-ish (next tick)
-                    nxt = now + timedelta(seconds=5)
-                return nxt.isoformat().replace('+00:00', 'Z')
+                if nxt <= now_utc:
+                    nxt = now_utc + timedelta(seconds=5)
+                return _to_utc_z(nxt)
             except Exception:
                 pass
-        # No last_run — run immediately
-        nxt = now + timedelta(seconds=5)
-        return nxt.isoformat().replace('+00:00', 'Z')
+        return _to_utc_z(now_utc + timedelta(seconds=5))
 
     elif stype == 'cron':
         expr = schedule.get('cron_expr', '')
         if not expr:
             return None
-        nxt = _next_cron_match(expr, now)
+        # Cron fields are also local-time-of-day per user intent.
+        nxt = _next_cron_match(expr, now_local)
         if nxt:
             if nxt.tzinfo is None:
-                nxt = nxt.replace(tzinfo=timezone.utc)
-            return nxt.isoformat().replace('+00:00', 'Z')
+                # _next_cron_match returns naive — assume local.
+                nxt = nxt.replace(tzinfo=now_local.tzinfo)
+            return _to_utc_z(nxt)
         return None
 
     return None
