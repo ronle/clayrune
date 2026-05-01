@@ -7565,19 +7565,20 @@ def _enforce_session_labels_once(force: bool = False) -> dict:
     p = _get_remote_provider()
     if p is None:
         return {'ok': True, 'skipped': 'no_provider'}
-    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
-    if not email:
-        return {'ok': True, 'skipped': 'no_email'}
 
     try:
         from mc_remote import enrollment as _mc_enrollment, config as _mc_config
     except Exception as e:
         return {'ok': False, 'error': f'import_error: {e}'}
 
+    auth_kwargs, err = _cp_auth_kwargs(empty_resp_field='sessions')
+    if err is not None:
+        return {'ok': True, 'skipped': err.get('error', 'no_auth')}
+
     cp_url = _mc_config.control_plane_base_url()
 
     try:
-        body = _mc_enrollment.list_sessions_via_cp(cp_base_url=cp_url, email=email)
+        body = _mc_enrollment.list_sessions_via_cp(cp_base_url=cp_url, **auth_kwargs)
     except Exception as e:
         return {'ok': False, 'error': f'list_failed: {e}'}
 
@@ -7607,7 +7608,7 @@ def _enforce_session_labels_once(force: bool = False) -> dict:
         # the user's labeled sessions.
         try:
             r = _mc_enrollment.revoke_session_via_cp(
-                cp_base_url=cp_url, email=email, session_id=sid, strict=True,
+                cp_base_url=cp_url, session_id=sid, strict=True, **auth_kwargs,
             )
             if r.get('ok') and r.get('scope') == 'session':
                 revoked.append({'nonce': nonce, 'short_id': s.get('short_id', '')})
@@ -7812,28 +7813,56 @@ def remote_resume():
     return jsonify({'ok': True})
 
 
+def _cp_auth_kwargs(empty_resp_field: str = "devices") -> tuple[dict, dict | None]:
+    """Build the auth kwargs for `*_via_cp` calls.
+
+    Prefers device-token auth from the local keystore (post-Firebase
+    enrollment). Falls back to MC_REMOTE_DEV_EMAIL env (dev-shim only).
+    Returns (kwargs, error_response). When error_response is not None, the
+    caller should jsonify+return it directly (covers no-provider / no-auth).
+    """
+    try:
+        from mc_remote import device_keys
+    except Exception as e:
+        return {}, {'error': 'import_error', 'message': str(e), empty_resp_field: []}
+    kwargs: dict = {}
+    try:
+        identity = device_keys.load_identity()
+    except Exception:
+        identity = None
+    if identity:
+        kwargs['device_id'] = identity.device_id
+        kwargs['enrollment_token'] = identity.enrollment_token
+        return kwargs, None
+    # Fall back to dev shim
+    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
+    if email:
+        kwargs['email'] = email
+        return kwargs, None
+    return {}, {'error': 'not_enrolled',
+                'message': 'No device keystore + no MC_REMOTE_DEV_EMAIL fallback. Click Enable Remote Access first.',
+                empty_resp_field: []}
+
+
 @app.route('/api/remote/devices')
 def remote_devices():
     """Proxy GET /v1/devices on the configured CP for the authenticated user.
 
-    For dev-auth, reads MC_REMOTE_DEV_EMAIL from the env (same one used at enrollment).
-    Returns the CP's response directly, plus the local device_id so the frontend
-    can highlight "this device" in the list.
+    Auth: device-token from keystore (post-Firebase) preferred; falls back to
+    MC_REMOTE_DEV_EMAIL (dev shim) if no keystore identity.
     """
     p = _get_remote_provider()
     if p is None:
         return jsonify({'error': 'no_provider', 'devices': []}), 501
-
     try:
         from mc_remote import enrollment as _mc_enrollment, device_keys, config
     except Exception as e:
         return jsonify({'error': 'import_error', 'message': str(e), 'devices': []}), 500
 
-    # Email + identity
-    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
-    if not email:
-        return jsonify({'error': 'no_email', 'message': 'MC_REMOTE_DEV_EMAIL not set',
-                        'devices': []}), 503
+    auth_kwargs, err = _cp_auth_kwargs(empty_resp_field='devices')
+    if err is not None:
+        return jsonify(err), 503
+
     try:
         identity = device_keys.load_identity()
     except Exception:
@@ -7842,8 +7871,8 @@ def remote_devices():
 
     body = _mc_enrollment.list_devices_via_cp(
         cp_base_url=config.control_plane_base_url(),
-        email=email,
         this_device_id=this_device_id,
+        **auth_kwargs,
     )
     return jsonify(body)
 
@@ -7858,13 +7887,12 @@ def remote_sessions():
         from mc_remote import enrollment as _mc_enrollment, config
     except Exception as e:
         return jsonify({'error': 'import_error', 'message': str(e), 'sessions': []}), 500
-    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
-    if not email:
-        return jsonify({'error': 'no_email', 'message': 'MC_REMOTE_DEV_EMAIL not set',
-                        'sessions': []}), 503
+    auth_kwargs, err = _cp_auth_kwargs(empty_resp_field='sessions')
+    if err is not None:
+        return jsonify(err), 503
     body = _mc_enrollment.list_sessions_via_cp(
         cp_base_url=config.control_plane_base_url(),
-        email=email,
+        **auth_kwargs,
     )
     # Enrich each session with its locally-stored device label (if any).
     # Match by full nonce; fall back to short_id if CP is on an older version.
@@ -7919,13 +7947,13 @@ def remote_session_revoke(session_id):
         from mc_remote import enrollment as _mc_enrollment, config
     except Exception as e:
         return jsonify({'error': 'import_error', 'message': str(e)}), 500
-    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
-    if not email:
-        return jsonify({'error': 'no_email'}), 503
+    auth_kwargs, err = _cp_auth_kwargs(empty_resp_field='sessions')
+    if err is not None:
+        return jsonify(err), 503
     body = _mc_enrollment.revoke_session_via_cp(
         cp_base_url=config.control_plane_base_url(),
-        email=email,
         session_id=session_id,
+        **auth_kwargs,
     )
     return jsonify(body)
 
@@ -7939,12 +7967,12 @@ def remote_sessions_revoke_all():
         from mc_remote import enrollment as _mc_enrollment, config
     except Exception as e:
         return jsonify({'error': 'import_error', 'message': str(e)}), 500
-    email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
-    if not email:
-        return jsonify({'error': 'no_email'}), 503
+    auth_kwargs, err = _cp_auth_kwargs(empty_resp_field='sessions')
+    if err is not None:
+        return jsonify(err), 503
     body = _mc_enrollment.revoke_all_sessions_via_cp(
         cp_base_url=config.control_plane_base_url(),
-        email=email,
+        **auth_kwargs,
     )
     return jsonify(body)
 

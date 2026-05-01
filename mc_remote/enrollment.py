@@ -241,17 +241,29 @@ def enroll_via_cp(*, cp_base_url: str, email: str, username: str,
     return identity
 
 
-def list_devices_via_cp(*, cp_base_url: str, email: str, this_device_id: Optional[str] = None,
-                        timeout: float = 15.0) -> dict:
-    """GET /v1/devices for the user identified by `email` (dev-auth path).
+def _auth_headers(*, email: str = "", device_id: str = "",
+                  enrollment_token: str = "") -> dict[str, str]:
+    """Build CP auth headers. Prefers device-token auth (post-Firebase enrollment)
+    over X-Dev-User-Email (dev shim only)."""
+    if device_id and enrollment_token:
+        return {"X-MC-Device-Auth": f"{device_id}:{enrollment_token}"}
+    if email:
+        return {"X-Dev-User-Email": email}
+    return {}
 
-    Returns the response dict directly, e.g.
-      { "devices": [...], "tier": "free", "device_cap": 2 }
-    On network or HTTP error, returns an error dict with `error` + `message`.
+
+def list_devices_via_cp(*, cp_base_url: str,
+                        email: str = "", device_id: str = "", enrollment_token: str = "",
+                        this_device_id: Optional[str] = None,
+                        timeout: float = 15.0) -> dict:
+    """GET /v1/devices.
+
+    Auth: prefer device-token (`device_id` + `enrollment_token` from keystore);
+    fall back to `email` (dev shim) if the device path isn't available.
     """
     import requests
 
-    headers = {"X-Dev-User-Email": email}
+    headers = _auth_headers(email=email, device_id=device_id, enrollment_token=enrollment_token)
     if this_device_id:
         headers["X-MC-Device-Id"] = this_device_id
 
@@ -273,12 +285,16 @@ def list_devices_via_cp(*, cp_base_url: str, email: str, this_device_id: Optiona
     return body
 
 
-def list_sessions_via_cp(*, cp_base_url: str, email: str, timeout: float = 15.0) -> dict:
-    """GET /v1/sessions for the given email."""
+def list_sessions_via_cp(*, cp_base_url: str,
+                         email: str = "", device_id: str = "", enrollment_token: str = "",
+                         timeout: float = 15.0) -> dict:
+    """GET /v1/sessions. Auth: device-token preferred over email."""
     import requests
     url = f"{cp_base_url.rstrip('/')}/sessions"
     try:
-        r = requests.get(url, headers={"X-Dev-User-Email": email}, timeout=timeout)
+        r = requests.get(url, headers=_auth_headers(
+            email=email, device_id=device_id, enrollment_token=enrollment_token,
+        ), timeout=timeout)
     except requests.RequestException as e:
         return {"error": "network_error", "message": str(e), "sessions": []}
     try:
@@ -291,10 +307,11 @@ def list_sessions_via_cp(*, cp_base_url: str, email: str, timeout: float = 15.0)
     return body
 
 
-def revoke_session_via_cp(*, cp_base_url: str, email: str, session_id: str,
+def revoke_session_via_cp(*, cp_base_url: str, session_id: str,
+                          email: str = "", device_id: str = "", enrollment_token: str = "",
                           strict: bool = False,
                           timeout: float = 20.0) -> dict:
-    """POST /v1/sessions/{session_id}/revoke.
+    """POST /v1/sessions/{session_id}/revoke. Auth: device-token preferred.
 
     With strict=True, the CP returns 503 instead of falling back to revoke-all
     when per-session revoke isn't supported by CF — used by automated cleanup
@@ -305,7 +322,9 @@ def revoke_session_via_cp(*, cp_base_url: str, email: str, session_id: str,
     if strict:
         url += "?strict=1"
     try:
-        r = requests.post(url, headers={"X-Dev-User-Email": email}, timeout=timeout)
+        r = requests.post(url, headers=_auth_headers(
+            email=email, device_id=device_id, enrollment_token=enrollment_token,
+        ), timeout=timeout)
     except requests.RequestException as e:
         return {"error": "network_error", "message": str(e)}
     try:
@@ -318,12 +337,16 @@ def revoke_session_via_cp(*, cp_base_url: str, email: str, session_id: str,
     return body
 
 
-def revoke_all_sessions_via_cp(*, cp_base_url: str, email: str, timeout: float = 20.0) -> dict:
-    """POST /v1/sessions/revoke-all."""
+def revoke_all_sessions_via_cp(*, cp_base_url: str,
+                               email: str = "", device_id: str = "", enrollment_token: str = "",
+                               timeout: float = 20.0) -> dict:
+    """POST /v1/sessions/revoke-all. Auth: device-token preferred."""
     import requests
     url = f"{cp_base_url.rstrip('/')}/sessions/revoke-all"
     try:
-        r = requests.post(url, headers={"X-Dev-User-Email": email}, timeout=timeout)
+        r = requests.post(url, headers=_auth_headers(
+            email=email, device_id=device_id, enrollment_token=enrollment_token,
+        ), timeout=timeout)
     except requests.RequestException as e:
         return {"error": "network_error", "message": str(e)}
     try:

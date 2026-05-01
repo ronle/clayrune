@@ -48,6 +48,7 @@ async def list_devices(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
+    x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
     x_mc_device_id: Optional[str] = Header(None, alias="X-MC-Device-Id"),
 ):
     """List all non-revoked devices owned by the authenticated user.
@@ -63,7 +64,7 @@ async def list_devices(
     rid = _request_id(request)
 
     try:
-        user = _resolve_user(authorization, x_dev_user_email)
+        user = _resolve_user(authorization, x_dev_user_email, device_auth=x_mc_device_auth)
     except HTTPException as e:
         d = dict(e.detail) if isinstance(e.detail, dict) else {"code": "unauthorized",
                                                                 "message": str(e.detail)}
@@ -142,6 +143,7 @@ async def list_sessions(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
+    x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
 ):
     """List active Cloudflare Access sign-in sessions for the user's email.
 
@@ -152,7 +154,7 @@ async def list_sessions(
     """
     rid = _request_id(request)
     try:
-        user = _resolve_user(authorization, x_dev_user_email)
+        user = _resolve_user(authorization, x_dev_user_email, device_auth=x_mc_device_auth)
     except HTTPException as e:
         d = dict(e.detail) if isinstance(e.detail, dict) else {"code": "unauthorized",
                                                                 "message": str(e.detail)}
@@ -248,6 +250,7 @@ async def revoke_session(
     strict: bool = Query(False, description="If true, do not fall back to revoke-all"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
+    x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
 ):
     """Revoke one CF Access session.
 
@@ -261,7 +264,7 @@ async def revoke_session(
     """
     rid = _request_id(request)
     try:
-        user = _resolve_user(authorization, x_dev_user_email)
+        user = _resolve_user(authorization, x_dev_user_email, device_auth=x_mc_device_auth)
     except HTTPException as e:
         d = dict(e.detail) if isinstance(e.detail, dict) else {"code": "unauthorized",
                                                                 "message": str(e.detail)}
@@ -324,6 +327,7 @@ async def revoke_all_sessions(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
+    x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
 ):
     """Revoke ALL CF Access sessions for the user's email.
 
@@ -333,7 +337,7 @@ async def revoke_all_sessions(
     """
     rid = _request_id(request)
     try:
-        user = _resolve_user(authorization, x_dev_user_email)
+        user = _resolve_user(authorization, x_dev_user_email, device_auth=x_mc_device_auth)
     except HTTPException as e:
         d = dict(e.detail) if isinstance(e.detail, dict) else {"code": "unauthorized",
                                                                 "message": str(e.detail)}
@@ -490,12 +494,19 @@ def _is_username_valid(u: str) -> tuple[bool, str]:
 _DEV_AUTH_ENABLED = os.environ.get("MC_CP_DEV_AUTH") == "1"
 
 
-def _resolve_user(authorization: Optional[str], dev_email: Optional[str]) -> dict:
+def _resolve_user(
+    authorization: Optional[str],
+    dev_email: Optional[str],
+    device_auth: Optional[str] = None,
+) -> dict:
     """Return {user_id, email, email_verified}. Raises HTTPException(401) on failure.
 
-    Tries Firebase ID token first (if available); falls back to dev shim if enabled.
+    Three paths, in priority order:
+      1. Firebase ID token in `Authorization: Bearer <token>` (production user UI).
+      2. Device-self auth via `X-MC-Device-Auth: <device_id>:<enrollment_token>`
+         (the local MC instance authenticates as itself; resolves to its owner).
+      3. Dev shim via `X-Dev-User-Email` (only when MC_CP_DEV_AUTH=1).
     """
-    # Real Firebase path (firebase-admin SDK; not yet wired up)
     if authorization and authorization.startswith("Bearer "):
         try:
             return _verify_firebase_token(authorization[7:])
@@ -505,7 +516,48 @@ def _resolve_user(authorization: Optional[str], dev_email: Optional[str]) -> dic
                 "request_id": "x",
             })
 
-    # Dev shim
+    if device_auth and ":" in device_auth:
+        device_id, enrollment_token = device_auth.split(":", 1)
+        device_id = device_id.strip()
+        enrollment_token = enrollment_token.strip()
+        if not device_id or not enrollment_token:
+            raise HTTPException(status_code=401, detail={
+                "code": "unauthorized",
+                "message": "X-MC-Device-Auth must be '<device_id>:<enrollment_token>'.",
+                "request_id": "x",
+            })
+        db = fs.db()
+        device_snap = db.collection(fs.COL_DEVICES).document(device_id).get()
+        if not device_snap.exists:
+            raise HTTPException(status_code=401, detail={
+                "code": "unknown_device",
+                "message": "Device not enrolled.",
+                "request_id": "x",
+            })
+        row = device_snap.to_dict() or {}
+        if row.get("revoked_at"):
+            raise HTTPException(status_code=401, detail={
+                "code": "device_revoked",
+                "message": "Device has been revoked.",
+                "request_id": "x",
+            })
+        provided_hash = hashlib.sha256(enrollment_token.encode("utf-8")).hexdigest()
+        if provided_hash != row.get("enrollment_token_hash", ""):
+            raise HTTPException(status_code=401, detail={
+                "code": "bad_enrollment_token",
+                "message": "Invalid enrollment_token for this device.",
+                "request_id": "x",
+            })
+        user_id = row.get("user_id", "")
+        # Pull the user row for email — needed by sessions endpoint to query CF.
+        user_snap = db.collection(fs.COL_USERS).document(user_id).get()
+        user_data = (user_snap.to_dict() or {}) if user_snap.exists else {}
+        return {
+            "user_id": user_id,
+            "email": user_data.get("email", ""),
+            "email_verified": True,  # device exists → user was email-verified at enrollment
+        }
+
     if _DEV_AUTH_ENABLED and dev_email:
         return {
             "user_id": "dev_" + hashlib.sha256(dev_email.encode("utf-8")).hexdigest()[:16],
