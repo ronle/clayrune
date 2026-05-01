@@ -250,7 +250,7 @@ class CloudflareClient:
         app = await self._call(
             "POST", f"/accounts/{acc}/access/apps",
             json={
-                "name": name or f"Mission Control - {hostname}",
+                "name": name or f"Clayrune - {hostname}",
                 "domain": hostname,
                 "type": "self_hosted",
                 "session_duration": session_duration,

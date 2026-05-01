@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mission Control</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8824a'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Nunito,Inter,sans-serif' font-weight='800' font-size='18' fill='%23ffffff'%3EM%3C/text%3E%3C/svg%3E">
+<title>Clayrune</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8824a'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Nunito,Inter,sans-serif' font-weight='800' font-size='18' fill='%23ffffff'%3EC%3C/text%3E%3C/svg%3E">
 <meta name="theme-color" content="#e8824a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Nunito:wght@600;700;800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700&display=swap" rel="stylesheet">
@@ -2869,8 +2869,8 @@
 <!-- ── SIDEBAR ──────────────────────────────────────── -->
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-logo">
-    <div class="logo-icon">M</div>
-    <span class="logo-text">Mission Ctrl</span>
+    <div class="logo-icon">C</div>
+    <span class="logo-text">Clayrune</span>
   </div>
   <div class="sidebar-nav">
     <div class="sidebar-item active" data-nav="dashboard" onclick="sidebarNav('dashboard')">
@@ -2946,10 +2946,10 @@
       <!-- Mobile app bar (≤960px, warm tone only) -->
       <div class="mc-app-bar" id="mobile-app-bar">
         <div class="mc-greet">
-          <div class="mc-eyebrow" id="mc-eyebrow">Mission Control</div>
+          <div class="mc-eyebrow" id="mc-eyebrow">Clayrune</div>
           <h1 id="mc-greeting">Hi <span aria-hidden="true">&#x1F44B;</span></h1>
         </div>
-        <div class="mc-avatar-btn" id="mc-avatar-btn" onclick="sidebarNav('settings')" title="Settings">MC</div>
+        <div class="mc-avatar-btn" id="mc-avatar-btn" onclick="sidebarNav('settings')" title="Settings">C</div>
       </div>
       <!-- Mobile filter pill row -->
       <div class="mc-pill-row" id="mobile-filter-pills"></div>
@@ -3168,11 +3168,11 @@ function renderMobileAppBar() {
   const h = now.getHours();
   const part = h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
   eyebrow.textContent = `${day} ${part}`;
-  // Avatar initials: from configured display name, else "MC"
+  // Avatar initials: from configured display name, else fall back to "C" for Clayrune
   const name = (_globalConfig && (_globalConfig.user_display_name || _globalConfig.user_name)) || '';
   const initials = name
     ? name.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
-    : 'MC';
+    : 'C';
   const av = document.getElementById('mc-avatar-btn');
   if (av) av.textContent = initials;
 }
@@ -10533,7 +10533,7 @@ function remoteAccessSettingsHTML() {
     const badge = `<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:6px;background:var(--accent-dim);color:var(--accent);margin-left:6px;letter-spacing:.5px">COMING SOON</span>`;
     return _ra_section_open(badge) + `
       <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
-        Reach this Mission Control dashboard from outside your home network &mdash;
+        Reach this Clayrune dashboard from outside your home network &mdash;
         from your phone, a laptop on the road, anywhere. Sign in once at
         <span style="font-family:'JetBrains Mono','Courier New',monospace">clayrune.io</span>
         and your dashboard becomes available at
@@ -10541,7 +10541,7 @@ function remoteAccessSettingsHTML() {
       </div>
       <div class="settings-row">
         <div>
-          <div class="settings-label">Mission Control Cloud</div>
+          <div class="settings-label">Clayrune Remote Access</div>
           <div class="settings-hint">No remote access provider installed yet. Available in a future update.</div>
         </div>
         <button class="btn-dispatch" disabled style="opacity:.55;cursor:not-allowed" title="Not yet available">Enable Remote Access</button>
@@ -10550,7 +10550,7 @@ function remoteAccessSettingsHTML() {
         <div>
           <div class="settings-label" style="font-size:12px;color:var(--text-soft,#888)">Want to use a different provider?</div>
           <div class="settings-hint">
-            Mission Control Core is open source. Forks can ship their own remote-access
+            Clayrune is open source. Forks can ship their own remote-access
             provider (Tailscale, ngrok, custom) by implementing the
             <span style="font-family:'JetBrains Mono','Courier New',monospace">mc_remote_iface</span>
             interface.
@@ -10566,7 +10566,7 @@ function remoteAccessSettingsHTML() {
   if (!st.enrolled) {
     return _ra_section_open() + `
       <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
-        Reach this Mission Control dashboard from outside your home network using
+        Reach this Clayrune dashboard from outside your home network using
         <strong>${providerName}</strong>. Sign in once and your dashboard becomes available at
         <span style="font-family:'JetBrains Mono','Courier New',monospace">&lt;your-name&gt;.clayrune.io</span>.
       </div>
@@ -11384,14 +11384,14 @@ let wtDontShow = false;
 const WT_STEPS = [
   {
     id: 'welcome',
-    title: 'Welcome to Mission Control',
-    body: 'Mission Control helps you manage multiple coding projects with AI-powered agents. Let\u2019s take a quick tour of the interface!',
+    title: 'Welcome to Clayrune',
+    body: 'Clayrune helps you manage multiple coding projects with AI-powered agents. Let\u2019s take a quick tour of the interface!',
     target: null, pos: 'center',
   },
   {
     id: 'advanced-picker',
     title: 'Choose your level',
-    body: () => `Mission Control starts in a simple view. Turn on any power-user features you want to see \u2014 you can change these anytime in Settings.<div id="wt-adv-list" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;text-align:left">` +
+    body: () => `Clayrune starts in a simple view. Turn on any power-user features you want to see \u2014 you can change these anytime in Settings.<div id="wt-adv-list" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;text-align:left">` +
       ADV_FEATURES.map(f => `
         <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:6px;border-radius:4px;background:var(--surface2)">
           <input type="checkbox" ${advancedFlags[f.key] ? 'checked' : ''}
@@ -11551,7 +11551,7 @@ function wtDemoTileHTML() {
       </div>
     </div>
     <div class="tile-body">
-      <div class="tile-task">Learn how to use Mission Control</div>
+      <div class="tile-task">Learn how to use Clayrune</div>
     </div>
     <div class="tile-footer">
       <span class="backlog-badge">3 open</span>
@@ -11621,7 +11621,7 @@ function wtDemoModalHTML(activeTab) {
         </div>
       </div>
       <div class="card-summary" style="pointer-events:none">
-        <div class="summary-item"><span class="summary-label">Current Task</span><span class="summary-value current-task">Learn how to use Mission Control</span></div>
+        <div class="summary-item"><span class="summary-label">Current Task</span><span class="summary-value current-task">Learn how to use Clayrune</span></div>
         <div class="summary-item"><span class="summary-label">Status</span><span class="status-pill status-active">active</span></div>
       </div>
       <div class="modal-tab-bar" style="pointer-events:none">${tabBar}</div>
@@ -11685,7 +11685,7 @@ function wtDemoMenuHTML() {
         </div>
       </div>
       <div class="card-summary" style="pointer-events:none">
-        <div class="summary-item"><span class="summary-label">Current Task</span><span class="summary-value current-task">Learn how to use Mission Control</span></div>
+        <div class="summary-item"><span class="summary-label">Current Task</span><span class="summary-value current-task">Learn how to use Clayrune</span></div>
         <div class="summary-item"><span class="summary-label">Status</span><span class="status-pill status-active">active</span></div>
       </div>
       <div class="modal-tab-bar" style="pointer-events:none">${tabBar}</div>

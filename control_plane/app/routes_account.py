@@ -682,7 +682,7 @@ async def enroll(
     if intent is None:
         return _err_response(400, "enrollment_intent_invalid",
                              "Sign-in expired or this device wasn't part of it. "
-                             "Click 'Connect' again from Mission Control.", rid)
+                             "Click 'Connect' again from Clayrune.", rid)
 
     # 4-7. Common post-auth/post-CSRF provisioning path. Shared with
     # /v1/signin/complete which has its own auth + CSRF checks.

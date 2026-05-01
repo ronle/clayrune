@@ -313,7 +313,7 @@ _CONNECT_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect Mission Control</title>
+<title>Connect to Clayrune</title>
 <style>
   :root { --accent:#e8824a; --bg:#fdfaf6; --fg:#1a1a1a; --muted:#6b6b6b; --border:#e0d8cc; }
   * { box-sizing: border-box; }
@@ -348,7 +348,7 @@ _CONNECT_HTML = r"""<!doctype html>
 </head>
 <body>
   <div class="wrap">
-    <h1>Connect this Mission Control</h1>
+    <h1>Connect this Clayrune</h1>
     <p class="lead">Sign in to claim a public URL like <code>yourname.clayrune.io</code>. Only you (signed in with this email) will be able to access it.</p>
 
     <div class="card">
@@ -370,7 +370,7 @@ _CONNECT_HTML = r"""<!doctype html>
         <div class="ok"  id="enroll-ok"></div>
       </div>
     </div>
-    <div class="footer">Mission Control · Clayrune</div>
+    <div class="footer">Clayrune</div>
   </div>
 
 <script type="module">
@@ -468,7 +468,7 @@ async function doEnroll() {
     });
     const j = await r.json();
     if (r.ok && j.ok) {
-      okEl.textContent = "Connected. Returning to Mission Control...";
+      okEl.textContent = "Connected. Returning to Clayrune...";
       setTimeout(() => { window.location.href = j.redirect_url; }, 800);
     } else {
       errEl.textContent = j.message || ("Enrollment failed (HTTP " + r.status + ")");

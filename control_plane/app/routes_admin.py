@@ -175,7 +175,7 @@ _ADMIN_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mission Control · Operator Dashboard</title>
+<title>Clayrune · Operator Dashboard</title>
 <style>
   :root { --accent:#e8824a; --bg:#fdfaf6; --fg:#1a1a1a; --muted:#6b6b6b;
           --border:#e0d8cc; --ok:#0b8a3a; --warn:#c0392b; --pill:#f6f1ea; }
@@ -236,7 +236,7 @@ _ADMIN_HTML = r"""<!doctype html>
     <div class="users" id="users"></div>
   </div>
 
-  <div class="footer">Mission Control · Clayrune</div>
+  <div class="footer">Clayrune</div>
 </div>
 
 <script type="module">
