@@ -1,10 +1,14 @@
 # RESUME HERE — picking up after reboot
 
-**Last updated:** 2026-04-30 (Firebase Auth + device-token auth fix shipped)
-**You are here:** End-to-end Firebase Auth flow is verified and working. Current enrollment: `ronl.clayrune.io` via real Google signin (no dev-shim env vars). Public-alpha gate unlocked — anyone with a Google account can now enroll. Dev shim still works as a fallback, but is no longer required for normal operation.
+**Last updated:** 2026-05-01 (rebrand to Clayrune + operator dashboard + Cloud Monitoring + scheduler timezone fix)
+**You are here:** Everything from yesterday is live + the product is now visually rebranded "Clayrune" everywhere users see (window title, sidebar logo, Settings panel, callback pages, /v1/connect, /v1/admin, etc.). Backend identifiers (`mc_remote`, `MC_*` env vars, repo name, Cloud Run service, keystore namespace, Tauri productName) intentionally still say Mission Control to avoid breaking installs/keystore. Logo is a clay-brown serif "C" on the orange tile, matching the Claydo mascot color. Current enrollment: `ronl.clayrune.io` via real Google signin.
 
-**Latest CP revision:** `control-plane-00012-...` (post device-token-auth bug fix, image `:492309a`).
+**Latest CP revision:** `control-plane-00015-86g` (image `:c3677a8`, rebrand commit). Live at `https://api.clayrune.io/v1`.
 **Cost today:** $0/month (everything fits free tiers; first paid threshold is CF Access at 50+ users).
+
+**Operator dashboard:** https://api.clayrune.io/v1/admin — Google signin (admin allowlist `MC_CP_ADMIN_EMAILS`, default `leviran1@gmail.com`). Shows users + devices + online status.
+
+**Cloud Monitoring dashboard:** https://console.cloud.google.com/monitoring/dashboards/builder/76f6aa3d-607a-4646-a043-192faf6bb527?project=clayrune — request rate / errors / latency / CPU / memory / Firestore. JSON config at `control_plane/monitoring/control_plane_dashboard.json` so it's reproducible.
 
 Firebase project: `clayrune-49e57` at https://console.firebase.google.com/project/clayrune-49e57. Google sign-in enabled. Authorized domain: `api.clayrune.io` is in the allow-list (without it, browser shows `auth/unauthorized-domain`).
 
@@ -60,6 +64,8 @@ When MC's `/api/remote/*` routes need to call the CP, they pick auth in this ord
 | Settings shows "Couldn't load devices: not_enrolled" | Keystore empty + no dev-shim env | Click Enable Remote Access (Firebase flow) OR set the four dev-shim env vars |
 | "username_taken" on re-enroll | Disconnect didn't fully release the claim (rare) | `python -m control_plane.force_cleanup --username ron` (needs `CLOUDFLARE_API_TOKEN` + `FIRESTORE_PROJECT` env) |
 | "enrollment_intent_invalid" | Browser tab >15 min between `/signin/start` and `/signin/complete` | Click Enable Remote Access again to mint a fresh nonce |
+| Daily/cron schedule fires at wrong time | Pre-fix schedule was stored as UTC time-of-day; new code interprets as local | Open the schedule, save it again — `_compute_next_run` recomputes `next_run` correctly. Or check "Next: …" line in scheduler matches your wall clock. |
+| Logo / window title still says "Mission Control" | Old browser cache / Tauri build pre-rebrand | Hard refresh (Ctrl+Shift+R) for the dashboard. For Tauri, rebuild via `cargo tauri build`. Backend identifiers (mc_remote etc) intentionally kept. |
 
 ### Where the code is
 
@@ -72,11 +78,12 @@ When MC's `/api/remote/*` routes need to call the CP, they pick auth in this ord
 
 ### What's NOT yet done
 
-- **Operator dashboard** — read-only `/admin` view aggregating Firestore (users + devices) + CF Access (sessions). Useful when there are many users.
-- **Cloud Monitoring dashboard** — request rate / error rate / latency / CPU graphs for the CP. Lets you spot abuse or degradation at a glance.
+- **Tier 2 rebrand** — docs sweep (CHANGELOG.md, README, every file under `docs/remote-access/` that says "Mission Control", agent system prompts in `server.py:1417-1498`). Phase 2 polish, not blocking.
+- **Animated Claydo logo** — currently a static "C". Future phase: replace with the friendly Claydo character (idle/working/confused/etc states already exist in the design system).
 - **Re-merge `mode-c-audio` branch** — Mode C interactive agent + voice STT/TTS; needs rebase + `static/index.html` conflict resolution.
 - **Email/password sign-in as a 2nd Firebase provider** — for users without Google accounts.
 - **CF Access Audit Logs scope** — would let us enrich session list with UA/IP/country (avoid the manual "Name this device" page). Needs a token-scope edit.
+- **Cron-expression validator** — frontend just checks "5 fields"; doesn't validate ranges. Server-side `_next_cron_match` is forgiving but malformed expressions silently never fire.
 
 ---
 
@@ -110,7 +117,18 @@ If you ever need the dev-shim fallback (e.g. testing CP changes without going th
 
 ---
 
-## What changed in this session (2026-04-30)
+## What changed in this session (2026-05-01)
+
+**Major:**
+- **Rebrand to Clayrune** (commits `c3677a8` + `ebf6e32`) — all user-visible surfaces flipped from "Mission Control" to "Clayrune"; backend identifiers stay (mc_remote, MC_*, keystore, repo, Cloud Run service, Tauri productName). Sidebar logo is a 34px rounded-orange tile with a bold serif "C" in clay-brown `#5c3a25` matching the Claydo mascot. Favicon, callback pages, `/v1/connect`, `/v1/admin`, OpenAPI title, Tauri window all flipped.
+- **Operator dashboard** at `/v1/admin` — Firebase-Google-signin gated, admin email allowlist (`MC_CP_ADMIN_EMAILS` env, default `leviran1@gmail.com`). Aggregates Firestore users + devices in one scan; renders summary cards + per-user device tables.
+- **Cloud Monitoring dashboard** for the control plane — request rate (stacked by 2xx/4xx/5xx), error rate, latency p50/p95/p99, container instances, CPU/memory utilization, Firestore reads/writes. Reproducible JSON at `control_plane/monitoring/control_plane_dashboard.json`.
+
+**Bug fixes / polish:**
+- **Scheduler timezone fix** (commit `dcca29d`) — `_compute_next_run` now uses `datetime.now().astimezone()` for daily + cron schedules so user-entered "09:00" means the host's local wall clock, not UTC. Form labels and schedule list show the local TZ abbreviation (e.g. "Time (PDT)"). Existing pre-fix schedules will fire at the literal time the user typed (which was their original intent — fix-by-doing-the-right-thing).
+- **Device-token auth bug fix** (commit `492309a`) — `/api/remote/{devices,sessions,sessions/<id>/revoke,sessions/revoke-all}` now self-authenticate to the CP using the keystore identity (`X-MC-Device-Auth` header) instead of requiring `MC_REMOTE_DEV_EMAIL` env. Settings panel no longer shows "Couldn't load devices: MC_REMOTE_DEV_EMAIL not set" after Firebase enrollment. Auth fallback chain documented above.
+
+## What changed earlier (2026-04-30)
 
 **Major:** Firebase Auth + browser-mediated enrollment shipped + verified end-to-end. Public-alpha gate unlocked. CI/CD via WIF auto-deploys CP on push to main. Custom domain `api.clayrune.io` live.
 
