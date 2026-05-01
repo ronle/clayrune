@@ -9624,18 +9624,27 @@ async function refreshScheduleList() {
 
 function scheduleDescription(s) {
   const type = s.schedule_type;
+  // TZ abbr for time-of-day descriptions (daily / cron) — server interprets
+  // these in the host's local zone.
+  const tzAbbr = (() => {
+    try {
+      const m = new Date().toLocaleTimeString('en-US', { timeZoneName: 'short' }).match(/\b([A-Z]{2,5})$/);
+      return m ? m[1] : '';
+    } catch { return ''; }
+  })();
   if (type === 'once') {
     return s.run_at ? 'Once at ' + formatScheduleTime(s.run_at) : 'Once (no time set)';
   } else if (type === 'daily') {
     const dayNames = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const days = (s.days || []).map(d => dayNames[d] || '?').join(', ');
-    return 'Daily at ' + (s.time || '09:00') + (days ? ' (' + days + ')' : '');
+    const time = s.time || '09:00';
+    return `Daily at ${time}${tzAbbr ? ' ' + tzAbbr : ''}${days ? ' (' + days + ')' : ''}`;
   } else if (type === 'interval') {
     const mins = s.interval_minutes || 60;
     if (mins >= 60 && mins % 60 === 0) return `Every ${mins / 60}h`;
     return `Every ${mins}m`;
   } else if (type === 'cron') {
-    return 'Cron: ' + (s.cron_expr || '?');
+    return `Cron: ${s.cron_expr || '?'}${tzAbbr ? ' (' + tzAbbr + ')' : ''}`;
   }
   return type;
 }
@@ -9723,10 +9732,20 @@ function renderSchedTypeFields(type, vals) {
   const runAt = vals?.run_at || '';
   const cronExpr = vals?.cron_expr || '';
 
+  // Show the host's local timezone abbreviation in form labels — schedule
+  // times are always interpreted in local time (server uses datetime.now()
+  // not utc).
+  const tzAbbr = (() => {
+    try {
+      const m = new Date().toLocaleTimeString('en-US', { timeZoneName: 'short' }).match(/\b([A-Z]{2,5})$/);
+      return m ? m[1] : 'local';
+    } catch { return 'local'; }
+  })();
+
   if (type === 'daily') {
     const dayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
     container.innerHTML = `
-      <label>Time (UTC)</label>
+      <label>Time (${tzAbbr})</label>
       <input type="time" id="sched-time" value="${time}">
       <label>Days</label>
       <div class="sched-days">
@@ -9741,13 +9760,13 @@ function renderSchedTypeFields(type, vals) {
       <input type="number" id="sched-interval" value="${interval}" min="1" step="1">`;
   } else if (type === 'once') {
     container.innerHTML = `
-      <label>Run At</label>
+      <label>Run At (${tzAbbr})</label>
       <input type="datetime-local" id="sched-runat" value="${runAt}">`;
   } else if (type === 'cron') {
     container.innerHTML = `
-      <label>Cron Expression (UTC)</label>
+      <label>Cron Expression (${tzAbbr})</label>
       <input type="text" id="sched-cron" value="${esc(cronExpr)}" placeholder="*/15 * * * *" spellcheck="false" style="font-family:var(--mono)">
-      <span class="memory-hint" style="margin:4px 0 0;font-size:10px">5 fields: minute hour day-of-month month day-of-week &mdash; e.g. <code>0 9 * * 1-5</code> = weekdays 9am UTC</span>`;
+      <span class="memory-hint" style="margin:4px 0 0;font-size:10px">5 fields: minute hour day-of-month month day-of-week &mdash; e.g. <code>0 9 * * 1-5</code> = weekdays 9am ${tzAbbr}</span>`;
   }
 }
 
