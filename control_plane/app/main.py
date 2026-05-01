@@ -30,7 +30,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("control_plane")
 
 app = FastAPI(
-    title="Mission Control Cloud — control plane",
+    title="Clayrune — control plane",
     version=build_info.VERSION,
     docs_url="/docs" if os.environ.get("ENV") != "prod" else None,
     redoc_url=None,

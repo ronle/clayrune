@@ -122,7 +122,7 @@ async def verify(req: AttestationRequest, *, raw_envelope: dict) -> VerifiedAtte
         _fail("unknown_client_key",
               f"Platform key {client_key_id!r} not registered.", 401)
     if key_row.get("revoked_at") is not None:
-        _fail("revoked_client_key", "Platform key revoked. Update Mission Control.", 403)
+        _fail("revoked_client_key", "Platform key revoked. Update Clayrune.", 403)
 
     try:
         client_pub_raw = base64.b64decode(key_row["pubkey_b64"])
@@ -143,14 +143,14 @@ async def verify(req: AttestationRequest, *, raw_envelope: dict) -> VerifiedAtte
     # Step 6: proto >= devices.min_protocol AND proto >= versions[mc_version].min_protocol.
     version_row = fs.version_get(env.mc_version)
     if version_row is None:
-        _fail("unknown_version", f"Mission Control version {env.mc_version!r} is not registered.", 410)
+        _fail("unknown_version", f"Clayrune version {env.mc_version!r} is not registered.", 410)
     if version_row.get("revoked"):
-        _fail("revoked_version", "This Mission Control version has been revoked. Update.", 410)
+        _fail("revoked_version", "This Clayrune version has been revoked. Update.", 410)
 
     min_proto_version = int(version_row.get("min_protocol", 1))
     min_proto_device = int(device.get("min_protocol", 1))
     if env.proto < max(min_proto_version, min_proto_device):
-        _fail("version_floor_exceeded", "Mission Control needs updating.", 403)
+        _fail("version_floor_exceeded", "Clayrune needs updating.", 403)
 
     # Step 7: mc_version in versions and not revoked. (already done above)
 

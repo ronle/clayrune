@@ -1111,7 +1111,7 @@ def create_sample_project():
         'domain': 'general',
         'status': 'active',
         'description': 'A sample project created during the walkthrough. Feel free to explore, modify, or delete it!',
-        'current_task': 'Learn how to use Mission Control',
+        'current_task': 'Learn how to use Clayrune',
         'next_action': 'Try adding tasks to the backlog',
         'last_updated': ts,
         'backlog': [
@@ -1120,7 +1120,7 @@ def create_sample_project():
             {'id': 'sample03', 'text': 'Connect a GitHub repo for issue sync', 'status': 'open', 'priority': 'low', 'created_at': ts},
         ],
         'activity_log': [
-            {'ts': ts, 'msg': 'Project created during Mission Control walkthrough'}
+            {'ts': ts, 'msg': 'Project created during Clayrune walkthrough'}
         ],
     }
     save_project(pid, project)
@@ -7015,7 +7015,7 @@ def _check_port_conflict():
     msg_lines = [
         "",
         "=" * 72,
-        f"  Mission Control cannot start: port {PORT} is already in use.",
+        f"  Clayrune cannot start: port {PORT} is already in use.",
         "=" * 72,
     ]
     if other_pids:
@@ -7427,7 +7427,7 @@ def mc_name_device_page():
       <button id="go" disabled>Continue</button>
       <div class="err" id="err"></div>
     </div>
-    <div class="footer">Mission Control · Cloudflare Access</div>
+    <div class="footer">Clayrune · Cloudflare Access</div>
   </div>
 <script>
 const NONCE = __NONCE__;
@@ -8016,7 +8016,7 @@ def _mc_callback_html(title: str, body: str, *, status: int = 200, accent: str =
     safe_title = title.replace("<", "&lt;").replace(">", "&gt;")
     return Response(
         f"""<!doctype html>
-<html><head><meta charset='utf-8'><title>Mission Control Cloud</title>
+<html><head><meta charset='utf-8'><title>Clayrune</title>
 <meta name='viewport' content='width=device-width,initial-scale=1'>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -8036,7 +8036,7 @@ def _mc_callback_html(title: str, body: str, *, status: int = 200, accent: str =
   <div class='badge'>{'✓' if status == 200 else '!'}</div>
   <h1>{safe_title}</h1>
   {body}
-  <p class='hint'>You can close this window and return to Mission Control.</p>
+  <p class='hint'>You can close this window and return to Clayrune.</p>
 </div></body></html>""",
         status=status,
         mimetype='text/html; charset=utf-8',
@@ -8055,7 +8055,7 @@ def mc_callback():
     if p is None:
         return _mc_callback_html(
             "Remote access isn't available",
-            "<p>Mission Control Cloud isn't installed in this build.</p>",
+            "<p>Clayrune Remote Access isn't installed in this build.</p>",
             status=404, accent="#9ca3af",
         )
 
@@ -8079,7 +8079,7 @@ def mc_callback():
         host = identity.hostname
         return _mc_callback_html(
             "You're connected!",
-            f"<p>Mission Control is reachable from anywhere at:</p>"
+            f"<p>Your Clayrune dashboard is reachable from anywhere at:</p>"
             f"<p style='font-family:JetBrains Mono,Consolas,monospace;font-size:14px;color:#1f2937;"
             f"background:#f3f4f6;padding:10px 14px;border-radius:8px;display:inline-block'>"
             f"https://{host}</p>",
@@ -8116,5 +8116,5 @@ if __name__ == '__main__':
     # first interaction (Enable / Resume / Disconnect) hits a warm CP instance.
     # Cheap; idempotent; safe even if remote-access provider is absent.
     threading.Thread(target=_warmup_control_plane, daemon=True).start()
-    print(f"Mission Control running at http://localhost:{PORT}")
+    print(f"Clayrune running at http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
