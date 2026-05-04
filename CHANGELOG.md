@@ -1,4 +1,156 @@
-# Mission Control — Changelog
+# Clayrune — Changelog
+
+> Renamed from "Mission Control" 2026-05-01. Backend identifiers (`mc_remote`,
+> `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
+> remain "mission-control" to avoid breaking existing installs.
+
+## [2026-05-01] — Rebrand to Clayrune + operator dashboards + scheduler timezone fix
+
+Multi-day milestone session. Public-alpha gate is unblocked, ops surfaces are
+in place, branding is unified.
+
+### Major
+
+- **Rebrand: Mission Control → Clayrune** (Model B, full product rename). All
+  user-visible surfaces flip:
+  - Window/page `<title>`, sidebar logo (orange tile + serif "C" + "CLAYRUNE"
+    wordmark — both hardcoded `#e8824a` so they're independent of the user's
+    selectable theme accent)
+  - Settings → Remote Access labels, walkthrough copy, sample-project text
+  - `/v1/connect` page header + footer + redirect toast
+  - `/v1/admin` operator-dashboard title + footer
+  - `/api/mc-callback` page (success + error templates)
+  - `/_mc/name-device` page footer
+  - OpenAPI title (`Clayrune — control plane`)
+  - Tauri window title
+  - CF Access app name template (`Clayrune - <hostname>` — visible in CF
+    dashboard + OTP emails)
+  - Attestation error messages (`Clayrune version not registered`, etc.)
+  - Cloud Monitoring dashboard JSON `displayName`
+  - Favicon SVG (white "C" on orange tile)
+  - Mobile app-bar avatar fallback ("C")
+
+  Backend identifiers explicitly kept as Mission Control:
+  - Python packages `mc_remote`, `mc_remote_iface`, `mc_tunnel`
+  - Env-var prefix `MC_*`
+  - Windows Credential Manager namespace `mission-control-remote`
+  - Tauri `productName` + bundle identifier `com.missioncontrol.desktop`
+  - GitHub repo, Cloud Run service name, GCP project name
+  - Agent system prompts mentioning "managed by Mission Control"
+    (`server.py:1417-1498`)
+
+- **Operator dashboard** at `https://api.clayrune.io/v1/admin` (`routes_admin.py`):
+  - Self-contained HTML page; Firebase Google signin gated by email allowlist
+    in `MC_CP_ADMIN_EMAILS` env (default `leviran1@gmail.com`)
+  - Aggregates Firestore `users/` + `devices/` in a single scan
+  - Summary cards (users / devices / online now / as-of) + per-user expandable
+    section with device tables, online/offline pills, tier + bandwidth use
+  - Endpoint `GET /v1/admin/data` returns JSON; HTML page consumes it
+  - Wired into `main.py` (was commented-out skeleton)
+
+- **Cloud Monitoring dashboard** for the control plane:
+  - 8-tile mosaic: request rate (stacked by 2xx/4xx/5xx), error rate
+    (4xx + 5xx), latency p50/p95/p99, active container instances, CPU
+    utilization, memory utilization, Firestore reads, Firestore writes
+  - Reproducible JSON config at `control_plane/monitoring/control_plane_dashboard.json`;
+    re-create via `gcloud monitoring dashboards create --config-from-file=...`
+  - Live at https://console.cloud.google.com/monitoring/dashboards/builder/76f6aa3d-607a-4646-a043-192faf6bb527?project=clayrune
+
+### Bug fixes
+
+- **Scheduler timezone fix** (`server.py:_compute_next_run`):
+  - Previously, daily-schedule "time" field and cron expressions were
+    interpreted as UTC time-of-day. User entered "09:00" intending wall-clock
+    PT, schedule fired at 02:00 PT.
+  - Now uses `datetime.now().astimezone()` (local-aware) as the time-of-day
+    reference for `daily` + `cron`. `interval` and `once` paths are
+    tz-agnostic so unchanged. Returned `next_run` is still UTC ISO+Z so the
+    scheduler loop and frontend `new Date(...)` continue working.
+  - Frontend form labels show host TZ abbreviation (e.g. "Time (PDT)") via
+    `Intl.DateTimeFormat`-derived short name; schedule list descriptions
+    append the same.
+  - Migration: pre-fix daily/cron schedules will fire at the literal time the
+    user originally typed (their original intent). Re-saving recomputes
+    `next_run` correctly.
+
+- **Device-token auth on `/api/remote/{devices,sessions,…}`** (commit `492309a`):
+  - After Firebase Auth shipped, `/api/remote/devices` and `/sessions` still
+    required `MC_REMOTE_DEV_EMAIL` env var to authenticate to the CP. Settings
+    panel showed "Couldn't load devices: MC_REMOTE_DEV_EMAIL not set" after a
+    successful Firebase enrollment.
+  - CP `_resolve_user()` now accepts a third auth path: `X-MC-Device-Auth:
+    <device_id>:<enrollment_token>`. Header verifies the device row exists,
+    isn't revoked, and the enrollment_token hash matches; resolves to the
+    owner's user_id from the device row.
+  - MC client `_auth_headers()` picks device-token from keystore; falls back
+    to email if keystore is empty. New helper `_cp_auth_kwargs()` in
+    `server.py` encapsulates the fallback chain. All four `/api/remote/*` call
+    sites + the auto-cleanup loop now use it.
+
+## [2026-04-30] — Firebase Auth + custom domain + CI/CD
+
+### Major
+
+- **Browser-mediated enrollment via Firebase Auth** — replaces the
+  `MC_CP_DEV_AUTH=1 + X-Dev-User-Email` shim with a real Google-signin flow.
+  - New CP endpoints: `GET /v1/connect` (HTML signin page with Firebase Web
+    SDK), `POST /v1/signin/start` (registers enrollment_intent), `POST /v1/signin/complete`
+    (verifies Firebase ID token + drives provisioning).
+  - `_verify_firebase_token()` uses `firebase_admin.auth.verify_id_token()`;
+    lazy SDK init reads `FB_PROJECT_ID` env so token verification matches the
+    Firebase project (`clayrune-49e57`) which is distinct from the GCP project
+    (`clayrune`).
+  - Extracted `_do_enroll_after_auth()` from `/v1/enroll` so the new flow
+    reuses the same CF + Firestore choreography.
+  - MC client: `connect_url()` builds `<cp>/v1/connect?pub=...&nonce=...&callback=...`;
+    callback flow unchanged.
+  - End-to-end verified: Disconnect → click Enable → Google signin → username
+    pick → redirect → green Online.
+
+- **Custom domain `api.clayrune.io`** — Cloud Run domain mapping with
+  Google-managed cert. CF Origin Rules path was abandoned (Host-header
+  override is paid-plan-only on CF); DNS-only CNAME → `ghs.googlehosted.com`
+  with no CF proxy works on free tiers both sides.
+
+- **CI/CD via GitHub Actions** — push-to-main on `control_plane/**` triggers
+  Cloud Build + Cloud Run deploy via Workload Identity Federation (no JSON
+  keys committed). After hitting Cloud Build's source-upload bucket legacy-IAM
+  wall, the workflow uses `docker build` directly on the runner instead.
+  Service account `ci-control-plane@clayrune.iam.gserviceaccount.com` with
+  least-privilege roles. WIF pool restricted to `ronle/*` repos via attribute
+  condition.
+
+### Polish
+
+- Added CP-warmup ping at MC startup (`_warmup_control_plane` daemon) to mask
+  Cloud Run cold-start on first user interaction.
+- New admin CLI `python -m control_plane.force_cleanup --username X` for
+  emergency state wipes (CF + Firestore for a given username, `--dry-run`,
+  `--keep-username`).
+- `_force_cleanup_for_hostname()` confirmed collision-only (was already, but
+  doc was stale).
+
+## [2026-04-29] — Device naming + auto-cleanup loop
+
+### Major
+
+- **Per-device naming flow** — when a phone/browser hits `<user>.clayrune.io`
+  after CF Access OTP, MC's `before_request` hook detects the CF tunnel
+  headers, extracts the session nonce from the JWT, and if unlabeled redirects
+  to `/_mc/name-device`. Self-contained HTML form with UA-derived suggestion
+  chips ("My iPhone", "My Phone", "Work Laptop"…). Labels stored at
+  `data/session_labels.json` keyed by CF Access nonce.
+- **Retroactive renaming** — clickable "Name this session…" link on each
+  unnamed row + small "rename" link on labeled rows.
+- **Auto-cleanup loop** (`_session_label_enforcer_loop`, 60 s interval) tries
+  strict per-session revoke for unnamed sessions older than 10 min. Aborts
+  pass on first `per_session_unsupported` so named sessions are never nuked.
+  Verified: CF doesn't expose per-session revoke for our token (4 API shapes
+  return 405); loop fails safe and surfaces a "per-session revoke unsupported
+  by CF" hint in the UI. "Sign out everywhere" remains the working tear-down.
+- **CP `/v1/sessions/{id}/revoke?strict=1`** mode — returns 503 instead of
+  falling back to revoke-all when per-session is unsupported. Tries 4 known
+  CF API shapes (POST/DELETE × full-name/nonce-only) before giving up.
 
 ## [2026-04-28d] — Revert [2026-04-28c]: restore live auto-pin during agent streaming
 
