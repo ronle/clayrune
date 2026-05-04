@@ -45,7 +45,7 @@ curl http://localhost:8080/v1/health
 # → {"status":"ok","build":"dev","time":"..."}
 ```
 
-### Terminal 2 — Mission Control (long-running)
+### Terminal 2 — Clayrune (long-running)
 
 **First close any existing MC running** (Tauri or `python server.py`) — env vars
 won't take effect mid-process.
@@ -78,7 +78,7 @@ Path B.
 
 1. With both Terminal 1 (CP) and Terminal 2 (MC) running, open MC's UI
 2. Navigate to **Settings → Remote Access**
-3. You should see the "**Mission Control Cloud**" provider, **not enrolled**
+3. You should see the "**Clayrune Cloud**" provider, **not enrolled**
 4. Click **"Enable Remote Access"**
 
 What happens under the hood:

@@ -1,10 +1,10 @@
-# Mission Control Remote Access — Architecture
+# Clayrune Remote Access — Architecture
 
 **Status:** Draft
 **Owner:** Ron Levy
 **Last updated:** 2026-04-24
 
-This document describes the end-to-end architecture for letting a Mission Control (MC) user reach their local dashboard from outside their home network. It is the foundation document; protocol details live in `02-attestation-protocol.md`, the control-plane API surface lives in `03-control-plane-api.md`, and abuse controls live in `04-abuse-prevention.md`.
+This document describes the end-to-end architecture for letting a Clayrune (MC) user reach their local dashboard from outside their home network. It is the foundation document; protocol details live in `02-attestation-protocol.md`, the control-plane API surface lives in `03-control-plane-api.md`, and abuse controls live in `04-abuse-prevention.md`.
 
 The platform domain is **not yet chosen**. Everywhere the platform domain appears, treat it as a configuration value `PLATFORM_DOMAIN` (placeholder: `example.tld`). A single rename PR should flip the real domain in one commit.
 

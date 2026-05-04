@@ -1,4 +1,4 @@
-# Mission Control Remote Access — Attestation Protocol
+# Clayrune Remote Access — Attestation Protocol
 
 **Status:** Draft
 **Owner:** Ron Levy

@@ -1,4 +1,4 @@
-# Mission Control Remote Access — Error Codebook
+# Clayrune Remote Access — Error Codebook
 
 **Status:** Draft
 **Owner:** Ron Levy
@@ -49,10 +49,10 @@ Client localization tables key off the `code` column. Operator runbooks key off 
 | `revoked_device` | state | 403 | attest, nonce | Device has been revoked | "This device was disconnected from remote access. Sign in to re-enroll." |
 | `bad_signature` | auth | 401 | attest | Signature verification failed | "Couldn't connect — please reconnect remote access." |
 | `bad_enrollment_token` | auth | 401 | attest | Enrollment token doesn't match device | "This device isn't enrolled. Sign in to re-enroll." |
-| `version_floor_exceeded` | state | 403 | attest, nonce | Mission Control needs updating | "An update is required to use remote access. Update Mission Control." |
-| `unknown_build` | state | 410 | attest | Build manifest not registered | "An update is required to use remote access. Update Mission Control." |
-| `revoked_build` | state | 410 | attest | Build has been revoked (CVE response) | "An update is required for security. Update Mission Control." |
-| `binary_hash_mismatch` | protocol | 400 | attest | mc-binary-sha differs from registered build | "Mission Control couldn't verify itself. Reinstall the latest version." |
+| `version_floor_exceeded` | state | 403 | attest, nonce | Clayrune needs updating | "An update is required to use remote access. Update Clayrune." |
+| `unknown_build` | state | 410 | attest | Build manifest not registered | "An update is required to use remote access. Update Clayrune." |
+| `revoked_build` | state | 410 | attest | Build has been revoked (CVE response) | "An update is required for security. Update Clayrune." |
+| `binary_hash_mismatch` | protocol | 400 | attest | mc-binary-sha differs from registered build | "Clayrune couldn't verify itself. Reinstall the latest version." |
 | `nonce_used` | request | 400 | attest | Nonce already burned | "Couldn't connect — retrying…" (auto-retry) |
 | `nonce_expired` | request | 400 | attest | Nonce older than 30 s | "Couldn't connect — retrying…" (auto-retry) |
 | `nonce_unknown` | request | 400 | attest | Nonce not issued for this device | "Couldn't connect — retrying…" (auto-retry) |
@@ -95,7 +95,7 @@ Client localization tables key off the `code` column. Operator runbooks key off 
 | Code | Category | HTTP | Surfaces | Default message | User-facing copy |
 |---|---|---|---|---|---|
 | `unknown_hostname` | not_found | 404 | worker | Hostname not registered | (visitor-facing) "Page not found." |
-| `tunnel_offline` | state | 502 | worker | Tunnel exists but no live mc-tunnel | (custom HTML page; see `04-abuse-prevention.md` §3) "Mission Control is offline. Last seen: <time>." |
+| `tunnel_offline` | state | 502 | worker | Tunnel exists but no live mc-tunnel | (custom HTML page; see `04-abuse-prevention.md` §3) "Clayrune is offline. Last seen: <time>." |
 | `path_not_allowed` | policy | 404 | worker | Path not in allowlist | "Page not found." |
 | `method_not_allowed` | policy | 405 | worker | HTTP method not in allowlist | (developer-only) |
 | `method_forbidden` | policy | 403 | worker | CONNECT or other forbidden verb | (developer-only) |
@@ -110,15 +110,15 @@ Client localization tables key off the `code` column. Operator runbooks key off 
 
 | Code | Category | Surfaces | Default message | User-facing copy |
 |---|---|---|---|---|
-| `tunnel_handshake_failed` | local | mc-tunnel ↔ MC | Localhost handshake rejected | "Remote access couldn't start. Restart Mission Control." |
-| `tunnel_parent_verify_failed` | local | mc-tunnel | Parent process verification failed | "Mission Control couldn't verify itself. Reinstall the latest version." |
-| `tunnel_manifest_missing` | local | mc-tunnel | build_manifest.json not found | "Installation looks incomplete. Reinstall Mission Control." |
-| `tunnel_manifest_invalid` | local | mc-tunnel | Manifest signature invalid | "Mission Control couldn't verify itself. Reinstall the latest version." |
+| `tunnel_handshake_failed` | local | mc-tunnel ↔ MC | Localhost handshake rejected | "Remote access couldn't start. Restart Clayrune." |
+| `tunnel_parent_verify_failed` | local | mc-tunnel | Parent process verification failed | "Clayrune couldn't verify itself. Reinstall the latest version." |
+| `tunnel_manifest_missing` | local | mc-tunnel | build_manifest.json not found | "Installation looks incomplete. Reinstall Clayrune." |
+| `tunnel_manifest_invalid` | local | mc-tunnel | Manifest signature invalid | "Clayrune couldn't verify itself. Reinstall the latest version." |
 | `tunnel_keystore_unavailable` | local | MC | OS keystore inaccessible | "Couldn't access secure storage. Run as your normal user (not Administrator) and try again." |
 | `tunnel_cloudflared_down` | local | supervisor | cloudflared subprocess not alive (crashed, missing binary, bad token) | "Tunnel daemon stopped responding. Reconnecting…" |
 | `tunnel_no_internet` | local | mc-tunnel | Network unreachable | "No internet connection." |
 | `tunnel_cp_unreachable` | local | mc-tunnel | api.PLATFORM_DOMAIN can't be reached | "Remote access service is unreachable. Check your connection." |
-| `tunnel_cf_pin_failed` | local | mc-tunnel | Control plane TLS pin mismatch | "Couldn't securely connect to remote access. Check for a Mission Control update." |
+| `tunnel_cf_pin_failed` | local | mc-tunnel | Control plane TLS pin mismatch | "Couldn't securely connect to remote access. Check for a Clayrune update." |
 
 ---
 

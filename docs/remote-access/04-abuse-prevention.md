@@ -1,4 +1,4 @@
-# Mission Control Remote Access — Abuse Prevention
+# Clayrune Remote Access — Abuse Prevention
 
 **Status:** Draft
 **Owner:** Ron Levy
@@ -360,7 +360,7 @@ This is a defense-in-depth system, but it deliberately collects minimal data.
 - Plaintext emails (only `email_hash` for join).
 - Anything that lets us reconstruct what the user looked at in their dashboard.
 
-**Privacy disclosure to user (in TOS):** "We measure how much traffic flows through your tunnel and which paths are accessed (e.g. `/api/projects`). We do not see, store, or have access to the contents of your projects or any data inside Mission Control. The dashboard's TLS terminates at Cloudflare; in v1, Cloudflare can see decrypted traffic on its servers (this is true of every CF customer). v2 will add end-to-end encryption to remove even this."
+**Privacy disclosure to user (in TOS):** "We measure how much traffic flows through your tunnel and which paths are accessed (e.g. `/api/projects`). We do not see, store, or have access to the contents of your projects or any data inside Clayrune. The dashboard's TLS terminates at Cloudflare; in v1, Cloudflare can see decrypted traffic on its servers (this is true of every CF customer). v2 will add end-to-end encryption to remove even this."
 
 The TOS is honest about the v1 trust model — v2 is not yet shipped, so we don't claim it.
 
@@ -370,7 +370,7 @@ The TOS is honest about the v1 trust model — v2 is not yet shipped, so we don'
 
 The TOS (drafted later) will codify the abuse boundary. Required clauses:
 
-1. **Permitted use** — Mission Control operation only. Not a generic tunnel/proxy/hosting service.
+1. **Permitted use** — Clayrune operation only. Not a generic tunnel/proxy/hosting service.
 2. **Prohibited content** — illegal content, malware, phishing, spam, infringing material, sexual content involving minors (mandatory wherever you operate), CSAM (immediate report).
 3. **Prohibited use patterns** — proxying third-party traffic, exposing services other than MC, automated visitors at scale, redistribution, commercial resale of remote access.
 4. **Capacity limits** — operator may throttle or suspend at any time for cap violations.

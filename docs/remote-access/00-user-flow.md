@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-04-30
 
-This document walks through the user experience from the moment someone installs Mission Control to the moment they're using it remotely from another device. It's intentionally non-technical — for the implementation specifics, see `01-architecture.md`, `02-attestation-protocol.md`, and `03-control-plane-api.md`.
+This document walks through the user experience from the moment someone installs Clayrune to the moment they're using it remotely from another device. It's intentionally non-technical — for the implementation specifics, see `01-architecture.md`, `02-attestation-protocol.md`, and `03-control-plane-api.md`.
 
 ---
 
@@ -83,7 +83,7 @@ This document walks through the user experience from the moment someone installs
 ║                       │                                                ║
 ║                       ▼                                                ║
 ║         ┌──────────────────────────────┐                               ║
-║         │  Mission Control dashboard   │   ← full UI, all features     ║
+║         │  Clayrune dashboard          │   ← full UI, all features     ║
 ║         │  (same as localhost)         │     available remotely        ║
 ║         └──────────────────────────────┘                               ║
 ║                                                                        ║
