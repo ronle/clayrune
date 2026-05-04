@@ -12,19 +12,25 @@
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script type="module">
-  // Mermaid for agent-generated diagrams. Loaded as ESM so we can pin v10
-  // without relying on a global. `window.mermaid` is set so non-module code
-  // (appendAgentLine) can call it. Manual init — we render on demand, not
-  // on DOMContentLoaded.
-  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  // Mermaid for agent-generated diagrams. v11 because v10's flowchart layout
+  // (dagre) produces tangled lines for non-trivial graphs; v11 ships with the
+  // ELK layout engine pre-registered, which is dramatically cleaner. Loaded
+  // as ESM so we can pin a version without relying on a global.
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
   mermaid.initialize({
     startOnLoad: false,
     theme: 'default',
     securityLevel: 'strict',
-    flowchart: { htmlLabels: true, useMaxWidth: true },
-    sequence: { useMaxWidth: true },
+    // ELK is significantly better than the default dagre at routing edges
+    // around nodes; for sequence/state diagrams it's ignored.
+    flowchart: { htmlLabels: true, useMaxWidth: true, defaultRenderer: 'elk' },
+    sequence: { useMaxWidth: true, mirrorActors: false },
+    state:    { useMaxWidth: true },
   });
   window.mermaid = mermaid;
+  // Render any pre-existing placeholders (e.g. modal rebuild that ran before
+  // mermaid finished loading) once the lib is ready.
+  window.dispatchEvent(new Event('mermaid-ready'));
 </script>
 <style>
   :root {
@@ -1859,28 +1865,54 @@
   .mermaid-viewer-overlay {
     position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72);
     display: flex; align-items: center; justify-content: center;
-    z-index: 10000; padding: 40px;
+    z-index: 10000; padding: 24px;
   }
   .mermaid-viewer-content {
-    background: #fff; border-radius: 14px; padding: 32px 28px;
-    max-width: 95vw; max-height: 95vh; overflow: auto;
+    background: #fff; border-radius: 14px;
+    width: 95vw; height: 92vh;
+    display: flex; flex-direction: column;
     position: relative; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
   }
-  .mermaid-viewer-content svg { max-width: 100%; height: auto; }
-  .mermaid-viewer-close {
-    position: absolute; top: 10px; right: 14px;
-    background: none; border: none; font-size: 28px;
-    cursor: pointer; color: #6b6b6b; line-height: 1; padding: 4px 8px;
-    border-radius: 6px;
+  .mermaid-viewer-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border, #e0d8cc);
+    background: #fafaf6; flex-shrink: 0;
   }
-  .mermaid-viewer-close:hover { background: #f3f0ea; color: #1a1a1a; }
-  .mermaid-viewer-source-toggle {
-    position: absolute; top: 14px; left: 18px;
-    font-size: 11px; padding: 4px 10px; cursor: pointer;
-    background: #f6f1ea; border: 1px solid var(--border);
-    border-radius: 6px; color: #6b6b6b;
+  .mermaid-viewer-btn {
+    font-size: 13px; padding: 5px 12px; cursor: pointer; line-height: 1;
+    background: #fff; border: 1px solid var(--border, #e0d8cc);
+    border-radius: 6px; color: #1a1a1a;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   }
-  .mermaid-viewer-source-toggle:hover { background: #efe5d6; color: #1a1a1a; }
+  .mermaid-viewer-btn:hover { background: #f3f0ea; }
+  .mermaid-viewer-zoom-label {
+    font-size: 12px; color: #6b6b6b; min-width: 50px;
+    text-align: center; font-family: var(--mono, Consolas, monospace);
+  }
+  .mermaid-viewer-close { margin-left: auto; font-size: 18px; padding: 5px 10px; }
+  .mermaid-viewer-scroll {
+    flex: 1; overflow: auto; padding: 24px;
+    background-image:
+      linear-gradient(45deg, #f8f4ed 25%, transparent 25%),
+      linear-gradient(-45deg, #f8f4ed 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #f8f4ed 75%),
+      linear-gradient(-45deg, transparent 75%, #f8f4ed 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  }
+  .mermaid-viewer-svg {
+    display: inline-block; transition: transform 0.12s ease-out;
+    transform-origin: top left;
+  }
+  .mermaid-viewer-svg svg { display: block; }
+  .mermaid-viewer-content .mermaid-source {
+    flex-shrink: 0; max-height: 30vh; overflow: auto;
+    margin: 0; border-top: 1px solid var(--border, #e0d8cc);
+    padding: 12px 16px; background: #1f2937; color: #e2e8f0;
+    font-family: var(--mono, Consolas, monospace); font-size: 12px;
+    white-space: pre; cursor: text;
+  }
 
   .agent-output .hl-table {
     display: block; background: #0d1117; border: 1px solid var(--border); border-radius: 4px;
@@ -4779,6 +4811,9 @@ function refreshModalById(modalId) {
   }
   const nameInput = content.querySelector('.name-edit');
   if (nameInput) autoSizeNameInput(nameInput);
+  // Render any mermaid placeholders that came from the outputLines builder
+  // (the streaming path renders inline; this catches the rebuild path).
+  _renderAllMermaidPlaceholders(content);
   if (sid && curTab === 'agent') {
     sizeAgentChat(entry.element, sid);
   }
@@ -6059,6 +6094,7 @@ function agentPanelHTML(p) {
       let tableLines = [];
       let planBlock = '';   // accumulates non-tool lines for plan detection
       let planRawLines = []; // raw text for plan viewer
+      let mermaidLines = null;  // null when not inside a ```mermaid block; array otherwise
       function flushTable() {
         if (tableLines.length === 0) return;
         if (isPipeTable(tableLines)) {
@@ -6069,6 +6105,25 @@ function agentPanelHTML(p) {
         tableLines = [];
       }
       for (const line of buf) {
+        // Mermaid block detection: ```mermaid ... ``` becomes a placeholder
+        // div that's later rendered by _renderAllMermaidPlaceholders.
+        if (mermaidLines === null && /^\s*```\s*mermaid\b/.test(line)) {
+          flushTable();
+          mermaidLines = [];
+          planRawLines.push(line);
+          continue;
+        }
+        if (mermaidLines !== null) {
+          if (/^\s*```\s*$/.test(line)) {
+            planBlock += _mermaidPlaceholderHTML(mermaidLines.join('\n'));
+            planRawLines.push(line);
+            mermaidLines = null;
+          } else {
+            mermaidLines.push(line);
+            planRawLines.push(line);
+          }
+          continue;
+        }
         // Plan detection: when ExitPlanMode is hit, collapse prior non-tool lines
         if (line.trim() === '[tool: ExitPlanMode]') {
           flushTable();
@@ -6797,12 +6852,64 @@ function _isAgentOutputPinned(el) {
 }
 
 // ── Mermaid diagram interception ────────────────────────────────────────────
-// Per-session state: when we see ```mermaid we start buffering subsequent
-// lines into a placeholder `<div class="mermaid-block">`; when we see the
-// closing ``` we render the buffered source. Click the rendered diagram to
-// open a fullscreen viewer with a "show source" toggle.
+// Three code paths produce mermaid blocks: live streaming (appendAgentLine),
+// modal-rebuild (outputLines builder in tile click / tab switch), and the
+// popout (openPlanViewer). All converge on the same shape:
+//
+//   1. Insert `<div class="mermaid-block" data-source="<escaped>">
+//        <div class="mermaid-pending">Building diagram…</div></div>`
+//   2. Call `_renderAllMermaidPlaceholders(rootEl)` after insertion. It
+//      finds un-rendered placeholders, runs mermaid.render() async, swaps
+//      in the SVG (with explicit width/height stripped so CSS can scale),
+//      wires the click-to-enlarge handler.
+//
+// Diagrams now survive tab switches (rebuild re-emits placeholder; render
+// runs again) and render in the popout window.
 
 const _mermaidBuffers = {};   // sessionId -> { placeholder, lines }
+
+function _mermaidPlaceholderHTML(source) {
+  // For HTML-string builders (outputLines, openPlanViewer).
+  return `<div class="mermaid-block" data-source="${esc(source)}">` +
+         `<div class="mermaid-pending">Building diagram…</div></div>`;
+}
+
+function _resizeSvgForFit(svg) {
+  // Mermaid SVGs ship with explicit width/height matching the natural size.
+  // Strip them so CSS max-width:100% actually scales the diagram.
+  return svg.replace(/<svg([^>]*)\swidth="[^"]*"/, '<svg$1')
+            .replace(/<svg([^>]*)\sheight="[^"]*"/, '<svg$1')
+            .replace(/<svg /, '<svg style="max-width:100%;height:auto" ');
+}
+
+function _renderAllMermaidPlaceholders(rootEl) {
+  if (!window.mermaid) {
+    // Library not ready yet — try again when init signals.
+    window.addEventListener('mermaid-ready',
+      () => _renderAllMermaidPlaceholders(rootEl), { once: true });
+    return;
+  }
+  const root = rootEl || document;
+  const blocks = root.querySelectorAll('.mermaid-block[data-source]:not([data-rendered])');
+  blocks.forEach(block => {
+    const source = block.dataset.source;
+    block.dataset.rendered = '1';
+    const id = 'mermaid-' + Math.random().toString(36).slice(2, 9);
+    window.mermaid.render(id, source).then(({ svg }) => {
+      const sized = _resizeSvgForFit(svg);
+      block.innerHTML = sized;
+      block.dataset.svg = sized;
+      block.title = 'Click to enlarge';
+      block.addEventListener('click', () => _openMermaidViewer(source, sized));
+    }).catch(e => {
+      const msg = (e && (e.message || e.str || String(e))) || 'render failed';
+      block.innerHTML =
+        `<div class="mermaid-error">Diagram error: ${esc(msg)}</div>` +
+        `<pre class="mermaid-source">${esc(source)}</pre>`;
+      block.style.cursor = 'default';
+    });
+  });
+}
 
 function _handleMermaidLine(sessionId, text, el) {
   const buf = _mermaidBuffers[sessionId];
@@ -6818,8 +6925,10 @@ function _handleMermaidLine(sessionId, text, el) {
     return true;
   }
   if (buf && isClosing) {
-    _renderMermaid(sessionId, buf);
+    const source = buf.lines.join('\n');
+    buf.placeholder.dataset.source = source;
     delete _mermaidBuffers[sessionId];
+    _renderAllMermaidPlaceholders(buf.placeholder.parentElement || document);
     return true;
   }
   if (buf) {
@@ -6831,50 +6940,72 @@ function _handleMermaidLine(sessionId, text, el) {
   return false;
 }
 
-function _renderMermaid(sessionId, buf) {
-  const source = buf.lines.join('\n');
-  const id = 'mermaid-' + Math.random().toString(36).slice(2, 9);
-  if (!window.mermaid) {
-    buf.placeholder.innerHTML = `<pre class="mermaid-source">${esc(source)}</pre>`;
-    buf.placeholder.style.cursor = 'default';
-    return;
-  }
-  window.mermaid.render(id, source).then(({ svg }) => {
-    buf.placeholder.innerHTML = svg;
-    buf.placeholder.dataset.source = source;
-    buf.placeholder.dataset.svg = svg;
-    buf.placeholder.title = 'Click to enlarge';
-    buf.placeholder.addEventListener('click', () => _openMermaidViewer(source, svg));
-  }).catch(e => {
-    const msg = (e && (e.message || e.str || String(e))) || 'render failed';
-    buf.placeholder.innerHTML =
-      `<div class="mermaid-error">Diagram error: ${esc(msg)}</div>` +
-      `<pre class="mermaid-source">${esc(source)}</pre>`;
-    buf.placeholder.style.cursor = 'default';
-  });
-}
-
 function _openMermaidViewer(source, svg) {
+  // Make the viewer SVG fill the modal — strip any inline width/height/style
+  // and apply our own. Dimensions controlled via .mermaid-viewer-svg CSS.
+  const big = svg.replace(/<svg([^>]*?)\sstyle="[^"]*"/, '<svg$1')
+                 .replace(/<svg([^>]*?)\swidth="[^"]*"/, '<svg$1')
+                 .replace(/<svg([^>]*?)\sheight="[^"]*"/, '<svg$1')
+                 .replace(/<svg /, '<svg style="width:100%;height:auto;display:block" ');
   const overlay = document.createElement('div');
   overlay.className = 'mermaid-viewer-overlay';
   overlay.innerHTML = `
     <div class="mermaid-viewer-content">
-      <button class="mermaid-viewer-source-toggle" title="Toggle source">&lt;/&gt; source</button>
-      <button class="mermaid-viewer-close" title="Close (Esc)">&times;</button>
-      <div class="mermaid-viewer-svg">${svg}</div>
-      <pre class="mermaid-source" style="display:none;margin-top:14px">${esc(source)}</pre>
+      <div class="mermaid-viewer-toolbar">
+        <button class="mermaid-viewer-btn mermaid-viewer-zoom-out" title="Zoom out">&minus;</button>
+        <span class="mermaid-viewer-zoom-label">100%</span>
+        <button class="mermaid-viewer-btn mermaid-viewer-zoom-in" title="Zoom in">+</button>
+        <button class="mermaid-viewer-btn mermaid-viewer-zoom-reset" title="Fit to view">&#8634;</button>
+        <button class="mermaid-viewer-btn mermaid-viewer-source-toggle" title="Toggle source">&lt;/&gt; source</button>
+        <button class="mermaid-viewer-btn mermaid-viewer-close" title="Close (Esc)">&times;</button>
+      </div>
+      <div class="mermaid-viewer-scroll">
+        <div class="mermaid-viewer-svg">${big}</div>
+      </div>
+      <pre class="mermaid-source" style="display:none">${esc(source)}</pre>
     </div>`;
   document.body.appendChild(overlay);
-  const closeIt = () => overlay.remove();
+  const svgWrap = overlay.querySelector('.mermaid-viewer-svg');
+  const zoomLabel = overlay.querySelector('.mermaid-viewer-zoom-label');
+  let scale = 1;
+  const applyScale = () => {
+    svgWrap.style.transform = `scale(${scale})`;
+    svgWrap.style.transformOrigin = 'top left';
+    zoomLabel.textContent = Math.round(scale * 100) + '%';
+  };
+  const closeIt = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
   overlay.addEventListener('click', e => {
-    if (e.target === overlay || e.target.classList.contains('mermaid-viewer-close')) closeIt();
+    if (e.target === overlay) closeIt();
   });
+  overlay.querySelector('.mermaid-viewer-close').addEventListener('click', closeIt);
   overlay.querySelector('.mermaid-viewer-source-toggle').addEventListener('click', e => {
     e.stopPropagation();
     const pre = overlay.querySelector('.mermaid-source');
     pre.style.display = pre.style.display === 'none' ? 'block' : 'none';
   });
-  const onKey = e => { if (e.key === 'Escape') { closeIt(); document.removeEventListener('keydown', onKey); } };
+  overlay.querySelector('.mermaid-viewer-zoom-in').addEventListener('click', e => {
+    e.stopPropagation(); scale = Math.min(scale * 1.25, 5); applyScale();
+  });
+  overlay.querySelector('.mermaid-viewer-zoom-out').addEventListener('click', e => {
+    e.stopPropagation(); scale = Math.max(scale / 1.25, 0.2); applyScale();
+  });
+  overlay.querySelector('.mermaid-viewer-zoom-reset').addEventListener('click', e => {
+    e.stopPropagation(); scale = 1; applyScale();
+  });
+  // Mouse-wheel zoom over the SVG
+  const scrollWrap = overlay.querySelector('.mermaid-viewer-scroll');
+  scrollWrap.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;  // only zoom on Ctrl/Cmd+wheel
+    e.preventDefault();
+    scale = Math.max(0.2, Math.min(5, scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+    applyScale();
+  }, { passive: false });
+  const onKey = e => {
+    if (e.key === 'Escape') closeIt();
+    else if (e.key === '+' || e.key === '=') { scale = Math.min(scale * 1.25, 5); applyScale(); }
+    else if (e.key === '-') { scale = Math.max(scale / 1.25, 0.2); applyScale(); }
+    else if (e.key === '0') { scale = 1; applyScale(); }
+  };
   document.addEventListener('keydown', onKey);
 }
 
@@ -9310,6 +9441,7 @@ function openPlanViewer(sessionId) {
   const flatLines = lines.flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n'));
   let bodyHTML = '';
   let tableLines = [];
+  let mermaidLines = null;  // null when not in a mermaid block
   function flushTable() {
     if (tableLines.length === 0) return;
     if (isPipeTable(tableLines)) {
@@ -9320,6 +9452,21 @@ function openPlanViewer(sessionId) {
     tableLines = [];
   }
   for (const line of flatLines) {
+    // Mermaid block detection — same shape as outputLines builder
+    if (mermaidLines === null && /^\s*```\s*mermaid\b/.test(line)) {
+      flushTable();
+      mermaidLines = [];
+      continue;
+    }
+    if (mermaidLines !== null) {
+      if (/^\s*```\s*$/.test(line)) {
+        bodyHTML += _mermaidPlaceholderHTML(mermaidLines.join('\n'));
+        mermaidLines = null;
+      } else {
+        mermaidLines.push(line);
+      }
+      continue;
+    }
     if (isTableLine(line)) {
       tableLines.push(line);
     } else if (tableLines.length > 0 && line.trim() === '') {
@@ -9359,6 +9506,8 @@ function openPlanViewer(sessionId) {
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
   centerModalElement(win);
   focusModal(modalId);
+  // Render mermaid placeholders inserted by the body builder above.
+  _renderAllMermaidPlaceholders(content);
 }
 
 function planFileLabel(task) {
