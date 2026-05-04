@@ -1,4 +1,4 @@
-# Mission Control Remote Access — Rollout Plan
+# Clayrune Remote Access — Rollout Plan
 
 **Status:** Draft
 **Owner:** Ron Levy
@@ -414,7 +414,7 @@ In rough priority order:
 2. ~~**`mc-tunnel` written by you in Rust, or use cloudflared directly?**~~ **Resolved 2026-04-27 (open-core decision):** keep the Rust `mc-tunnel` binary. With MC core going open source, the Rust binary becomes the closed-source platform-binding component — it carries the baked-in `CLIENT_SECRET_PRIV` (`02-` §3.6) that distinguishes "real platform install" from "fork that re-implemented the protocol." This restores the ~2 weeks of Rust work to the M2 budget but is load-bearing security work, not throwaway. See `07-licensing.md` and `feedback_no_paid_code_signing.md`.
 3. **TOS jurisdiction.** Defer until paid tier launches; use a simple "as-is, no warranty" boilerplate for v1.
 4. **Pricing of paid tier.** Out of v1; don't pre-commit.
-5. **What's the public face of the project?** `clayrune.io` landing page copy needs a name decision (is the product "Clayrune" or "Mission Control"? Probably MC, with Clayrune as the platform/company name).
+5. **What's the public face of the project?** `clayrune.io` landing page copy needs a name decision (is the product "Clayrune" or "Clayrune"? Probably MC, with Clayrune as the platform/company name).
 
 ---
 

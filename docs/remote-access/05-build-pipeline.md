@@ -1,4 +1,4 @@
-# Mission Control Remote Access — Build & Release Notes
+# Clayrune Remote Access — Build & Release Notes
 
 **Status:** Draft (descoped 2026-04-27, open-core update 2026-04-27)
 **Owner:** Ron Levy

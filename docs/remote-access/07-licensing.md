@@ -1,4 +1,4 @@
-# Mission Control Remote Access — Licensing & Open-Core Model
+# Clayrune Remote Access — Licensing & Open-Core Model
 
 **Status:** Draft
 **Owner:** Ron Levy
@@ -6,13 +6,13 @@
 **Depends on:** `01-architecture.md`, `02-attestation-protocol.md`, `04-abuse-prevention.md`, `05-build-pipeline.md`
 **Companion memory:** `feedback_no_paid_code_signing.md`
 
-This document specifies the licensing model for Mission Control + the `clayrune.io` platform: which parts are open source, which are proprietary, why, and what that means for forks, contributors, and platform users.
+This document specifies the licensing model for Clayrune + the `clayrune.io` platform: which parts are open source, which are proprietary, why, and what that means for forks, contributors, and platform users.
 
 ---
 
 ## 1. The model: open-core
 
-Mission Control is **open core**:
+Clayrune is **open core**:
 
 - **MC core** (the app users run on their PC — dashboard, agent system, server, UI) is **open source** under a permissive license (MIT or Apache 2.0; final pick in §3).
 - The **remote-access integration** (the proprietary `mc-tunnel` Rust binary + the `mc_remote` Python glue that talks to it) is **proprietary**, distributed only as compiled binaries under the platform Terms of Service.
@@ -66,13 +66,13 @@ This is the same shape as Sentry, GitLab, Mattermost, Cal.com, n8n, and many oth
 **A fork cannot:**
 
 - Use `clayrune.io` for remote access (the proprietary `mc_remote` + `mc-tunnel` artifacts are not in their tree).
-- Use the name "Mission Control Cloud" or "Clayrune" or any of the platform's trademarks (see §5).
+- Use the name "Clayrune Cloud" or "Clayrune" or any of the platform's trademarks (see §5).
 
 ### 2.2 `mc-tunnel` + `mc_remote` — proprietary
 
 **Repo:** `mc-remote/` (private; operator-only; eventually a separate GitHub repo with restricted access).
 
-**License:** "All rights reserved. Distributed only as compiled artifacts under the Mission Control Cloud Terms of Service."
+**License:** "All rights reserved. Distributed only as compiled artifacts under the Clayrune Cloud Terms of Service."
 
 **Includes:**
 
@@ -137,12 +137,12 @@ def register_provider(p: RemoteAccessProvider) -> None: ...
 def get_provider() -> RemoteAccessProvider | None: ...
 ```
 
-MC core's frontend Settings panel calls `get_provider()`. If `None`, it shows "No remote access provider installed. [Learn more about Mission Control Cloud]" with a link to `clayrune.io`. If present, it renders the panel as designed.
+MC core's frontend Settings panel calls `get_provider()`. If `None`, it shows "No remote access provider installed. [Learn more about Clayrune Cloud]" with a link to `clayrune.io`. If present, it renders the panel as designed.
 
 ### 4.2 Default vs platform implementation
 
 - **No remote access provider** (default for self-built MC core): Settings panel shows the marketing CTA. Everything else works normally.
-- **Mission Control Cloud provider** (`mc_remote` package, proprietary): plugs into the interface; talks to `mc-tunnel`; uses `clayrune.io`.
+- **Clayrune Cloud provider** (`mc_remote` package, proprietary): plugs into the interface; talks to `mc-tunnel`; uses `clayrune.io`.
 - **A fork's provider**: implements the same interface against Tailscale, ngrok, their own infrastructure, etc.
 
 ### 4.3 Why this matters
@@ -155,14 +155,14 @@ It keeps the open-source claim honest. If MC core *only* worked with the proprie
 
 Names that need to be reserved (do not put in MC core's open-source LICENSE):
 
-- "Mission Control" (the product) — open to be ambiguous; many other things use this name (NASA, Slack, Apple).
-- "Mission Control Cloud" (the platform service) — should be more distinctive; consider trademarking eventually.
+- "Clayrune" (the product) — open to be ambiguous; many other things use this name (NASA, Slack, Apple).
+- "Clayrune Cloud" (the platform service) — should be more distinctive; consider trademarking eventually.
 - "Clayrune" (the company / domain) — should be trademarked when the project has commercial traction.
 - The "M" favicon, color palette, logo, design system — keep under the platform's brand guidelines, not in the open-source repo's `static/`.
 
 Forks may call themselves whatever they like, **as long as they don't use the trademarked names** to imply official affiliation. This is standard open-source trademark practice (Mozilla / Firefox does this; Linux distros do this).
 
-A short **TRADEMARKS.md** at the root of the open MC repo will spell this out: forks are welcome, "Mission Control" the name is informal and not strongly defended, "Clayrune" / "Mission Control Cloud" are reserved.
+A short **TRADEMARKS.md** at the root of the open MC repo will spell this out: forks are welcome, "Clayrune" the name is informal and not strongly defended, "Clayrune" / "Clayrune Cloud" are reserved.
 
 ---
 
@@ -198,7 +198,7 @@ This is something to act on at the same time as the repo split (when `mc-remote/
 A complete TOS is out of v1 scope (per `04-` §8). The licensing-related clauses to lock in early:
 
 1. **MC core** is licensed as open source under MIT (or Apache 2.0). Users who build MC themselves get the open-source license; nothing else.
-2. **Mission Control Cloud** (the binaries: `mc-tunnel`, `mc_remote`, plus access to `clayrune.io`) is licensed *separately* under the platform TOS. Use of the platform requires accepting the TOS at signup time.
+2. **Clayrune Cloud** (the binaries: `mc-tunnel`, `mc_remote`, plus access to `clayrune.io`) is licensed *separately* under the platform TOS. Use of the platform requires accepting the TOS at signup time.
 3. **The platform TOS reserves the right to revoke binary distribution and platform access at any time** for cause (abuse, payment failure, TOS violation).
 4. **Reverse engineering** of the proprietary binaries is not licensed and may be additionally protected by anti-circumvention law (DMCA §1201 in the US, equivalent elsewhere). The TOS doesn't grant a license to reverse-engineer.
 5. **Forks of MC core** are explicitly permitted; the platform doesn't claim any rights over forks under the open-source license.
@@ -216,7 +216,7 @@ In rough priority order:
 2. **Add `TRADEMARKS.md` to the root** describing the trademark posture (per §5).
 3. **Create `mc_remote_iface/`** in MC core: the Protocol class + `register_provider` / `get_provider` (per §4.1). Even before any provider exists, the interface is the open-source contract.
 4. **Move `mc_remote/` and `mc_tunnel/` into a private repo `mc-remote/`** when their content stabilizes.
-5. **Add `LICENSE.proprietary`** at the root of `mc-remote/`: a single short file stating "All rights reserved. Distributed under the Mission Control Cloud TOS."
+5. **Add `LICENSE.proprietary`** at the root of `mc-remote/`: a single short file stating "All rights reserved. Distributed under the Clayrune Cloud TOS."
 6. **Add an `ALL CAPS NOTICE`** at the top of every proprietary source file: a copyright header + "PROPRIETARY AND CONFIDENTIAL" line. Standard practice.
 7. **Get a TOS draft** before public alpha. Use a template (Termly, GetTerms, or borrow from a similarly-shaped open-core SaaS). Have a lawyer review.
 

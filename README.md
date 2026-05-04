@@ -1,10 +1,10 @@
-# Mission Control
+# Clayrune
 
 A multi-project management dashboard for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents. Manage, dispatch, and monitor AI coding agents across all your projects from a single interface.
 
 ## What It Does
 
-Mission Control gives you a centralized dashboard to:
+Clayrune gives you a centralized dashboard to:
 
 - **Manage multiple projects** with status tracking, descriptions, and domains
 - **Dispatch Claude Code agents** to work on tasks across any project
@@ -166,7 +166,7 @@ You can also set the port via environment variable: `MC_PORT=8080 python server.
 - Per-project persistent memory using Claude Code's native `MEMORY.md`
 - Memory content injected into agent context automatically
 - Auto-memory: session summaries appended on completion
-- Shared between Mission Control and direct Claude CLI usage
+- Shared between Clayrune and direct Claude CLI usage
 
 ### Multi-Window System
 - Open multiple project modals simultaneously
