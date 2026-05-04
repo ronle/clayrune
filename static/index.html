@@ -11,6 +11,21 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script type="module">
+  // Mermaid for agent-generated diagrams. Loaded as ESM so we can pin v10
+  // without relying on a global. `window.mermaid` is set so non-module code
+  // (appendAgentLine) can call it. Manual init — we render on demand, not
+  // on DOMContentLoaded.
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'default',
+    securityLevel: 'strict',
+    flowchart: { htmlLabels: true, useMaxWidth: true },
+    sequence: { useMaxWidth: true },
+  });
+  window.mermaid = mermaid;
+</script>
 <style>
   :root {
     --bg:          #0c0e14;
@@ -1816,6 +1831,57 @@
     display: block; background: #0d1017; border: 1px solid var(--border); border-radius: 4px;
     padding: 8px 10px; margin: 4px 0; color: #a5d6ff; overflow-x: auto;
   }
+  /* ── Mermaid diagrams (agent-generated) ─────────────────────────────── */
+  .mermaid-block {
+    display: block; margin: 10px 0; padding: 12px 14px;
+    background: #fdfbf6; border: 1px solid var(--border);
+    border-radius: 8px; max-width: 100%; overflow: auto;
+    text-align: center; cursor: zoom-in;
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .mermaid-block:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .mermaid-block svg { max-width: 100%; height: auto; display: inline-block; }
+  .mermaid-block .mermaid-pending {
+    font-style: italic; color: var(--text-faint); padding: 4px 8px;
+    font-size: 12px; cursor: default;
+  }
+  .mermaid-block .mermaid-error {
+    color: #c0392b; padding: 6px 10px; font-size: 13px;
+    background: #fef2f2; border-radius: 4px; margin-bottom: 8px;
+    text-align: left;
+  }
+  .mermaid-block .mermaid-source {
+    text-align: left; font-family: var(--mono, Consolas, monospace);
+    font-size: 12px; color: var(--text-dim); white-space: pre-wrap;
+    background: #f6f1ea; padding: 6px 10px; border-radius: 4px;
+    margin: 0; cursor: default;
+  }
+  .mermaid-viewer-overlay {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 10000; padding: 40px;
+  }
+  .mermaid-viewer-content {
+    background: #fff; border-radius: 14px; padding: 32px 28px;
+    max-width: 95vw; max-height: 95vh; overflow: auto;
+    position: relative; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+  }
+  .mermaid-viewer-content svg { max-width: 100%; height: auto; }
+  .mermaid-viewer-close {
+    position: absolute; top: 10px; right: 14px;
+    background: none; border: none; font-size: 28px;
+    cursor: pointer; color: #6b6b6b; line-height: 1; padding: 4px 8px;
+    border-radius: 6px;
+  }
+  .mermaid-viewer-close:hover { background: #f3f0ea; color: #1a1a1a; }
+  .mermaid-viewer-source-toggle {
+    position: absolute; top: 14px; left: 18px;
+    font-size: 11px; padding: 4px 10px; cursor: pointer;
+    background: #f6f1ea; border: 1px solid var(--border);
+    border-radius: 6px; color: #6b6b6b;
+  }
+  .mermaid-viewer-source-toggle:hover { background: #efe5d6; color: #1a1a1a; }
+
   .agent-output .hl-table {
     display: block; background: #0d1117; border: 1px solid var(--border); border-radius: 4px;
     padding: 2px 0; margin: 4px 0; overflow-x: auto; max-width: 100%;
@@ -6730,6 +6796,88 @@ function _isAgentOutputPinned(el) {
   return (el.scrollHeight - el.scrollTop - el.clientHeight) < 80;
 }
 
+// ── Mermaid diagram interception ────────────────────────────────────────────
+// Per-session state: when we see ```mermaid we start buffering subsequent
+// lines into a placeholder `<div class="mermaid-block">`; when we see the
+// closing ``` we render the buffered source. Click the rendered diagram to
+// open a fullscreen viewer with a "show source" toggle.
+
+const _mermaidBuffers = {};   // sessionId -> { placeholder, lines }
+
+function _handleMermaidLine(sessionId, text, el) {
+  const buf = _mermaidBuffers[sessionId];
+  const isOpening = /^\s*```\s*mermaid\b/.test(text);
+  const isClosing = /^\s*```\s*$/.test(text);
+
+  if (!buf && isOpening) {
+    const ph = document.createElement('div');
+    ph.className = 'mermaid-block';
+    ph.innerHTML = '<div class="mermaid-pending">Building diagram…</div>';
+    el.appendChild(ph);
+    _mermaidBuffers[sessionId] = { placeholder: ph, lines: [] };
+    return true;
+  }
+  if (buf && isClosing) {
+    _renderMermaid(sessionId, buf);
+    delete _mermaidBuffers[sessionId];
+    return true;
+  }
+  if (buf) {
+    buf.lines.push(text);
+    const pending = buf.placeholder.querySelector('.mermaid-pending');
+    if (pending) pending.textContent = `Building diagram… (${buf.lines.length} lines)`;
+    return true;
+  }
+  return false;
+}
+
+function _renderMermaid(sessionId, buf) {
+  const source = buf.lines.join('\n');
+  const id = 'mermaid-' + Math.random().toString(36).slice(2, 9);
+  if (!window.mermaid) {
+    buf.placeholder.innerHTML = `<pre class="mermaid-source">${esc(source)}</pre>`;
+    buf.placeholder.style.cursor = 'default';
+    return;
+  }
+  window.mermaid.render(id, source).then(({ svg }) => {
+    buf.placeholder.innerHTML = svg;
+    buf.placeholder.dataset.source = source;
+    buf.placeholder.dataset.svg = svg;
+    buf.placeholder.title = 'Click to enlarge';
+    buf.placeholder.addEventListener('click', () => _openMermaidViewer(source, svg));
+  }).catch(e => {
+    const msg = (e && (e.message || e.str || String(e))) || 'render failed';
+    buf.placeholder.innerHTML =
+      `<div class="mermaid-error">Diagram error: ${esc(msg)}</div>` +
+      `<pre class="mermaid-source">${esc(source)}</pre>`;
+    buf.placeholder.style.cursor = 'default';
+  });
+}
+
+function _openMermaidViewer(source, svg) {
+  const overlay = document.createElement('div');
+  overlay.className = 'mermaid-viewer-overlay';
+  overlay.innerHTML = `
+    <div class="mermaid-viewer-content">
+      <button class="mermaid-viewer-source-toggle" title="Toggle source">&lt;/&gt; source</button>
+      <button class="mermaid-viewer-close" title="Close (Esc)">&times;</button>
+      <div class="mermaid-viewer-svg">${svg}</div>
+      <pre class="mermaid-source" style="display:none;margin-top:14px">${esc(source)}</pre>
+    </div>`;
+  document.body.appendChild(overlay);
+  const closeIt = () => overlay.remove();
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay || e.target.classList.contains('mermaid-viewer-close')) closeIt();
+  });
+  overlay.querySelector('.mermaid-viewer-source-toggle').addEventListener('click', e => {
+    e.stopPropagation();
+    const pre = overlay.querySelector('.mermaid-source');
+    pre.style.display = pre.style.display === 'none' ? 'block' : 'none';
+  });
+  const onKey = e => { if (e.key === 'Escape') { closeIt(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+}
+
 function appendAgentLine(sessionId, text) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el) return;
@@ -6743,6 +6891,13 @@ function appendAgentLine(sessionId, text) {
     for (const line of text.split('\n')) {
       appendAgentLine(sessionId, line);
     }
+    return;
+  }
+
+  // Mermaid diagram interception. Must come before all other line handling
+  // so ```mermaid fences are caught even if they look like other syntaxes.
+  if (_handleMermaidLine(sessionId, text, el)) {
+    if (wasPinned) el.scrollTop = el.scrollHeight;
     return;
   }
 
