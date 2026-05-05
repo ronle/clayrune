@@ -1902,10 +1902,18 @@
     background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   }
   .mermaid-viewer-svg {
-    display: inline-block; transition: transform 0.12s ease-out;
+    /* width:100% means fill the scroll container at scale=1; transform:scale
+       grows it beyond, with overflow-scroll on the parent kicking in. */
+    display: block; width: 100%;
+    transition: transform 0.12s ease-out;
     transform-origin: top left;
   }
-  .mermaid-viewer-svg svg { display: block; }
+  .mermaid-viewer-svg svg {
+    display: block;
+    width: 100% !important;
+    height: auto !important;
+    max-width: none !important;
+  }
   .mermaid-viewer-content .mermaid-source {
     flex-shrink: 0; max-height: 30vh; overflow: auto;
     margin: 0; border-top: 1px solid var(--border, #e0d8cc);
