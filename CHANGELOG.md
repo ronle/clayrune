@@ -4,6 +4,73 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-04] — Diagram polish: Excalidraw bridge restored, de-sketched, orphan-error sweep
+
+Iterative tightening of the Mermaid → Excalidraw rendering pipeline introduced
+on 2026-05-03. Commit `44772f2` had brought in the Excalidraw bridge for a
+polished aesthetic; commit `3a088cc` reverted it after sequence-diagram
+rendering bugs (strikethrough lifelines, literal `<br/>` text, mono-color
+output). This session restores the bridge but pivots away from the hand-drawn
+look that made the diagrams read as childish.
+
+### Diagram rendering (`static/index.html`)
+
+- **Restore Excalidraw bridge** (commit `b63ec46`, revert of `3a088cc`). Keeps
+  the Excalidraw layout + element model — but with the changes below, no
+  longer with the Roughjs sketch effect.
+- **Mermaid `look: 'handDrawn'` → `'classic'`** (line ~25). Fallback path
+  (sequence/state diagrams that Excalidraw can't parse) now renders with
+  clean strokes instead of wobbly Roughjs lines.
+- **Excalidraw element post-processor** in `_renderViaExcalidraw` (line ~6967):
+  after `convertToExcalidrawElements(skeleton)`, every element is mutated
+  before the SVG export:
+  - `roughness = 0` — straight strokes, no sketch wobble
+  - `fillStyle = 'solid'` — kills hachure / cross-hatch fills
+  - `strokeStyle = 'solid'` (preserving any explicit `dashed` / `dotted`
+    intent the source author set)
+  - `fontFamily = 2` (Helvetica) — replaces Excalidraw's default Virgil
+    "hand-drawn" font on text + arrow labels. Without this, diagrams still
+    read as whiteboard scribbles even with clean strokes.
+- **Orphan "Syntax error" sweep** — Mermaid v11 (and `parseMermaidToExcalidraw`
+  which uses Mermaid's parser internally) injects an error SVG into `<body>`
+  when its parser fails, and never cleans it up. They accumulate on the page
+  over the lifetime of the tab as visible toast-like cards.
+  - New helper `_sweepOrphanMermaidNodes()` (line ~6961). Selector matches
+    both `<svg>` and `<div>` direct children of `<body>` whose id starts with
+    `mermaid-` / `dmermaid-`, gated by a textContent regex
+    `/Syntax error|mermaid version/i`. The textContent gate is critical:
+    Mermaid v11 keeps its own *working* sandbox div on body with the same
+    id prefix and reuses it across renders. Removing that crashes the next
+    render with `Cannot read properties of null (reading 'firstChild')`.
+    The sandbox is empty between renders, so the error-text gate never
+    matches it.
+  - Called before + after every render attempt (Excalidraw and Mermaid
+    paths), plus a one-shot sweep at lib-load to clear pre-existing orphans.
+
+### User-facing color guidance
+
+- `classDef` color rules in flowcharts are often stripped by the Excalidraw
+  bridge — the polished look comes at the cost of some Mermaid styling
+  expressiveness. Inline `style <node> fill:#...,stroke:#...,color:#...` per
+  node is the reliable path; classDef should be treated as best-effort.
+- Color-by-role convention used in this session's example diagrams:
+  - Cream + brand-orange = your own services / compute
+  - Tan + burnt-orange = caching layer
+  - Sage green = persistent storage / data layer
+  - Purple = async / messaging
+  - Blue = observability
+  - Red = secrets / crypto
+  - Pale slate = external systems
+
+### Limitations (intentional, not in scope)
+
+- AWS architecture icons via Mermaid's `architecture-beta` diagram type are
+  not enabled. Would require `mermaid.registerIconPacks([...])` wiring + an
+  Iconify pack import + a bypass of the Excalidraw bridge for that diagram
+  type (Excalidraw can't parse `architecture-beta`). Deferred.
+- Mobile rendering of the Excalidraw bridge has known visual issues; the
+  fix above is desktop-first. Tracked separately.
+
 ## [2026-05-01] — Rebrand to Clayrune + operator dashboards + scheduler timezone fix
 
 Multi-day milestone session. Public-alpha gate is unblocked, ops surfaces are

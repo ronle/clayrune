@@ -19,10 +19,10 @@
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
   mermaid.initialize({
     startOnLoad: false,
-    // 'handDrawn' uses Roughjs to give diagrams a sketchy, Excalidraw-ish
-    // feel instead of the boxy "Visio stencil" aesthetic of the default
-    // 'classic' look. Major readability + warmth upgrade for free.
-    look: 'handDrawn',
+    // 'classic' is the clean, straight-line look. We previously used
+    // 'handDrawn' (Roughjs) for warmth, but the wobbly strokes read as
+    // childish next to real architecture diagrams.
+    look: 'classic',
     theme: 'base',
     // Clayrune palette: brand orange + clay-brown + cream surfaces.
     themeVariables: {
@@ -64,22 +64,35 @@
       fontSize: '14px',
     },
     securityLevel: 'strict',
-    // ELK still beats dagre for non-trivial flowcharts. handDrawn look is
-    // applied on top regardless of layout engine.
+    // ELK still beats dagre for non-trivial flowcharts. The chosen 'look'
+    // is applied on top regardless of layout engine.
     flowchart: { htmlLabels: true, useMaxWidth: true, defaultRenderer: 'elk' },
     sequence: { useMaxWidth: true, mirrorActors: false },
     state:    { useMaxWidth: true },
   });
   window.mermaid = mermaid;
+  // One-shot sweep: any orphan "Syntax error" nodes left on <body> by a
+  // previous failed parse get cleaned up as soon as the lib is ready.
+  // Match only nodes that actually contain the error text — Mermaid's own
+  // sandbox node on body uses the same id prefix and must NOT be removed.
+  document.querySelectorAll(
+    'body > svg[id^="mermaid-"], body > svg[id^="dmermaid-"], ' +
+    'body > div[id^="mermaid-"], body > div[id^="dmermaid-"]'
+  ).forEach(n => {
+    if (n.closest('.mermaid-block')) return;
+    const txt = (n.textContent || '');
+    if (/Syntax error|mermaid version/i.test(txt)) n.remove();
+  });
   // Render any pre-existing placeholders (e.g. modal rebuild that ran before
   // mermaid finished loading) once the lib is ready.
   window.dispatchEvent(new Event('mermaid-ready'));
 
   // ── Excalidraw bridge ────────────────────────────────────────────────
-  // Parses Mermaid source -> Excalidraw scene -> SVG. Gives diagrams a
-  // polished hand-drawn aesthetic that's the closest open-source equivalent
-  // to Lucid/Visio polish without the SaaS dependency. Unsupported diagram
-  // types (state, ER, gantt, journey, pie, mindmap) fall back to Mermaid.
+  // Parses Mermaid source -> Excalidraw scene -> SVG. We use Excalidraw's
+  // layout + typography (clean Cascadia/Virgil-ish look) but flatten the
+  // Roughjs sketch effect at render time (roughness=0, solid fills) so
+  // diagrams look polished, not childish. Unsupported diagram types
+  // (state, ER, gantt, journey, pie, mindmap) fall back to Mermaid.
   // Loaded in the background so it doesn't block initial mermaid renders;
   // when it's ready, `excalidraw-ready` fires and the renderer can opt in.
   Promise.all([
@@ -92,7 +105,7 @@
       exportToSvg: exc.exportToSvg,
     };
     window.dispatchEvent(new Event('excalidraw-ready'));
-    console.log('[Clayrune] Excalidraw bridge ready — diagrams will render in hand-drawn style.');
+    console.log('[Clayrune] Excalidraw bridge ready — diagrams will render with polished (non-sketchy) Excalidraw look.');
   }).catch(e => {
     console.warn('[Clayrune] Excalidraw bridge failed to load — diagrams will fall back to plain Mermaid:', e);
   });
@@ -6958,12 +6971,55 @@ function _resizeSvgForFit(svg) {
 // Render via Excalidraw bridge: Mermaid source -> Excalidraw elements -> SVG.
 // Returns a Promise<svgString>. Throws on unsupported diagram types so the
 // caller can fall back to Mermaid's own renderer.
+// Mermaid v11 (and parseMermaidToExcalidraw, which uses it under the hood)
+// injects an orphan "Syntax error in text" SVG into <body> when its parser
+// fails, and never cleans it up — they accumulate on the page over the
+// lifetime of the tab. Sweep them before/after every render attempt.
+//
+// Important: Mermaid v11 *also* keeps its own working sandbox node on
+// <body> (id starts with "dmermaid-" / "mermaid-") that it reuses across
+// renders. Removing that crashes the next render with
+// "Cannot read properties of null (reading 'firstChild')". So we only
+// remove nodes that actually contain the error text — that signature is
+// unique to the failure SVGs.
+function _sweepOrphanMermaidNodes() {
+  // Match both the bare error SVG and the wrapper div Mermaid sometimes
+  // leaves on body. Mermaid's *working* sandbox div uses the same id
+  // prefix, so we gate every removal on the literal "Syntax error" text
+  // — the working sandbox is empty between renders and never matches.
+  document.querySelectorAll(
+    'body > svg[id^="mermaid-"], body > svg[id^="dmermaid-"], ' +
+    'body > div[id^="mermaid-"], body > div[id^="dmermaid-"]'
+  ).forEach(n => {
+    if (n.closest('.mermaid-block')) return;
+    const txt = (n.textContent || '');
+    if (/Syntax error|mermaid version/i.test(txt)) n.remove();
+  });
+}
+
 async function _renderViaExcalidraw(source) {
   const api = window._excalidrawAPI;
   if (!api) throw new Error('excalidraw-not-loaded');
   const { parseMermaidToExcalidraw, convertToExcalidrawElements, exportToSvg } = api;
+  _sweepOrphanMermaidNodes();
   const { elements: skeleton, files } = await parseMermaidToExcalidraw(source);
   const elements = convertToExcalidrawElements(skeleton);
+  // Strip Roughjs sketchiness AND swap the default Virgil "hand-drawn"
+  // font for Helvetica. Without the font swap, diagrams still look like
+  // Excalidraw whiteboard scribbles even when the strokes are clean.
+  // fontFamily: 1 = Virgil (hand-drawn), 2 = Helvetica, 3 = Cascadia.
+  // Applies to text elements AND to the label of arrows/lines (which
+  // store the same fontFamily field on the element itself).
+  for (const el of elements) {
+    if (el.roughness != null) el.roughness = 0;
+    if (el.fillStyle != null) el.fillStyle = 'solid';
+    if (el.strokeStyle === 'dashed' || el.strokeStyle === 'dotted') {
+      // keep dashed/dotted intent
+    } else if (el.strokeStyle != null) {
+      el.strokeStyle = 'solid';
+    }
+    if (el.fontFamily != null) el.fontFamily = 2;
+  }
   const svgEl = await exportToSvg({
     elements,
     files: files || {},
@@ -6979,14 +7035,19 @@ async function _renderViaExcalidraw(source) {
 
 async function _renderViaMermaid(source) {
   const id = 'mermaid-' + Math.random().toString(36).slice(2, 9);
-  const result = await window.mermaid.render(id, source);
-  return _resizeSvgForFit(result.svg);
+  _sweepOrphanMermaidNodes();
+  try {
+    const result = await window.mermaid.render(id, source);
+    return _resizeSvgForFit(result.svg);
+  } finally {
+    _sweepOrphanMermaidNodes();
+  }
 }
 
 function _renderAllMermaidPlaceholders(rootEl) {
   // Block-rendering pipeline:
   //   1. If neither lib is ready: wait for the first to land, retry.
-  //   2. Prefer Excalidraw (polished hand-drawn aesthetic).
+  //   2. Prefer Excalidraw (clean shapes, polished typography).
   //   3. Fall back to Mermaid for diagram types Excalidraw can't parse
   //      (state, ER, gantt, journey, pie, mindmap, timeline).
   //   4. If both fail: show the error + raw source so the user/agent can
