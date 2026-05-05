@@ -17,74 +17,85 @@
   // ELK layout engine pre-registered, which is dramatically cleaner. Loaded
   // as ESM so we can pin a version without relying on a global.
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-  // Professional / "AWS architecture doc" aesthetic — NOT hand-drawn.
-  // We tried Mermaid's handDrawn look and the Excalidraw bridge; both felt
-  // childish to the user. This config:
-  //   - classic look (clean rectangles)
-  //   - color hierarchy (different fills for actor types)
-  //   - white-backed message labels so lifelines don't strike through text
-  //   - htmlLabels:true so <br/> in notes renders as a line break
-  //   - ELK layout for flowcharts (cleaner edge routing)
   mermaid.initialize({
     startOnLoad: false,
-    look: 'classic',
+    // 'handDrawn' uses Roughjs to give diagrams a sketchy, Excalidraw-ish
+    // feel instead of the boxy "Visio stencil" aesthetic of the default
+    // 'classic' look. Major readability + warmth upgrade for free.
+    look: 'handDrawn',
     theme: 'base',
+    // Clayrune palette: brand orange + clay-brown + cream surfaces.
     themeVariables: {
-      // Primary palette — used for the user's own/local services
-      primaryColor:        '#fdf3e7',  // soft cream
-      primaryTextColor:    '#1f2937',  // near-black, high contrast
-      primaryBorderColor:  '#c66a36',  // burnt orange
-      // Secondary — used for external systems (CF, Email, etc.)
-      secondaryColor:      '#e8eef7',  // pale slate blue
-      secondaryTextColor:  '#1f2937',
-      secondaryBorderColor:'#3b6da6',  // steel blue
-      // Tertiary — used for storage / data
-      tertiaryColor:       '#e9f1e8',  // pale sage
-      tertiaryTextColor:   '#1f2937',
-      tertiaryBorderColor: '#4a7d4f',  // forest green
-      // Edges
-      lineColor:           '#475569',  // slate
-      arrowheadColor:      '#1f2937',
-      edgeLabelBackground: '#ffffff',  // crisp white — kills strikethrough bug
-      // Notes (the dashed callout boxes)
-      noteBkgColor:        '#fffbeb',
-      noteTextColor:       '#78350f',
-      noteBorderColor:     '#d97706',
-      // Clusters / subgraphs
-      clusterBkg:          'rgba(200,200,200,0.08)',
-      clusterBorder:       '#9ca3af',
-      // Sequence diagram-specific
-      actorBkg:            '#fdf3e7',
-      actorBorder:         '#c66a36',
-      actorTextColor:      '#1f2937',
-      actorLineColor:      '#9ca3af',  // muted gray lifelines
-      signalColor:         '#374151',
-      signalTextColor:     '#1f2937',
-      labelBoxBkgColor:    '#ffffff',  // white background under labels
-      labelBoxBorderColor: '#c66a36',
-      labelTextColor:      '#1f2937',
-      loopTextColor:       '#1f2937',
-      activationBkgColor:  '#fff1de',
-      activationBorderColor:'#c66a36',
-      // Font — clean sans-serif, matches the dashboard
+      // Primary node fill + text
+      primaryColor: '#fdf3e7',          // soft cream — clearly a node, low contrast
+      primaryTextColor: '#5c3a25',      // clay-brown text
+      primaryBorderColor: '#e8824a',    // brand orange border
+      // Secondary (used for highlighted/important nodes)
+      secondaryColor: '#fff1de',
+      secondaryBorderColor: '#c66a36',
+      // Tertiary (rare)
+      tertiaryColor: '#f6f1ea',
+      tertiaryBorderColor: '#8b5e3c',
+      // Edges + labels
+      lineColor: '#5c3a25',
+      arrowheadColor: '#5c3a25',
+      edgeLabelBackground: '#fdfbf6',
+      // Notes / clusters
+      noteBkgColor: '#fff5e6',
+      noteTextColor: '#5c3a25',
+      noteBorderColor: '#e8824a',
+      clusterBkg: 'rgba(232,130,74,0.08)',
+      clusterBorder: '#e8824a',
+      // Sequence-specific
+      actorBkg: '#fff1de',
+      actorBorder: '#e8824a',
+      actorTextColor: '#5c3a25',
+      actorLineColor: '#5c3a25',
+      signalColor: '#5c3a25',
+      signalTextColor: '#5c3a25',
+      labelBoxBkgColor: '#fdf3e7',
+      labelBoxBorderColor: '#e8824a',
+      labelTextColor: '#5c3a25',
+      loopTextColor: '#5c3a25',
+      activationBkgColor: '#fff1de',
+      activationBorderColor: '#e8824a',
+      // Font — match the dashboard's body
       fontFamily: 'Inter, -apple-system, system-ui, sans-serif',
-      fontSize: '13px',
+      fontSize: '14px',
     },
-    securityLevel: 'loose',  // loose so <br/> and similar render as expected
-    flowchart: { htmlLabels: true, useMaxWidth: true, defaultRenderer: 'elk', curve: 'basis' },
-    sequence: {
-      useMaxWidth: true,
-      mirrorActors: false,
-      messageMargin: 40,           // breathing room between messages
-      boxMargin: 14,               // breathing room around alt/loop boxes
-      actorMargin: 80,             // wider columns for readability
-      noteMargin: 12,
-    },
-    state: { useMaxWidth: true },
-    classDiagram: { useMaxWidth: true },
+    securityLevel: 'strict',
+    // ELK still beats dagre for non-trivial flowcharts. handDrawn look is
+    // applied on top regardless of layout engine.
+    flowchart: { htmlLabels: true, useMaxWidth: true, defaultRenderer: 'elk' },
+    sequence: { useMaxWidth: true, mirrorActors: false },
+    state:    { useMaxWidth: true },
   });
   window.mermaid = mermaid;
+  // Render any pre-existing placeholders (e.g. modal rebuild that ran before
+  // mermaid finished loading) once the lib is ready.
   window.dispatchEvent(new Event('mermaid-ready'));
+
+  // ── Excalidraw bridge ────────────────────────────────────────────────
+  // Parses Mermaid source -> Excalidraw scene -> SVG. Gives diagrams a
+  // polished hand-drawn aesthetic that's the closest open-source equivalent
+  // to Lucid/Visio polish without the SaaS dependency. Unsupported diagram
+  // types (state, ER, gantt, journey, pie, mindmap) fall back to Mermaid.
+  // Loaded in the background so it doesn't block initial mermaid renders;
+  // when it's ready, `excalidraw-ready` fires and the renderer can opt in.
+  Promise.all([
+    import('https://esm.sh/@excalidraw/mermaid-to-excalidraw@1.1.2'),
+    import('https://esm.sh/@excalidraw/excalidraw@0.18.0'),
+  ]).then(([m2e, exc]) => {
+    window._excalidrawAPI = {
+      parseMermaidToExcalidraw: m2e.parseMermaidToExcalidraw,
+      convertToExcalidrawElements: exc.convertToExcalidrawElements,
+      exportToSvg: exc.exportToSvg,
+    };
+    window.dispatchEvent(new Event('excalidraw-ready'));
+    console.log('[Clayrune] Excalidraw bridge ready — diagrams will render in hand-drawn style.');
+  }).catch(e => {
+    console.warn('[Clayrune] Excalidraw bridge failed to load — diagrams will fall back to plain Mermaid:', e);
+  });
 </script>
 <style>
   :root {
@@ -6944,7 +6955,42 @@ function _resizeSvgForFit(svg) {
             .replace(/<svg /, '<svg style="max-width:100%;height:auto" ');
 }
 
+// Render via Excalidraw bridge: Mermaid source -> Excalidraw elements -> SVG.
+// Returns a Promise<svgString>. Throws on unsupported diagram types so the
+// caller can fall back to Mermaid's own renderer.
+async function _renderViaExcalidraw(source) {
+  const api = window._excalidrawAPI;
+  if (!api) throw new Error('excalidraw-not-loaded');
+  const { parseMermaidToExcalidraw, convertToExcalidrawElements, exportToSvg } = api;
+  const { elements: skeleton, files } = await parseMermaidToExcalidraw(source);
+  const elements = convertToExcalidrawElements(skeleton);
+  const svgEl = await exportToSvg({
+    elements,
+    files: files || {},
+    appState: {
+      exportBackground: false,
+      viewBackgroundColor: '#fdfbf6',
+      exportEmbedScene: false,
+    },
+  });
+  // exportToSvg returns an SVGElement; we want a string for innerHTML.
+  return svgEl.outerHTML;
+}
+
+async function _renderViaMermaid(source) {
+  const id = 'mermaid-' + Math.random().toString(36).slice(2, 9);
+  const result = await window.mermaid.render(id, source);
+  return _resizeSvgForFit(result.svg);
+}
+
 function _renderAllMermaidPlaceholders(rootEl) {
+  // Block-rendering pipeline:
+  //   1. If neither lib is ready: wait for the first to land, retry.
+  //   2. Prefer Excalidraw (polished hand-drawn aesthetic).
+  //   3. Fall back to Mermaid for diagram types Excalidraw can't parse
+  //      (state, ER, gantt, journey, pie, mindmap, timeline).
+  //   4. If both fail: show the error + raw source so the user/agent can
+  //      diagnose.
   if (!window.mermaid) {
     window.addEventListener('mermaid-ready',
       () => _renderAllMermaidPlaceholders(rootEl), { once: true });
@@ -6955,21 +7001,30 @@ function _renderAllMermaidPlaceholders(rootEl) {
   blocks.forEach(async block => {
     const source = block.dataset.source;
     block.dataset.rendered = '1';
+    let svg = '';
+    let renderer = 'mermaid';
     try {
-      const id = 'mermaid-' + Math.random().toString(36).slice(2, 9);
-      const result = await window.mermaid.render(id, source);
-      const svg = _resizeSvgForFit(result.svg);
-      block.innerHTML = svg;
-      block.dataset.svg = svg;
-      block.title = 'Click to enlarge';
-      block.addEventListener('click', () => _openMermaidViewer(source, svg));
+      svg = await _renderViaExcalidraw(source);
+      renderer = 'excalidraw';
     } catch (e) {
-      const msg = (e && (e.message || e.str || String(e))) || 'render failed';
-      block.innerHTML =
-        `<div class="mermaid-error">Diagram error: ${esc(msg)}</div>` +
-        `<pre class="mermaid-source">${esc(source)}</pre>`;
-      block.style.cursor = 'default';
+      // Excalidraw failed (not loaded yet, or unsupported diagram type).
+      // Try Mermaid as a fallback.
+      try {
+        svg = await _renderViaMermaid(source);
+      } catch (e2) {
+        const msg = (e2 && (e2.message || e2.str || String(e2))) || 'render failed';
+        block.innerHTML =
+          `<div class="mermaid-error">Diagram error: ${esc(msg)}</div>` +
+          `<pre class="mermaid-source">${esc(source)}</pre>`;
+        block.style.cursor = 'default';
+        return;
+      }
     }
+    block.innerHTML = svg;
+    block.dataset.svg = svg;
+    block.dataset.renderer = renderer;
+    block.title = 'Click to enlarge';
+    block.addEventListener('click', () => _openMermaidViewer(source, svg));
   });
 }
 
