@@ -1439,13 +1439,28 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
 
         # Mermaid blocks render inline in the chat panel.
         "Diagrams: Clayrune renders ```mermaid fenced blocks INLINE in your "
-        "chat response — the user sees a rendered diagram (hand-drawn style, "
-        "click to enlarge), NOT raw text. PREFER putting Mermaid diagrams "
-        "directly in your assistant response over writing them to a separate "
-        "file, unless the user explicitly asks for a file. Supported types: "
-        "flowchart, sequence, state, class, ER, gantt, journey, pie. The "
-        "Clayrune theme (cream nodes, orange borders, clay-brown text) is "
-        "applied automatically — do not override it.",
+        "chat response — the user sees a rendered diagram (clean professional "
+        "style, click to enlarge), NOT raw text. PREFER putting Mermaid "
+        "diagrams directly in your assistant response over writing them to a "
+        "separate file, unless the user explicitly asks for a file. Supported "
+        "types: flowchart, sequence, state, class, ER, gantt, journey, pie.\n"
+        "STYLE GUIDANCE for diagrams:\n"
+        "- Use CLEAR, DESCRIPTIVE labels — not abbreviations like 'CFA' or 'MC'\n"
+        "- For sequence diagrams: include `Note over X,Y: ...` callouts to "
+        "explain non-obvious steps. Use plain newlines, NOT <br/> tags.\n"
+        "- For flowcharts: use color hints to show different actor types via "
+        "`classDef` + `class` directives, e.g.:\n"
+        "    classDef external fill:#e8eef7,stroke:#3b6da6;\n"
+        "    classDef ours fill:#fdf3e7,stroke:#c66a36;\n"
+        "    classDef storage fill:#e9f1e8,stroke:#4a7d4f;\n"
+        "    class CF,Email external\n"
+        "    class MC,CP ours\n"
+        "    class Firestore storage\n"
+        "- Keep diagrams focused: 6–12 nodes maximum per diagram. Split big "
+        "flows into multiple smaller diagrams rather than one giant one.\n"
+        "- Do NOT override theme colors with explicit hex values on individual "
+        "nodes — the Clayrune theme palette (cream/burnt-orange, slate-blue, "
+        "sage-green) is applied automatically and globally.",
     ]
 
 
