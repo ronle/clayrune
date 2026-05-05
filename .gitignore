@@ -22,6 +22,7 @@ config.json
 data/settings.json
 data/grid_layout.json
 data/schedules.json
+data/restart_log.json
 data/memory/
 
 # Build artifacts

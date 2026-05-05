@@ -1446,6 +1446,32 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         "flowchart, sequence, state, class, ER, gantt, journey, pie. The "
         "Clayrune theme (cream nodes, orange borders, clay-brown text) is "
         "applied automatically — do not override it.",
+
+        # Two schedulers exist — pick the right one for the job.
+        f"Scheduler — TWO options, pick by lifespan:\n"
+        f"  • Clayrune LOCAL scheduler — for LONG-TERM, REPEATABLE jobs scoped "
+        f"to a project that must outlive any single session and re-run an agent "
+        f"inside THIS Mission Control environment (daily standups, weekly "
+        f"reports, recurring cleanups, one-shots scheduled hours/days out). "
+        f"List: GET http://localhost:{port}/api/schedules  "
+        f"Create: POST http://localhost:{port}/api/schedules with "
+        f"{{\"project_id\":\"...\",\"task\":\"...\",\"schedule_type\":\"daily|weekly|interval|once|cron\","
+        f"\"time\":\"09:00\",\"days\":[],\"interval_minutes\":60,\"run_at\":\"ISO8601\",\"cron_expr\":\"...\"}}  "
+        f"Update: PUT /api/schedules/<id>  Delete: DELETE /api/schedules/<id>.\n"
+        f"  • Anthropic /schedule skill — for SHORT-INTERVAL polling/follow-ups "
+        f"that live inside the CURRENT session lifespan (e.g. \"check the build "
+        f"every 5 min\", \"poll this PR until merged\"). Cloud-side; cannot reach "
+        f"local Mission Control state, but perfect for in-session tick work.\n"
+        f"Rule of thumb: if it should still fire after this conversation ends, "
+        f"use the Clayrune local scheduler; if it's a tight loop tied to the "
+        f"work you're doing right now, use /schedule.",
+
+        # API discovery hint — when an unfamiliar Clayrune feature is needed,
+        # don't guess endpoint names; list them.
+        f"API discovery: When you need a Clayrune feature you haven't used "
+        f"before, do NOT guess endpoint names (e.g. /api/cron, /api/jobs). "
+        f"Grep server.py for `@app.route` to enumerate the real endpoints, "
+        f"or curl http://localhost:{port}/ and inspect the served HTML.",
     ]
 
 
@@ -7042,17 +7068,52 @@ def _check_port_conflict():
 
     Bypass: set MC_ALLOW_PORT_CONFLICT=1 if you genuinely need two MCs
     competing for the port (rare; almost always a misconfiguration).
+
+    Restart-aware bypass: if MC_RESTART_FROM_PID is set, this is the new
+    instance from a `/api/system/restart` re-exec. On Windows, os.execv
+    actually spawns a new process and exits the old one, so the old
+    process briefly still holds the port. Wait up to 15s for it to release
+    before declaring a true conflict.
     """
     import socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(('0.0.0.0', PORT))
-        sock.close()
+    def _try_bind():
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(('0.0.0.0', PORT))
+            s.close()
+            return True
+        except OSError:
+            try: s.close()
+            except Exception: pass
+            return False
+
+    if _try_bind():
         return  # Clean — port is free.
-    except OSError:
-        pass  # Port in use; identify and possibly abort.
+
+    # Restart re-exec window: the parent we just replaced may still be releasing
+    # the socket. Poll briefly before treating this as a real conflict.
+    restart_parent = os.environ.get('MC_RESTART_FROM_PID', '')
+    if restart_parent:
+        deadline = _time.time() + 15.0
+        while _time.time() < deadline:
+            _time.sleep(0.3)
+            if _try_bind():
+                # Clean — clear the marker so a subsequent restart starts fresh
+                # and doesn't inherit a stale value.
+                os.environ.pop('MC_RESTART_FROM_PID', None)
+                print(f"[port-conflict] dying parent (PID {restart_parent}) released port {PORT}; continuing.", flush=True)
+                return
+        print(f"[port-conflict] waited 15s for parent PID {restart_parent} to release port {PORT}; falling through to conflict check.", flush=True)
 
     other_pids: list[str] = []
+    pid_details: dict[str, str] = {}
+    # TODO(linux/macos): when MC runs on POSIX, add equivalent diagnostic
+    # branches so the conflict message names what's holding the port:
+    #   Linux  → `ss -lntp 'sport = :<PORT>'`  (parses users:(("name",pid=N,...)))
+    #   macOS  → `lsof -i :<PORT> -P -n -sTCP:LISTEN`  (image name in column 1, PID in column 2)
+    # The restart flow itself already works on POSIX (close_fds + start_new_session),
+    # so this is purely UX — without it the abort message just says "port in use"
+    # with no PID list. Not urgent; only matters when the wait-15s bypass fails.
     if sys.platform == 'win32':
         try:
             result = subprocess.run(
@@ -7065,6 +7126,21 @@ def _check_port_conflict():
                         pids.add(parts[-1])
             my_pid = str(os.getpid())
             other_pids = sorted(pids - {my_pid})
+            # Identify each holder by image name + parent PID. Helps tell
+            # whether we're fighting an orphan child process (e.g. claude.exe
+            # that inherited our socket FD) vs an unrelated MC instance.
+            for pid in other_pids:
+                try:
+                    out = subprocess.run(
+                        ['tasklist', '/FI', f'PID eq {pid}', '/FO', 'CSV', '/NH'],
+                        capture_output=True, text=True, timeout=5)
+                    line = out.stdout.strip().splitlines()[0] if out.stdout.strip() else ''
+                    if line and ',' in line:
+                        # CSV: "image","pid","sessionname","session#","memusage"
+                        image = line.split(',')[0].strip().strip('"')
+                        pid_details[pid] = image
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -7075,7 +7151,11 @@ def _check_port_conflict():
         "=" * 72,
     ]
     if other_pids:
-        msg_lines.append(f"  Held by PID(s): {', '.join(other_pids)}")
+        if pid_details:
+            described = [f"{p} ({pid_details.get(p, '?')})" for p in other_pids]
+            msg_lines.append(f"  Held by PID(s): {', '.join(described)}")
+        else:
+            msg_lines.append(f"  Held by PID(s): {', '.join(other_pids)}")
     msg_lines += [
         "",
         "  Another MC is likely already running (e.g. via Tauri).",
@@ -8147,6 +8227,252 @@ def mc_callback():
         f"<p style='font-size:12px;color:#9ca3af'>Code: {result.get('error', 'unknown')}</p>",
         status=400, accent="#ef4444",
     )
+
+
+# ── Server restart (remote-triggered, graceful) ──────────────────────────────
+# Lets the user restart the Mission Control Flask process from the dashboard
+# (including over the clayrune.io tunnel from a phone or remote PC) so they can
+# pick up new code/config without needing physical access. Two endpoints:
+#   GET  /api/system/restart/status — list active sessions/hiveminds that would
+#                                      be killed by a restart (UI shows a warning).
+#   POST /api/system/restart        — re-check empty state server-side, then
+#                                      stop everything cleanly and re-exec.
+# Auth model: same as the rest of the app. Localhost is unauthenticated by
+# design (your own machine); tunneled requests have already passed CF Access OTP.
+RESTART_LOG_PATH = _DATA_ROOT / 'data' / 'restart_log.json'
+_LAST_RESTART_TIME = 0.0
+_RESTART_RATE_LIMIT_SECONDS = 30
+# Set once at module load. Changes every time the Python process is replaced,
+# so any dashboard polling /api/system/heartbeat can detect a restart by
+# comparing this against its cached value.
+_SERVER_STARTED_AT = datetime.now(timezone.utc).isoformat()
+_SERVER_STARTED_MONOTONIC = _time.time()
+
+
+@app.route('/api/system/heartbeat')
+def system_heartbeat():
+    """Tiny endpoint dashboards poll to detect that the server has restarted.
+
+    Cheap to call (no DB / disk read). The frontend caches `started_at` from
+    its first response and reloads the page if a later response shows a
+    different value — that means the Python process has been replaced (e.g.
+    by /api/system/restart) and any in-memory session state the dashboard
+    was tracking is stale.
+    """
+    return jsonify({
+        'started_at': _SERVER_STARTED_AT,
+        'pid': os.getpid(),
+        'uptime_seconds': int(_time.time() - _SERVER_STARTED_MONOTONIC),
+    })
+
+
+def _get_active_restart_blockers():
+    """Snapshot of sessions/hiveminds that would be killed if we restarted now.
+
+    "Active" = a live agent turn (status='running') or an active hivemind
+    orchestrator. Idle/completed/error/stopped sessions are NOT blockers — their
+    process is either dead or just waiting on stdin and is safe to drop.
+    """
+    project_names = {p['id']: p.get('name', p['id']) for p in load_projects()}
+    active_sessions = []
+    for sid, sess in list(agent_sessions.items()):
+        if sess.get('status') != 'running':
+            continue
+        pid = sess.get('project_id', '')
+        task = (sess.get('task') or '').strip()
+        active_sessions.append({
+            'session_id': sid,
+            'project_id': pid,
+            'project_name': project_names.get(pid, pid),
+            'status': sess.get('status'),
+            'task_preview': (task[:80] + '…') if len(task) > 80 else task,
+            'started_at': sess.get('started_at'),
+        })
+    active_hiveminds = []
+    with _hivemind_lock:
+        for hm_id, hm in list(_hivemind_sessions.items()):
+            if hm.get('status') != 'active':
+                continue
+            workers = hm.get('worker_sessions', []) or []
+            active_hiveminds.append({
+                'hivemind_id': hm_id,
+                'project_id': hm.get('project_id', ''),
+                'project_name': project_names.get(hm.get('project_id', ''), hm.get('project_id', '')),
+                'title': hm.get('title') or hm.get('goal', '')[:80],
+                'workers_running': len(workers),
+            })
+    return {'active_sessions': active_sessions, 'active_hiveminds': active_hiveminds}
+
+
+def _append_restart_log(entry):
+    try:
+        log = []
+        if RESTART_LOG_PATH.exists():
+            try:
+                log = json.loads(RESTART_LOG_PATH.read_text(encoding='utf-8'))
+            except Exception:
+                log = []
+        log.append(entry)
+        # Keep last 200 entries to bound the file
+        if len(log) > 200:
+            log = log[-200:]
+        RESTART_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        RESTART_LOG_PATH.write_text(json.dumps(log, indent=2), encoding='utf-8')
+    except Exception as e:
+        print(f"[restart] failed to append log: {e}")
+
+
+def _stop_all_sessions_for_restart(grace_seconds=3.0):
+    """Best-effort graceful stop of every tracked session before re-exec.
+
+    Iterates agent_sessions, sends graceful stop (Mode B closes stdin; both modes
+    schedule a background kill of the proc tree). Then waits up to grace_seconds
+    for processes to exit before letting the re-exec orphan/kill the rest.
+    """
+    procs = []
+    for sid, sess in list(agent_sessions.items()):
+        try:
+            mgr = get_manager_for_session(sid)
+            if mgr is None:
+                # Fall back to a per-project lookup; if still not found, just touch the dict directly.
+                pid = sess.get('project_id', '')
+                mgr = get_manager(pid) if pid else None
+            if mgr is not None:
+                with mgr.lock:
+                    if sess.get('status') in ('running', 'idle', 'error'):
+                        proc = _stop_session(sess, sid)
+                        if proc is not None:
+                            procs.append(proc)
+            else:
+                # No manager — direct stop without lock as a last resort.
+                if sess.get('status') in ('running', 'idle', 'error'):
+                    proc = _stop_session(sess, sid)
+                    if proc is not None:
+                        procs.append(proc)
+        except Exception as e:
+            print(f"[restart] graceful stop failed for {sid}: {e}")
+
+    # Schedule background kills (existing helper handles tree-kill + wait).
+    for proc in procs:
+        _kill_proc_background(proc)
+
+    # Brief wait so the children get a chance to die before exec replaces us.
+    deadline = _time.time() + grace_seconds
+    while _time.time() < deadline:
+        alive = [p for p in procs if p.poll() is None]
+        if not alive:
+            break
+        _time.sleep(0.1)
+
+
+def _perform_server_restart_async(audit_entry):
+    """Run after the HTTP response flushes: stop everything, then re-exec.
+
+    Re-exec replaces the current Python process in place. Same PID, fresh
+    interpreter — picks up code changes on disk. Open SSE streams drop, the
+    frontend's polling overlay reconnects when /api/projects starts answering
+    again, and the localStorage open-modals snapshot restores the conversation
+    layout.
+    """
+    def _do_restart():
+        _time.sleep(0.4)  # let the HTTP 202 actually reach the client
+        try:
+            _stop_all_sessions_for_restart()
+        except Exception as e:
+            print(f"[restart] stop-all failed (continuing anyway): {e}")
+        try:
+            _append_restart_log(audit_entry)
+        except Exception:
+            pass
+        print("[restart] spawning fresh server process and exiting old one")
+        # Use subprocess.Popen instead of os.execv. On Windows execv is
+        # implemented as spawn-new-then-exit-old AND the new process inherits
+        # open handles (including the listening socket). Worse, any child
+        # processes we spawned (Mode B agents, terminal sessions) ALSO hold
+        # that socket FD — so the port stays bound until every descendant
+        # dies, which can be longer than the new instance is willing to wait.
+        # A fresh subprocess.Popen with close_fds=True starts clean.
+        new_env = os.environ.copy()
+        new_env['MC_RESTART_FROM_PID'] = str(os.getpid())
+        try:
+            popen_kwargs = {
+                'env': new_env,
+                'cwd': os.getcwd(),
+                'close_fds': True,
+            }
+            if sys.platform == 'win32':
+                # DETACHED_PROCESS so it survives our exit; CREATE_NEW_PROCESS_GROUP
+                # so Ctrl-C in the old terminal doesn't propagate. CREATE_NEW_CONSOLE
+                # gives it a visible window if launched from one (matches user expectation).
+                popen_kwargs['creationflags'] = (
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    | subprocess.CREATE_NEW_CONSOLE
+                )
+            else:
+                popen_kwargs['start_new_session'] = True
+                # TODO(linux/macos): once the parent exits, the child's stdout/stderr
+                # are wired to the now-closed terminal so log output disappears.
+                # Redirect to a rotating file (e.g. data/server.log) here:
+                #   logf = open(_DATA_ROOT / 'data' / 'server.log', 'ab')
+                #   popen_kwargs['stdout'] = logf
+                #   popen_kwargs['stderr'] = subprocess.STDOUT
+                # Skipped today because MC is Windows-only in practice and the
+                # CREATE_NEW_CONSOLE branch above gives Windows users a visible window.
+            subprocess.Popen([sys.executable] + sys.argv, **popen_kwargs)
+        except Exception as e:
+            print(f"[restart] failed to spawn new instance: {e}")
+            os._exit(1)
+        # Give the spawn ~250ms to get past its own startup before we exit and
+        # release the listening socket. (The new instance's port-conflict
+        # bypass will keep waiting beyond that if needed.)
+        _time.sleep(0.25)
+        os._exit(0)
+    threading.Thread(target=_do_restart, daemon=True).start()
+
+
+@app.route('/api/system/restart/status')
+def system_restart_status():
+    """Return what's currently active so the UI can warn before restarting."""
+    return jsonify(_get_active_restart_blockers())
+
+
+@app.route('/api/system/restart', methods=['POST'])
+def system_restart():
+    """Restart the Mission Control server process.
+
+    Body: {"confirmed": true, "force": bool}. We always re-check active state
+    on the server to close the GET → POST race window (a cron or hivemind
+    could have spawned a fresh session in between). If active and force is
+    falsy, return 409 with the live blocker list so the UI can re-prompt.
+    """
+    global _LAST_RESTART_TIME
+    data = request.get_json(silent=True) or {}
+    if not data.get('confirmed'):
+        return jsonify({'error': 'confirmation required (set "confirmed": true)'}), 400
+
+    now = _time.time()
+    if now - _LAST_RESTART_TIME < _RESTART_RATE_LIMIT_SECONDS:
+        wait = int(_RESTART_RATE_LIMIT_SECONDS - (now - _LAST_RESTART_TIME))
+        return jsonify({'error': f'restart was triggered recently; try again in {wait}s'}), 429
+
+    blockers = _get_active_restart_blockers()
+    if (blockers['active_sessions'] or blockers['active_hiveminds']) and not data.get('force'):
+        return jsonify({
+            'error': 'active flows present; stop them or pass "force": true',
+            **blockers,
+        }), 409
+
+    _LAST_RESTART_TIME = now
+    audit_entry = {
+        'ts': datetime.now(timezone.utc).isoformat(),
+        'source_ip': request.remote_addr or '',
+        'user_agent': request.headers.get('User-Agent', ''),
+        'tunneled': _is_cf_tunneled_request(),
+        'blockers_at_request': blockers,
+        'forced': bool(data.get('force')),
+    }
+    _perform_server_restart_async(audit_entry)
+    return jsonify({'ok': True, 'restarting': True}), 202
 
 
 if __name__ == '__main__':

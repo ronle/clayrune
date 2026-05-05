@@ -1540,7 +1540,7 @@
       font-size: 11px !important; color: var(--text-faint);
     }
 
-    /* Bottom tab bar — 5 slots, center FAB. Compact (~52px tall incl. FAB lift) */
+    /* Bottom tab bar — 5 slots, FAB centered. Compact (~52px tall incl. FAB lift) */
     .bottom-tab-bar {
       display: grid !important; grid-template-columns: repeat(5, 1fr);
       padding: 4px 8px 6px;
@@ -3223,7 +3223,9 @@
   </div>
 </div>
 
-<!-- Bottom Tab Bar (mobile) — 5 slots, center FAB -->
+<!-- Bottom Tab Bar (mobile) — 5 slots: Home | Backlog | + FAB | Scheduler | Settings.
+     Activity (Processes view) removed 2026-05-04: not usable on mobile; still
+     reachable from desktop sidebar. -->
 <div class="bottom-tab-bar" id="bottom-tab-bar">
   <div class="bottom-tab-item active" data-nav="dashboard" onclick="sidebarNav('dashboard')">
     <span class="bti-icon">&#x1F3E0;</span>Home
@@ -3234,8 +3236,8 @@
   <div class="bottom-tab-item fab" data-nav="new" onclick="openNewProjectForm()" title="New project">
     <span class="bti-icon">+</span>New
   </div>
-  <div class="bottom-tab-item" data-nav="processes" onclick="sidebarNav('processes')">
-    <span class="bti-icon">&#x1F4EC;</span>Activity
+  <div class="bottom-tab-item" data-nav="scheduler" onclick="sidebarNav('scheduler')">
+    <span class="bti-icon">&#x23F1;</span>Scheduler
   </div>
   <div class="bottom-tab-item" data-nav="settings" onclick="sidebarNav('settings')">
     <span class="bti-icon">&#x2699;</span>Settings
@@ -4068,6 +4070,59 @@ const openModals = new Map();   // modalId -> { projectId, element, minimized, z
 let focusedModalId = null;
 let nextModalZ = 201;
 
+// ── Persistent modal prefs (per-project size+zoom) and open-list snapshot ───
+// mc_modal_prefs: { [projectId]: { width, height, zoom } } — survives reboot,
+//   applied every time a project modal is opened.
+// mc_open_modals: [ { projectId, left, top, minimized } ] — snapshot of which
+//   project modals are open and where, restored once on page load.
+function _loadModalPrefs() {
+  try { return JSON.parse(localStorage.getItem('mc_modal_prefs') || '{}'); }
+  catch { return {}; }
+}
+function _saveModalPrefs(prefs) {
+  try { localStorage.setItem('mc_modal_prefs', JSON.stringify(prefs)); } catch {}
+}
+function _getModalPref(projectId) {
+  const all = _loadModalPrefs();
+  return all[projectId] || null;
+}
+let _modalPrefSaveTimer = null;
+let _modalPrefPending = null; // latest in-memory prefs object awaiting flush
+function _flushModalPrefs() {
+  if (_modalPrefSaveTimer) { clearTimeout(_modalPrefSaveTimer); _modalPrefSaveTimer = null; }
+  if (_modalPrefPending) { _saveModalPrefs(_modalPrefPending); _modalPrefPending = null; }
+}
+function _setModalPref(projectId, patch) {
+  if (!projectId || projectId.startsWith('__')) return;
+  if (_isMobileDevice || window.innerWidth <= 960) return; // mobile is full-screen, skip
+  if (!_modalPrefPending) _modalPrefPending = _loadModalPrefs();
+  _modalPrefPending[projectId] = Object.assign({}, _modalPrefPending[projectId] || {}, patch);
+  // Debounce writes during continuous resize/scroll-zoom
+  clearTimeout(_modalPrefSaveTimer);
+  _modalPrefSaveTimer = setTimeout(_flushModalPrefs, 250);
+}
+
+function _saveOpenModalsSnapshot() {
+  if (_isMobileDevice || window.innerWidth <= 960) return; // mobile: don't persist
+  const list = [];
+  for (const [modalId, entry] of openModals) {
+    // Only persist project modals (synthetic IDs like __terminal_*, __hivemind_* are transient)
+    if (!entry.projectId || modalId.startsWith('__')) continue;
+    const r = entry.element.getBoundingClientRect();
+    list.push({
+      projectId: entry.projectId,
+      left: Math.round(r.left),
+      top: Math.round(r.top),
+      minimized: !!entry.minimized,
+    });
+  }
+  try { localStorage.setItem('mc_open_modals', JSON.stringify(list)); } catch {}
+}
+function _loadOpenModalsSnapshot() {
+  try { return JSON.parse(localStorage.getItem('mc_open_modals') || '[]'); }
+  catch { return []; }
+}
+
 function getStatusColor(status) {
   const map = { active: 'var(--green)', blocked: 'var(--red)', waiting: 'var(--amber)', parked: 'var(--text-faint)' };
   return map[status] || 'var(--text-faint)';
@@ -4098,7 +4153,7 @@ function focusModal(modalId) {
   focusedModalId = modalId;
 }
 
-function openProjectModal(projectId) {
+function openProjectModal(projectId, restoreState) {
   const p = allProjects.find(x => x.id === projectId);
   if (!p) return;
 
@@ -4127,12 +4182,34 @@ function openProjectModal(projectId) {
   win.style.zIndex = z;
   openModals.set(projectId, { projectId, element: win, minimized: false, zIndex: z });
 
-  centerModalElement(win);
-  focusModal(projectId);
+  // Apply persistent per-project prefs (size + zoom) before positioning
+  const pref = (!_isMobileDevice && window.innerWidth > 960) ? _getModalPref(projectId) : null;
+  if (pref && pref.width)  content.style.width  = Math.min(pref.width,  window.innerWidth)  + 'px';
+  if (pref && pref.height) content.style.height = Math.min(pref.height, window.innerHeight) + 'px';
+  if (pref && pref.zoom) {
+    modalZoomLevels[projectId] = pref.zoom;
+    applyModalZoom(win, pref.zoom);
+  }
+
+  // Position: restoreState (refresh/restore-on-load) wins; else center
+  if (restoreState && typeof restoreState.left === 'number' && !_isMobileDevice && window.innerWidth > 960) {
+    const w = win.offsetWidth, h = win.offsetHeight;
+    win.style.left = Math.max(0, Math.min(window.innerWidth  - 100, restoreState.left)) + 'px';
+    win.style.top  = Math.max(0, Math.min(window.innerHeight - 50,  restoreState.top))  + 'px';
+  } else {
+    centerModalElement(win);
+  }
+
+  if (restoreState && restoreState.minimized) {
+    minimizeModal(projectId);
+  } else {
+    focusModal(projectId);
+  }
+  _saveOpenModalsSnapshot();
   Promise.all([fetchAgentStatus(projectId), fetchTerminalStatus(projectId)])
     .then(() => refreshModalById(projectId));
 
-  // Re-size agent chat when modal is resized
+  // Re-size agent chat when modal is resized + persist size pref
   new ResizeObserver(() => {
     const entry = openModals.get(projectId);
     if (!entry || entry.minimized) return;
@@ -4140,6 +4217,7 @@ function openProjectModal(projectId) {
     if (sid && (modalActiveTab[projectId] || 'agent') === 'agent') {
       sizeAgentChat(entry.element, sid);
     }
+    _setModalPref(projectId, { width: content.offsetWidth, height: content.offsetHeight });
   }).observe(content);
 }
 
@@ -4174,6 +4252,7 @@ function closeModalById(modalId) {
     }
     if (topId) focusModal(topId);
   }
+  _saveOpenModalsSnapshot();
 }
 
 function closeModal() {
@@ -4405,6 +4484,7 @@ function minimizeModal(modalId) {
     }
     if (topId) focusModal(topId);
   }
+  _saveOpenModalsSnapshot();
 }
 
 function showDesktop() {
@@ -4719,17 +4799,37 @@ function restoreModal(modalId) {
   const scrollBody = entry.element.querySelector('.modal-scroll-body');
   if (scrollBody && entry.savedScrollTop) scrollBody.scrollTop = entry.savedScrollTop;
   focusModal(modalId);
+  _saveOpenModalsSnapshot();
 }
 
 function sizeAgentChat(win, sessionId) {
+  // Re-apply user's saved input-area height first, before measuring chat space.
+  // refreshModalById has its own snapshot/restore, but partial refresh paths
+  // (output appends, status ticks) skip it — without this, those paths would
+  // leave the textarea at its default rows="1" height, making it visibly
+  // shrink back every few seconds after the user drags it taller.
+  const followupId = `agent-followup-${sessionId}`;
+  const savedH = textareaHeights[followupId];
+  if (savedH) {
+    const ta = document.getElementById(followupId);
+    if (ta && ta.style.height !== savedH) ta.style.height = savedH;
+  }
   const scrollBody = win.querySelector('.modal-scroll-body');
   const chat = win.querySelector('.agent-chat');
   const out = document.getElementById(`agent-output-${sessionId}`);
   // Capture pinned state BEFORE the resize so we don't snap a scrolled-up user
   // back to the bottom every time the modal refreshes. A freshly-mounted output
   // (no `scrollInitialized` flag) always pins so the chat opens at the bottom.
+  // For the resize re-pin we use a STRICT tolerance (≤8px). The 80px window
+  // _isAgentOutputPinned uses is fine for "should new SSE lines auto-scroll",
+  // but on a resize re-pin it would snap a user reading 30-70px above the
+  // bottom all the way down, making the visible text appear to jump up by that
+  // gap every few seconds (e.g. after dragging the input area taller).
   const freshMount = out && !out.dataset.scrollInitialized;
   const wasPinned = out ? (freshMount || _isAgentOutputPinned(out)) : true;
+  const wasStrictlyAtBottom = out
+    ? (freshMount || (out.scrollHeight - out.scrollTop - out.clientHeight) <= 8)
+    : true;
   if (!scrollBody || !chat) return;
   scrollBody.style.overflow = 'hidden';
   // Constrain the tab content and agent panel to fill scroll body exactly
@@ -4759,6 +4859,30 @@ function sizeAgentChat(win, sessionId) {
   if (heightChanged) {
     chat.style.height = chatHeight + 'px';
   }
+  // Explicitly size .agent-output to fill whatever the chat-input section
+  // doesn't take. flex:1 alone wasn't reliably reflowing when the textarea's
+  // inline `style.height` changed (separator drag), which left the output at
+  // its old size and visually overlapped with the grown textarea until the
+  // next periodic refresh forced a layout — that snap was the "jump" the user
+  // saw. Setting it explicitly makes the geometry deterministic on every call.
+  const sep = chat.querySelector('.agent-chat-separator');
+  const chatInputEl = chat.querySelector('.agent-chat-input');
+  const sepH = sep ? sep.offsetHeight : 0;
+  const inputH = chatInputEl ? chatInputEl.offsetHeight : 0;
+  if (out) {
+    const desiredOutH = Math.max(40, chatHeight - sepH - inputH);
+    // Use setProperty with priority='important' so the explicit height beats
+    // any cached layout the browser might still be using from when the
+    // textarea was its smaller size. Plain inline assignment was visibly not
+    // taking effect during the drag in some cases (the textarea was overlapping
+    // the output until the next periodic sizeAgentChat refresh forced layout).
+    out.style.setProperty('height',     desiredOutH + 'px', 'important');
+    out.style.setProperty('max-height', desiredOutH + 'px', 'important');
+    out.style.setProperty('flex',       '0 0 ' + desiredOutH + 'px', 'important');
+    out.style.setProperty('min-height', '0', 'important');
+    out.style.setProperty('overflow-y', 'auto', 'important');
+  }
+  const outHeightChanged = heightChanged; // any chat resize implies output resize
   if (out) {
     if (freshMount) {
       out.scrollTop = out.scrollHeight;
@@ -4766,9 +4890,12 @@ function sizeAgentChat(win, sessionId) {
         out.scrollTop = out.scrollHeight;
         if (out.scrollHeight > 0) out.dataset.scrollInitialized = '1';
       });
-    } else if (heightChanged && wasPinned) {
-      // Only re-pin to bottom when the chat height actually changed; otherwise
-      // leave scrollTop alone so the user's reading position is stable.
+    } else if (outHeightChanged && wasStrictlyAtBottom) {
+      // Only re-pin to bottom when the chat height actually changed AND the
+      // user was already glued to the bottom (not just within the 80px lazy
+      // tolerance). Anything looser yanks a slightly-scrolled-up reader back
+      // to the bottom on every periodic refresh, which the user sees as the
+      // text jumping up by the gap they had scrolled.
       out.scrollTop = out.scrollHeight;
     }
   }
@@ -4831,7 +4958,9 @@ function refreshModalById(modalId) {
   let focusedId = null, selStart = 0, selEnd = 0;
   content.querySelectorAll('textarea, input[type="text"]').forEach(ta => {
     if (ta.id && ta.value) saved[ta.id] = ta.value;
-    if (ta.id && ta.tagName === 'TEXTAREA' && ta.offsetHeight > 50) {
+    // Capture any height above the CSS min-height (38px) so even a single-row
+    // user drag is preserved. A small buffer (40) avoids re-saving the default.
+    if (ta.id && ta.tagName === 'TEXTAREA' && ta.offsetHeight > 40) {
       textareaHeights[ta.id] = ta.offsetHeight + 'px';
     }
     if (ta === document.activeElement) {
@@ -6759,21 +6888,29 @@ function connectAgentStream(projectId, sessionId) {
     if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
     const cached = agentStatusCache[sessionId];
     if (cached && (cached.status === 'running' || cached.status === 'idle')) {
-      const retries = (sseRetryCount[sessionId] || 0) + 1;
-      sseRetryCount[sessionId] = retries;
-      if (retries <= 3) {
-        // Retry with increasing delay
-        setTimeout(() => connectAgentStream(projectId, sessionId), retries * 2000);
-      } else {
-        // Too many retries — server likely lost the session
-        cached.status = 'error';
-        const hist = agentHistory.find(h => h.sessionId === sessionId);
-        if (hist) hist.status = 'error';
-        delete sseRetryCount[sessionId];
-        refreshModal();
-        renderAgentConsole();
-        refreshSilent();
-      }
+      // Before the retry/error cascade, check whether the server has been
+      // restarted. If so, this dashboard's in-memory state is stale and the
+      // right move is to reload — not to mark the session as errored. This
+      // catches the case where the user restarted MC from another device
+      // (mobile) and this device was just observing.
+      _checkServerRestart().then(restarted => {
+        if (restarted) return; // _handleServerRestart already triggered the reload overlay
+        const retries = (sseRetryCount[sessionId] || 0) + 1;
+        sseRetryCount[sessionId] = retries;
+        if (retries <= 3) {
+          // Retry with increasing delay
+          setTimeout(() => connectAgentStream(projectId, sessionId), retries * 2000);
+        } else {
+          // Too many retries — server likely lost the session
+          cached.status = 'error';
+          const hist = agentHistory.find(h => h.sessionId === sessionId);
+          if (hist) hist.status = 'error';
+          delete sseRetryCount[sessionId];
+          refreshModal();
+          renderAgentConsole();
+          refreshSilent();
+        }
+      });
     }
   };
 }
@@ -10685,6 +10822,227 @@ async function createProject() {
 
 // ── Global Settings ──────────────────────────────────────────────────────────
 
+// ── Server-restart detection (for dashboards that didn't trigger the restart) ──
+// Any dashboard that sees its SSE drop or its periodic poll fail will probe
+// /api/system/heartbeat. If the server's `started_at` differs from what we
+// first saw, we know the Python process has been replaced and our in-memory
+// session state is stale — best to reload (the mc_open_modals snapshot
+// brings the conversations back).
+let _serverStartedAt = null;        // first-seen value
+let _restartHandlingInFlight = false;
+
+async function _checkServerRestart() {
+  try {
+    const res = await fetch(API_BASE + '/api/system/heartbeat', { cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    const seen = data.started_at;
+    if (!seen) return false;
+    if (_serverStartedAt === null) {
+      _serverStartedAt = seen;
+      return false;
+    }
+    if (seen !== _serverStartedAt) {
+      _handleServerRestart();
+      return true;
+    }
+    return false;
+  } catch {
+    // Heartbeat itself failed — server is genuinely down right now. Don't
+    // declare a restart yet; the caller's normal retry path will handle it.
+    return false;
+  }
+}
+
+function _handleServerRestart() {
+  if (_restartHandlingInFlight) return;
+  _restartHandlingInFlight = true;
+  // Reuse the same overlay+reload flow the device that triggered the restart
+  // uses. It already flushes the open-modals snapshot synchronously, so the
+  // conversation layout is restored after the reload.
+  try { showRestartingOverlay(); }
+  catch (e) {
+    // If the overlay function isn't available for some reason, fall back to
+    // a hard reload after a short delay so the page picks up the new server.
+    setTimeout(() => window.location.reload(), 1500);
+  }
+}
+
+// Seed the cached start time on first page load. Done lazily so we don't
+// add another startup blocker — best-effort fire-and-forget.
+setTimeout(() => { _checkServerRestart(); }, 1500);
+
+// ── Restart Mission Control (with active-flow warning + reconnect overlay) ──
+// User triggers from Settings → "Restart server". We GET the live blocker list
+// first, render a warning modal, and only POST to /api/system/restart after
+// explicit confirmation. The frontend then shows a "Restarting..." overlay and
+// polls /api/projects until it 200s, at which point the page reloads — the
+// existing mc_open_modals localStorage snapshot brings back the conversations.
+async function openRestartConfirmation() {
+  let status;
+  try {
+    const res = await fetch(API_BASE + '/api/system/restart/status');
+    if (!res.ok) throw new Error('status ' + res.status);
+    status = await res.json();
+  } catch (e) {
+    showToast('Could not load active-flow list: ' + e.message, 5000);
+    return;
+  }
+
+  const sessions = status.active_sessions || [];
+  const hiveminds = status.active_hiveminds || [];
+  const hasActive = sessions.length > 0 || hiveminds.length > 0;
+
+  // Build the warning content
+  let listHTML = '';
+  if (hasActive) {
+    listHTML += '<div style="background:var(--red-dim,#3a1d1d);border:1px solid var(--red,#e35858);border-radius:6px;padding:12px 14px;margin:10px 0">';
+    listHTML += '<div style="font-weight:600;color:var(--red-text,#ffd2d2);margin-bottom:8px">' +
+      sessions.length + ' active session' + (sessions.length === 1 ? '' : 's') +
+      (hiveminds.length ? ' · ' + hiveminds.length + ' active hivemind' + (hiveminds.length === 1 ? '' : 's') : '') +
+      '</div>';
+    listHTML += '<div style="font-size:12px;color:var(--text)">';
+    for (const s of sessions) {
+      const taskBit = s.task_preview ? ' — "' + esc(s.task_preview) + '"' : '';
+      listHTML += '<div style="padding:3px 0">• <strong>' + esc(s.project_name) + '</strong>' + taskBit + '</div>';
+    }
+    for (const h of hiveminds) {
+      listHTML += '<div style="padding:3px 0">• <strong>Hivemind on ' + esc(h.project_name) + '</strong>' +
+        (h.title ? ' — "' + esc(h.title) + '"' : '') +
+        ' (' + h.workers_running + ' worker' + (h.workers_running === 1 ? '' : 's') + ')</div>';
+    }
+    listHTML += '</div></div>';
+  }
+
+  const modalId = '__restart_confirm';
+  if (openModals.has(modalId)) { closeModalById(modalId); }
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 540);
+  content.style.height = 'auto';
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">Restart Mission Control</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:8px 28px 20px;color:var(--text);font-size:13px;line-height:1.55">
+      <p style="margin:6px 0 4px">This restarts the Mission Control server process so it picks up new code or config.</p>
+      <p style="margin:4px 0 8px;color:var(--text-dim);font-size:12px">Your open conversation modals will be restored automatically once the server is back.</p>
+      ${listHTML}
+      ${hasActive
+        ? '<p style="margin:10px 0 0;color:var(--text-dim);font-size:12px">The above flows will be stopped before the restart. Their progress so far is preserved on disk; they can be resumed afterward.</p>'
+        : '<p style="margin:10px 0 0;color:var(--text-dim);font-size:12px">No active sessions — restart is safe.</p>'}
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="closeModalById('${modalId}')">Cancel</button>
+        <button class="btn-dispatch" id="restart-go-btn" style="background:var(--red-dim,#5a2828);border-color:var(--red,#e35858);color:var(--red-text,#ffd2d2)" onclick="performRestart(${hasActive ? 'true' : 'false'})">${hasActive ? 'Stop all and restart' : 'Restart'}</button>
+      </div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+}
+
+async function performRestart(force) {
+  const btn = document.getElementById('restart-go-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting...'; }
+  let res;
+  try {
+    res = await fetch(API_BASE + '/api/system/restart', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ confirmed: true, force: !!force }),
+    });
+  } catch (e) {
+    // Network error usually means the server already started re-exec'ing — that's success, not failure.
+    closeModalById('__restart_confirm');
+    showRestartingOverlay();
+    return;
+  }
+
+  if (res.status === 202) {
+    closeModalById('__restart_confirm');
+    showRestartingOverlay();
+    return;
+  }
+
+  if (res.status === 409) {
+    // Race: a new session started after our GET. Refresh the modal with the current blockers.
+    const data = await res.json().catch(() => ({}));
+    closeModalById('__restart_confirm');
+    showToast('New activity started — please confirm again', 4000);
+    setTimeout(() => openRestartConfirmation(), 300);
+    return;
+  }
+
+  if (res.status === 429) {
+    const data = await res.json().catch(() => ({}));
+    showToast(data.error || 'Restart rate-limited; try again shortly', 5000);
+    if (btn) { btn.disabled = false; btn.textContent = force ? 'Stop all and restart' : 'Restart'; }
+    return;
+  }
+
+  // Other failure
+  const data = await res.json().catch(() => ({}));
+  showToast('Restart failed: ' + (data.error || 'HTTP ' + res.status), 5000);
+  if (btn) { btn.disabled = false; btn.textContent = force ? 'Stop all and restart' : 'Restart'; }
+}
+
+function showRestartingOverlay() {
+  // Make sure the open-modals snapshot is flushed before we lose the connection,
+  // so the next page load can restore everything. _saveOpenModalsSnapshot is
+  // already debounced via storage events, but we call it synchronously here.
+  try { _saveOpenModalsSnapshot(); } catch {}
+  try { _flushModalPrefs && _flushModalPrefs(); } catch {}
+
+  const id = 'mc-restart-overlay';
+  if (document.getElementById(id)) return;
+  const overlay = document.createElement('div');
+  overlay.id = id;
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.65);' +
+    'display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)';
+  overlay.innerHTML =
+    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;' +
+    'padding:24px 32px;max-width:380px;text-align:center;color:var(--text);font-size:13px;line-height:1.55">' +
+    '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Restarting Mission Control...</div>' +
+    '<div id="mc-restart-overlay-status" style="color:var(--text-dim);font-size:12px">Waiting for the server to come back online.</div>' +
+    '<div style="margin-top:14px;display:flex;justify-content:center"><div class="mc-spinner" style="width:24px;height:24px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:mc-spin 0.8s linear infinite"></div></div>' +
+    '<style>@keyframes mc-spin{to{transform:rotate(360deg)}}</style>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  let attempts = 0;
+  const statusEl = document.getElementById('mc-restart-overlay-status');
+  const poll = async () => {
+    attempts += 1;
+    try {
+      const r = await fetch(API_BASE + '/api/projects', { cache: 'no-store' });
+      if (r.ok) {
+        if (statusEl) statusEl.textContent = 'Server is back. Reloading...';
+        setTimeout(() => window.location.reload(), 600);
+        return;
+      }
+    } catch (e) {
+      // expected during the gap
+    }
+    if (statusEl && attempts > 5) {
+      statusEl.textContent = 'Still waiting (' + attempts + 's)... if this hangs, you may need to start the server manually.';
+    }
+    setTimeout(poll, 1000);
+  };
+  // First check after a short delay so we don't hit the still-alive server pre-exec.
+  setTimeout(poll, 1200);
+}
+
 async function openSettings() {
   const modalId = '__settings';
   if (openModals.has(modalId)) {
@@ -10915,6 +11273,14 @@ async function _renderSettings() {
     </div>
 
     ${remoteAccessSettingsHTML()}
+
+    <div class="settings-section">
+      <div class="settings-section-title">Server</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Restart Mission Control</div><div class="settings-hint">Picks up new code or config without needing local access. Open conversations are restored after reconnect.</div></div>
+        <button class="btn-dispatch" style="background:var(--red-dim,#5a2828);border-color:var(--red,#e35858);color:var(--red-text,#ffd2d2)" onclick="openRestartConfirmation()">Restart server</button>
+      </div>
+    </div>
 
     <div class="settings-section">
       <div class="settings-section-title">Help</div>
@@ -12484,6 +12850,16 @@ if (feedCollapsed) {
 applyViewMode();
 
 fetchProjects().then(async () => {
+  // Restore previously-open project modals (refresh persistence).
+  // Skip on mobile: modals are full-screen there and bottom-tab nav assumes a clean slate.
+  if (!_isMobileDevice && window.innerWidth > 960) {
+    const snapshot = _loadOpenModalsSnapshot();
+    const knownIds = new Set(allProjects.map(p => p.id));
+    for (const s of snapshot) {
+      if (!knownIds.has(s.projectId)) continue; // project deleted
+      try { openProjectModal(s.projectId, s); } catch (e) { console.warn('restore modal failed', s.projectId, e); }
+    }
+  }
   // Restore any running/completed agent sessions into the console
   for (const p of allProjects) {
     if (p.project_path) await fetchAgentStatus(p.id);
@@ -12502,6 +12878,11 @@ setInterval(refreshScheduleBanner, 60000);
 
 // ── Fallback: poll for missed agent completions every 15s ───────────────────
 setInterval(async () => {
+  // Piggyback a server-restart check here so dashboards with no live SSE still
+  // notice a restart within ~15s. _checkServerRestart triggers the reload
+  // overlay if the server's start time changed since first load.
+  const restarted = await _checkServerRestart();
+  if (restarted) return; // we're about to reload; don't bother with the rest
   const running = agentHistory.filter(h => h.status === 'running' || h.status === 'idle');
   if (running.length === 0) return;
   const checked = new Set();
@@ -12554,6 +12935,10 @@ document.getElementById('modal-layer').addEventListener('input', e => {
 
 // ── Cleanup running agents on page close ────────────────────────────────────
 window.addEventListener('beforeunload', () => {
+  // Persist open-modal snapshot one last time so the next load can restore it
+  try { _saveOpenModalsSnapshot(); } catch {}
+  // Flush any pending pref save
+  try { _flushModalPrefs(); } catch {}
   // Close all SSE connections — processes keep running server-side
   for (const sid in agentEventSources) {
     try { agentEventSources[sid].close(); } catch {}
@@ -12591,6 +12976,7 @@ function modalDragEnd() {
   if (!modalDrag) return;
   modalDrag.element.querySelector('.modal-header.dragging')?.classList.remove('dragging');
   modalDrag = null;
+  _saveOpenModalsSnapshot();
 }
 
 document.getElementById('modal-layer').addEventListener('mousedown', (e) => {
@@ -12621,7 +13007,10 @@ function separatorDragStart(y, target) {
   const textarea = handle.nextElementSibling?.querySelector('.agent-task-input');
   if (!textarea || !chat) return false;
   const chatH = chat.offsetHeight;
-  chatResize = { textarea, chat, startY: y, origH: textarea.offsetHeight, chatH };
+  // Capture the modal+session so we can re-run sizeAgentChat live during the drag.
+  const win = chat.closest('.modal-window');
+  const sessionId = textarea.id ? textarea.id.replace(/^agent-followup-/, '') : null;
+  chatResize = { textarea, chat, win, sessionId, startY: y, origH: textarea.offsetHeight, chatH };
   document.body.style.cursor = 'ns-resize';
   document.body.style.userSelect = 'none';
   return true;
@@ -12633,12 +13022,33 @@ function separatorDragMove(y) {
   const maxH = chatResize.chatH - 80;  // leave at least 80px for output + separator
   const newH = Math.max(38, Math.min(maxH, chatResize.origH + dy));
   chatResize.textarea.style.height = newH + 'px';
+  // Keep the persisted cache in lock-step with the live drag so any refresh
+  // that fires mid-drag (SSE event, status update, etc.) restores the
+  // in-progress height instead of snapping back to the default rows="1".
+  if (chatResize.textarea.id) {
+    textareaHeights[chatResize.textarea.id] = newH + 'px';
+  }
+  // Re-run the chat geometry pass live. Without this the flex children only
+  // recompute when the next periodic refresh fires (SSE tick, status update),
+  // which the user sees as the conversation suddenly jumping up by the amount
+  // they grew the textarea — the deferred layout finally catching up.
+  if (chatResize.win && chatResize.sessionId) {
+    sizeAgentChat(chatResize.win, chatResize.sessionId);
+  }
 }
 
 function separatorDragEnd() {
   if (!chatResize) return;
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
+  // Persist the user's drag explicitly so it survives every refresh path,
+  // not just refreshModalById's snapshot/restore cycle. Keyed by textarea id
+  // (which encodes the session id), shared with refreshModalById's restore loop.
+  const ta = chatResize.textarea;
+  if (ta && ta.id) {
+    const h = ta.style.height || (ta.offsetHeight + 'px');
+    textareaHeights[ta.id] = h;
+  }
   chatResize = null;
 }
 
@@ -12764,6 +13174,7 @@ document.getElementById('modal-layer').addEventListener('wheel', (e) => {
   const delta = e.deltaY > 0 ? -1 : 1;
   modalZoomLevels[modalId] = Math.max(8, Math.min(24, modalZoomLevels[modalId] + delta));
   applyModalZoom(modal, modalZoomLevels[modalId]);
+  _setModalPref(modalId, { zoom: modalZoomLevels[modalId] });
 }, { passive: false });
 </script>
 </body>
