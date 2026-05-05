@@ -1495,6 +1495,12 @@ def _build_agent_context(project, incognito=False):
         "IMPORTANT — Questions: When you need to ask the user questions, use the AskUserQuestion tool. "
         "Mission Control will intercept the questions and present them as an interactive form. "
         "The user's answers will be sent as a follow-up message to resume the conversation.",
+        "Diagrams: Clayrune renders ```mermaid fenced blocks INLINE in your chat response — "
+        "the user sees an actual rendered diagram (hand-drawn style, click to enlarge) right in the "
+        "agent panel, not raw text. PREFER putting Mermaid diagrams directly in your assistant "
+        "response over writing them to a separate .md file, unless the user explicitly asks for a file. "
+        "Supported: flowchart, sequence, state, class, ER, gantt, journey, pie. The Clayrune theme "
+        "(cream nodes, orange borders, clay-brown text) is applied automatically — don't override it.",
         f"Backlog: This project has a Mission Control backlog (prioritized task list with notes, "
         f"attachments, and status). When the user says \"backlog\", \"backlog items\", \"the list\", "
         f"or similar, they mean THIS list — do NOT grep the filesystem. "
