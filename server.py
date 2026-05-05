@@ -1408,6 +1408,47 @@ def agent_upload_image():
 
 # ── Agent endpoints ──────────────────────────────────────────────────────────
 
+def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
+    """Universal Clayrune-aware behaviors that apply to EVERY agent —
+    regular project agents, hivemind workers, future agent types.
+
+    THIS IS THE CANONICAL PLACE for "things every agent should know about
+    how Clayrune works". Both `_build_agent_context()` and
+    `_hm_build_worker_context()` (and any future builders) splice the
+    output of this function into their system prompts.
+
+    Add a new universal capability HERE, not in the per-context builders.
+    Project-specific items (backlog API with project_id, memory paths,
+    workstream bus endpoints) belong in the per-context builders.
+
+    Each entry becomes one section of the agent's appended system prompt.
+    """
+    if port is None:
+        port = PORT
+    return [
+        # Plan mode hangs in headless Claude Code regardless of agent type.
+        "IMPORTANT — Plan Mode: Do NOT use EnterPlanMode or ExitPlanMode. "
+        "You are running headless without an interactive terminal, so plan "
+        "mode approval will hang indefinitely. Just describe your plan in a "
+        "text message and proceed directly with implementation.",
+
+        # Clayrune intercepts AskUserQuestion and renders it as an interactive form.
+        "Questions: When you need to ask the user, use the AskUserQuestion "
+        "tool. Clayrune intercepts it and presents an interactive form; "
+        "answers come back as a follow-up message.",
+
+        # Mermaid blocks render inline in the chat panel.
+        "Diagrams: Clayrune renders ```mermaid fenced blocks INLINE in your "
+        "chat response — the user sees a rendered diagram (hand-drawn style, "
+        "click to enlarge), NOT raw text. PREFER putting Mermaid diagrams "
+        "directly in your assistant response over writing them to a separate "
+        "file, unless the user explicitly asks for a file. Supported types: "
+        "flowchart, sequence, state, class, ER, gantt, journey, pie. The "
+        "Clayrune theme (cream nodes, orange borders, clay-brown text) is "
+        "applied automatically — do not override it.",
+    ]
+
+
 def _build_agent_context(project, incognito=False):
     """Build system prompt context for the agent.
 
@@ -1487,20 +1528,9 @@ def _build_agent_context(project, incognito=False):
         f"-d '{{\"pid\":PID_NUMBER,\"name\":\"Short description\",\"project_id\":\"{pid}\","
         f"\"command\":\"the command that was run\"}}' "
         f"— PID must be an integer. Do NOT skip this step.",
-        "IMPORTANT — Plan Mode: Do NOT use EnterPlanMode or ExitPlanMode. "
-        "You are running headless without an interactive terminal, so plan mode approval "
-        "will hang indefinitely. Instead, just describe your plan in a text message and "
-        "proceed directly with implementation. If the user asks you to plan, write your "
-        "plan as a text response, then start coding immediately.",
-        "IMPORTANT — Questions: When you need to ask the user questions, use the AskUserQuestion tool. "
-        "Mission Control will intercept the questions and present them as an interactive form. "
-        "The user's answers will be sent as a follow-up message to resume the conversation.",
-        "Diagrams: Clayrune renders ```mermaid fenced blocks INLINE in your chat response — "
-        "the user sees an actual rendered diagram (hand-drawn style, click to enlarge) right in the "
-        "agent panel, not raw text. PREFER putting Mermaid diagrams directly in your assistant "
-        "response over writing them to a separate .md file, unless the user explicitly asks for a file. "
-        "Supported: flowchart, sequence, state, class, ER, gantt, journey, pie. The Clayrune theme "
-        "(cream nodes, orange borders, clay-brown text) is applied automatically — don't override it.",
+        # Universal Clayrune awareness — see _clayrune_universal_capabilities().
+        # Add new universal entries THERE, not here.
+        *_clayrune_universal_capabilities(port=port),
         f"Backlog: This project has a Mission Control backlog (prioritized task list with notes, "
         f"attachments, and status). When the user says \"backlog\", \"backlog items\", \"the list\", "
         f"or similar, they mean THIS list — do NOT grep the filesystem. "
@@ -5008,6 +5038,10 @@ def _hm_build_worker_context(hivemind_id, ws_id):
         "   PHASE 2 — When done, submit a handoff document via the handoff endpoint, "
         "then mark your workstream complete. Do NOT skip Phase 2."
     )
+
+    # Universal Clayrune awareness — same source of truth as regular agents.
+    # See _clayrune_universal_capabilities().
+    parts.extend(_clayrune_universal_capabilities(port=port))
 
     return "\n\n".join(parts)
 
