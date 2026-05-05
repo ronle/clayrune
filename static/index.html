@@ -19,10 +19,53 @@
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
   mermaid.initialize({
     startOnLoad: false,
-    theme: 'default',
+    // 'handDrawn' uses Roughjs to give diagrams a sketchy, Excalidraw-ish
+    // feel instead of the boxy "Visio stencil" aesthetic of the default
+    // 'classic' look. Major readability + warmth upgrade for free.
+    look: 'handDrawn',
+    theme: 'base',
+    // Clayrune palette: brand orange + clay-brown + cream surfaces.
+    themeVariables: {
+      // Primary node fill + text
+      primaryColor: '#fdf3e7',          // soft cream — clearly a node, low contrast
+      primaryTextColor: '#5c3a25',      // clay-brown text
+      primaryBorderColor: '#e8824a',    // brand orange border
+      // Secondary (used for highlighted/important nodes)
+      secondaryColor: '#fff1de',
+      secondaryBorderColor: '#c66a36',
+      // Tertiary (rare)
+      tertiaryColor: '#f6f1ea',
+      tertiaryBorderColor: '#8b5e3c',
+      // Edges + labels
+      lineColor: '#5c3a25',
+      arrowheadColor: '#5c3a25',
+      edgeLabelBackground: '#fdfbf6',
+      // Notes / clusters
+      noteBkgColor: '#fff5e6',
+      noteTextColor: '#5c3a25',
+      noteBorderColor: '#e8824a',
+      clusterBkg: 'rgba(232,130,74,0.08)',
+      clusterBorder: '#e8824a',
+      // Sequence-specific
+      actorBkg: '#fff1de',
+      actorBorder: '#e8824a',
+      actorTextColor: '#5c3a25',
+      actorLineColor: '#5c3a25',
+      signalColor: '#5c3a25',
+      signalTextColor: '#5c3a25',
+      labelBoxBkgColor: '#fdf3e7',
+      labelBoxBorderColor: '#e8824a',
+      labelTextColor: '#5c3a25',
+      loopTextColor: '#5c3a25',
+      activationBkgColor: '#fff1de',
+      activationBorderColor: '#e8824a',
+      // Font — match the dashboard's body
+      fontFamily: 'Inter, -apple-system, system-ui, sans-serif',
+      fontSize: '14px',
+    },
     securityLevel: 'strict',
-    // ELK is significantly better than the default dagre at routing edges
-    // around nodes; for sequence/state diagrams it's ignored.
+    // ELK still beats dagre for non-trivial flowcharts. handDrawn look is
+    // applied on top regardless of layout engine.
     flowchart: { htmlLabels: true, useMaxWidth: true, defaultRenderer: 'elk' },
     sequence: { useMaxWidth: true, mirrorActors: false },
     state:    { useMaxWidth: true },
