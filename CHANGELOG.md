@@ -4,6 +4,155 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-06] — Hivemind global surface, trigger-aware run history, sizeAgentChat fix
+
+Three threads of work in one session.
+
+### Hivemind: global cross-project surface (replaces per-project tab)
+
+**Why**: Hivemind was tucked into a per-project modal tab. The cross-project comms / orchestration story is the differentiator that justifies a first-class surface, parallel to Backlog and Scheduler in the sidebar — not a tab inside a single project.
+
+**`static/index.html`**:
+
+- **Sidebar entry "Hivemind"** between Backlog and Scheduler (🐝 icon). `sidebarNav('hivemind')` → `openAllHiveminds()` → synthetic modal `__all_hivemind`.
+- **Cross-project list view** (`renderAllHiveminds`): status filter (Active / Paused / **Stale** / Completed / All), project filter (auto-populated from data), search box, count, **+ New Hivemind** action.
+- **Card per hivemind**: status pill, short ID hash (`#abc12345` so visually-identical titles in the same project are distinguishable), title, project badge (clickable → filter), updated-relative, pause/stop/resume controls. Below: a **planner/worker tree mini-viz** — orchestrator badge → trunk → row of workstream chips colored by status (✓ done, ● active, ⏳ blocked, ✖ failed, ○ pending). Stats row: workstreams / done / active / findings.
+- Click a card → existing `openHivemindDashboard()` detail modal (left untouched in this pass).
+- **Mobile bottom-tab bar**: Settings slot replaced with Hivemind. Settings remains reachable via the avatar tap on the mobile app bar (`mc-avatar-btn` already routed there).
+- **Per-project Hivemind tab REMOVED** from the modal tab strip (`validTabs` no longer includes `'hivemind'`; stale `modalActiveTab` values auto-migrate to `'agent'`). Replaced with two entries in the project's 3-dot menu, separated by a divider:
+  - **🐝 Hiveminds** → opens global view filtered to this project (status: All).
+  - **✨ Start Hivemind** → switches to Agent tab, opens a fresh session, **auto-dispatches** the setup prompt so the user lands directly in an active conversation (not a populated form). Earlier draft just filled the textarea; users mistook it for a misdirected new-session screen.
+
+**Stale heuristic**:
+
+- Frontend `_hmEffectiveStatus(hm)` in `static/index.html`: if `status === 'active' || 'paused'` and `updated_at > 24h` ago, render as **stale** (grey badge, separate filter option, **▶ Restart** control, tooltip explains: "Marked stale because no activity for >24h"). Keeps underlying status intact in the data — only display + filter behavior changes.
+- Server-side reconciliation (`server.py:_hm_reconcile_stale_on_startup`): one-shot pass at startup that transitions any `active` hivemind whose `updated_at > _HM_STALE_HOURS (24)` to `status='stale'` in the manifest on disk. Only touches `active` — `paused` is intentional idle. Prints `[hivemind-reconcile] marked N long-active hivemind(s) as 'stale' (>24h idle)` if any transitions happen.
+
+### Trigger-aware run history (scheduler + hivemind)
+
+**Why**: scheduled / hivemind-spawned runs were invisible after restart — the live conversation context disappeared, the agent log entries weren't tagged with what triggered them, and there was no surface that said "show me the last 10 runs of *this* schedule" or "what did each worker actually do?". Server log persisted but wasn't navigable.
+
+**`server.py`**:
+
+- **Two new fields on every `agent_log` entry** (`_log_agent_completion`): `trigger_type` (`manual` | `schedule` | `hivemind_orchestrator` | `hivemind_worker`) and `trigger_id` (schedule_id, hivemind_id, or workstream_id depending on type). Default `'manual'`/`''` for direct user dispatch. Old entries continue to work (defaults applied at read time).
+- **`_dispatch_agent_internal` extended** with `trigger_type='manual'`, `trigger_id=''` kwargs that flow into the session dict; both Mode A and Mode B are stamped.
+- **Scheduler (`_scheduler_loop`)** now passes `trigger_type='schedule'`, `trigger_id=sched['id']` on every fire.
+- **Hivemind orchestrator + worker spawn paths** stamp `trigger_type='hivemind_orchestrator'`/`'hivemind_worker'` directly on the inline session dicts (those paths construct sessions inline, not via `_dispatch_agent_internal`).
+- **New endpoints**:
+  - `GET /api/schedule/<id>/runs?limit=` — agent_log entries where `trigger_type='schedule'` and `trigger_id=<id>`. Resolves project via the schedule record.
+  - `GET /api/hivemind/<id>/runs?role=&ws_id=&limit=` — falls back to existing `hivemind_id`/`hivemind_ws_id`/`hivemind_role` fields, so historical entries (predating this session) work too. `role=orchestrator` / `role=worker` filter by role; `ws_id` scopes to a specific workstream.
+  - `GET /api/project/<pid>/transcript/<csid>` — read-only parsed transcript (user msgs + assistant text + `[tool: X]` markers) for the read-only viewer. Uses new helper `_parse_transcript_messages` + `_find_transcript_file` (resolves Claude Code's `~/.claude/projects/<encoded-cwd>/<csid>.jsonl` with both `_`→`-` encoding variants).
+- **`POST /api/schedule/<id>/run-now`** — manually fire a schedule's task without disturbing its cadence. Updates `last_run` for visual feedback, leaves `next_run`/`enabled` alone (it's an *extra* dispatch on top of the normal cycle). Stamps `trigger_type='schedule'` so the resulting run shows up in the schedule's Runs panel.
+
+**`static/index.html`**:
+
+- **Shared transcript viewer modal** (`openTranscriptViewer`, `__transcript_<csid>` synthetic id): renders user/assistant blocks with role labels and inline `[tool: X]` markers. Cached per csid in `_transcriptCache`.
+- **Shared row renderer** (`renderRunRows`): timestamp · status icon · summary, click → transcript viewer.
+- **Scheduler card "Runs" button** + inline expanding panel (`toggleScheduleRuns`). Panel sits below the card with surface2 background.
+- **Scheduler "▶ Run Now" button** at the far right of the action row (kept apart from "Runs" by Edit + Del to avoid label collision). Also available in the Edit form (only when editing existing).
+- **Hivemind detail dashboard**:
+  - Workstream detail view: **Runs** button next to the workstream title → opens `__hm_runs_<hivemind>_worker_<ws>` modal listing runs for that workstream.
+  - Overview view: **Orchestrator Runs** button in the actions row → opens orchestrator-only runs modal.
+- New CSS for `.run-row`, `.transcript-msg`, `.transcript-tool`, `.runs-panel`, `.runs-empty`.
+
+### Fix: sizeAgentChat over-allocation cut Send button bottom border
+
+**Symptom**: Send button's bottom green border was clipped by ~6 px after some refresh cycles. Diagnostic showed `agent-output: h=521` when it should have been 500 — over-allocated by exactly 21 px, matching agent-chat's `scrollH − clientH` overflow.
+
+**Cause**: `sizeAgentChat` set `agent-output` to `flex: 0 0 <X>px !important` based on `desiredOutH = chatHeight − sepH − inputH`. `inputH` came from `chatInputEl.offsetHeight`, which returned the **squashed** value left over from the previous over-allocation (47 instead of natural 68). Each refresh fed back the smaller value → desiredOutH grew by 21 px → chat-input got squashed *more* → Send button's bottom border drifted past `agent-chat`'s `overflow: hidden` boundary. Classic measurement feedback loop.
+
+**Fix** (`static/index.html:sizeAgentChat`):
+
+1. Before measuring, `removeProperty` on output's `height` / `max-height` / `flex` / `min-height` so the natural-flex layout is what gets measured.
+2. Compute `inputH` as `Math.max(offsetHeight, scrollHeight, rowOffsetHeight + computedPadding, 80)`. Three independent signals plus an 80 px safety floor (well above natural ~68 px). Pathological measurement can no longer over-allocate the output area.
+
+### Rollback
+
+- **Hivemind elevation**: revert the `static/index.html` block search-anchored at `// ── Cross-project Hivemind view ──` plus the sidebar HTML entry, the `sidebarNav('hivemind')` branch, and the `_hm_reconcile_stale_on_startup` call in `server.py`'s `__main__`. Re-add the modal-tab `<div>Hivemind</div>` line and the `<div data-tab="hivemind">` panel in `modalContentHTML`.
+- **Run history**: drop `trigger_type`/`trigger_id` from `_log_agent_completion`, the kwargs from `_dispatch_agent_internal`, the scheduler/hivemind dispatch sites' stamping, and the four new endpoints (`schedule_runs`, `hivemind_runs`, `get_project_transcript`, `schedule_run_now`). Frontend: revert the Runs/Run Now buttons in `refreshScheduleList`, the buttons in `buildWsDetailHTML`/`buildHmOverviewHTML`, and the shared `openTranscriptViewer`/`renderRunRows`/`openHmRunsModal`/`runScheduleNow`/`toggleScheduleRuns` block.
+- **sizeAgentChat fix**: revert the `removeProperty` block + replace the multi-signal `inputH` calc with the original `chatInputEl.offsetHeight`. Note: doing this revives the Send-button-clipping feedback loop.
+
+---
+
+## [2026-05-05] — Sticky modals, conversation drag fix, and remote server restart
+
+Three threads of work shipped together (commit `5ce48eb`):
+
+### Modal persistence (`static/index.html`)
+
+- **`mc_open_modals` snapshot in `localStorage`**: stores `[{projectId, left, top, minimized}]` for every open project modal. Saved on open / close / minimize / restore / drag-end / `beforeunload`. Restored on page load right after `fetchProjects()` resolves. Skipped on mobile (full-screen modals + bottom-tab nav assume a clean slate). Filters out transient synthetic modals (`__terminal_*`, `__hivemind_*`, `__settings`, etc.).
+- **`mc_modal_prefs` in `localStorage`**: per-project `{width, height, zoom}`, applied every time the modal opens. Captured by the existing `ResizeObserver` on `.modal-content` (catches corner-drag + pinch-resize), the `Ctrl+wheel` zoom handler, and pinch-zoom. Debounced 250 ms; flushed on `beforeunload` and before any in-app restart so the snapshot survives.
+- Open-project modal helper extended with optional `restoreState` arg so startup restore (per-instance position) and Settings-sidebar reopen (centered, prefs only) can share the same code path.
+
+### Conversation input drag (`static/index.html`)
+
+- Dragging the agent chat input separator now resizes the output area in lock-step with the textarea instead of leaving it frozen and snapping a few seconds later (the snap was the deferred flex-layout finally catching up on the next periodic refresh).
+- `sizeAgentChat` now drives `agent-output` height **explicitly** via `style.setProperty('height', …, 'important')` + matching `flex: 0 0 <h>px`. CSS `flex: 1` alone wasn't reliably reflowing when the textarea's inline `style.height` changed; `!important` beats whatever cached layout the browser still had from when the textarea was its smaller size.
+- `separatorDragMove` now (a) updates `textareaHeights[id]` in lock-step with the live drag so any refresh that fires mid-drag restores the in-progress height instead of the default `rows="1"`, and (b) calls `sizeAgentChat` on every step so the layout follows the drag instead of waiting for the next periodic refresh.
+- The "scroll position jumps up" bug: tightened the resize re-pin tolerance to ≤8 px (vs. the lazy 80 px window `_isAgentOutputPinned` uses for new-line auto-scroll, which is left untouched). Without this, a user reading 30–70 px above the bottom got snapped to the absolute bottom every refresh, which they perceived as the text jumping up by the gap they had scrolled.
+
+### Remote server restart (`server.py`, `static/index.html`)
+
+The user can now restart the Mission Control Python process from any open dashboard, including mobile via the `clayrune.io` tunnel. Designed for the "I just deployed a fix and I'm on my phone — let me restart" workflow.
+
+**Endpoints** (`server.py`, just before `if __name__ == '__main__'`):
+
+- `GET /api/system/restart/status` — returns `{active_sessions: [...], active_hiveminds: [...]}` with project names and task previews. Powers the warning modal so the user sees what would be killed before confirming.
+- `POST /api/system/restart` body `{confirmed: true, force?: bool}`:
+  - 400 if not confirmed.
+  - 429 if a restart was triggered in the last 30 s (rate limit).
+  - **409 with the live blocker list** if anything is still active and `force` isn't set — closes the GET → POST race window where a cron or hivemind could spawn a fresh session between the user seeing the modal and clicking confirm.
+  - 202 + audit log + async restart thread otherwise.
+- `GET /api/system/heartbeat` — `{started_at, pid, uptime_seconds}`. Cheap probe (no disk/DB). Dashboards compare `started_at` against their first-seen value to detect a restart.
+
+**Restart thread** (`_perform_server_restart_async`):
+
+1. Sleeps 400 ms so the 202 actually reaches the client.
+2. Calls `_stop_all_sessions_for_restart` → graceful `_stop_session` (Mode B closes stdin, Mode A flips status), then `_kill_proc_background` (existing tree-kill helper).
+3. Waits up to 3 s for children to die.
+4. Appends to `data/restart_log.json` (capped at 200 entries; gitignored).
+5. **`subprocess.Popen([sys.executable] + sys.argv, close_fds=True, …)`** then `os._exit(0)`.
+
+**Why Popen instead of `os.execv`** — *the non-obvious lesson of this session.* On Windows, `os.execv` is implemented as spawn-new-then-exit-old AND the new process inherits open file handles. Worse, every child process we spawned (Mode B agents, terminal sessions) **also** held the listening socket FD via inheritance — so port 5199 stayed bound until every descendant died, well past the 15 s the new instance was willing to wait. Symptom: the new process bailed in `_check_port_conflict` saying `Held by PID(s): X (claude.exe)`. `subprocess.Popen([…], close_fds=True)` starts the new instance with a clean handle table, sidestepping the whole inheritance chain. POSIX uses `start_new_session=True`; Windows uses `CREATE_NEW_PROCESS_GROUP | CREATE_NEW_CONSOLE` so the new server gets a visible terminal window the user expects.
+
+**Restart-aware port-conflict bypass** (`_check_port_conflict`):
+
+- Before exec/spawn the parent sets `MC_RESTART_FROM_PID = <our_pid>` in env.
+- The new instance recognizes the marker and polls the port every 300 ms for up to 15 s, waiting for the dying parent to release it. Only after that timeout does it fall through to the hard-abort path.
+- Marker is cleared on successful bind so a normal subsequent launch (no in-progress restart) behaves like before.
+- Conflict-message diagnostics enriched on Windows: now lists image name next to PID (`Held by PID(s): 42836 (claude.exe)`). POSIX equivalents (`ss -lntp`, `lsof -i`) noted as TODOs in code.
+
+**Cross-dashboard restart detection** (`static/index.html`):
+
+- Every dashboard probes `/api/system/heartbeat` (`_checkServerRestart`) on SSE drop AND in the existing 15 s fallback poll. If `started_at` changed since first-seen, calls `_handleServerRestart` which reuses the same `showRestartingOverlay` flow as the device that triggered the restart.
+- Without this, dashboards that didn't trigger the restart would see SSE drop, retry 3×, mark sessions `'error'`, and the project tile turns "Blocked" (via `friendlyStatus` mapping `c==='error'` → `'stuck'`) until manual refresh.
+- The SSE error handler now probes the heartbeat **before** incrementing the retry counter. If a restart is detected, skips the retry/error cascade entirely and reloads instead of marking the session `'error'`.
+
+**UI** (`static/index.html`):
+
+- Settings → new **"Server"** section with a red **"Restart server"** button.
+- `openRestartConfirmation` fetches the live blocker list, builds a modal showing each active project + task preview + hivemind worker counts. Two-button confirm: "Cancel" / "Stop all and restart" (or just "Restart" if nothing's active).
+- `performRestart(force)` POSTs and handles 202 / 409 / 429. On 409 (race) the modal auto-reopens with refreshed state.
+- `showRestartingOverlay` flushes `mc_open_modals` + `mc_modal_prefs` synchronously before the page reload, draws a backdrop spinner overlay, polls `/api/projects` every 1 s starting at +1.2 s, reloads when it 200s. The modal-restore code then brings back open conversations and their positions/zoom from `localStorage`.
+
+**Auth model**: same as the rest of the app — localhost is unauthenticated by design (your machine), tunneled requests have already passed CF Access OTP. No new auth surface introduced.
+
+### System-prompt awareness (`server.py:_clayrune_universal_capabilities`)
+
+- New **Scheduler** entry: every agent now sees Clayrune's local `/api/schedules` endpoints in its preamble, framed as the long-term option next to the Anthropic `/schedule` skill (short, in-session). Picker rule: "if it should still fire after this conversation ends, use Clayrune's local scheduler; if it's a tight loop tied to current work, use `/schedule`."
+- New **API discovery** hint: tells agents to grep `server.py` for `@app.route` instead of guessing endpoint names like `/api/cron` or `/api/jobs`. Triggered by an observed failure mode where an agent probed five wrong paths before finding the real one.
+
+### Rollback
+
+The four pieces are independent enough to revert separately:
+
+- **Modal persistence**: clear `mc_open_modals` + `mc_modal_prefs` from `localStorage`; remove the helper block in `static/index.html` (search for `_loadModalPrefs`).
+- **Drag fix**: revert the `sizeAgentChat` block (search for `setProperty('height'`) and the changes inside `separatorDragMove` (live `sizeAgentChat` call + cache write).
+- **Remote restart**: remove the four endpoints (`/api/system/restart{,/status}`, `/api/system/heartbeat`) and helpers from `server.py`, plus the Settings "Server" section + restart-related JS in `static/index.html`. Optionally also remove the `_check_port_conflict` `MC_RESTART_FROM_PID` branch.
+- **System-prompt awareness**: remove the two new entries from `_clayrune_universal_capabilities`.
+
+---
+
 ## [2026-05-04] — Diagram polish: Excalidraw bridge restored, de-sketched, orphan-error sweep
 
 Iterative tightening of the Mermaid → Excalidraw rendering pipeline introduced

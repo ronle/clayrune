@@ -14,7 +14,8 @@ Clayrune gives you a centralized dashboard to:
 - **Schedule automated tasks** with once, daily, or interval-based triggers
 - **Sync backlogs with GitHub Issues** — bidirectional sync via `gh` CLI
 - **Track token usage and costs** across all sessions with time-range filtering
-- **Open multiple project windows** simultaneously (multi-modal windowing system)
+- **Open multiple project windows** simultaneously (multi-modal windowing system) — open conversations and their layouts persist across page refresh and reboot
+- **Manage from any device** via the clayrune.io tunnel — including a one-click server restart from your phone after deploying changes
 - **View agent plans** in a dedicated wide-format viewer
 - **Share baseline rules** across all projects (SHARED_RULES.md)
 - **Arrange project tiles** freely on a grid (Android home screen style)

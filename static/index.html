@@ -1834,11 +1834,18 @@
   }
   .agent-output:empty { display: none; }
   .agent-chat-input {
-    flex-shrink: 0; padding: 8px 10px 16px;
+    flex-shrink: 0; padding: 8px 14px 16px;
+    min-width: 0; box-sizing: border-box;
   }
-  .agent-chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
+  .agent-chat-input-row {
+    display: flex; gap: 8px; align-items: flex-end;
+    min-width: 0;
+  }
   .agent-chat-input-row .agent-task-input {
     background: transparent; border-color: var(--border2);
+    /* Allow the flex textarea to shrink below its intrinsic content width so
+       the fixed-size Send button always stays visible inside the modal. */
+    min-width: 0;
   }
   .agent-chat-input .agent-image-previews { margin-bottom: 6px; }
   .agent-output::-webkit-scrollbar { width: 5px; }
@@ -2904,8 +2911,10 @@
   }
   .hm-status-badge.active { background:#22c55e20; color:#22c55e; }
   .hm-status-badge.paused { background:#f59e0b20; color:#f59e0b; }
+  .hm-status-badge.stale { background:#94a3b820; color:#94a3b8; }
   .hm-status-badge.completed { background:#3b82f620; color:#3b82f6; }
   .hm-status-badge.stopped { background:#ef444420; color:#ef4444; }
+  .hm-status-badge.archived { background:var(--surface); color:var(--text-faint); }
   .hm-status-badge.pending { background:var(--surface); color:var(--text-faint); }
   .hm-controls { display:flex; gap:6px; margin-left:auto; }
   .hm-controls button {
@@ -3043,6 +3052,152 @@
   .hm-pop-ws-status { font-size:11px; opacity:0.7; }
   .hm-pop-empty { padding:12px; color:var(--text-faint); font-style:italic; }
 
+  /* ── Run history rows + transcript viewer ──────────────────────────── */
+  .runs-panel { padding:6px 12px 8px 12px; background:var(--surface2); border-radius:0 0 6px 6px; }
+  .schedule-card-wrap { margin-bottom: 8px; }
+  .schedule-card-wrap .schedule-card { margin-bottom: 0; }
+  .runs-empty {
+    padding:14px 12px; text-align:center; color:var(--text-faint);
+    font-size:12px; font-style:italic;
+  }
+  .run-row {
+    display:flex; align-items:center; gap:10px;
+    padding:6px 10px; border:1px solid var(--border); border-radius:5px;
+    margin-bottom:4px; cursor:pointer; background:var(--surface);
+    transition:border-color 0.15s, background 0.15s;
+  }
+  .run-row:hover { border-color:var(--accent); background:var(--surface2); }
+  .run-row-ts {
+    font-size:11px; color:var(--text-faint); flex-shrink:0;
+    min-width:70px; font-variant-numeric:tabular-nums;
+  }
+  .run-row-status { flex-shrink:0; font-size:13px; width:14px; text-align:center; }
+  .run-row-summary {
+    flex:1; min-width:0; font-size:12px; color:var(--text);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .transcript-body {
+    padding:14px 24px 22px 28px;
+    max-height:65vh; overflow-y:auto;
+  }
+  .transcript-empty {
+    padding:30px 12px; text-align:center; color:var(--text-faint);
+    font-size:12px; font-style:italic;
+  }
+  .transcript-msg {
+    margin-bottom:14px; padding:10px 12px; border-radius:6px;
+    border:1px solid var(--border);
+  }
+  .transcript-msg.user { background:var(--surface2); }
+  .transcript-msg.assistant { background:var(--surface); }
+  .transcript-msg.error { background:#ef444420; border-color:#ef4444; }
+  .transcript-msg-label {
+    font-size:11px; color:var(--text-faint); font-weight:600;
+    text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;
+  }
+  .transcript-msg-text {
+    font-size:13px; color:var(--text); line-height:1.5;
+    white-space:pre-wrap; word-wrap:break-word;
+  }
+  .transcript-tool {
+    font-family:var(--mono,monospace); font-size:11px;
+    color:var(--text-faint); padding:3px 12px;
+    margin-bottom:6px;
+  }
+
+  /* ── Cross-project Hivemind global view ────────────────────────────── */
+  .hm-global-card {
+    border:1px solid var(--border); border-radius:8px; padding:12px 14px;
+    margin-bottom:10px; background:var(--surface); cursor:pointer;
+    transition:border-color 0.15s, background 0.15s;
+  }
+  .hm-global-card:hover { border-color:var(--accent); background:var(--surface-hover, var(--surface2)); }
+  .hm-global-card-head { display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap; }
+  .hm-global-card-title {
+    flex:1; min-width:0; font-size:14px; font-weight:600; color:var(--text);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .hm-global-card-shortid {
+    font-family:var(--mono, monospace); font-size:11px; color:var(--text-faint);
+    padding:2px 6px; background:var(--surface2); border-radius:3px;
+    flex-shrink:0; letter-spacing:0.3px;
+  }
+  .hm-global-card-project {
+    font-size:11px; padding:2px 8px; background:var(--surface2);
+    border:1px solid var(--border); border-radius:10px;
+    color:var(--accent); font-weight:600; cursor:pointer; flex-shrink:0;
+  }
+  .hm-global-card-project:hover { background:var(--accent-dim, var(--surface)); }
+  .hm-global-card-meta { font-size:11px; color:var(--text-faint); flex-shrink:0; }
+  .hm-global-card-controls { display:flex; gap:2px; flex-shrink:0; }
+  .hm-card-ctrl {
+    background:transparent; border:1px solid var(--border); color:var(--text-faint);
+    padding:2px 8px; border-radius:4px; cursor:pointer; font-size:12px;
+    transition:all 0.15s;
+  }
+  .hm-card-ctrl:hover { border-color:var(--accent); color:var(--accent); }
+  .hm-global-card-goal {
+    font-size:12px; color:var(--text-faint); line-height:1.4;
+    margin:6px 0 10px 0;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden;
+  }
+  .hm-global-card-stats {
+    display:flex; gap:14px; font-size:11px; color:var(--text-faint);
+    margin-top:10px; padding-top:8px; border-top:1px solid var(--border-faint, var(--border));
+  }
+  .hm-global-card-stats strong { color:var(--text); font-weight:600; }
+
+  /* Planner/worker tree mini-viz */
+  .hm-mini-tree {
+    background:var(--surface2); border-radius:6px; padding:10px 12px 12px 12px;
+    margin:8px 0;
+  }
+  .hm-mini-tree.empty {
+    color:var(--text-faint); font-size:12px; font-style:italic;
+    padding:14px 12px; text-align:center;
+  }
+  .hm-tree-orchestrator {
+    display:flex; align-items:center; justify-content:center; gap:6px;
+    font-size:12px; font-weight:600; color:var(--text);
+    text-transform:uppercase; letter-spacing:0.4px;
+  }
+  .hm-tree-orch-icon { color:var(--accent); font-size:13px; }
+  .hm-tree-trunk {
+    width:1px; height:14px; background:var(--border);
+    margin:4px auto 0 auto;
+  }
+  .hm-tree-workers {
+    display:flex; flex-wrap:wrap; gap:6px; justify-content:center;
+    position:relative; padding-top:6px;
+  }
+  .hm-tree-workers::before {
+    content:''; position:absolute; top:0; left:8%; right:8%;
+    height:1px; background:var(--border);
+  }
+  .hm-tree-worker {
+    display:inline-flex; align-items:center; gap:4px;
+    padding:3px 8px; border:1px solid var(--border); border-radius:12px;
+    background:var(--surface); font-size:11px;
+    max-width:160px; overflow:hidden;
+  }
+  .hm-tree-worker-icon { flex-shrink:0; font-size:10px; }
+  .hm-tree-worker-label {
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    color:var(--text);
+  }
+  .hm-tree-worker.st-completed { border-color:#22c55e; }
+  .hm-tree-worker.st-completed .hm-tree-worker-icon { color:#22c55e; }
+  .hm-tree-worker.st-active { border-color:var(--accent); background:var(--accent-dim, var(--surface)); }
+  .hm-tree-worker.st-active .hm-tree-worker-icon { color:var(--accent); }
+  .hm-tree-worker.st-blocked,
+  .hm-tree-worker.st-paused { border-color:#f59e0b; }
+  .hm-tree-worker.st-blocked .hm-tree-worker-icon,
+  .hm-tree-worker.st-paused .hm-tree-worker-icon { color:#f59e0b; }
+  .hm-tree-worker.st-failed { border-color:#ef4444; }
+  .hm-tree-worker.st-failed .hm-tree-worker-icon { color:#ef4444; }
+  .hm-tree-worker.st-pending { opacity:0.7; }
+
   /* ── Advanced features toggles (hide when flag is off) ─────────────── */
   body.adv-hide-tokens #global-token-counter { display: none !important; }
   body.adv-hide-tool-lines .agent-line-tool { display: none !important; }
@@ -3069,6 +3224,10 @@
     <div class="sidebar-item" data-nav="backlog" onclick="sidebarNav('backlog')">
       <span class="si-icon">&#x1F4CB;</span>
       <span class="si-label">Backlog</span>
+    </div>
+    <div class="sidebar-item" data-nav="hivemind" onclick="sidebarNav('hivemind')">
+      <span class="si-icon">&#x1F41D;</span>
+      <span class="si-label">Hivemind</span>
     </div>
     <div class="sidebar-item" data-nav="scheduler" onclick="sidebarNav('scheduler')">
       <span class="si-icon">&#x23F1;</span>
@@ -3239,8 +3398,8 @@
   <div class="bottom-tab-item" data-nav="scheduler" onclick="sidebarNav('scheduler')">
     <span class="bti-icon">&#x23F1;</span>Scheduler
   </div>
-  <div class="bottom-tab-item" data-nav="settings" onclick="sidebarNav('settings')">
-    <span class="bti-icon">&#x2699;</span>Settings
+  <div class="bottom-tab-item" data-nav="hivemind" onclick="sidebarNav('hivemind')">
+    <span class="bti-icon">&#x1F41D;</span>Hivemind
   </div>
 </div>
 
@@ -3347,7 +3506,7 @@ function buildSlotArray(filteredIds) {
   return slots;
 }
 
-function render() { renderStats(); renderProjects(); renderListView(); renderFeed(); renderSidebarProjects(); applyViewMode(); renderMobileAppBar(); renderMobileFilterPills(); if (openModals.has('__all_backlog')) renderAllBacklog(); }
+function render() { renderStats(); renderProjects(); renderListView(); renderFeed(); renderSidebarProjects(); applyViewMode(); renderMobileAppBar(); renderMobileFilterPills(); if (openModals.has('__all_backlog')) renderAllBacklog(); if (openModals.has('__all_hivemind')) renderAllHiveminds(); }
 
 // ── Mobile UI: app bar greeting + filter pills (≤960px, warm tone) ──────────
 function renderMobileAppBar() {
@@ -3713,8 +3872,9 @@ function modalContentHTML(p) {
     ? `<span class="summary-value blocked-text">${esc(p.blocked_reason||'Blocked')}</span>`
     : `<span class="summary-value ${modalLive.currentTaskClass}">${esc(modalLive.currentTask)}</span>`;
 
-  // Migrate stale tab selections (memory/rules moved to three-dot menu)
-  const validTabs = ['agent','backlog','agent-log','plans','activity','hivemind'];
+  // Migrate stale tab selections (memory/rules moved to three-dot menu;
+  // hivemind moved to global sidebar Hivemind view)
+  const validTabs = ['agent','backlog','agent-log','plans','activity'];
   let activeTab = modalActiveTab[p.id] || 'agent';
   if (!validTabs.includes(activeTab)) { activeTab = 'agent'; modalActiveTab[p.id] = 'agent'; }
 
@@ -3834,11 +3994,15 @@ function modalContentHTML(p) {
             <button class="modal-menu-item${activeTab==='activity'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','activity')">
               <span class="menu-icon">&#x23F1;</span> Activity
             </button>
-            <button class="modal-menu-item${activeTab==='hivemind'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','hivemind')">
-              <span class="menu-icon">&#x2B21;</span> Hivemind
-            </button>
             <div class="modal-menu-sep"></div>
           </div>
+          <button class="modal-menu-item" onclick="_mcMenuClose();openAllHivemindsForProject('${esc(p.id)}')">
+            <span class="menu-icon">&#x1F41D;</span> Hiveminds
+          </button>
+          <button class="modal-menu-item" onclick="_mcMenuClose();startHivemindChat('${esc(p.id)}')">
+            <span class="menu-icon">&#x2728;</span> Start Hivemind
+          </button>
+          <div class="modal-menu-sep"></div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'status-sub-${esc(p.id)}')">
             <span class="menu-icon">&#x25CF;</span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
@@ -4002,7 +4166,6 @@ function modalContentHTML(p) {
       <div class="modal-tab ${activeTab==='agent-log'?'active':''}" data-tab-name="agent-log" onclick="switchModalTab('${esc(p.id)}','agent-log')">Agent Log</div>
       <div class="modal-tab ${activeTab==='plans'?'active':''}" onclick="switchModalTab('${esc(p.id)}','plans')">Plans</div>
       <div class="modal-tab ${activeTab==='activity'?'active':''}" onclick="switchModalTab('${esc(p.id)}','activity')">Activity</div>
-      <div class="modal-tab ${activeTab==='hivemind'?'active':''}" onclick="switchModalTab('${esc(p.id)}','hivemind')">Hivemind</div>
       ${activeTab !== 'agent' ? `<div class="modal-tab-search">
         <input type="text" id="tab-search-${esc(p.id)}" placeholder="Filter..."
           value="${esc(modalSearchQuery[p.id] || '')}"
@@ -4057,9 +4220,6 @@ function modalContentHTML(p) {
           <div class="section-title">Activity Log</div>
           <div class="log-entries">${logHTML || '<div style="color:var(--text-faint);font-style:italic">No activity yet</div>'}</div>
         </div>
-      </div>
-      <div class="modal-tab-content ${activeTab==='hivemind'?'active':''}" data-tab="hivemind">
-        ${hivemindTabHTML(p)}
       </div>
     </div>`;
 }
@@ -4540,6 +4700,7 @@ function sidebarNav(target) {
   else if (target === 'shared-rules') openSharedRulesEditor();
   else if (target === 'processes') openProcessManager();
   else if (target === 'backlog') openAllBacklog();
+  else if (target === 'hivemind') openAllHiveminds();
   // Update active state in sidebar
   document.querySelectorAll('.sidebar-item').forEach(i =>
     i.classList.toggle('active', i.dataset.nav === target)
@@ -4867,8 +5028,36 @@ function sizeAgentChat(win, sessionId) {
   // saw. Setting it explicitly makes the geometry deterministic on every call.
   const sep = chat.querySelector('.agent-chat-separator');
   const chatInputEl = chat.querySelector('.agent-chat-input');
+  const chatInputRowEl = chat.querySelector('.agent-chat-input-row');
+  // Clear any explicit sizing on agent-output BEFORE measuring chat-input.
+  // Without this, a prior call's `flex: 0 0 X` left chat-input squeezed
+  // (button bottom-clipped); we'd read the squeezed offsetHeight, over-allocate
+  // again, and the input would only get smaller each refresh — a feedback loop.
+  if (out) {
+    out.style.removeProperty('height');
+    out.style.removeProperty('max-height');
+    out.style.removeProperty('flex');
+    out.style.removeProperty('min-height');
+  }
   const sepH = sep ? sep.offsetHeight : 0;
-  const inputH = chatInputEl ? chatInputEl.offsetHeight : 0;
+  // Compute chat-input's NATURAL height robustly. offsetHeight alone returns
+  // the (possibly clipped/squashed) layout height, which can feed a stale value
+  // into desiredOutH and cause the bottom of the Send button to be cut. Combine
+  // three signals and take the max:
+  //   1. offsetHeight (current layout)
+  //   2. scrollHeight (content height, ignores overflow clipping)
+  //   3. row offsetHeight + computed vertical padding (intrinsic content)
+  // Then add a safety floor of 80px so even pathological measurements never
+  // over-allocate the output area.
+  let inputH = 0;
+  if (chatInputEl) {
+    const offset = chatInputEl.offsetHeight;
+    const scroll = chatInputEl.scrollHeight;
+    const cs = getComputedStyle(chatInputEl);
+    const padV = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    const rowH = chatInputRowEl ? chatInputRowEl.offsetHeight : 0;
+    inputH = Math.max(offset, scroll, rowH + padV, 80);
+  }
   if (out) {
     const desiredOutH = Math.max(40, chatHeight - sepH - inputH);
     // Use setProperty with priority='important' so the explicit height beats
@@ -8526,7 +8715,7 @@ function hivemindTabHTML(p) {
            <button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','stop')" title="Stop" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:13px;padding:2px 4px">&#x23F9;</button>`
         : hm.status === 'paused'
         ? `<button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','start')" title="Resume" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:13px;padding:2px 4px">&#x25B6;</button>`
-        : hm.status === 'completed' || hm.status === 'stopped'
+        : (hm.status === 'completed' || hm.status === 'stopped' || hm.status === 'stale')
         ? `<button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','start')" title="Restart" style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:13px;padding:2px 4px">&#x25B6;</button>`
         : '';
       return `<div class="hm-list-row" onclick="openHivemindDashboard('${esc(hm.id)}')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer;background:var(--surface);transition:background 0.15s" onmouseover="this.style.background='var(--surface-hover)'" onmouseout="this.style.background='var(--surface)'">
@@ -8592,7 +8781,7 @@ function hivemindCardHTML(projectId, hm, expanded) {
     : hm.status === 'paused'
     ? `<button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','start')" title="Resume">&#x25B6;</button>
        <button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','stop')" title="Stop">&#x23F9;</button>`
-    : hm.status === 'completed' || hm.status === 'stopped'
+    : (hm.status === 'completed' || hm.status === 'stopped' || hm.status === 'stale')
     ? `<button onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','start')" title="Restart">&#x25B6;</button>`
     : '';
 
@@ -8645,18 +8834,19 @@ async function loadHiveminds(projectId) {
 }
 
 function startHivemindChat(projectId) {
-  // Switch to Agent tab and pre-fill with hivemind setup prompt
+  // Open a fresh agent tab and immediately dispatch the hivemind setup prompt
+  // so the user lands directly in an active conversation, not a populated form.
   modalActiveTab[projectId] = 'agent';
+  delete activeAgentTab[projectId];
+  delete pendingResumeId[projectId];
   refreshModal();
-  // Wait for DOM to settle, then fill the agent input and dispatch
   setTimeout(() => {
     const input = document.getElementById('agent-task-' + projectId);
-    if (input) {
-      input.value = 'I want to start a new Hivemind multi-agent analysis on this project. ' +
-        'Before creating it, ask me clarifying questions about the goal, scope, priorities, ' +
-        'and any constraints. Then create the hivemind when you have enough context.';
-      input.focus();
-    }
+    if (!input) return;
+    input.value = 'I want to start a new Hivemind multi-agent analysis on this project. ' +
+      'Before creating it, ask me clarifying questions about the goal, scope, priorities, ' +
+      'and any constraints. Then create the hivemind when you have enough context.';
+    dispatchAgent(projectId);
   }, 100);
 }
 
@@ -8859,6 +9049,7 @@ function buildHmOverviewHTML(hivemindId, manifest, workstreams, fullData) {
     <div class="hm-actions" style="margin-top:14px">
       <button onclick="viewSynthesis('${esc(hivemindId)}')">View Synthesis</button>
       <button class="secondary" onclick="triggerSynthesis('${esc(hivemindId)}')">Re-synthesize</button>
+      <button class="secondary" onclick="openHmRunsModal('${esc(hivemindId)}','${esc(manifest.project_id || '')}','orchestrator','','Orchestrator')">Orchestrator Runs</button>
     </div>`;
 }
 
@@ -8870,6 +9061,7 @@ function buildWsDetailHTML(hivemindId, ws, fullData) {
   // Check if worker is running
   const sid = ws.current_agent_session_id;
   const isRunning = sid && typeof agent_sessions !== 'undefined';
+  const projectId = (fullData.manifest && fullData.manifest.project_id) || '';
 
   return `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
@@ -8877,6 +9069,8 @@ function buildWsDetailHTML(hivemindId, ws, fullData) {
       <h3 style="margin:0;font-size:15px">${esc(ws.title || ws.id)}</h3>
       <span class="hm-status-badge ${esc(ws.status)}">${esc(ws.status)}</span>
       ${ws.model ? `<span style="font-size:11px;color:var(--text-faint)">${esc(ws.model)}</span>` : ''}
+      <button style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--text-faint);padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px"
+        onclick="openHmRunsModal('${esc(hivemindId)}','${esc(projectId)}','worker','${esc(ws.id)}','${esc(ws.title || ws.id)}')">Runs</button>
     </div>
     <div style="font-size:13px;color:var(--text-faint);margin-bottom:12px;line-height:1.4">${esc(ws.description || '')}</div>
 
@@ -8928,6 +9122,58 @@ function buildWsDetailHTML(hivemindId, ws, fullData) {
       <button style="background:var(--accent);border:none;color:#fff;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px"
         onclick="sendWsDirective('${esc(hivemindId)}','${esc(ws.id)}')">Send</button>
     </div>`;
+}
+
+async function openHmRunsModal(hivemindId, projectId, role, wsId, label) {
+  const modalId = `__hm_runs_${hivemindId}_${role}_${wsId || ''}`;
+  if (openModals.has(modalId)) {
+    focusModal(modalId);
+    return;
+  }
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 700);
+  const titleLabel = role === 'orchestrator' ? `${esc(label)} runs` : `${esc(label)} — runs`;
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:14px;font-weight:700;color:var(--text)">${titleLabel}</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div id="hm-runs-body-${hivemindId}-${role}-${wsId || 'all'}" style="padding:6px 24px 22px 28px;max-height:60vh;overflow-y:auto">
+      <div class="runs-empty">Loading runs...</div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  const bodyId = `hm-runs-body-${hivemindId}-${role}-${wsId || 'all'}`;
+  try {
+    const params = new URLSearchParams({ role });
+    if (wsId) params.set('ws_id', wsId);
+    params.set('limit', '30');
+    const res = await fetch(API_BASE + `/api/hivemind/${encodeURIComponent(hivemindId)}/runs?${params}`);
+    if (!res.ok) {
+      const body = document.getElementById(bodyId);
+      if (body) body.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
+      return;
+    }
+    const runs = await res.json();
+    const body = document.getElementById(bodyId);
+    if (body) body.innerHTML = renderRunRows(runs, projectId);
+  } catch(e) {
+    const body = document.getElementById(bodyId);
+    if (body) body.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
+  }
 }
 
 function selectDashboardWs(hivemindId, wsId) {
@@ -9480,9 +9726,12 @@ async function openRulesModal(projectId) {
 // ── Tab switch ──────────────────────────────────────────────────────────────
 
 // Mobile: invoked from the modal three-dot menu to switch tabs and close the menu
-function _mcMenuSwitchTab(projectId, tab) {
+function _mcMenuClose() {
   document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
   document.querySelectorAll('.modal-menu-sub.open').forEach(d => d.classList.remove('open'));
+}
+function _mcMenuSwitchTab(projectId, tab) {
+  _mcMenuClose();
   switchModalTab(projectId, tab);
 }
 
@@ -9494,10 +9743,6 @@ function switchModalTab(projectId, tab) {
   }
   if (tab === 'plans') {
     loadProjectPlans(projectId);
-    return;
-  }
-  if (tab === 'hivemind') {
-    loadHiveminds(projectId);
     return;
   }
   refreshModal();
@@ -10221,25 +10466,68 @@ async function refreshScheduleList() {
       const desc = scheduleDescription(s);
       const lastRun = s.last_run ? timeAgoShort(s.last_run) : 'never';
       const nextRun = s.next_run ? formatScheduleTime(s.next_run) : (s.enabled ? 'calculating...' : 'disabled');
-      return `<div class="schedule-card${cardClass}">
-        <div class="schedule-card-body">
-          <div class="schedule-card-project">${esc(s.project_name || s.project_id)}</div>
-          <div class="schedule-card-task" title="${esc(s.task)}">${esc(s.task)}</div>
-          <div class="schedule-card-meta">
-            <span>${desc}</span>
-            <span>Last: ${lastRun}</span>
-            <span>Next: ${nextRun}</span>
+      return `<div class="schedule-card-wrap">
+        <div class="schedule-card${cardClass}">
+          <div class="schedule-card-body">
+            <div class="schedule-card-project">${esc(s.project_name || s.project_id)}</div>
+            <div class="schedule-card-task" title="${esc(s.task)}">${esc(s.task)}</div>
+            <div class="schedule-card-meta">
+              <span>${desc}</span>
+              <span>Last: ${lastRun}</span>
+              <span>Next: ${nextRun}</span>
+            </div>
+          </div>
+          <div class="schedule-card-actions">
+            <div class="schedule-toggle ${enabledClass}" onclick="toggleScheduleEnabled('${esc(s.id)}', ${!s.enabled})" title="${s.enabled ? 'Disable' : 'Enable'}"></div>
+            <button class="btn-header-action" style="padding:3px 8px;font-size:11px" onclick="toggleScheduleRuns('${esc(s.id)}','${esc(s.project_id || '')}')" title="Show past runs">Runs</button>
+            <button class="btn-header-action" style="padding:3px 8px;font-size:11px" onclick="editSchedule('${esc(s.id)}')">Edit</button>
+            <button class="btn-header-action" style="padding:3px 8px;font-size:11px;color:var(--red-text);border-color:var(--red)" onclick="deleteSchedule('${esc(s.id)}')">Del</button>
+            <button class="btn-header-action" style="padding:3px 8px;font-size:11px;color:var(--accent);border-color:var(--accent)" onclick="runScheduleNow('${esc(s.id)}')" title="Dispatch this task now">&#x25B6; Run Now</button>
           </div>
         </div>
-        <div class="schedule-card-actions">
-          <div class="schedule-toggle ${enabledClass}" onclick="toggleScheduleEnabled('${esc(s.id)}', ${!s.enabled})" title="${s.enabled ? 'Disable' : 'Enable'}"></div>
-          <button class="btn-header-action" style="padding:3px 8px;font-size:11px" onclick="editSchedule('${esc(s.id)}')">Edit</button>
-          <button class="btn-header-action" style="padding:3px 8px;font-size:11px;color:var(--red-text);border-color:var(--red)" onclick="deleteSchedule('${esc(s.id)}')">Del</button>
-        </div>
+        <div class="runs-panel" id="schedule-runs-${esc(s.id)}" style="display:none"></div>
       </div>`;
     }).join('');
   } catch(e) {
     container.innerHTML = '<div class="schedule-empty">Failed to load schedules.</div>';
+  }
+}
+
+async function runScheduleNow(scheduleId) {
+  try {
+    const res = await fetch(API_BASE + `/api/schedule/${encodeURIComponent(scheduleId)}/run-now`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      showToast('Run failed: ' + (data.error || res.statusText), 6000);
+      return;
+    }
+    showToast('Schedule dispatched', 3000);
+    // Refresh list to update the "Last:" timestamp
+    refreshScheduleList();
+  } catch(e) {
+    showToast('Run failed: ' + e.message, 6000);
+  }
+}
+
+async function toggleScheduleRuns(scheduleId, projectId) {
+  const panel = document.getElementById('schedule-runs-' + scheduleId);
+  if (!panel) return;
+  if (panel.style.display === 'block') {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  panel.innerHTML = '<div class="runs-empty">Loading runs...</div>';
+  try {
+    const res = await fetch(API_BASE + `/api/schedule/${encodeURIComponent(scheduleId)}/runs?limit=20`);
+    if (!res.ok) {
+      panel.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
+      return;
+    }
+    const runs = await res.json();
+    panel.innerHTML = renderRunRows(runs, projectId);
+  } catch(e) {
+    panel.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
   }
 }
 
@@ -10327,6 +10615,7 @@ function showScheduleForm(existing) {
     <div id="sched-type-fields"></div>
     <div class="sched-actions">
       <button class="btn-sched-save" onclick="saveSchedule()">${existing ? 'Update' : 'Create'}</button>
+      ${existing ? `<button class="btn-sched-cancel" style="border-color:var(--accent);color:var(--accent)" onclick="runScheduleNow('${esc(existing.id)}')">&#x25B6; Run Now</button>` : ''}
       <button class="btn-sched-cancel" onclick="hideScheduleForm()">Cancel</button>
     </div>
   </div>`;
@@ -12163,6 +12452,396 @@ function _jumpToBacklogItem(projectId, itemId) {
       setTimeout(() => { el.style.background = orig; }, 900);
     }
   }, 150);
+}
+
+// ── Run history (shared between Scheduler + Hivemind surfaces) ─────────────
+// Two pieces:
+//   1) renderRunRows(runs) — draws a list of compact rows, each clickable to
+//      open the transcript viewer
+//   2) openTranscriptViewer(projectId, csid, label) — modal that fetches and
+//      displays a parsed transcript read-only
+
+function _runStatusIcon(status) {
+  if (status === 'completed') return '<span style="color:#22c55e">&#x2714;</span>';
+  if (status === 'error' || status === 'failed') return '<span style="color:#ef4444">&#x26A0;</span>';
+  if (status === 'interrupted' || status === 'stopped') return '<span style="color:#f59e0b">&#x25A0;</span>';
+  if (status === 'running' || status === 'idle') return '<span style="color:var(--accent)">&#x25CF;</span>';
+  return '<span style="color:var(--text-faint)">&#x25CB;</span>';
+}
+
+function renderRunRows(runs, projectId) {
+  if (!runs || !runs.length) {
+    return '<div class="runs-empty">No runs yet.</div>';
+  }
+  return runs.map(r => {
+    const csid = r.claude_session_id || '';
+    const summary = (r.summary || r.task || '').replace(/\s+/g, ' ').substring(0, 140);
+    const ts = r.ts_relative || r.ts || '';
+    const statusIcon = _runStatusIcon(r.status);
+    const clickAction = csid
+      ? `openTranscriptViewer('${esc(projectId)}','${esc(csid)}','${esc(ts)}')`
+      : `showToast('No transcript available for this run', 3000)`;
+    return `<div class="run-row" onclick="${clickAction}" title="${esc(summary)}">
+      <span class="run-row-ts">${esc(ts)}</span>
+      <span class="run-row-status">${statusIcon}</span>
+      <span class="run-row-summary">${esc(summary || '(no summary)')}</span>
+    </div>`;
+  }).join('');
+}
+
+const _transcriptCache = {};  // csid -> {messages, size, message_count}
+
+async function openTranscriptViewer(projectId, csid, label) {
+  const modalId = '__transcript_' + csid;
+  if (openModals.has(modalId)) {
+    focusModal(modalId);
+    return;
+  }
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 760);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:14px;font-weight:700;color:var(--text)">Transcript</div>
+        <div style="font-size:11px;color:var(--text-faint);font-family:var(--mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label || '')} &middot; ${esc(csid)}</div>
+      </div>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div id="transcript-body-${csid}" class="transcript-body">Loading transcript...</div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  try {
+    let data = _transcriptCache[csid];
+    if (!data) {
+      const res = await fetch(API_BASE + `/api/project/${encodeURIComponent(projectId)}/transcript/${encodeURIComponent(csid)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const body = document.getElementById('transcript-body-' + csid);
+        if (body) body.innerHTML = `<div class="transcript-empty">Could not load transcript: ${esc(err.error || res.statusText)}</div>`;
+        return;
+      }
+      data = await res.json();
+      _transcriptCache[csid] = data;
+    }
+    const body = document.getElementById('transcript-body-' + csid);
+    if (!body) return;
+    if (!data.messages || !data.messages.length) {
+      body.innerHTML = '<div class="transcript-empty">Empty transcript.</div>';
+      return;
+    }
+    body.innerHTML = data.messages.map(m => {
+      if (m.role === 'tool_call') {
+        return `<div class="transcript-tool">[tool: ${esc(m.tool || 'unknown')}]</div>`;
+      }
+      const cls = m.role === 'user' ? 'transcript-msg user' : (m.role === 'error' ? 'transcript-msg error' : 'transcript-msg assistant');
+      const label = m.role === 'user' ? 'You' : (m.role === 'error' ? 'Error' : 'Agent');
+      return `<div class="${cls}">
+        <div class="transcript-msg-label">${label}</div>
+        <div class="transcript-msg-text">${esc(m.text || '')}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    const body = document.getElementById('transcript-body-' + csid);
+    if (body) body.innerHTML = `<div class="transcript-empty">Failed to load transcript.</div>`;
+  }
+}
+
+
+// ── Cross-project Hivemind view ─────────────────────────────────────────────
+let _allHivemindFilter = { status: 'active', search: '', project: 'all' };
+let _allHivemindsCache = { hiveminds: [], loaded: false, loading: false };
+
+// Hivemind is treated as "stale" if it's nominally active/paused but the
+// orchestrator hasn't moved in HM_STALE_HOURS — usually the server restarted
+// or the run was abandoned and the manifest never got updated.
+const HM_STALE_HOURS = 24;
+function _hmEffectiveStatus(hm) {
+  const real = hm && hm.status;
+  if ((real === 'active' || real === 'paused') && hm && hm.updated_at) {
+    const ageH = (Date.now() - new Date(hm.updated_at).getTime()) / 3600000;
+    if (!isNaN(ageH) && ageH > HM_STALE_HOURS) return 'stale';
+  }
+  return real;
+}
+function _hmShortId(id) {
+  if (!id) return '';
+  return id.startsWith('hm_') ? id.slice(3, 11) : id.slice(0, 8);
+}
+
+function openAllHivemindsForProject(projectId) {
+  _allHivemindFilter.project = projectId || 'all';
+  _allHivemindFilter.status = 'all';  // show every hivemind for that project, not just active
+  openAllHiveminds();
+}
+
+async function openAllHiveminds() {
+  const modalId = '__all_hivemind';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    renderAllHiveminds();
+    loadAllHiveminds();
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 980);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x1F41D; Hivemind</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:4px 24px 20px 28px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <input type="text" id="ahm-search" placeholder="Search title/goal..." value="${esc(_allHivemindFilter.search)}"
+          style="flex:1;min-width:180px;padding:6px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+          oninput="_allHivemindFilter.search=this.value;renderAllHiveminds()">
+        <select id="ahm-status" style="padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+          onchange="_allHivemindFilter.status=this.value;renderAllHiveminds()">
+          <option value="active"${_allHivemindFilter.status==='active'?' selected':''}>Active</option>
+          <option value="paused"${_allHivemindFilter.status==='paused'?' selected':''}>Paused</option>
+          <option value="stale"${_allHivemindFilter.status==='stale'?' selected':''}>Stale</option>
+          <option value="completed"${_allHivemindFilter.status==='completed'?' selected':''}>Completed</option>
+          <option value="all"${_allHivemindFilter.status==='all'?' selected':''}>All</option>
+        </select>
+        <select id="ahm-project" style="padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);max-width:200px"
+          onchange="_allHivemindFilter.project=this.value;renderAllHiveminds()">
+          <option value="all">All projects</option>
+        </select>
+        <span id="ahm-count" style="font-size:11px;color:var(--text-faint)"></span>
+        <button class="btn-add" style="margin-left:auto" onclick="newHivemindFromGlobal()">+ New Hivemind</button>
+      </div>
+      <div id="ahm-list" style="max-height:65vh;overflow-y:auto"></div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  renderAllHiveminds();
+  loadAllHiveminds();
+}
+
+async function loadAllHiveminds() {
+  if (_allHivemindsCache.loading) return;
+  _allHivemindsCache.loading = true;
+  try {
+    const res = await fetch(API_BASE + '/api/hivemind/list');
+    const hiveminds = await res.json();
+    // Enrich each with workstream summaries
+    await Promise.all(hiveminds.map(async hm => {
+      try {
+        const detail = await fetch(API_BASE + `/api/hivemind/${hm.id}`);
+        const data = await detail.json();
+        hm._workstreams = data.workstreams || [];
+        hm._recent_messages = data.recent_messages || [];
+      } catch(e) {
+        hm._workstreams = [];
+        hm._recent_messages = [];
+      }
+    }));
+    _allHivemindsCache = { hiveminds, loaded: true, loading: false };
+    renderAllHiveminds();
+  } catch(e) {
+    _allHivemindsCache = { hiveminds: [], loaded: true, loading: false };
+    renderAllHiveminds();
+  }
+}
+
+function _hmTreeMiniViz(ws) {
+  if (!ws || !ws.length) {
+    return `<div class="hm-mini-tree empty">Orchestrator decomposing the goal...</div>`;
+  }
+  const chips = ws.map(w => {
+    const st = w.status || 'pending';
+    const icon = ({
+      completed: '&#x2714;',
+      active: '&#x25CF;',
+      pending: '&#x25CB;',
+      blocked: '&#x23F3;',
+      paused: '&#x23F8;',
+      failed: '&#x2716;',
+    })[st] || '&#x25CB;';
+    const label = (w.title || w.id || '').substring(0, 28);
+    const fc = w.findings_count || 0;
+    return `<div class="hm-tree-worker st-${esc(st)}" title="${esc(w.title || w.id)} — ${esc(st)}, ${fc} findings">
+      <span class="hm-tree-worker-icon">${icon}</span>
+      <span class="hm-tree-worker-label">${esc(label)}</span>
+    </div>`;
+  }).join('');
+  return `<div class="hm-mini-tree">
+    <div class="hm-tree-orchestrator">
+      <span class="hm-tree-orch-icon">&#x25C6;</span>
+      <span>orchestrator</span>
+    </div>
+    <div class="hm-tree-trunk"></div>
+    <div class="hm-tree-workers">${chips}</div>
+  </div>`;
+}
+
+function renderAllHiveminds() {
+  const container = document.getElementById('ahm-list');
+  const countEl = document.getElementById('ahm-count');
+  const projectSel = document.getElementById('ahm-project');
+  if (!container) return;
+
+  // Populate project filter dropdown from cache
+  if (projectSel && _allHivemindsCache.loaded) {
+    const projectIds = [...new Set(_allHivemindsCache.hiveminds.map(h => h.project_id).filter(Boolean))];
+    const projectMap = {};
+    for (const pid of projectIds) {
+      const proj = allProjects.find(p => p.id === pid);
+      projectMap[pid] = proj ? (proj.name || pid) : pid;
+    }
+    const currentVal = _allHivemindFilter.project;
+    const opts = ['<option value="all">All projects</option>',
+      ...projectIds.map(pid =>
+        `<option value="${esc(pid)}"${currentVal===pid?' selected':''}>${esc(projectMap[pid])}</option>`
+      )];
+    projectSel.innerHTML = opts.join('');
+    projectSel.value = currentVal;
+  }
+
+  if (!_allHivemindsCache.loaded) {
+    container.innerHTML = '<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">Loading hiveminds...</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+
+  const f = _allHivemindFilter;
+  const q = (f.search || '').trim().toLowerCase();
+  const rows = _allHivemindsCache.hiveminds.filter(hm => {
+    const eff = _hmEffectiveStatus(hm);
+    if (f.status !== 'all' && eff !== f.status) return false;
+    if (f.project !== 'all' && hm.project_id !== f.project) return false;
+    if (q) {
+      const hay = ((hm.title || '') + ' ' + (hm.goal || '')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  // Sort: active first, then paused, pending, stale, completed, stopped/archived; updated_at desc within
+  const order = { active: 0, paused: 1, pending: 2, stale: 3, completed: 4, stopped: 5, archived: 6 };
+  rows.sort((a, b) => {
+    const oa = order[_hmEffectiveStatus(a)] ?? 7;
+    const ob = order[_hmEffectiveStatus(b)] ?? 7;
+    if (oa !== ob) return oa - ob;
+    return (b.updated_at || '').localeCompare(a.updated_at || '');
+  });
+
+  if (countEl) countEl.textContent = `${rows.length} hivemind${rows.length===1?'':'s'}`;
+  if (!rows.length) {
+    container.innerHTML = '<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">No matching hiveminds. Use + New Hivemind on a project to start one.</div>';
+    return;
+  }
+
+  container.innerHTML = rows.map(hm => {
+    const ws = hm._workstreams || [];
+    const totalFindings = ws.reduce((s, w) => s + (w.findings_count || 0), 0);
+    const completedWs = ws.filter(w => w.status === 'completed').length;
+    const activeWs = ws.filter(w => w.status === 'active').length;
+    const proj = allProjects.find(p => p.id === hm.project_id);
+    const projName = proj ? (proj.name || hm.project_id) : (hm.project_id || '—');
+    const updated = hm.updated_at ? _hmRelativeTime(hm.updated_at) : '';
+
+    const controls = hm.status === 'active'
+      ? `<button class="hm-card-ctrl" onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','pause');setTimeout(loadAllHiveminds,300)" title="Pause">&#x23F8;</button>
+         <button class="hm-card-ctrl" onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','stop');setTimeout(loadAllHiveminds,300)" title="Stop">&#x23F9;</button>`
+      : hm.status === 'paused'
+      ? `<button class="hm-card-ctrl" onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','start');setTimeout(loadAllHiveminds,300)" title="Resume">&#x25B6;</button>`
+      : (hm.status === 'completed' || hm.status === 'stopped' || hm.status === 'stale')
+      ? `<button class="hm-card-ctrl" onclick="event.stopPropagation();hivemindAction('${esc(hm.id)}','start');setTimeout(loadAllHiveminds,300)" title="Restart">&#x25B6;</button>`
+      : '';
+
+    const eff = _hmEffectiveStatus(hm);
+    const badgeTitle = eff === 'stale' ? `Marked stale because no activity for >${HM_STALE_HOURS}h. Underlying status: ${hm.status}` : '';
+    return `<div class="hm-global-card" onclick="openHivemindDashboard('${esc(hm.id)}')">
+      <div class="hm-global-card-head">
+        <span class="hm-status-badge ${esc(eff)}"${badgeTitle ? ` title="${esc(badgeTitle)}"` : ''}>${esc(eff)}</span>
+        <span class="hm-global-card-shortid" title="Hivemind ID: ${esc(hm.id)}">#${esc(_hmShortId(hm.id))}</span>
+        <div class="hm-global-card-title">${esc(hm.title || 'Untitled')}</div>
+        <span class="hm-global-card-project" onclick="event.stopPropagation();_allHivemindFilter.project='${esc(hm.project_id)}';document.getElementById('ahm-project').value='${esc(hm.project_id)}';renderAllHiveminds()" title="Filter by project">${esc(projName)}</span>
+        <span class="hm-global-card-meta">${esc(updated)}</span>
+        <span class="hm-global-card-controls">${controls}</span>
+      </div>
+      ${hm.goal ? `<div class="hm-global-card-goal">${esc((hm.goal || '').substring(0, 240))}${hm.goal.length > 240 ? '…' : ''}</div>` : ''}
+      ${_hmTreeMiniViz(ws)}
+      <div class="hm-global-card-stats">
+        <span><strong>${ws.length}</strong> workstreams</span>
+        <span><strong>${completedWs}</strong> done</span>
+        <span><strong>${activeWs}</strong> active</span>
+        <span><strong>${totalFindings}</strong> findings</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _hmRelativeTime(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (isNaN(ms)) return '';
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return days + 'd ago';
+  return new Date(iso).toLocaleDateString();
+}
+
+function newHivemindFromGlobal() {
+  // Pick a project, then route to that project's startHivemindChat
+  const projects = allProjects.filter(p => !isIncognitoProject(p));
+  if (!projects.length) {
+    showToast('No projects available. Create a project first.', 4000);
+    return;
+  }
+  // Use the currently filtered project if set, otherwise prompt
+  const filterPid = _allHivemindFilter.project !== 'all' ? _allHivemindFilter.project : null;
+  if (filterPid) {
+    closeModalById('__all_hivemind');
+    openProjectModal(filterPid);
+    setTimeout(() => startHivemindChat(filterPid), 200);
+    return;
+  }
+  // Simple list picker
+  const choice = prompt('Start a hivemind in which project?\n\n' +
+    projects.map((p, i) => `${i+1}. ${p.name || p.id}`).join('\n') +
+    '\n\nEnter number:');
+  const idx = parseInt(choice, 10) - 1;
+  if (isNaN(idx) || idx < 0 || idx >= projects.length) return;
+  const pid = projects[idx].id;
+  closeModalById('__all_hivemind');
+  openProjectModal(pid);
+  setTimeout(() => startHivemindChat(pid), 200);
 }
 
 function _formatDuration(startedAt) {

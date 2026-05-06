@@ -397,6 +397,71 @@ def _recent_claude_transcripts(project_path, limit=5):
     return results
 
 
+def _find_transcript_file(project_path, claude_session_id):
+    """Locate the Claude Code transcript JSONL for a given csid, or None."""
+    if not project_path or not claude_session_id:
+        return None
+    try:
+        resolved = str(Path(project_path).resolve())
+    except Exception:
+        return None
+    encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
+    candidates = [CLAUDE_HOME / encoded]
+    encoded_alt = encoded.replace('_', '-')
+    if encoded_alt != encoded:
+        candidates.append(CLAUDE_HOME / encoded_alt)
+    for d in candidates:
+        f = d / f'{claude_session_id}.jsonl'
+        if f.exists():
+            return f
+    return None
+
+
+def _parse_transcript_messages(f, max_messages=300):
+    """Parse a Claude Code JSONL transcript into [{role, text, tool, timestamp}] for read-only display.
+
+    role: 'user' | 'assistant' | 'tool_call'
+    Returns at most max_messages entries; longer transcripts are truncated.
+    """
+    messages = []
+    try:
+        with open(f, 'r', encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                t = obj.get('type', '')
+                ts = obj.get('timestamp', '')
+                if t == 'user':
+                    text = _extract_user_text(obj.get('message', {}))
+                    if text:
+                        messages.append({'role': 'user', 'text': text[:5000], 'timestamp': ts})
+                elif t == 'assistant':
+                    content = obj.get('message', {}).get('content', [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if not isinstance(block, dict):
+                                continue
+                            btype = block.get('type', '')
+                            if btype == 'text':
+                                txt = str(block.get('text', '')).strip()
+                                if txt:
+                                    messages.append({'role': 'assistant', 'text': txt[:5000], 'timestamp': ts})
+                            elif btype == 'tool_use':
+                                messages.append({'role': 'tool_call',
+                                                 'tool': block.get('name', ''),
+                                                 'timestamp': ts})
+                if len(messages) >= max_messages:
+                    break
+    except Exception as e:
+        return [{'role': 'error', 'text': f'Failed to parse transcript: {e}'}]
+    return messages
+
+
 def _native_memory_path(project_path):
     """Derive the Claude Code native MEMORY.md path for a project.
 
@@ -2568,6 +2633,11 @@ def _log_agent_completion(session):
         'hivemind_id': session.get('hivemind_id', ''),
         'hivemind_ws_id': session.get('hivemind_ws_id', ''),
         'hivemind_role': session.get('hivemind_role', ''),
+        # Trigger correlation: lets us list runs by what spawned them.
+        # trigger_type: 'manual' | 'schedule' | 'hivemind_orchestrator' | 'hivemind_worker'
+        # trigger_id: schedule_id, hivemind_id, or workstream_id depending on type
+        'trigger_type': session.get('trigger_type', 'manual'),
+        'trigger_id': session.get('trigger_id', ''),
     }
     log = _load_agent_log(project_id)
     log.insert(0, entry)
@@ -2841,7 +2911,8 @@ def _dispatch_condense(project):
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False):
+def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
+                             trigger_type='manual', trigger_id=''):
     """Core dispatch logic shared by HTTP endpoint and scheduler.
 
     Returns session_id on success, raises ValueError on error.
@@ -2850,6 +2921,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False):
     MEMORY/AGENT_RULES are skipped from --append-system-prompt and the session
     is flagged so _log_agent_completion will not write to the agent log or
     append to MEMORY.md.
+
+    trigger_type/trigger_id annotate the resulting agent_log entry so callers
+    (scheduler, hivemind dispatch) can later list "all runs for this trigger".
+    Defaults are 'manual'/'' for direct user dispatch.
     """
     p = load_project(project_id)
     if not p:
@@ -2942,6 +3017,8 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False):
                 '_resume_id': resume_id or None,
                 '_dispatch_time': _time.time(),
                 'incognito': bool(incognito),
+                'trigger_type': trigger_type,
+                'trigger_id': trigger_id,
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -2993,6 +3070,8 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False):
                 '_resume_id': resume_id or None,
                 '_dispatch_time': _time.time(),
                 'incognito': bool(incognito),
+                'trigger_type': trigger_type,
+                'trigger_id': trigger_id,
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -4666,6 +4745,50 @@ def _hm_list_all():
     return result
 
 
+# Hours of inactivity after which an "active" hivemind is considered orphaned.
+# Threshold matches the frontend heuristic (HM_STALE_HOURS in static/index.html).
+_HM_STALE_HOURS = 24
+
+def _hm_reconcile_stale_on_startup():
+    """One-shot pass: transition long-active hiveminds with no recent activity to 'stale'.
+
+    Server crashes / restarts orphan hiveminds whose orchestrator + worker subprocesses
+    are gone, but the manifest still says status='active'. This sweep updates those
+    manifests so the UI / API reflects reality. The user can still 'Restart' to resume.
+    Only touches 'active' — 'paused' is intentional idle and should stay paused.
+    """
+    if not HIVEMIND_DIR.exists():
+        return
+    threshold_secs = _HM_STALE_HOURS * 3600
+    now = _time.time()
+    transitioned = 0
+    try:
+        for d in HIVEMIND_DIR.iterdir():
+            if not d.is_dir() or d.name.startswith('_'):
+                continue
+            manifest = _hm_load_manifest(d.name)
+            if not manifest:
+                continue
+            if manifest.get('status') != 'active':
+                continue
+            updated_at = manifest.get('updated_at', '')
+            if not updated_at:
+                continue
+            try:
+                ts = datetime.fromisoformat(updated_at.replace('Z', '+00:00')).timestamp()
+            except Exception:
+                continue
+            if now - ts > threshold_secs:
+                manifest['status'] = 'stale'
+                _hm_save_manifest(d.name, manifest)
+                transitioned += 1
+    except Exception as e:
+        print(f"[hivemind-reconcile] failed: {e}")
+        return
+    if transitioned:
+        print(f"[hivemind-reconcile] marked {transitioned} long-active hivemind(s) as 'stale' (>{_HM_STALE_HOURS}h idle)")
+
+
 # ── Hivemind API: Management ─────────────────────────────────────────────────
 
 @app.route('/api/hivemind/create', methods=['POST'])
@@ -5143,6 +5266,8 @@ def hivemind_workstream_spawn(hivemind_id, ws_id):
             'housekeeping': True,  # prevent MEMORY.md writes — hivemind workers use bus only
             'hivemind_id': hivemind_id,
             'hivemind_ws_id': ws_id,
+            'trigger_type': 'hivemind_worker',
+            'trigger_id': ws_id,
         }
         mgr = get_manager(project_id)
         mgr.ensure_guardian()
@@ -5359,6 +5484,8 @@ def _hm_dispatch_orchestrator(hivemind_id, task_type, extra_context=''):
                 'housekeeping': True,
                 'hivemind_id': hivemind_id,
                 'hivemind_role': 'orchestrator',
+                'trigger_type': 'hivemind_orchestrator',
+                'trigger_id': hivemind_id,
             }
             mgr = get_manager(project_id)
             mgr.ensure_guardian()
@@ -5918,6 +6045,119 @@ def get_agent_log(project_id):
         entry['ts_relative'] = time_ago(entry.get('ts'))
         entry['started_relative'] = time_ago(entry.get('started_at'))
     return jsonify(log)
+
+
+def _enrich_run_entries(entries):
+    """Add ts_relative + started_relative for FE display, in place."""
+    for e in entries:
+        e['ts_relative'] = time_ago(e.get('ts'))
+        e['started_relative'] = time_ago(e.get('started_at'))
+    return entries
+
+
+@app.route('/api/project/<project_id>/transcript/<claude_session_id>')
+def get_project_transcript(project_id, claude_session_id):
+    """Return parsed transcript for read-only display in the Runs panel viewer."""
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    f = _find_transcript_file(p.get('project_path', ''), claude_session_id)
+    if not f:
+        return jsonify({'error': 'transcript not found'}), 404
+    try:
+        size = f.stat().st_size
+    except OSError:
+        size = 0
+    messages = _parse_transcript_messages(f)
+    return jsonify({
+        'csid': claude_session_id,
+        'size': size,
+        'message_count': len(messages),
+        'messages': messages,
+    })
+
+
+@app.route('/api/schedule/<schedule_id>/run-now', methods=['POST'])
+def schedule_run_now(schedule_id):
+    """Manually fire a schedule's task right now without disturbing its cadence.
+
+    Updates last_run for visual feedback but leaves next_run/enabled untouched —
+    the schedule still fires at its normal cadence; this is an extra dispatch.
+    """
+    schedules = _load_schedules()
+    sched = next((s for s in schedules if s.get('id') == schedule_id), None)
+    if not sched:
+        return jsonify({'error': 'schedule not found'}), 404
+    pid = sched.get('project_id', '')
+    task = sched.get('task', '')
+    if not pid or not task:
+        return jsonify({'error': 'schedule missing project or task'}), 400
+    try:
+        sid = _dispatch_agent_internal(pid, task,
+                                       trigger_type='schedule',
+                                       trigger_id=schedule_id)
+    except ValueError as e:
+        code = 404 if 'not found' in str(e) else 400
+        return jsonify({'error': str(e)}), code
+    except FileNotFoundError:
+        return jsonify({'error': 'Claude CLI not found'}), 500
+    except Exception as e:
+        return jsonify({'error': f'dispatch failed: {e}'}), 500
+    sched['last_run'] = now_iso()
+    _save_schedules(schedules)
+    return jsonify({'ok': True, 'session_id': sid})
+
+
+@app.route('/api/schedule/<schedule_id>/runs')
+def schedule_runs(schedule_id):
+    """Return all agent_log entries that were dispatched by this schedule."""
+    try:
+        limit = int(request.args.get('limit', 50))
+    except Exception:
+        limit = 50
+    schedules = _load_schedules()
+    sched = next((s for s in schedules if s.get('id') == schedule_id), None)
+    if not sched:
+        return jsonify({'error': 'schedule not found'}), 404
+    pid = sched.get('project_id', '')
+    if not pid:
+        return jsonify([])
+    log = _load_agent_log(pid)
+    runs = [e for e in log
+            if e.get('trigger_type') == 'schedule' and e.get('trigger_id') == schedule_id]
+    return jsonify(_enrich_run_entries(runs[:limit]))
+
+
+@app.route('/api/hivemind/<hivemind_id>/runs')
+def hivemind_runs(hivemind_id):
+    """Return agent_log entries for this hivemind. Filter by role/ws_id via query.
+
+    Query params:
+      role=orchestrator|worker  (default: both)
+      ws_id=<workstream_id>     (default: any)
+      limit=<n>                 (default: 50)
+    """
+    role = request.args.get('role', '')
+    ws_id = request.args.get('ws_id', '')
+    try:
+        limit = int(request.args.get('limit', 50))
+    except Exception:
+        limit = 50
+    manifest = _hm_load_manifest(hivemind_id)
+    if not manifest:
+        return jsonify({'error': 'hivemind not found'}), 404
+    pid = manifest.get('project_id', '')
+    if not pid:
+        return jsonify([])
+    log = _load_agent_log(pid)
+    runs = [e for e in log if e.get('hivemind_id') == hivemind_id]
+    if role == 'orchestrator':
+        runs = [e for e in runs if e.get('hivemind_role') == 'orchestrator']
+    elif role == 'worker':
+        runs = [e for e in runs if e.get('hivemind_role') != 'orchestrator']
+    if ws_id:
+        runs = [e for e in runs if e.get('hivemind_ws_id') == ws_id]
+    return jsonify(_enrich_run_entries(runs[:limit]))
 
 
 @app.route('/api/project/<project_id>/conversations')
@@ -6602,7 +6842,9 @@ def _scheduler_loop():
                     task = sched.get('task', '')
                     if pid and task:
                         try:
-                            sid = _dispatch_agent_internal(pid, task)
+                            sid = _dispatch_agent_internal(pid, task,
+                                                          trigger_type='schedule',
+                                                          trigger_id=sched.get('id', ''))
                             print(f"[scheduler] Dispatched for {pid}: {task[:60]} -> session {sid}")
                         except Exception as e:
                             print(f"[scheduler] Failed to dispatch for {pid}: {e}")
@@ -8491,6 +8733,12 @@ if __name__ == '__main__':
     # the Agent Log tab. Runs once, in the background, so app.run() isn't blocked.
     # Roll back: set agent_log_backfill_enabled = false in data/config.json.
     threading.Thread(target=_backfill_all_agent_logs, daemon=True).start()
+    # One-shot: transition orphaned 'active' hiveminds to 'stale'. Cheap, runs
+    # synchronously before app.run().
+    try:
+        _hm_reconcile_stale_on_startup()
+    except Exception as e:
+        print(f"[hivemind-reconcile] bootstrap failed: {e}")
     # Auto-cleanup unnamed CF Access sessions (per-session revoke, strict mode).
     # Roll back: set auto_revoke_unnamed_sessions=false in data/config.json.
     threading.Thread(target=_session_label_enforcer_loop, daemon=True).start()
