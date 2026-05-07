@@ -4,6 +4,92 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-07b] — Installer scaffold (Claude-driven, browser-only v1)
+
+A new install path designed around Clayrune's own pitch: the user runs one terminal command, Claude CLI does the install. No installer pipeline to build, sign, or maintain across three OSes; cross-platform "for free" because Claude detects the OS, package manager, and Python/Node install paths.
+
+### Architecture
+
+```
+user runs:                             ┌─────────────────────────────┐
+  curl -sSL clayrune.io/install.sh \   │ install.sh / install.ps1    │
+       | sh                            │ (~110 lines each)           │
+                                       │  1. verify/install Claude   │
+                                       │     CLI if missing          │
+                                       │  2. fetch install-prompt.md │
+                                       │  3. show 5s abort window    │
+                                       │  4. claude --dangerously-   │
+                                       │     skip-permissions -p ... │
+                                       └────────────┬────────────────┘
+                                                    │
+                                                    ▼
+                                       ┌─────────────────────────────┐
+                                       │ Claude executes 6 STEPs:    │
+                                       │  1. detect env              │
+                                       │  2. clone/pull repo         │
+                                       │  3. python venv + deps      │
+                                       │  4. node.js (safety net)    │
+                                       │  5. create OS launcher      │
+                                       │  6. start server + browser  │
+                                       └────────────┬────────────────┘
+                                                    │
+                                                    ▼
+                                       Clayrune at localhost:5199
+                                       Desktop / Start Menu / Apps
+                                       has a clickable shortcut.
+```
+
+### New files
+
+`installer/`:
+- `install-prompt.md` — the prescriptive Claude prompt, ~200 lines, 6 STEPs. Conservative: does git, pip, package-manager calls, and launches the app. Does NOT modify dotfiles, change system PATH, write outside the install dir, or `sudo` without explanation.
+- `install.sh` — macOS/Linux bootstrap.
+- `install.ps1` — Windows PowerShell bootstrap.
+- `start.sh` — Linux launcher (activates `.venv`, runs `python server.py`, opens browser via `xdg-open`).
+- `start.command` — macOS launcher (same role; opens via `open`).
+- `start.bat` — Windows launcher (same role; opens via `start http://...`).
+- `README.md` — architecture diagram + hosting plan + testing checklist.
+
+`assets/`:
+- `clayrune.png` — 1024×1024 RGBA. The Playdo mascot character; doubles as the product / install-shortcut icon. Source for all per-platform icon variants (`.ico`, `.icns`, scaled PNGs); the install prompt generates these on-the-fly with ImageMagick / `sips`.
+
+### Hosting plan
+
+| URL | Source |
+|---|---|
+| `clayrune.io/install.sh` | `installer/install.sh` |
+| `clayrune.io/install.ps1` | `installer/install.ps1` |
+| `clayrune.io/install-prompt.md` | `installer/install-prompt.md` |
+
+Domain not yet up. Pre-domain testing uses `raw.githubusercontent.com/.../installer/<file>` with `CLAYRUNE_PROMPT_URL` env var pointing the bootstrap at the right URL.
+
+### Disclosure model
+
+The bootstrap prints the exact `claude --dangerously-skip-permissions -p "<prompt>"` line it's about to execute, with a 5-second Ctrl-C abort window. The install prompt is publicly hosted at `clayrune.io/install-prompt.md` so anyone can audit before authorizing.
+
+### What's not in v1
+
+- **Tauri desktop wrapper** — browser-only for now. The Tauri build path adds a Rust toolchain dependency to step 6 that's not worth the fragility for v1; deferred to a Settings → "install desktop wrapper" follow-up.
+- **`.ico` / `.icns` pre-baked** — the install prompt generates these from `clayrune.png` on-the-fly when ImageMagick / `sips` is available. If neither is, the OS launcher uses the default icon (still works). Pre-baking is a polish add.
+- **Auto-updater** — not yet. Updates use the same model (`claude "update Clayrune in ~/Clayrune"`); a formal `clayrune.io/update.sh` is a future enhancement.
+
+### Rollback
+
+Delete `installer/` and `assets/clayrune.png`. The existing zip + `install.bat`/`install.sh` source-setup paths in the README continue to work. The Claude-driven install is purely additive.
+
+### Testing checklist
+
+A new install on a clean VM (Windows 11, macOS 14+, Ubuntu 22.04) should:
+
+- [ ] Complete in under 5 minutes with no manual intervention beyond the initial `curl … | sh`
+- [ ] End with the browser open at `http://localhost:5199`
+- [ ] Place a clickable launcher on Desktop and in the OS app menu
+- [ ] Survive a re-run (idempotent — clone becomes pull, deps re-install cleanly)
+- [ ] Leave nothing in `/etc`, `/usr`, or system-wide locations
+- [ ] Not modify `.bashrc`, `.zshrc`, or system PATH
+
+---
+
 ## [2026-05-07] — Scheduled-task UI hang + empty Runs panel
 
 Two related symptoms users hit when the scheduler ran heavily over hours:
