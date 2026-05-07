@@ -65,6 +65,71 @@ _refresh_claude_path() {
   export PATH
 }
 
+# Print the Node major version on PATH (or "0" if missing/invalid).
+_node_major() {
+  command -v node >/dev/null 2>&1 || { echo "0"; return; }
+  v=$(node --version 2>/dev/null | sed 's/^v//' | cut -d. -f1)
+  case "$v" in ''|*[!0-9]*) echo "0" ;; *) echo "$v" ;; esac
+}
+
+# Ensure a Node 18+ runtime is on PATH. Strategy: nvm (user-space, no sudo).
+# Already-good Node → no-op. Old Node → install Node 20 via nvm and switch
+# the current shell + the user's nvm default to it. This DOES install nvm if
+# it's missing (modifies ~/.bashrc / ~/.zshrc as nvm's installer normally does).
+_setup_node() {
+  m=$(_node_major)
+  if [ "$m" -ge 18 ] 2>/dev/null; then
+    return 0
+  fi
+
+  if [ "$m" = "0" ]; then
+    printf "%sNode.js not found.%s Need 18+ for Claude CLI.\n" "$Y" "$R"
+  else
+    printf "%sNode.js v%s found%s — too old for Claude CLI (need 18+).\n" "$Y" "$(node --version 2>/dev/null | sed 's/^v//')" "$R"
+  fi
+  printf "Setting up Node 20 via nvm (user-space, no sudo)...\n\n"
+
+  # Install nvm if it isn't already
+  if [ ! -s "$HOME/.nvm/nvm.sh" ]; then
+    if ! command -v curl >/dev/null 2>&1; then
+      printf "%scurl is required to install nvm.%s\n" "$E" "$R"
+      return 1
+    fi
+    printf "Installing nvm (sets up ~/.nvm + adds sourcing line to your shell rc)...\n"
+    if ! curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | PROFILE=/dev/null bash; then
+      printf "%snvm install failed.%s\n" "$E" "$R"
+      return 1
+    fi
+  fi
+
+  # Source nvm into this shell
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck disable=SC1091
+  if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; fi
+  if ! command -v nvm >/dev/null 2>&1; then
+    printf "%snvm not loaded into this shell. Open a new terminal and re-run.%s\n" "$E" "$R"
+    return 1
+  fi
+
+  # Install Node 20, use it now, set as default for future shells
+  printf "Installing Node 20 via nvm...\n"
+  if ! nvm install 20 >/dev/null 2>&1; then
+    printf "%snvm install 20 failed.%s\n" "$E" "$R"
+    return 1
+  fi
+  nvm use 20 >/dev/null 2>&1
+  nvm alias default 20 >/dev/null 2>&1
+  hash -r 2>/dev/null || true
+
+  m=$(_node_major)
+  if [ "$m" -ge 18 ] 2>/dev/null; then
+    printf "%sOK%s Node $(node --version)\n\n" "$G" "$R"
+    return 0
+  fi
+  printf "%sNode setup completed but `node --version` still reports v%s.%s\n" "$E" "$m" "$R"
+  return 1
+}
+
 # Returns 0 iff `claude --version` exits 0 AND emits non-empty output.
 # This is the *real* working-state check — `command -v claude` only proves a
 # binary exists, not that it actually runs (the WSL Node-version mismatch
@@ -76,6 +141,23 @@ _validate_claude() {
   [ -n "$out" ] || return 1
   return 0
 }
+
+# ── Step 0: Ensure Node 18+ is available ───────────────────────────────────
+
+# This must run BEFORE any Claude CLI install attempt because npm-installed
+# Claude CLI requires Node 18+ to even parse its own source (uses optional
+# chaining etc.). Without this check, we'd hit the WSL/old-nvm trap where
+# `npm install -g @anthropic-ai/claude-code` "succeeds" but every invocation
+# crashes with `SyntaxError: Unexpected token '?'`.
+if ! _setup_node; then
+  printf "%sCould not set up a working Node 18+ runtime automatically.%s\n\n" "$E" "$R"
+  printf "Please install Node 20+ manually, then re-run:\n"
+  printf "  Via nvm:  %scurl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash%s\n" "$C" "$R"
+  printf "            %snvm install 20 && nvm alias default 20%s\n" "$C" "$R"
+  printf "  Via apt:  %ssudo apt-get install -y nodejs npm%s (Ubuntu 22.04+ has Node 18)\n" "$C" "$R"
+  printf "  Direct:   %shttps://nodejs.org/%s\n" "$C" "$R"
+  exit 1
+fi
 
 # ── Step 1: Ensure a working Claude CLI ────────────────────────────────────
 

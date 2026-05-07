@@ -31,6 +31,61 @@ function Refresh-Path {
                 [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
+# Returns Node major version on PATH, or 0 if missing/invalid.
+function Get-NodeMajor {
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { return 0 }
+    try {
+        $v = (& node --version 2>$null).Trim().TrimStart('v')
+        $major = [int]($v -split '\.')[0]
+        return $major
+    } catch {
+        return 0
+    }
+}
+
+# Ensure Node 18+ is on PATH. Already-good Node → no-op. Old or missing →
+# install Node LTS via winget. Must run BEFORE any Claude CLI install attempt
+# because npm-installed Claude CLI requires Node 18+ to even parse its own
+# source.
+function Setup-Node {
+    $major = Get-NodeMajor
+    if ($major -ge 18) {
+        return $true
+    }
+
+    if ($major -eq 0) {
+        Write-Host 'Node.js not found. Need 18+ for Claude CLI.' -ForegroundColor Yellow
+    } else {
+        Write-Host "Node.js v$major found - too old for Claude CLI (need 18+)." -ForegroundColor Yellow
+    }
+
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host 'winget not available; cannot auto-install Node.' -ForegroundColor Red
+        Write-Host 'Install Node 20+ manually from https://nodejs.org/ and re-run.'
+        return $false
+    }
+
+    Write-Host 'Installing Node.js LTS via winget (no admin needed for current user)...'
+    try {
+        winget install --id OpenJS.NodeJS.LTS -e --silent `
+            --accept-source-agreements --accept-package-agreements
+    } catch {
+        Write-Host "winget install Node.js failed: $_" -ForegroundColor Red
+        return $false
+    }
+    Refresh-Path
+
+    $major = Get-NodeMajor
+    if ($major -ge 18) {
+        Write-Host "OK Node $((& node --version 2>&1))" -ForegroundColor Green
+        Write-Host ''
+        return $true
+    }
+    Write-Host "Node install completed but 'node --version' still reports v$major." -ForegroundColor Red
+    Write-Host 'Open a new PowerShell window and re-run.'
+    return $false
+}
+
 # Returns $true iff `claude --version` runs cleanly with non-empty output.
 # This is the *real* working-state check — Get-Command alone only proves a
 # binary is on PATH, not that it actually runs (the same trap that bit us on
@@ -49,6 +104,15 @@ Write-Host '======================================' -ForegroundColor Cyan
 Write-Host '  Clayrune Installer' -ForegroundColor White
 Write-Host '======================================'
 Write-Host ''
+
+# ── Step 0: Ensure Node 18+ is available ───────────────────────────────────
+
+if (-not (Setup-Node)) {
+    Write-Host ''
+    Write-Host 'Could not set up a working Node 18+ runtime automatically.' -ForegroundColor Red
+    Write-Host 'Please install Node 20+ from https://nodejs.org/ and re-run.'
+    exit 1
+}
 
 # ── Step 1: Ensure a working Claude CLI ────────────────────────────────────
 
