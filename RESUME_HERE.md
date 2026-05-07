@@ -1,20 +1,19 @@
 # Clayrune — Resume Here
 
-**Last updated:** 2026-05-07 (late PM)
-**Branch:** `master` — clean tree, everything committed + pushed.
-**Latest committed:** `4b65248` — Ask Playdo helper + walkthrough rewrite + USER_GUIDE.md.
+**Last updated:** 2026-05-07 (end-of-session)
+**Branch:** `master` — clean tree (after the final retry-button commit), everything pushed.
+**Latest committed:** `25651f0` — Playdo streaming + Settings update button + clayrune.io hosting prep, plus a small Playdo error-retry-button polish on top.
 
-**Recent commits this session** (most recent first):
-- `4b65248` — Ask Playdo helper + walkthrough rewrite + USER_GUIDE.md
-- `24993da` — Walkthrough: filter out `_incognito` pseudo-project from first-run gate
-- `da932fe` — Installer: tell user to exit Claude REPL after `/login`
-- `9d2909f` — Installer: use `exec bash -l` as in-shell auth-failure shortcut
-- `3824658` — Installer: let nvm modify `~/.bashrc` + clearer auth-failure instructions
-- `18ead06` — Installer: auth preflight + `bash` (not `sh`) for Anthropic curl-installer
-- `d498bb4` — Installer: preflight Node 18+ via nvm / winget before Claude install
-- `5607839` — Installer: validate after each install method, multi-method fallback
-- `36be356` — Installer scaffold: Claude-driven bootstrap + per-OS launchers
-- `28ced41` — Scheduler reliability + run history pagination
+**This session's commits** (most recent first):
+- *(uncommitted on disk: small Playdo retry-button polish)* — error UX in Playdo modal
+- `25651f0` — **Playdo streaming + Settings update button + clayrune.io hosting prep**
+- `8edd80d` — Playdo: draggable FAB (mistitled — same subject as 010de5a)
+- `010de5a` — Playdo: marker reliability + within-session memory
+- `34c93d8` — RESUME_HERE: post-Playdo session summary + verification checklist
+- `4b65248` — **Ask Playdo helper + walkthrough rewrite + USER_GUIDE.md**
+- `24993da` — Walkthrough: filter out `_incognito` from first-run gate
+- `da932fe`, `9d2909f`, `3824658`, `18ead06`, `d498bb4`, `5607839`, `36be356` — **Installer hardening chain** (7 commits) tested end-to-end on WSL Ubuntu
+- `28ced41` — Scheduler reliability + run history pagination (paginated Runs panel + Run Now)
 - `4a7dd4b` — Hivemind global surface + trigger-aware run history + sizeAgentChat fix
 
 > Pick this up after a system restart. Skim section 0 for what's pending,
@@ -22,9 +21,18 @@
 
 ---
 
-## 0. What's pending after reboot
+## 0. What's pending after the next reboot
 
-**Tree is clean.** Everything from today's session is committed + pushed.
+**Tree state**: one small uncommitted change (Playdo error retry button) — needs to be committed before pushing. Everything else from today is shipped.
+
+**Server restart needed** to pick up: `/api/guide/stream` (new), `/api/system/update/status` (new), `/api/system/update` (new) — all from `25651f0`.
+
+**User action queue** (you, Ron):
+
+- [ ] **Validate the install on a vanilla Windows host** (the only thing not yet tested end-to-end this session). PowerShell command in section "Vanilla Windows install — test recipe" below.
+- [ ] **Set up Cloudflare Pages for clayrune.io** following `docs/HOSTING.md`. ~10 minutes — domain DNS to Cloudflare, Pages project, output dir = `installer/`, custom domain attach. After that, `clayrune.io/install.sh` works directly (no `CLAYRUNE_PROMPT_URL` env var needed).
+- [ ] **Test the new Playdo features** that landed today after restart + hard-refresh: streaming token-by-token, draggable FAB, retry button on errors, marker reliability with new few-shot prompt.
+- [ ] **Test the Settings → Update Clayrune** button. Make a deliberate small change on master + push, then click Update from the dashboard — should report "1 commit behind", click Update, see the pull succeed, click Restart now.
 
 Three things to do *immediately* after reboot:
 
@@ -132,15 +140,54 @@ A floating circular button bottom-right of every viewport, opens a chat modal wh
 
 **Voice**: deliberately not playful or childish (per Ron). Friendly + tight register. The system prompt at the bottom of `USER_GUIDE.md` instructs Playdo on tone.
 
+### Thread 4 — Playdo polish iterations (`010de5a`, `8edd80d`, `25651f0`)
+
+After the initial Playdo landed, several refinements followed in the same session:
+
+- **Marker reliability** (`010de5a` part 1): the original system prompt described markers as a soft guideline; the model treated emission as optional. Live testing surfaced "Playdo answered correctly but didn't open/highlight the menu." Strengthened the system prompt with **hard rules** (marker emission is MANDATORY for how/where questions), **7 concrete few-shot Q→A pairs**, a **CSS selector cheatsheet** (17 entries pulled from live UI), and a hard ban on `[clayrune:open-modal project="<id>"]` placeholder fabrications. Common-tasks recipes rewritten to use only working selectors.
+- **Within-session memory** (`010de5a` part 2): `_playdoHistory` array tracks last 12 messages (~6 exchanges). Each request to `/api/guide/ask` now sends the last 6 messages as `history`; backend prepends them as "Previous exchange in this conversation: …". Cleaned text only (markers stripped before storing) so Playdo doesn't re-emit prior highlights. Reset on close+reopen, preserved across minimize+restore.
+- **Draggable FAB** (`8edd80d`): tap-vs-drag detection via 5px movement threshold. Tap → opens modal as before. Drag → button follows cursor; on release, position persists in `localStorage.playdo_fab_pos`. Touch + mouse both supported. Re-clamps to viewport on resize so it can't get trapped off-screen.
+- **Streaming responses** (`25651f0` part 1): replaces the 5–15s blocking wait with token-by-token streaming via SSE. New `/api/guide/stream` endpoint spawns claude with `--output-format stream-json`, parses assistant text blocks, emits `delta` / `done` / `error` events. Subprocess killed on client disconnect (GeneratorExit handler) so abandoned conversations don't burn tokens. Frontend `submitPlaydo` rewritten to use `fetch + ReadableStream`; bot message div fills incrementally; markers parsed from final assembled answer at done event (mid-stream marker firing is v2 polish).
+- **Error retry button** (uncommitted on disk): error bubbles in the chat now have a **Retry** button. Removes the failed user message from `_playdoHistory`, refills the input box, lets the user re-submit (or edit + re-submit). Surfaced after a transient `claude exit 1` that didn't recover gracefully.
+
+### Thread 5 — Settings → Update Clayrune (`25651f0` part 2)
+
+Closes the "users without git CLI experience can't update" gap.
+
+- New `GET /api/system/update/status` — runs `git fetch --quiet`, returns `{is_git_repo, branch, commit, behind, ahead, has_local_changes, update_available}`.
+- New `POST /api/system/update` — runs `git pull --ff-only`. Refuses with 409 if working tree is dirty. Returns `recent_log` + `new_commit` on success.
+- Settings → Server section gets an "Update Clayrune" row below the existing "Restart server" row. Auto-checks status when Settings opens. Button reads `Update (N)` when N commits behind, `Up to date` when in sync. Successful pull flips the button to `Restart now` which jumps to the existing restart confirm flow.
+- Helper `_git(args, cwd)` wraps `subprocess.run` with the project's Windows-flag boilerplate.
+
+### Thread 6 — clayrune.io hosting prep (`25651f0` part 3)
+
+Files in place; still needs Ron to set up Cloudflare Pages + DNS.
+
+- `installer/_headers` — Cloudflare Pages config. Sets `Content-Type: text/plain; charset=utf-8` on `.sh`/`.ps1`/`.md` files so curling them works AND viewing in a browser doesn't trigger a download.
+- `installer/index.html` — landing page for `clayrune.io`. Dark theme, brand orange accent, hero + 6-feature grid + per-OS install commands + audit link to `/install-prompt.md` + GitHub source link.
+- `installer/clayrune.png` — copy of the mascot icon for the landing page (referenced as `/clayrune.png`).
+- `docs/HOSTING.md` — step-by-step Cloudflare Pages setup. ~10 minutes for the operator. After setup, every push to `master` auto-redeploys; bootstrap fetches from `clayrune.io/install-prompt.md` directly (no env-var override needed).
+
 ---
 
-## Things still TBD (after testing)
+## Things still TBD (after testing + the next session)
 
-- **clayrune.io hosting** — Cloudflare Pages auto-deploy from the `installer/` dir + DNS for `clayrune.io`. Required to swap the ugly `raw.githubusercontent.com/...` URLs for `clayrune.io/install.sh`. Lowest-friction path: add Cloudflare Pages → connect GitHub → done.
-- **Settings → Update Clayrune button** — currently users have to know `cd ~/Clayrune && git pull` to update. Non-starter for non-technical users. A simple Settings entry that calls `git pull` server-side and offers to restart would close this.
-- **Streaming Playdo responses** — v1 is non-streaming (5–15 s wait for full answer). Streaming via SSE would be friendlier; existing agent SSE infra can be reused.
-- **Playdo conversation memory** — v1 is fresh-each-open. A within-session history would help follow-ups feel natural.
-- **Playdo as actor** — v1 is read-only (only `goto`/`open-modal`/`highlight`). v2 could add safe destructive markers (`create-schedule`, etc.) with explicit confirmations.
+### User-action queue
+
+- [ ] **Validate vanilla Windows install** (the only platform not tested end-to-end this session — `install.ps1` path).
+- [ ] **Set up Cloudflare Pages for clayrune.io** following `docs/HOSTING.md`. ~10 min.
+- [ ] **Test the new Playdo features** end-to-end after restart (streaming, draggable FAB, retry button, marker reliability with new prompt).
+- [ ] **Commit the uncommitted retry-button polish** if it's still on disk in the next session.
+
+### Engineering items still TBD
+
+- **Mid-stream marker firing** — Playdo currently parses markers only at the `done` event. Mid-stream firing (so highlights appear as Playdo "speaks them" rather than after) is the next polish layer.
+- **Suggested follow-up chips** — after each answer, Playdo could offer 3 clickable next-questions ("Want to know how to schedule one?"). A new `[clayrune:suggest "Q1" "Q2" "Q3"]` marker shape.
+- **Playdo as actor** — v1 is read-only. v2 could add safe destructive markers (`create-schedule`, etc.) gated by explicit user confirmations.
+- **Telemetry on installer success/failure** — anonymous, opt-in. Count successful installs and where they fail. Helps drive the install prompt iteration.
+- **CI check** that any user-visible UI/server change also touches `docs/USER_GUIDE.md` so Playdo's knowledge stays current. Soft warning, not a block.
+- **Versioned install prompts** at clayrune.io (e.g. `install-prompt-v1.md`) so updates can ship without breaking in-flight installs.
+- **POSIX adapter parity for the existing remote-restart code** (CHANGELOG `[2026-05-05]` flagged this as a TODO — netstat equivalent + log redirection for non-Windows).
 - **Mobile clay icon** — the FAB on mobile is 50 px which feels right; verify it doesn't clash with the bottom-tab bar in landscape orientation.
 - **First-launch UX**: walkthrough → Playdo. After the rewritten walkthrough completes, the Playdo button is pulsing for the user. The "ask-playdo" step calls it out. Could optionally auto-open the modal at the end of the tour — currently doesn't, by design (user clicks if they want).
 
