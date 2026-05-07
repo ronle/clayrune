@@ -4,6 +4,104 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-07c] — Ask Playdo helper + walkthrough rewrite + USER_GUIDE.md
+
+Three pieces shipped together to close the "new user has no idea what's possible" gap:
+
+### `docs/USER_GUIDE.md` (new)
+
+Comprehensive user-facing reference for every Clayrune surface. ~310 lines, sections:
+
+```
+What is Clayrune
+Your first 5 minutes
+Surfaces overview (Dashboard / Sidebar / Header / Mobile)
+Project modal (tabs + 3-dot menu inventory)
+Agent dispatch (sessions, plan approval, stop/continue, pop-out)
+Hivemind (sidebar surface, workings, stale heuristic, Start from project)
+Scheduler (recurring + Run Now + Runs panel + paginated history)
+Backlog (per-project + cross-project + GitHub sync)
+Memory & Rules (per-project + shared)
+Plans / Activity / Run history & transcripts
+Mobile remote access (clayrune.io tunnel)
+Settings
+Keyboard shortcuts
+Common tasks (10 recipes — each ends with the [clayrune:...] marker recipe Playdo emits)
+Glossary (12 terms)
+Troubleshooting (4 known issues with version pointers)
+Marker syntax for the assistant (Playdo-only — explains the inline UI control markers)
+```
+
+The doc plays double duty: a human reference AND Playdo's system prompt. The Common-tasks section is the load-bearing piece — each recipe ends with the exact `[clayrune:...]` marker, so Playdo highlights the right UI element while it explains.
+
+### Walkthrough rewrite (`WT_STEPS` in `static/index.html`)
+
+Old walkthrough was 19 steps with stale content (Tabs step still listed "Hivemind" as a tab — no longer true; menu steps didn't include Hiveminds + Start Hivemind; no Hivemind sidebar / Scheduler / Run Now / Runs panel coverage). Rewritten to 16 hand-curated steps reflecting current UI:
+
+```
+1.  welcome              — opening screen
+2.  advanced-picker      — pick power-user features (kept)
+3.  sidebar              — Dashboard / Backlog / 🐝 Hivemind / Scheduler / Settings / Shared Rules / Processes
+4.  header               — Ctrl+K + agent count + live badge + ? button
+5.  toolbar              — Grid/List toggle + filter + density + + New Project
+6.  sample-tile          — virtual demo tile (sample project auto-created)
+7.  open-modal           — virtual modal demo
+8.  tabs                 — Agent / Backlog / Agent Log / Plans / Activity (NO Hivemind here)
+9.  agent                — dispatch input + plan approval mention
+10. menu                 — three-dot menu: Hiveminds + Start Hivemind + Memory & Rules + Status/Color/Domain/Model + GitHub Sync (mobile: tabs in menu)
+11. hivemind-sidebar     — global cross-project Hivemind view (desktop only)
+12. scheduler            — Run Now + Runs panel + transcript viewer (desktop only)
+13. console              — bottom agent console
+14. bottom-tabs          — mobile bottom tab bar (mobile only)
+15. cmd-palette          — Ctrl+K
+16. ask-playdo           — points at the floating button (NEW)
+17. done                 — Settings/cmd-palette/? to re-run; mascot pulse continues until first open
+```
+
+(Counts to 17 with the new step — net change vs old: removed 4 granular menu sub-steps + redundant backlog/agent demo steps, added hivemind-sidebar / scheduler / ask-playdo.)
+
+### Ask Playdo — in-app guide assistant (new)
+
+Floating circular button bottom-right of every viewport, always visible. Pulses on first visit until the user opens it once (persisted in `localStorage.playdo_opened`). Mobile sits 70 px above the bottom tab bar.
+
+**Surface** (`static/index.html`):
+- Floating FAB: 56 px desktop / 50 px mobile, Playdo mascot icon, accent border.
+- `__playdo` modal: chat history + input pinned bottom. Each open is a fresh conversation (no per-session memory in v1, by design — keeps it simple).
+- `submitPlaydo()` POSTs to the new endpoint and renders the response.
+- `_playdoParseMarkers()` strips `[clayrune:goto/open-modal/highlight]` from the answer + queues the actions.
+- `_playdoDispatchActions()` runs them with 350 ms stagger so the user can follow what's happening.
+- `_playdoFormatText()` light markdown (bold, inline code, newlines).
+
+**Backend** (`server.py`):
+- `POST /api/guide/ask` — single-shot call. Reads `docs/USER_GUIDE.md` as system prompt, runs `claude -p <question> --append-system-prompt <guide> --max-turns 1`, returns `{answer}`. 60 s timeout, 2000-char question cap. No project context, no memory writes, no agent_log entry.
+- `GET /assets/<filename>` — new static-file route to serve the mascot icon (and any other repo assets the FE needs).
+
+**Marker protocol** (Playdo emits these inline; FE parses + dispatches):
+```
+[clayrune:goto view="hivemind"]
+[clayrune:open-modal project="abc123"]
+[clayrune:highlight selector="#sidebar-item-hivemind" duration=2500]
+```
+All read-only — no destructive actions in v1. Highlight uses a CSS pulse class (`.clayrune-highlight`) and `scrollIntoView` so the user sees what Playdo means.
+
+**Naming convention** (saved as memory `naming_playdo_clayrune.md`): Playdo = mascot character, Clayrune = product. The marker prefix stays `clayrune:` (product-namespaced); only the user-facing helper is "Ask Playdo."
+
+### Walkthrough trigger fix (was broken since the incognito project was added)
+
+The trigger checked `allProjects.length === 0`, but the auto-created `_incognito` pseudo-project always counts as 1 — so the first-run walkthrough never fired on a fresh install. Fix: filter via `isIncognitoProject` before counting. Surfaced during installer end-to-end testing on a clean WSL Ubuntu where the dashboard rendered empty but no walkthrough kicked in.
+
+### Server restart
+
+Required for the new `/api/guide/ask` and `/assets/...` endpoints. Frontend changes apply on next page load.
+
+### Rollback
+
+- USER_GUIDE.md: just delete `docs/USER_GUIDE.md`. Playdo will return `guide not available` errors but nothing else breaks.
+- Walkthrough rewrite: revert the `WT_STEPS` block.
+- Ask Playdo: revert `<button id="playdo-fab">` HTML, the `.playdo-*` CSS block, the `// ── Ask Playdo` JS block, the `/api/guide/ask` and `/assets/<path:filename>` server routes.
+
+---
+
 ## [2026-05-07b] — Installer scaffold (Claude-driven, browser-only v1)
 
 A new install path designed around Clayrune's own pitch: the user runs one terminal command, Claude CLI does the install. No installer pipeline to build, sign, or maintain across three OSes; cross-platform "for free" because Claude detects the OS, package manager, and Python/Node install paths.
