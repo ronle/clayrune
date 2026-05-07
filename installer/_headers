@@ -1,0 +1,27 @@
+# Cloudflare Pages headers config — sets correct Content-Type for the
+# installer files so browsers don't try to render them as HTML when a
+# user pastes the URL into the address bar.
+
+/install.sh
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+
+/install.ps1
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+
+/install-prompt.md
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+
+/start.sh
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+
+/start.command
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+
+/start.bat
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300

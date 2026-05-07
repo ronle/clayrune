@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clayrune — operator console for long-running Claude agents</title>
+  <meta name="description" content="A multi-project dashboard for dispatching, monitoring, and coordinating Claude agents. One-command install.">
+  <meta name="theme-color" content="#e8824a">
+  <link rel="icon" type="image/png" href="/clayrune.png">
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --surface: #232831;
+      --surface2: #2a3038;
+      --text: #e8e8e8;
+      --text-faint: #8b95a5;
+      --accent: #e8824a;
+      --accent-dim: #4a2a1a;
+      --border: #353c47;
+      --mono: 'SF Mono', Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+      line-height: 1.55;
+      min-height: 100vh;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 60px 24px; }
+    header { display: flex; align-items: center; gap: 16px; margin-bottom: 40px; }
+    header img { width: 64px; height: 64px; }
+    header h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }
+    .tagline { color: var(--text-faint); font-size: 14px; margin-top: 2px; }
+    h2 { font-size: 20px; font-weight: 600; margin: 36px 0 14px; }
+    p { margin-bottom: 14px; }
+    .lead { font-size: 16px; color: var(--text); margin-bottom: 28px; }
+    .install-block {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 18px 20px; margin: 12px 0 28px;
+    }
+    .install-block .os { font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 8px; }
+    .install-block pre {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 5px; padding: 12px 14px; overflow-x: auto;
+      font-family: var(--mono); font-size: 13px; color: var(--text);
+    }
+    .install-block .note { font-size: 12px; color: var(--text-faint); margin-top: 8px; }
+    code {
+      font-family: var(--mono); font-size: 13px;
+      background: var(--surface2); padding: 2px 6px; border-radius: 3px;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    ul { margin-left: 20px; margin-bottom: 14px; }
+    ul li { margin-bottom: 6px; }
+    .features {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px;
+      margin-bottom: 28px;
+    }
+    .features .feat { font-size: 13px; }
+    .features .feat strong { color: var(--text); }
+    .features .feat span { color: var(--text-faint); }
+    @media (max-width: 600px) {
+      .features { grid-template-columns: 1fr; }
+      .wrap { padding: 32px 16px; }
+      header h1 { font-size: 24px; }
+    }
+    footer {
+      margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border);
+      font-size: 12px; color: var(--text-faint);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <img src="/clayrune.png" alt="Clayrune mascot">
+      <div>
+        <h1>Clayrune</h1>
+        <div class="tagline">Operator console for long-running Claude agents</div>
+      </div>
+    </header>
+
+    <p class="lead">A multi-project dashboard for dispatching, monitoring, and coordinating Claude agents. Run 5–20 long-lived AI work-streams on your own machine without losing track.</p>
+
+    <div class="features">
+      <div class="feat"><strong>🐝 Hivemind</strong><br><span>Multi-agent coordination — orchestrator + parallel workers per goal</span></div>
+      <div class="feat"><strong>⏱ Scheduler</strong><br><span>Recurring tasks, run history, click-to-replay</span></div>
+      <div class="feat"><strong>📋 Backlog</strong><br><span>Cross-project task list, GitHub Issues sync</span></div>
+      <div class="feat"><strong>🧠 Memory</strong><br><span>Per-project + shared rules, auto-curated</span></div>
+      <div class="feat"><strong>📱 Mobile remote</strong><br><span>Cloudflare tunnel + named devices, restart from your phone</span></div>
+      <div class="feat"><strong>🤖 Ask Playdo</strong><br><span>In-app guide that highlights UI as it explains</span></div>
+    </div>
+
+    <h2>Install</h2>
+
+    <p>One command. Claude CLI installs Clayrune for you on your local machine.</p>
+
+    <div class="install-block">
+      <div class="os">macOS / Linux</div>
+      <pre>curl -sSL https://clayrune.io/install.sh | sh</pre>
+      <div class="note">Tested on Ubuntu 22.04+, macOS 14+. WSL Ubuntu also works.</div>
+    </div>
+
+    <div class="install-block">
+      <div class="os">Windows (PowerShell)</div>
+      <pre>iwr https://clayrune.io/install.ps1 -useb | iex</pre>
+      <div class="note">Tested on Windows 11. May need <code>Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass</code> first if your policy is restrictive.</div>
+    </div>
+
+    <h2>What the installer does</h2>
+
+    <ul>
+      <li>Installs Claude CLI if missing (npm or Anthropic's installer)</li>
+      <li>Installs Node.js 20 via nvm/winget if you don't have it</li>
+      <li>Clones this repo to <code>~/Clayrune</code> (or <code>%USERPROFILE%\Clayrune</code>)</li>
+      <li>Sets up the Python venv + dependencies</li>
+      <li>Creates a desktop shortcut + Start Menu / Applications entry</li>
+      <li>Launches the server and opens <code>http://localhost:5199</code> in your browser</li>
+    </ul>
+
+    <p>The full install logic is a Markdown prompt — Claude reads it and executes the steps. <a href="/install-prompt.md">Read the prompt</a> before you run.</p>
+
+    <h2>Source</h2>
+
+    <p>Open source on GitHub: <a href="https://github.com/ronle/mission-control">github.com/ronle/mission-control</a>. MIT licensed.</p>
+
+    <footer>
+      Built with Claude · Hosted on Cloudflare Pages · <a href="/install-prompt.md">install prompt</a> · <a href="https://github.com/ronle/mission-control">source</a>
+    </footer>
+  </div>
+</body>
+</html>

@@ -11356,6 +11356,75 @@ setTimeout(() => { _checkServerRestart(); }, 1500);
 // explicit confirmation. The frontend then shows a "Restarting..." overlay and
 // polls /api/projects until it 200s, at which point the page reloads — the
 // existing mc_open_modals localStorage snapshot brings back the conversations.
+// ── Update Clayrune (Settings → Server → Update) ──────────────────────────
+
+async function refreshUpdateStatus() {
+  const hint = document.getElementById('update-status-hint');
+  const btn = document.getElementById('update-btn');
+  if (!hint || !btn) return;
+  try {
+    const res = await fetch(API_BASE + '/api/system/update/status');
+    const data = await res.json();
+    if (!data.is_git_repo) {
+      hint.textContent = data.message || 'Not a git checkout — automatic updates unavailable.';
+      btn.disabled = true;
+      btn.textContent = 'Unavailable';
+      return;
+    }
+    const branchInfo = `branch ${data.branch} @ ${data.commit}`;
+    if (data.has_local_changes) {
+      hint.textContent = `Local changes in ${branchInfo} — pull would conflict. Stash or commit first.`;
+      btn.disabled = true;
+      btn.textContent = 'Blocked';
+    } else if (data.behind > 0) {
+      hint.innerHTML = `<strong style="color:var(--accent)">${data.behind} commit${data.behind === 1 ? '' : 's'} behind</strong> &middot; ${branchInfo}. Click to pull + restart.`;
+      btn.disabled = false;
+      btn.textContent = `Update (${data.behind})`;
+    } else if (data.ahead > 0) {
+      hint.textContent = `${branchInfo} — ${data.ahead} commit${data.ahead === 1 ? '' : 's'} ahead of origin (local-only changes, nothing to pull).`;
+      btn.disabled = true;
+      btn.textContent = 'Up to date';
+    } else {
+      hint.textContent = `Up to date &middot; ${branchInfo}.`;
+      btn.disabled = true;
+      btn.textContent = 'Up to date';
+    }
+  } catch (e) {
+    hint.textContent = 'Could not check for updates: ' + (e.message || e);
+    btn.disabled = true;
+    btn.textContent = 'Error';
+  }
+}
+
+async function performClayruneUpdate() {
+  const btn = document.getElementById('update-btn');
+  const hint = document.getElementById('update-status-hint');
+  if (!btn || !hint) return;
+  if (!confirm('Pull the latest version from GitHub? Your data and config are preserved.')) return;
+  btn.disabled = true;
+  btn.textContent = 'Pulling...';
+  hint.textContent = 'Running git pull...';
+  try {
+    const res = await fetch(API_BASE + '/api/system/update', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      hint.textContent = (data.error || `Update failed (${res.status})`) + (data.detail ? ' — ' + data.detail.split('\n')[0] : '');
+      btn.textContent = 'Failed';
+      setTimeout(refreshUpdateStatus, 1500);
+      return;
+    }
+    hint.innerHTML = `<strong style="color:var(--green-text,#22c55e)">Updated to ${esc(data.new_commit)}</strong>. ${data.restart_recommended ? 'Restart the server now to pick up the changes.' : ''}`;
+    btn.textContent = data.restart_recommended ? 'Restart now' : 'Done';
+    btn.disabled = false;
+    if (data.restart_recommended) {
+      btn.onclick = () => { closeModalById('__settings'); openRestartConfirmation(); };
+    }
+  } catch (e) {
+    hint.textContent = 'Update error: ' + (e.message || e);
+    btn.textContent = 'Failed';
+  }
+}
+
 async function openRestartConfirmation() {
   let status;
   try {
@@ -11565,6 +11634,10 @@ async function _renderSettings() {
   // Refresh remote-access status alongside config so the panel renders with
   // live state (no provider / not enrolled / enrolled).
   fetchRemoteStatus().then(s => { window._remoteState = s; refreshRemoteAccessSection(); });
+  // Async git-status check for the Update Clayrune row (`refreshUpdateStatus`
+  // populates #update-status-hint + #update-btn after the settings body is in
+  // the DOM; safe to fire-and-forget).
+  setTimeout(() => refreshUpdateStatus(), 100);
   let cfg;
   try {
     const res = await fetch(API_BASE + '/api/config');
@@ -11757,6 +11830,13 @@ async function _renderSettings() {
       <div class="settings-row">
         <div><div class="settings-label">Restart Mission Control</div><div class="settings-hint">Picks up new code or config without needing local access. Open conversations are restored after reconnect.</div></div>
         <button class="btn-dispatch" style="background:var(--red-dim,#5a2828);border-color:var(--red,#e35858);color:var(--red-text,#ffd2d2)" onclick="openRestartConfirmation()">Restart server</button>
+      </div>
+      <div class="settings-row" style="margin-top:8px">
+        <div>
+          <div class="settings-label">Update Clayrune</div>
+          <div class="settings-hint" id="update-status-hint">Checking for updates...</div>
+        </div>
+        <button class="btn-dispatch" id="update-btn" onclick="performClayruneUpdate()" disabled>Update</button>
       </div>
     </div>
 
@@ -12830,68 +12910,109 @@ async function submitPlaydo() {
   const question = input.value.trim();
   if (!question) return;
 
-  // Show the user's message in the history pane
+  // User's message
   const userMsg = document.createElement('div');
   userMsg.className = 'playdo-msg user';
   userMsg.textContent = question;
   histDiv.appendChild(userMsg);
 
-  // "Thinking..." indicator
-  const thinking = document.createElement('div');
+  // Bot message div — will be filled with streaming tokens.
+  // Starts empty + shows the typing dots; replaced with real text as we go.
+  const botMsg = document.createElement('div');
+  botMsg.className = 'playdo-msg bot';
+  const thinking = document.createElement('span');
   thinking.className = 'playdo-thinking';
   thinking.textContent = 'Playdo is thinking';
-  histDiv.appendChild(thinking);
+  botMsg.appendChild(thinking);
+  histDiv.appendChild(botMsg);
   histDiv.scrollTop = histDiv.scrollHeight;
 
   input.value = '';
   input.disabled = true;
   send.disabled = true;
 
-  // Snapshot prior history to send as context (last 6 messages = ~3 exchanges).
-  // The current question is NOT included — backend appends it as "Current".
+  // Snapshot prior history (last 6 messages = ~3 exchanges).
   const historyPayload = _playdoHistory.slice(-6);
   // Push the user's message into history NOW so the next turn sees it even
-  // if the network call below fails midway.
+  // if streaming fails midway.
   _playdoHistory.push({role: 'user', text: question});
 
+  // Accumulate streamed text chunks here so we can render incrementally
+  // AND parse markers at the end from the full assembled answer.
+  let assembled = '';
+  let firstChunk = true;
+  let errored = false;
+
   try {
-    const res = await fetch(API_BASE + '/api/guide/ask', {
+    const res = await fetch(API_BASE + '/api/guide/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({question, history: historyPayload}),
     });
-    thinking.remove();
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const errMsg = document.createElement('div');
-      errMsg.className = 'playdo-msg error';
-      errMsg.textContent = (data.error || `Request failed (${res.status})`);
-      histDiv.appendChild(errMsg);
-      // Don't store error responses in history — keeps Playdo's context clean.
-    } else {
-      // Parse markers, render the cleaned text, then dispatch the actions.
-      const {cleanText, actions} = _playdoParseMarkers(data.answer || '');
-      const botMsg = document.createElement('div');
-      botMsg.className = 'playdo-msg bot';
-      botMsg.innerHTML = _playdoFormatText(cleanText);
-      histDiv.appendChild(botMsg);
-      // Store the cleaned text (NO markers) so Playdo's next turn doesn't
-      // re-emit the same highlights from seeing them in its own prior reply.
-      _playdoHistory.push({role: 'assistant', text: cleanText});
-      // Cap at 12 messages total — anything older drops off the front.
-      if (_playdoHistory.length > 12) {
-        _playdoHistory = _playdoHistory.slice(-12);
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}));
+      botMsg.innerHTML = '';
+      botMsg.classList.remove('bot'); botMsg.classList.add('error');
+      botMsg.textContent = (data.error || `Request failed (${res.status})`);
+      errored = true;
+      return;
+    }
+
+    // Read the SSE stream chunk-by-chunk via the body's ReadableStream.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      // SSE events are `data: {...}\n\n` — split on double-newline.
+      let nl;
+      while ((nl = buf.indexOf('\n\n')) !== -1) {
+        const event = buf.slice(0, nl);
+        buf = buf.slice(nl + 2);
+        const dataLine = event.split('\n').find(l => l.startsWith('data: '));
+        if (!dataLine) continue;
+        let payload;
+        try { payload = JSON.parse(dataLine.slice(6)); } catch { continue; }
+        if (payload.type === 'delta') {
+          if (firstChunk) {
+            botMsg.innerHTML = '';
+            firstChunk = false;
+          }
+          assembled += payload.text || '';
+          // Render the assembled-so-far with markers stripped (they'll be
+          // dispatched on `done`). Light formatting matches non-streaming path.
+          const {cleanText} = _playdoParseMarkers(assembled);
+          botMsg.innerHTML = _playdoFormatText(cleanText);
+          histDiv.scrollTop = histDiv.scrollHeight;
+        } else if (payload.type === 'error') {
+          botMsg.innerHTML = '';
+          botMsg.classList.remove('bot'); botMsg.classList.add('error');
+          botMsg.textContent = payload.message || 'Playdo errored';
+          errored = true;
+          return;
+        } else if (payload.type === 'done') {
+          // Final assembled answer — use it as ground truth in case any
+          // delta got dropped. Then parse markers and dispatch.
+          const finalText = (payload.answer || assembled).trim();
+          const {cleanText, actions} = _playdoParseMarkers(finalText);
+          botMsg.innerHTML = _playdoFormatText(cleanText);
+          // Store the cleaned text (NO markers) so Playdo's next turn doesn't
+          // re-emit the same highlights from seeing them in its own prior reply.
+          _playdoHistory.push({role: 'assistant', text: cleanText});
+          if (_playdoHistory.length > 12) {
+            _playdoHistory = _playdoHistory.slice(-12);
+          }
+          _playdoDispatchActions(actions);
+        }
       }
-      // Dispatch the markers AFTER rendering so any DOM lookups they need
-      // (e.g. a view that gets navigated to) have a moment to mount.
-      _playdoDispatchActions(actions);
     }
   } catch (e) {
-    thinking.remove();
-    const errMsg = document.createElement('div');
-    errMsg.className = 'playdo-msg error';
-    errMsg.textContent = 'Network error: ' + (e.message || e);
-    histDiv.appendChild(errMsg);
+    botMsg.innerHTML = '';
+    botMsg.classList.remove('bot'); botMsg.classList.add('error');
+    botMsg.textContent = 'Network error: ' + (e.message || e);
+    errored = true;
   } finally {
     input.disabled = false;
     send.disabled = false;

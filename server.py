@@ -854,6 +854,140 @@ def serve_asset(filename):
 
 # ── "Ask Playdo" guide assistant ────────────────────────────────────────────
 
+@app.route('/api/guide/stream', methods=['POST'])
+def guide_stream():
+    """Streaming variant of /api/guide/ask. Spawns claude with stream-json output
+    and forwards text deltas to the client as Server-Sent Events.
+
+    SSE protocol:
+      data: {"type":"delta","text":"<chunk>"}\n\n
+      data: {"type":"done","answer":"<full text>"}\n\n
+      data: {"type":"error","message":"..."}\n\n
+
+    The full assembled answer is emitted in the final `done` event so the
+    client can run its existing marker parser on the complete text. The
+    incremental `delta` events are purely for the typing-animation effect.
+    """
+    data = request.get_json() or {}
+    question = (data.get('question') or '').strip()
+    if not question:
+        return jsonify({'error': 'question required'}), 400
+    if len(question) > 2000:
+        return jsonify({'error': 'question too long (max 2000 chars)'}), 400
+
+    history = data.get('history', [])
+    if not isinstance(history, list):
+        history = []
+    history = history[-6:]
+
+    guide_path = Path(__file__).parent / 'docs' / 'USER_GUIDE.md'
+    if not guide_path.exists():
+        return jsonify({'error': 'guide not available — docs/USER_GUIDE.md missing'}), 500
+    try:
+        system_prompt = guide_path.read_text(encoding='utf-8')
+    except Exception as e:
+        return jsonify({'error': f'guide read failed: {e}'}), 500
+
+    if history:
+        lines = ['Previous exchange in this conversation:']
+        for m in history:
+            role = 'User' if (m.get('role') or '') == 'user' else 'You'
+            text = (m.get('text') or '').strip()[:1000]
+            if text:
+                lines.append(f'{role}: {text}')
+        lines.append('')
+        lines.append(f'Current question: {question}')
+        full_question = '\n'.join(lines)
+    else:
+        full_question = question
+    if len(full_question) > 8000:
+        full_question = full_question[-8000:]
+
+    cmd = ['claude', '-p', full_question,
+           '--append-system-prompt', system_prompt,
+           '--max-turns', '1',
+           '--print', '--verbose', '--output-format', 'stream-json']
+
+    def sse(payload):
+        return f'data: {json.dumps(payload)}\n\n'
+
+    def generate():
+        proc = None
+        full_text_parts = []
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True, encoding='utf-8', errors='replace',
+                creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+            )
+        except FileNotFoundError:
+            yield sse({'type': 'error', 'message': 'Claude CLI not found on this server'})
+            return
+        except Exception as e:
+            yield sse({'type': 'error', 'message': f'spawn failed: {e}'})
+            return
+
+        try:
+            for raw in iter(proc.stdout.readline, ''):
+                line = raw.rstrip('\n')
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                # claude stream-json emits {type: "assistant", message: {role, content: [...]}}
+                # for assistant turns. Each content block can be {type: "text", text: "..."}.
+                if obj.get('type') == 'assistant':
+                    msg = obj.get('message', {}) or {}
+                    content = msg.get('content', []) or []
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get('type') == 'text':
+                                t = str(block.get('text') or '')
+                                if t:
+                                    full_text_parts.append(t)
+                                    yield sse({'type': 'delta', 'text': t})
+                # Other event types (system, result, user echo) are ignored —
+                # we only need the assistant text.
+
+            proc.wait(timeout=5)
+            if proc.returncode != 0:
+                err = ''
+                try:
+                    err = (proc.stderr.read() or '').strip()[:500]
+                except Exception:
+                    pass
+                yield sse({'type': 'error', 'message': err or f'claude exit {proc.returncode}'})
+                return
+            full_text = ''.join(full_text_parts).strip()
+            yield sse({'type': 'done', 'answer': full_text})
+        except GeneratorExit:
+            # Client disconnected (closed modal, asked new question, navigated
+            # away). Kill the subprocess so we don't keep burning tokens.
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise
+        except Exception as e:
+            yield sse({'type': 'error', 'message': str(e)})
+        finally:
+            if proc and proc.poll() is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',  # disable nginx buffering if behind a proxy
+    })
+
+
 @app.route('/api/guide/ask', methods=['POST'])
 def guide_ask():
     """Single-shot ask of the in-app Playdo guide assistant.
@@ -8918,6 +9052,114 @@ def _perform_server_restart_async(audit_entry):
 def system_restart_status():
     """Return what's currently active so the UI can warn before restarting."""
     return jsonify(_get_active_restart_blockers())
+
+
+# ── Update Clayrune (git pull from inside the dashboard) ───────────────────
+
+def _git(args, cwd, timeout=30):
+    """Run git with the given args in cwd. Returns (returncode, stdout+stderr)."""
+    try:
+        r = subprocess.run(
+            ['git', *args],
+            cwd=str(cwd),
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=timeout,
+            creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+        )
+        out = (r.stdout or '') + (r.stderr or '')
+        return r.returncode, out.strip()
+    except FileNotFoundError:
+        return -1, 'git not found on PATH'
+    except subprocess.TimeoutExpired:
+        return -2, f'git {args[0]} timed out'
+    except Exception as e:
+        return -3, str(e)
+
+
+@app.route('/api/system/update/status')
+def system_update_status():
+    """Report whether the install dir is a git repo, current commit + branch,
+    and how far behind origin master we are. The Settings UI uses this to
+    show a "X commits behind" badge.
+    """
+    repo_root = Path(__file__).parent
+    if not (repo_root / '.git').exists():
+        return jsonify({
+            'is_git_repo': False,
+            'message': 'Install directory is not a git checkout — automatic updates not available.',
+        })
+
+    rc, sha = _git(['rev-parse', '--short', 'HEAD'], repo_root)
+    current_commit = sha if rc == 0 else 'unknown'
+    rc, branch = _git(['rev-parse', '--abbrev-ref', 'HEAD'], repo_root)
+    current_branch = branch if rc == 0 else 'unknown'
+
+    # Fetch silently to learn what's on the remote.
+    _git(['fetch', '--quiet', 'origin'], repo_root, timeout=30)
+    rc, ahead_behind = _git(
+        ['rev-list', '--left-right', '--count', f'origin/{current_branch}...HEAD'],
+        repo_root,
+    )
+    behind = 0
+    ahead = 0
+    if rc == 0 and ahead_behind:
+        try:
+            behind, ahead = (int(x) for x in ahead_behind.split())
+        except Exception:
+            pass
+
+    # Detect dirty working tree (uncommitted changes that would block pull).
+    rc, status_out = _git(['status', '--porcelain'], repo_root)
+    has_local_changes = bool(status_out)
+
+    return jsonify({
+        'is_git_repo': True,
+        'install_dir': str(repo_root),
+        'branch': current_branch,
+        'commit': current_commit,
+        'behind': behind,
+        'ahead': ahead,
+        'has_local_changes': has_local_changes,
+        'update_available': behind > 0 and not has_local_changes and ahead == 0,
+    })
+
+
+@app.route('/api/system/update', methods=['POST'])
+def system_update():
+    """Run `git pull --ff-only` in the install dir. The Settings UI calls this
+    after the user confirms. Returns the git output so the user sees what
+    changed. Does NOT auto-restart — the UI prompts the user separately.
+    """
+    repo_root = Path(__file__).parent
+    if not (repo_root / '.git').exists():
+        return jsonify({'error': 'install dir is not a git checkout'}), 400
+
+    rc, status_out = _git(['status', '--porcelain'], repo_root)
+    if rc != 0:
+        return jsonify({'error': f'git status failed: {status_out}'}), 500
+    if status_out:
+        return jsonify({
+            'error': 'Working tree has local changes — pull would conflict.',
+            'detail': status_out[:500],
+            'hint': 'Stash or commit local changes, then re-try.',
+        }), 409
+
+    rc, pull_out = _git(['pull', '--ff-only', '--quiet'], repo_root, timeout=60)
+    if rc != 0:
+        return jsonify({
+            'error': f'git pull failed (rc={rc})',
+            'detail': pull_out[:1000],
+        }), 500
+
+    rc, new_sha = _git(['rev-parse', '--short', 'HEAD'], repo_root)
+    rc2, log_out = _git(['log', '-5', '--pretty=format:%h %s'], repo_root)
+    return jsonify({
+        'ok': True,
+        'new_commit': new_sha if rc == 0 else 'unknown',
+        'recent_log': log_out if rc2 == 0 else '',
+        'restart_recommended': True,  # FE should prompt for restart after pull
+    })
 
 
 @app.route('/api/system/restart', methods=['POST'])
