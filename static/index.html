@@ -3194,6 +3194,17 @@
     align-self: stretch;
     background: #ef444420; color: #fca5a5;
     border: 1px solid #ef444460; font-size: 12px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .playdo-retry-btn {
+    margin-left: auto;
+    background: transparent; border: 1px solid #ef444480;
+    color: #fca5a5; padding: 3px 12px; border-radius: 4px;
+    cursor: pointer; font-size: 12px; font-family: inherit;
+    transition: all 0.15s;
+  }
+  .playdo-retry-btn:hover {
+    background: #ef444430; color: #fed7d7; border-color: #ef4444;
   }
   .playdo-thinking {
     align-self: flex-start;
@@ -12951,9 +12962,7 @@ async function submitPlaydo() {
     });
     if (!res.ok || !res.body) {
       const data = await res.json().catch(() => ({}));
-      botMsg.innerHTML = '';
-      botMsg.classList.remove('bot'); botMsg.classList.add('error');
-      botMsg.textContent = (data.error || `Request failed (${res.status})`);
+      _playdoRenderError(botMsg, data.error || `Request failed (${res.status})`, question);
       errored = true;
       return;
     }
@@ -12987,9 +12996,7 @@ async function submitPlaydo() {
           botMsg.innerHTML = _playdoFormatText(cleanText);
           histDiv.scrollTop = histDiv.scrollHeight;
         } else if (payload.type === 'error') {
-          botMsg.innerHTML = '';
-          botMsg.classList.remove('bot'); botMsg.classList.add('error');
-          botMsg.textContent = payload.message || 'Playdo errored';
+          _playdoRenderError(botMsg, payload.message || 'Playdo errored', question);
           errored = true;
           return;
         } else if (payload.type === 'done') {
@@ -13009,9 +13016,7 @@ async function submitPlaydo() {
       }
     }
   } catch (e) {
-    botMsg.innerHTML = '';
-    botMsg.classList.remove('bot'); botMsg.classList.add('error');
-    botMsg.textContent = 'Network error: ' + (e.message || e);
+    _playdoRenderError(botMsg, 'Network error: ' + (e.message || e), question);
     errored = true;
   } finally {
     input.disabled = false;
@@ -13019,6 +13024,35 @@ async function submitPlaydo() {
     input.focus();
     histDiv.scrollTop = histDiv.scrollHeight;
   }
+}
+
+// Render an error in the bot message slot with a Retry button. The retry
+// pops the failed user message back out of _playdoHistory + the input box
+// so the user just clicks Send again (or edits the question first).
+function _playdoRenderError(botMsg, message, originalQuestion) {
+  botMsg.innerHTML = '';
+  botMsg.classList.remove('bot'); botMsg.classList.add('error');
+  const msg = document.createElement('div');
+  msg.textContent = message;
+  botMsg.appendChild(msg);
+  const retry = document.createElement('button');
+  retry.className = 'playdo-retry-btn';
+  retry.textContent = 'Retry';
+  retry.onclick = () => {
+    // Drop the failed user message from history (we pushed it pre-fetch).
+    if (_playdoHistory.length && _playdoHistory[_playdoHistory.length - 1].role === 'user') {
+      _playdoHistory.pop();
+    }
+    // Refill the input so the user can edit if they want, then resubmit.
+    const input = document.getElementById('playdo-input');
+    if (input) {
+      input.value = originalQuestion;
+      input.focus();
+    }
+    // Remove the error bubble so it doesn't pile up on retry.
+    botMsg.remove();
+  };
+  botMsg.appendChild(retry);
 }
 
 // Parse [clayrune:goto view="..."], [clayrune:open-modal project="..."],
