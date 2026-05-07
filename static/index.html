@@ -13635,8 +13635,12 @@ fetchProjects().then(async () => {
   fetchGlobalUsage();
   refreshScheduleBanner();
   renderSidebarProjects();
-  // Auto-start walkthrough on first run (zero projects, never completed)
-  if (allProjects.length === 0 && !localStorage.getItem('walkthrough_done')) {
+  // Auto-start walkthrough on first run (zero REAL projects, never completed).
+  // Filter out the auto-created `_incognito` pseudo-project — it always exists
+  // even on fresh installs, so counting it would suppress the walkthrough on
+  // the exact users it's meant for.
+  const realProjectCount = allProjects.filter(p => !isIncognitoProject(p)).length;
+  if (realProjectCount === 0 && !localStorage.getItem('walkthrough_done')) {
     setTimeout(() => startWalkthrough(), 600);
   }
 });
