@@ -843,6 +843,66 @@ def file_type(filename):
     return 'file'
 
 
+# ── Asset serving (mascot icon, etc.) ────────────────────────────────────────
+
+@app.route('/assets/<path:filename>')
+def serve_asset(filename):
+    """Serve files from the repo's assets/ dir (mascot icon, etc.)."""
+    assets_dir = Path(__file__).parent / 'assets'
+    return send_from_directory(str(assets_dir), filename)
+
+
+# ── "Ask Playdo" guide assistant ────────────────────────────────────────────
+
+@app.route('/api/guide/ask', methods=['POST'])
+def guide_ask():
+    """Single-shot ask of the in-app Playdo guide assistant.
+
+    Spawns a claude session with `docs/USER_GUIDE.md` as system prompt, runs
+    the user's question, returns the answer. No project context, no memory
+    writes, no agent_log entry. Each call is fully independent.
+
+    The answer may contain inline `[clayrune:...]` markers — the frontend
+    parses + strips them and triggers UI actions (highlight, goto, open-modal).
+    """
+    data = request.get_json() or {}
+    question = (data.get('question') or '').strip()
+    if not question:
+        return jsonify({'error': 'question required'}), 400
+    # Cap length to avoid a runaway prompt eating tokens.
+    if len(question) > 2000:
+        return jsonify({'error': 'question too long (max 2000 chars)'}), 400
+
+    guide_path = Path(__file__).parent / 'docs' / 'USER_GUIDE.md'
+    if not guide_path.exists():
+        return jsonify({'error': 'guide not available — docs/USER_GUIDE.md missing'}), 500
+    try:
+        system_prompt = guide_path.read_text(encoding='utf-8')
+    except Exception as e:
+        return jsonify({'error': f'guide read failed: {e}'}), 500
+
+    cmd = ['claude', '-p', question,
+           '--append-system-prompt', system_prompt,
+           '--max-turns', '1']
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=60, encoding='utf-8', errors='replace',
+            creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Playdo timed out (>60s)'}), 504
+    except FileNotFoundError:
+        return jsonify({'error': 'Claude CLI not found on this server'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    if result.returncode != 0:
+        err = (result.stderr or 'claude failed').strip()[:500]
+        return jsonify({'error': err}), 500
+    return jsonify({'answer': result.stdout.strip()})
+
+
 # ── Project endpoints ────────────────────────────────────────────────────────
 
 @app.route('/api/projects')

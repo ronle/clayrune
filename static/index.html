@@ -3122,6 +3122,126 @@
     margin-bottom:6px;
   }
 
+  /* ── Ask Playdo (in-app guide assistant) ───────────────────────────── */
+  .playdo-fab {
+    position: fixed; right: 18px; bottom: 18px; z-index: 1500;
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--bg-card, var(--surface));
+    border: 2px solid var(--accent);
+    cursor: pointer; padding: 4px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.18s, box-shadow 0.18s;
+  }
+  .playdo-fab:hover {
+    transform: translateY(-2px) scale(1.04);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  }
+  .playdo-fab img {
+    width: 100%; height: 100%; object-fit: contain;
+    pointer-events: none;
+  }
+  .playdo-fab.pulse {
+    animation: playdo-pulse 2.4s ease-out infinite;
+  }
+  @keyframes playdo-pulse {
+    0%   { box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 0 0 var(--accent); }
+    70%  { box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 0 14px transparent; }
+    100% { box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 0 0 transparent; }
+  }
+  /* On mobile, lift above the bottom tab bar */
+  @media (max-width: 960px) {
+    .playdo-fab {
+      bottom: 70px; right: 14px;
+      width: 50px; height: 50px;
+    }
+  }
+
+  /* The Ask Playdo modal — chat-style: scroll history + input pinned bottom */
+  .playdo-history {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 14px 22px 14px 28px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .playdo-msg {
+    padding: 10px 12px; border-radius: 8px;
+    font-size: 13px; line-height: 1.55;
+    max-width: 92%;
+  }
+  .playdo-msg.user {
+    align-self: flex-end;
+    background: var(--accent-dim, var(--surface2));
+    color: var(--text);
+  }
+  .playdo-msg.bot {
+    align-self: flex-start;
+    background: var(--surface2);
+    color: var(--text);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .playdo-msg.bot strong { color: var(--accent); }
+  .playdo-msg.bot code {
+    font-family: var(--mono, monospace); font-size: 12px;
+    background: var(--surface); padding: 1px 5px; border-radius: 3px;
+  }
+  .playdo-msg.error {
+    align-self: stretch;
+    background: #ef444420; color: #fca5a5;
+    border: 1px solid #ef444460; font-size: 12px;
+  }
+  .playdo-thinking {
+    align-self: flex-start;
+    color: var(--text-faint); font-size: 12px; font-style: italic;
+    padding: 6px 12px;
+  }
+  .playdo-thinking::after {
+    content: ''; display: inline-block; width: 0;
+    animation: playdo-dots 1.4s steps(4, end) infinite;
+    overflow: hidden; vertical-align: bottom;
+  }
+  @keyframes playdo-dots {
+    0%   { content: ''; }
+    25%  { content: '.'; }
+    50%  { content: '..'; }
+    75%  { content: '...'; }
+    100% { content: ''; }
+  }
+  .playdo-input-row {
+    flex-shrink: 0; padding: 10px 22px 16px 28px;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 8px; align-items: flex-end;
+  }
+  .playdo-input {
+    flex: 1; min-width: 0;
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: 'Inter', sans-serif; font-size: 13px;
+    padding: 8px 12px; border-radius: 5px; outline: none; resize: none;
+    min-height: 38px; max-height: 120px; line-height: 1.5;
+  }
+  .playdo-input:focus { border-color: var(--accent); }
+  .playdo-send {
+    background: var(--accent); border: none; color: #fff;
+    padding: 8px 16px; border-radius: 5px; cursor: pointer;
+    font-size: 12px; font-weight: 600; flex-shrink: 0;
+    transition: opacity 0.15s;
+  }
+  .playdo-send:hover { opacity: 0.85; }
+  .playdo-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* The orange pulse Playdo emits via [clayrune:highlight] markers. */
+  .clayrune-highlight {
+    position: relative;
+    animation: clayrune-highlight-pulse 1.8s ease-in-out;
+    animation-iteration-count: 2;
+    border-radius: 4px;
+    box-shadow: 0 0 0 0 var(--accent);
+  }
+  @keyframes clayrune-highlight-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(232, 130, 74, 0.7); }
+    50%  { box-shadow: 0 0 0 10px rgba(232, 130, 74, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(232, 130, 74, 0); }
+  }
+
   /* ── Cross-project Hivemind global view ────────────────────────────── */
   .hm-global-card {
     border:1px solid var(--border); border-radius:8px; padding:12px 14px;
@@ -3371,6 +3491,11 @@
 <div class="minimized-tray" id="minimized-tray"></div>
 <div id="toast-container"></div>
 <div id="hm-worker-popover" class="hm-worker-popover hidden" onmouseenter="cancelHideHmPopover()" onmouseleave="scheduleHideHmPopover()"></div>
+
+<!-- Floating "Ask Playdo" button — always visible, opens the in-app helper. -->
+<button id="playdo-fab" class="playdo-fab" onclick="openPlaydo()" title="Ask Playdo" aria-label="Ask Playdo">
+  <img src="/assets/clayrune.png" alt="" draggable="false">
+</button>
 
 <!-- Command Palette -->
 <!-- Emoji picker overlay -->
@@ -12512,6 +12637,195 @@ function _jumpToBacklogItem(projectId, itemId) {
   }, 150);
 }
 
+// ── Ask Playdo (in-app guide assistant) ───────────────────────────────────
+// Floating button → modal chat → POST /api/guide/ask → render answer +
+// strip + dispatch [clayrune:...] UI control markers emitted by Playdo.
+
+// Pulse the floating button until the user opens the modal once.
+(function _initPlaydoPulse() {
+  if (localStorage.getItem('playdo_opened')) return;
+  // Apply on next tick so the button has been added to DOM.
+  setTimeout(() => {
+    const fab = document.getElementById('playdo-fab');
+    if (fab) fab.classList.add('pulse');
+  }, 300);
+})();
+
+async function openPlaydo() {
+  // Stop the pulse the first time the user opens it (persisted).
+  localStorage.setItem('playdo_opened', '1');
+  const fab = document.getElementById('playdo-fab');
+  if (fab) fab.classList.remove('pulse');
+
+  const modalId = '__playdo';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    setTimeout(() => document.getElementById('playdo-input')?.focus(), 50);
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 520, 600);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 22px 12px 24px">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+        <img src="/assets/clayrune.png" alt="" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);object-fit:contain;background:var(--surface2)" draggable="false">
+        <div style="min-width:0">
+          <div style="font-size:14px;font-weight:700;color:var(--text)">Ask Playdo</div>
+          <div style="font-size:11px;color:var(--text-faint)">Your in-app guide to Clayrune</div>
+        </div>
+      </div>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div class="playdo-history" id="playdo-history">
+      <div class="playdo-msg bot">Hi — I'm Playdo. Ask me anything about Clayrune. I can highlight UI elements while I explain. Try: <em>"how do I start a hivemind?"</em> or <em>"where do I see scheduled runs?"</em></div>
+    </div>
+    <div class="playdo-input-row">
+      <textarea id="playdo-input" class="playdo-input" rows="1" placeholder="Ask a question..."
+        onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitPlaydo();}"></textarea>
+      <button id="playdo-send" class="playdo-send" onclick="submitPlaydo()">Send</button>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+  setTimeout(() => document.getElementById('playdo-input')?.focus(), 50);
+}
+
+async function submitPlaydo() {
+  const input = document.getElementById('playdo-input');
+  const send = document.getElementById('playdo-send');
+  const history = document.getElementById('playdo-history');
+  if (!input || !history) return;
+  const question = input.value.trim();
+  if (!question) return;
+
+  // Show the user's message
+  const userMsg = document.createElement('div');
+  userMsg.className = 'playdo-msg user';
+  userMsg.textContent = question;
+  history.appendChild(userMsg);
+
+  // "Thinking..." indicator
+  const thinking = document.createElement('div');
+  thinking.className = 'playdo-thinking';
+  thinking.textContent = 'Playdo is thinking';
+  history.appendChild(thinking);
+  history.scrollTop = history.scrollHeight;
+
+  input.value = '';
+  input.disabled = true;
+  send.disabled = true;
+
+  try {
+    const res = await fetch(API_BASE + '/api/guide/ask', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question}),
+    });
+    thinking.remove();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errMsg = document.createElement('div');
+      errMsg.className = 'playdo-msg error';
+      errMsg.textContent = (data.error || `Request failed (${res.status})`);
+      history.appendChild(errMsg);
+    } else {
+      // Parse markers, render the cleaned text, then dispatch the actions.
+      const {cleanText, actions} = _playdoParseMarkers(data.answer || '');
+      const botMsg = document.createElement('div');
+      botMsg.className = 'playdo-msg bot';
+      botMsg.innerHTML = _playdoFormatText(cleanText);
+      history.appendChild(botMsg);
+      // Dispatch the markers AFTER rendering so any DOM lookups they need
+      // (e.g. a project modal that opens) have a moment to mount.
+      _playdoDispatchActions(actions);
+    }
+  } catch (e) {
+    thinking.remove();
+    const errMsg = document.createElement('div');
+    errMsg.className = 'playdo-msg error';
+    errMsg.textContent = 'Network error: ' + (e.message || e);
+    history.appendChild(errMsg);
+  } finally {
+    input.disabled = false;
+    send.disabled = false;
+    input.focus();
+    history.scrollTop = history.scrollHeight;
+  }
+}
+
+// Parse [clayrune:goto view="..."], [clayrune:open-modal project="..."],
+// [clayrune:highlight selector="..." duration=N] markers out of Playdo's
+// reply. Returns the cleaned text + an array of action objects to dispatch.
+function _playdoParseMarkers(raw) {
+  const actions = [];
+  const re = /\[clayrune:(goto|open-modal|highlight)\s+([^\]]+)\]/g;
+  const cleanText = raw.replace(re, (_match, kind, attrs) => {
+    const out = {kind};
+    // Parse key="value" pairs (also accept key=value for unquoted nums).
+    const attrRe = /(\w+)=(?:"([^"]*)"|(\d+))/g;
+    let m;
+    while ((m = attrRe.exec(attrs)) !== null) {
+      out[m[1]] = m[2] !== undefined ? m[2] : m[3];
+    }
+    actions.push(out);
+    return '';
+  });
+  return {cleanText: cleanText.trim(), actions};
+}
+
+function _playdoDispatchActions(actions) {
+  if (!actions.length) return;
+  // Stagger by 300ms so the user can follow what's happening.
+  let delay = 0;
+  for (const a of actions) {
+    setTimeout(() => _playdoRunAction(a), delay);
+    delay += 350;
+  }
+}
+
+function _playdoRunAction(a) {
+  try {
+    if (a.kind === 'goto' && a.view) {
+      if (typeof sidebarNav === 'function') sidebarNav(a.view);
+    } else if (a.kind === 'open-modal' && a.project) {
+      if (typeof openProjectModal === 'function') openProjectModal(a.project);
+    } else if (a.kind === 'highlight' && a.selector) {
+      const el = document.querySelector(a.selector);
+      if (!el) return;
+      const dur = parseInt(a.duration, 10) || 2500;
+      el.classList.add('clayrune-highlight');
+      try { el.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch {}
+      setTimeout(() => el.classList.remove('clayrune-highlight'), dur);
+    }
+  } catch (e) {
+    console.warn('Playdo action failed:', a, e);
+  }
+}
+
+// Light markdown-ish formatting for Playdo's text. Bold, inline code, and
+// preserve newlines. Strip any HTML the agent might emit (defense in depth).
+function _playdoFormatText(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+}
+
 // ── Run history (shared between Scheduler + Hivemind surfaces) ─────────────
 // Two pieces:
 //   1) renderRunRows(runs) — draws a list of compact rows, each clickable to
@@ -13025,7 +13339,7 @@ const WT_STEPS = [
   {
     id: 'welcome',
     title: 'Welcome to Clayrune',
-    body: 'Clayrune helps you manage multiple coding projects with AI-powered agents. Let\u2019s take a quick tour of the interface!',
+    body: 'Clayrune is your operator console for long-running Claude agents \u2014 a multi-project dashboard where you dispatch, monitor, and coordinate AI work across many parallel streams. Quick tour: about 12 steps, 2 minutes.',
     target: null, pos: 'center',
   },
   {
@@ -13044,26 +13358,26 @@ const WT_STEPS = [
   {
     id: 'sidebar',
     title: 'Sidebar Navigation',
-    body: 'The sidebar gives quick access to Dashboard, Scheduler, Settings, Shared Rules, and Processes. Hover to expand and see project shortcuts.',
+    body: 'The sidebar is your top-level navigation: <strong>Dashboard</strong>, <strong>Backlog</strong> (cross-project task list), <strong>\ud83d\udc1d Hivemind</strong> (cross-project multi-agent runs), <strong>Scheduler</strong>, <strong>Settings</strong>, <strong>Shared Rules</strong>, and <strong>Processes</strong>. Hover to expand. Recent projects also pin here for quick jump.',
     target: '#sidebar', pos: 'right',
     skip: () => window.innerWidth <= 960, // hidden on mobile
   },
   {
     id: 'header',
     title: 'Header Bar',
-    body: 'Search projects with Ctrl+K, see token usage at a glance, and check the live badge that pulses while auto-refresh is active.',
+    body: 'Search projects + commands with <strong>Ctrl+K</strong>, see active agents at a glance, and check the live badge that pulses while auto-refresh is on. The <strong>?</strong> button on the right re-runs this tour any time.',
     target: '.header', pos: 'bottom',
   },
   {
     id: 'toolbar',
     title: 'Toolbar',
-    body: 'Switch between Grid and List views, filter projects by status or domain, toggle compact density, or create a new project.',
+    body: 'Switch between <strong>Grid</strong> and <strong>List</strong> views, filter projects by status or domain, toggle compact density, or create a new project.',
     target: '.toolbar', pos: 'bottom',
   },
   {
     id: 'sample-tile',
     title: 'Project Tiles',
-    body: 'Each tile shows a project\u2019s status and last activity. Click one to open its details. We\u2019ve created a sample project for you.',
+    body: 'Each tile shows a project\u2019s status and last activity. Click one to open it as a modal window. We\u2019ve created a sample project for you to explore.',
     target: null, pos: 'right', demo: 'tile',
     onEnter: async () => {
       await fetch(API_BASE + '/api/walkthrough/sample-project', { method: 'POST' });
@@ -13073,81 +13387,58 @@ const WT_STEPS = [
   {
     id: 'open-modal',
     title: 'Project Modal',
-    body: 'Click a tile to open its details. You can have multiple project windows open at once, drag them around, and resize them.',
+    body: 'Click a tile to open the project. Multiple modals can be open at once \u2014 drag them around, resize, minimize. Open conversations and their layouts even survive a page refresh.',
     target: null, pos: 'left', demo: 'modal',
   },
   {
     id: 'tabs',
     title: 'Tabs',
-    body: 'Switch between Agent (dispatch AI), Backlog (tasks), Agent Log (history), Plans, Activity, and Hivemind.',
+    body: '<strong>Agent</strong> (dispatch + active sessions), <strong>Backlog</strong> (tasks for this project), <strong>Agent Log</strong> (completed sessions, click any to view its transcript), <strong>Plans</strong>, <strong>Activity</strong>. On mobile these tabs move into the three-dot menu.',
     target: null, pos: 'bottom', demo: 'modal', demoTarget: '.modal-tab-bar',
-  },
-  {
-    id: 'backlog',
-    title: 'Backlog',
-    body: 'Manage your task list here. Set priorities, add attachments, and mark items done. Tasks can also sync with GitHub Issues.',
-    target: null, pos: 'left', demo: 'modal-backlog',
   },
   {
     id: 'agent',
     title: 'Agent Dispatch',
-    body: 'Type a prompt and dispatch an AI agent to work on your project. Agents run in the background and stream output in real time.',
+    body: 'Type a task in the Agent tab and click Dispatch. The agent runs in the background and streams output here AND into the bottom Agent Console so you can keep watching from anywhere. Plans triggered by the agent show approve/collapse buttons \u2014 nothing dangerous runs without your click.',
     target: null, pos: 'left', demo: 'modal-agent',
   },
   {
     id: 'menu',
-    title: 'Project Menu',
-    body: 'The three-dot menu gives access to status changes, color theming, agent model, Memory, Rules, GitHub sync, and more.',
+    title: 'Three-Dot Menu',
+    body: 'The three-dot button in any project modal opens this menu: <strong>\ud83d\udc1d Hiveminds</strong> for this project, <strong>\u2728 Start Hivemind</strong>, <strong>Memory &amp; Rules</strong> editor, <strong>Status</strong> / <strong>Color</strong> / <strong>Domain</strong> / <strong>Model</strong> per project, <strong>GitHub Sync</strong>, and more. On mobile, the project tabs (Agent / Backlog / etc.) live at the top of this menu.',
     target: null, pos: 'bottom', demo: 'modal', demoTarget: '.modal-menu-btn',
   },
   {
-    id: 'menu-status',
-    title: 'Change Status',
-    body: 'Set your project to Active, Waiting, Blocked, or Parked. Status determines the tile color and filter grouping.',
-    target: null, pos: 'left', demo: 'modal-menu', demoTarget: '.wt-menu-status',
+    id: 'hivemind-sidebar',
+    title: '\ud83d\udc1d Hivemind \u2014 multi-agent runs',
+    body: 'Hivemind is Clayrune\u2019s signature feature: an orchestrator agent decomposes a goal into workstreams, then parallel worker agents tackle them in coordination. The <strong>\ud83d\udc1d Hivemind</strong> sidebar entry shows every hivemind across every project \u2014 each card has a planner-to-workers tree, status pill, and stats. Long-idle "active" hiveminds auto-mark themselves <strong>stale</strong> with a Restart control.',
+    target: '[data-nav="hivemind"]', pos: 'right',
+    skip: () => window.innerWidth <= 960, // mobile uses bottom-tab; covered separately
   },
   {
-    id: 'menu-color',
-    title: 'Color & Domain',
-    body: 'Customize the modal accent color and organize projects by domain (e.g. Frontend, Backend, DevOps).',
-    target: null, pos: 'left', demo: 'modal-menu', demoTarget: '.wt-menu-color',
-  },
-  {
-    id: 'menu-model',
-    title: 'Agent Model',
-    body: 'Choose which AI model to use for this project \u2014 Sonnet 4.5, Opus 4.6, or Haiku 4.5.',
-    target: null, pos: 'left', demo: 'modal-menu', demoTarget: '.wt-menu-model',
-  },
-  {
-    id: 'menu-github',
-    title: 'GitHub Sync',
-    body: 'Connect a GitHub repository to sync backlog items with GitHub Issues. Changes flow both ways.',
-    target: null, pos: 'left', demo: 'modal-menu', demoTarget: '.wt-menu-github',
-  },
-  {
-    id: 'feed',
-    title: 'Activity Feed',
-    body: 'Real-time activity across all projects appears in the feed column \u2014 agent dispatches, task updates, status changes, and more. Click any entry to jump to that project.',
-    target: '.feed-col', pos: 'left',
-    skip: () => window.innerWidth <= 960, // hidden on mobile
-  },
-  {
-    id: 'bottom-tabs',
-    title: 'Navigation Bar',
-    body: 'Tap the bottom bar to switch between Dashboard, Scheduler, Settings, and Processes.',
-    target: '#bottom-tab-bar', pos: 'top',
-    skip: () => window.innerWidth > 960, // only on mobile
+    id: 'scheduler',
+    title: 'Scheduler \u2014 recurring agents',
+    body: 'Set up tasks that fire on a daily / cron / interval schedule. Each schedule has a <strong>\u25b6 Run Now</strong> button to fire immediately and a <strong>Runs</strong> button that opens an inline panel listing the most recent runs (50 per page). Click any run row to read its transcript.',
+    target: '[data-nav="scheduler"]', pos: 'right',
+    skip: () => window.innerWidth <= 960, // mobile bottom-tab covers this
   },
   {
     id: 'console',
     title: 'Agent Console',
-    body: 'Running agent sessions appear in this bottom bar. Expand it to view output, send follow-ups, or stop a session.',
+    body: 'Running agent sessions \u2014 from any project, manual or automated \u2014 appear in this bottom tray. Expand it to view output, send follow-ups, or stop a session without leaving wherever you are.',
     target: '#agent-console', pos: 'top',
+  },
+  {
+    id: 'bottom-tabs',
+    title: 'Bottom Tabs',
+    body: 'Mobile navigation: <strong>Home</strong>, <strong>Backlog</strong>, <strong>+ FAB</strong> (new project), <strong>Scheduler</strong>, <strong>\ud83d\udc1d Hivemind</strong>. Settings is reachable via the avatar circle in the top app bar.',
+    target: '#bottom-tab-bar', pos: 'top',
+    skip: () => window.innerWidth > 960, // only on mobile
   },
   {
     id: 'cmd-palette',
     title: 'Command Palette',
-    body: 'Press Ctrl+K anytime to search projects, switch views, open settings, or re-take this tour.',
+    body: 'Press <strong>Ctrl+K</strong> anywhere to fuzzy-search projects, jump to any view, open settings, or re-take this tour.',
     target: '.cmd-palette', pos: 'bottom',
     onEnter: () => {
       const overlay = document.getElementById('cmd-overlay');
@@ -13171,9 +13462,15 @@ const WT_STEPS = [
     },
   },
   {
+    id: 'ask-playdo',
+    title: 'Ask Playdo any time',
+    body: 'Click the floating <strong>Playdo</strong> button bottom-right (it\u2019s pulsing for you) to ask questions about Clayrune in plain English \u2014 Playdo can highlight the relevant UI element while explaining. It reads the same User Guide that powers this tour, so it always knows what\u2019s available.',
+    target: '#playdo-fab', pos: 'left',
+  },
+  {
     id: 'done',
-    title: 'You\u2019re All Set!',
-    body: 'Start by exploring the sample project or create your own. You can re-run this tour from Settings or the Command Palette (Ctrl+K \u2192 "Take Tour").',
+    title: 'You\u2019re all set',
+    body: 'Start by exploring the sample project or create your own with <strong>+ New Project</strong>. Re-run this tour any time from Settings, the Command Palette (Ctrl+K \u2192 "Take Tour"), or the <strong>?</strong> button in the header.',
     target: null, pos: 'center',
   },
 ];
