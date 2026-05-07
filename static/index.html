@@ -12641,6 +12641,11 @@ function _jumpToBacklogItem(projectId, itemId) {
 // Floating button → modal chat → POST /api/guide/ask → render answer +
 // strip + dispatch [clayrune:...] UI control markers emitted by Playdo.
 
+// Per-modal-session conversation history. Reset each time the modal is
+// opened fresh (i.e. after being closed). Minimize+restore preserves it.
+// Cap at 6 messages (3 exchanges) — anything older falls off the front.
+let _playdoHistory = [];
+
 // Pulse the floating button until the user opens the modal once.
 (function _initPlaydoPulse() {
   if (localStorage.getItem('playdo_opened')) return;
@@ -12665,6 +12670,9 @@ async function openPlaydo() {
     setTimeout(() => document.getElementById('playdo-input')?.focus(), 50);
     return;
   }
+  // Fresh open → fresh conversation. (Minimize keeps history; close+reopen
+  // resets, since closeModalById removes the modal from the DOM.)
+  _playdoHistory = [];
 
   const win = document.createElement('div');
   win.className = 'modal-window';
@@ -12708,33 +12716,40 @@ async function openPlaydo() {
 async function submitPlaydo() {
   const input = document.getElementById('playdo-input');
   const send = document.getElementById('playdo-send');
-  const history = document.getElementById('playdo-history');
-  if (!input || !history) return;
+  const histDiv = document.getElementById('playdo-history');
+  if (!input || !histDiv) return;
   const question = input.value.trim();
   if (!question) return;
 
-  // Show the user's message
+  // Show the user's message in the history pane
   const userMsg = document.createElement('div');
   userMsg.className = 'playdo-msg user';
   userMsg.textContent = question;
-  history.appendChild(userMsg);
+  histDiv.appendChild(userMsg);
 
   // "Thinking..." indicator
   const thinking = document.createElement('div');
   thinking.className = 'playdo-thinking';
   thinking.textContent = 'Playdo is thinking';
-  history.appendChild(thinking);
-  history.scrollTop = history.scrollHeight;
+  histDiv.appendChild(thinking);
+  histDiv.scrollTop = histDiv.scrollHeight;
 
   input.value = '';
   input.disabled = true;
   send.disabled = true;
 
+  // Snapshot prior history to send as context (last 6 messages = ~3 exchanges).
+  // The current question is NOT included — backend appends it as "Current".
+  const historyPayload = _playdoHistory.slice(-6);
+  // Push the user's message into history NOW so the next turn sees it even
+  // if the network call below fails midway.
+  _playdoHistory.push({role: 'user', text: question});
+
   try {
     const res = await fetch(API_BASE + '/api/guide/ask', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question}),
+      body: JSON.stringify({question, history: historyPayload}),
     });
     thinking.remove();
     const data = await res.json().catch(() => ({}));
@@ -12742,16 +12757,24 @@ async function submitPlaydo() {
       const errMsg = document.createElement('div');
       errMsg.className = 'playdo-msg error';
       errMsg.textContent = (data.error || `Request failed (${res.status})`);
-      history.appendChild(errMsg);
+      histDiv.appendChild(errMsg);
+      // Don't store error responses in history — keeps Playdo's context clean.
     } else {
       // Parse markers, render the cleaned text, then dispatch the actions.
       const {cleanText, actions} = _playdoParseMarkers(data.answer || '');
       const botMsg = document.createElement('div');
       botMsg.className = 'playdo-msg bot';
       botMsg.innerHTML = _playdoFormatText(cleanText);
-      history.appendChild(botMsg);
+      histDiv.appendChild(botMsg);
+      // Store the cleaned text (NO markers) so Playdo's next turn doesn't
+      // re-emit the same highlights from seeing them in its own prior reply.
+      _playdoHistory.push({role: 'assistant', text: cleanText});
+      // Cap at 12 messages total — anything older drops off the front.
+      if (_playdoHistory.length > 12) {
+        _playdoHistory = _playdoHistory.slice(-12);
+      }
       // Dispatch the markers AFTER rendering so any DOM lookups they need
-      // (e.g. a project modal that opens) have a moment to mount.
+      // (e.g. a view that gets navigated to) have a moment to mount.
       _playdoDispatchActions(actions);
     }
   } catch (e) {
@@ -12759,12 +12782,12 @@ async function submitPlaydo() {
     const errMsg = document.createElement('div');
     errMsg.className = 'playdo-msg error';
     errMsg.textContent = 'Network error: ' + (e.message || e);
-    history.appendChild(errMsg);
+    histDiv.appendChild(errMsg);
   } finally {
     input.disabled = false;
     send.disabled = false;
     input.focus();
-    history.scrollTop = history.scrollHeight;
+    histDiv.scrollTop = histDiv.scrollHeight;
   }
 }
 

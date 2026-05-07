@@ -859,9 +859,11 @@ def guide_ask():
     """Single-shot ask of the in-app Playdo guide assistant.
 
     Spawns a claude session with `docs/USER_GUIDE.md` as system prompt, runs
-    the user's question, returns the answer. No project context, no memory
-    writes, no agent_log entry. Each call is fully independent.
+    the user's question (optionally with prior-turn context), returns the
+    answer. No project context, no memory writes, no agent_log entry. Each
+    call is fully independent — `history` is just prepended to the prompt.
 
+    Request body: {question: str, history?: [{role: 'user'|'assistant', text: str}]}.
     The answer may contain inline `[clayrune:...]` markers — the frontend
     parses + strips them and triggers UI actions (highlight, goto, open-modal).
     """
@@ -873,6 +875,12 @@ def guide_ask():
     if len(question) > 2000:
         return jsonify({'error': 'question too long (max 2000 chars)'}), 400
 
+    # Validate + cap conversation history (last 6 messages = ~3 exchanges).
+    history = data.get('history', [])
+    if not isinstance(history, list):
+        history = []
+    history = history[-6:]
+
     guide_path = Path(__file__).parent / 'docs' / 'USER_GUIDE.md'
     if not guide_path.exists():
         return jsonify({'error': 'guide not available — docs/USER_GUIDE.md missing'}), 500
@@ -881,7 +889,24 @@ def guide_ask():
     except Exception as e:
         return jsonify({'error': f'guide read failed: {e}'}), 500
 
-    cmd = ['claude', '-p', question,
+    # Build the user prompt: prior turns (if any) + current question.
+    if history:
+        lines = ['Previous exchange in this conversation:']
+        for m in history:
+            role = 'User' if (m.get('role') or '') == 'user' else 'You'
+            text = (m.get('text') or '').strip()[:1000]
+            if text:
+                lines.append(f'{role}: {text}')
+        lines.append('')
+        lines.append(f'Current question: {question}')
+        full_question = '\n'.join(lines)
+    else:
+        full_question = question
+    # Hard cap on the assembled prompt to keep us tame.
+    if len(full_question) > 8000:
+        full_question = full_question[-8000:]
+
+    cmd = ['claude', '-p', full_question,
            '--append-system-prompt', system_prompt,
            '--max-turns', '1']
     try:
