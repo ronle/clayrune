@@ -40,41 +40,110 @@ printf "%s======================================%s\n" "$C" "$R"
 printf "%s  Clayrune Installer%s\n" "$B" "$R"
 printf "%s======================================%s\n\n" "$C" "$R"
 
-# ── Step 1: Claude CLI present? ────────────────────────────────────────────
-if ! command -v claude >/dev/null 2>&1; then
-  printf "%sClaude CLI not found. Attempting to install...%s\n\n" "$Y" "$R"
+# ── Helpers ────────────────────────────────────────────────────────────────
 
+# Refresh PATH so a freshly-installed `claude` is discoverable without forcing
+# the user to start a new shell. Covers the common destinations Anthropic's
+# curl-installer and npm-global use.
+_refresh_claude_path() {
+  for d in "$HOME/.local/bin" "$HOME/.claude/bin" "$HOME/.npm-global/bin" "/usr/local/bin"; do
+    case ":$PATH:" in
+      *":$d:"*) ;;
+      *) [ -d "$d" ] && PATH="$d:$PATH" ;;
+    esac
+  done
   if command -v npm >/dev/null 2>&1; then
-    printf "Trying npm install -g @anthropic-ai/claude-code\n"
-    if ! npm install -g @anthropic-ai/claude-code; then
-      printf "\n%snpm install failed.%s\n" "$E" "$R"
-      printf "Fall back to: %scurl -fsSL https://claude.ai/install.sh | sh%s\n" "$C" "$R"
-      exit 1
+    np=$(npm config get prefix 2>/dev/null || echo '')
+    if [ -n "$np" ] && [ -d "$np/bin" ]; then
+      case ":$PATH:" in
+        *":$np/bin:"*) ;;
+        *) PATH="$np/bin:$PATH" ;;
+      esac
     fi
-  elif command -v curl >/dev/null 2>&1; then
-    printf "npm not found. Trying Anthropic's curl-installer...\n"
-    if ! curl -fsSL https://claude.ai/install.sh | sh; then
-      printf "\n%sInstall failed.%s\n" "$E" "$R"
-      printf "Manual install: https://docs.anthropic.com/claude-code\n"
-      exit 1
-    fi
+  fi
+  hash -r 2>/dev/null || true
+  export PATH
+}
+
+# Returns 0 iff `claude --version` exits 0 AND emits non-empty output.
+# This is the *real* working-state check — `command -v claude` only proves a
+# binary exists, not that it actually runs (the WSL Node-version mismatch
+# scenario produces a `claude` binary that crashes with a SyntaxError on every
+# invocation).
+_validate_claude() {
+  command -v claude >/dev/null 2>&1 || return 1
+  out=$(claude --version 2>/dev/null) || return 1
+  [ -n "$out" ] || return 1
+  return 0
+}
+
+# ── Step 1: Ensure a working Claude CLI ────────────────────────────────────
+
+# Skip install entirely if a working claude is already on PATH.
+if _validate_claude; then
+  CLAUDE_VERSION=$(claude --version 2>&1 | head -n1 || echo "unknown")
+  printf "%sOK%s Claude CLI already installed: %s\n\n" "$G" "$R" "$CLAUDE_VERSION"
+else
+  if command -v claude >/dev/null 2>&1; then
+    printf "%sFound 'claude' on PATH but it doesn't run cleanly.%s\n" "$Y" "$R"
+    printf "Will attempt a clean reinstall.\n\n"
   else
-    printf "%sNeither npm nor curl found — cannot auto-install Claude CLI.%s\n" "$E" "$R"
-    printf "Install it manually first:\n"
-    printf "  https://docs.anthropic.com/claude-code\n"
+    printf "%sClaude CLI not found. Attempting to install...%s\n\n" "$Y" "$R"
+  fi
+
+  installed=0
+
+  # Method 1: Anthropic's official installer. Self-contained — bundles its own
+  # runtime, sidesteps Node version mismatches (the failure mode we hit on WSL
+  # where npm + nvm + system Node disagreed).
+  if [ "$installed" -eq 0 ] && command -v curl >/dev/null 2>&1; then
+    printf "Trying Anthropic's official installer (curl)...\n"
+    if curl -fsSL https://claude.ai/install.sh | sh; then
+      _refresh_claude_path
+      if _validate_claude; then
+        printf "%s✓ Anthropic installer succeeded%s\n\n" "$G" "$R"
+        installed=1
+      else
+        printf "%s✗ Installer ran but 'claude --version' doesn't work; trying next method...%s\n\n" "$Y" "$R"
+      fi
+    else
+      printf "%s✗ Anthropic installer failed; trying next method...%s\n\n" "$Y" "$R"
+    fi
+  fi
+
+  # Method 2: npm. Some users have an existing Node setup where npm is the
+  # path of least resistance. We validate after — npm "succeeding" without a
+  # working binary is exactly the WSL case.
+  if [ "$installed" -eq 0 ] && command -v npm >/dev/null 2>&1; then
+    printf "Trying npm install -g @anthropic-ai/claude-code...\n"
+    if npm install -g @anthropic-ai/claude-code; then
+      _refresh_claude_path
+      if _validate_claude; then
+        printf "%s✓ npm install succeeded%s\n\n" "$G" "$R"
+        installed=1
+      else
+        printf "%s✗ npm completed but 'claude --version' doesn't work%s\n" "$Y" "$R"
+        printf "  (often a Node version / nvm mismatch; the curl-installer above is more reliable).\n\n"
+      fi
+    else
+      printf "%s✗ npm install failed%s\n\n" "$Y" "$R"
+    fi
+  fi
+
+  if [ "$installed" -eq 0 ]; then
+    printf "\n%sCould not install a working Claude CLI automatically.%s\n\n" "$E" "$R"
+    printf "Manual install options:\n"
+    printf "  Anthropic:  %scurl -fsSL https://claude.ai/install.sh | sh%s\n" "$C" "$R"
+    printf "  npm:        %snpm install -g @anthropic-ai/claude-code%s\n" "$C" "$R"
+    printf "  Docs:       https://docs.anthropic.com/claude-code\n\n"
+    printf "After installing, verify with: %sclaude --version%s\n" "$C" "$R"
     printf "Then re-run: %scurl -sSL https://clayrune.io/install.sh | sh%s\n" "$C" "$R"
     exit 1
   fi
 
-  if ! command -v claude >/dev/null 2>&1; then
-    printf "%sClaude CLI installed but not on PATH.%s\n" "$Y" "$R"
-    printf "Open a new terminal session and re-run this installer.\n"
-    exit 1
-  fi
+  CLAUDE_VERSION=$(claude --version 2>&1 | head -n1 || echo "unknown")
+  printf "%sOK%s Claude CLI: %s\n\n" "$G" "$R" "$CLAUDE_VERSION"
 fi
-
-CLAUDE_VERSION=$(claude --version 2>&1 | head -n1 || echo "unknown")
-printf "%sOK%s Claude CLI: %s\n\n" "$G" "$R" "$CLAUDE_VERSION"
 
 # ── Step 2: Fetch install prompt ───────────────────────────────────────────
 printf "Fetching install instructions from %s\n" "$PROMPT_URL"

@@ -31,66 +31,111 @@ function Refresh-Path {
                 [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
+# Returns $true iff `claude --version` runs cleanly with non-empty output.
+# This is the *real* working-state check — Get-Command alone only proves a
+# binary is on PATH, not that it actually runs (the same trap that bit us on
+# WSL where npm completed "successfully" but produced a broken CLI).
+function Test-ClaudeWorks {
+    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { return $false }
+    try {
+        $out = & claude --version 2>$null
+        return ($LASTEXITCODE -eq 0) -and ($out) -and ($out.ToString().Trim() -ne '')
+    } catch {
+        return $false
+    }
+}
+
 Write-Host '======================================' -ForegroundColor Cyan
 Write-Host '  Clayrune Installer' -ForegroundColor White
 Write-Host '======================================'
 Write-Host ''
 
-# ── Step 1: Claude CLI present? ────────────────────────────────────────────
-if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-    Write-Host 'Claude CLI not found. Attempting to install...' -ForegroundColor Yellow
-    Write-Host ''
+# ── Step 1: Ensure a working Claude CLI ────────────────────────────────────
 
-    if (Get-Command npm -ErrorAction SilentlyContinue) {
-        Write-Host 'Trying npm install -g @anthropic-ai/claude-code'
+if (Test-ClaudeWorks) {
+    $claudeVersion = (& claude --version 2>&1 | Select-Object -First 1)
+    Write-Host "OK Claude CLI already installed: $claudeVersion" -ForegroundColor Green
+    Write-Host ''
+} else {
+    if (Get-Command claude -ErrorAction SilentlyContinue) {
+        Write-Host "Found 'claude' on PATH but it doesn't run cleanly." -ForegroundColor Yellow
+        Write-Host 'Will attempt a clean reinstall.'
+        Write-Host ''
+    } else {
+        Write-Host 'Claude CLI not found. Attempting to install...' -ForegroundColor Yellow
+        Write-Host ''
+    }
+
+    $installed = $false
+
+    # Method 1: npm (preferred on Windows — ships natively with Node).
+    if (-not $installed -and (Get-Command npm -ErrorAction SilentlyContinue)) {
+        Write-Host 'Trying npm install -g @anthropic-ai/claude-code...'
         try {
             npm install -g '@anthropic-ai/claude-code'
+            Refresh-Path
+            if (Test-ClaudeWorks) {
+                Write-Host '+ npm install succeeded' -ForegroundColor Green
+                Write-Host ''
+                $installed = $true
+            } else {
+                Write-Host "- npm completed but 'claude --version' doesn't work; trying next method..." -ForegroundColor Yellow
+                Write-Host ''
+            }
         } catch {
+            Write-Host "- npm install failed: $_" -ForegroundColor Yellow
             Write-Host ''
-            Write-Host 'npm install failed.' -ForegroundColor Red
-            Write-Host "Manual install: https://docs.anthropic.com/claude-code"
-            exit 1
         }
-    } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host 'npm not found. Installing Node.js via winget first...'
+    }
+
+    # Method 2: winget Node.js LTS, then npm install.
+    if (-not $installed -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host 'Installing Node.js LTS via winget, then Claude CLI...'
         try {
             winget install --id OpenJS.NodeJS.LTS -e --silent `
                 --accept-source-agreements --accept-package-agreements
         } catch {
-            Write-Host 'winget install Node.js failed.' -ForegroundColor Red
-            Write-Host 'Install Node.js manually from https://nodejs.org and re-run.'
-            exit 1
+            Write-Host "- winget install Node.js failed: $_" -ForegroundColor Yellow
+            Write-Host ''
         }
         Refresh-Path
-        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-            Write-Host 'Node installed but npm not on PATH.' -ForegroundColor Red
-            Write-Host 'Open a new PowerShell window and re-run this installer.'
-            exit 1
+        if (Get-Command npm -ErrorAction SilentlyContinue) {
+            try {
+                npm install -g '@anthropic-ai/claude-code'
+                Refresh-Path
+                if (Test-ClaudeWorks) {
+                    Write-Host '+ winget Node + npm install succeeded' -ForegroundColor Green
+                    Write-Host ''
+                    $installed = $true
+                } else {
+                    Write-Host "- npm install completed but claude doesn't run" -ForegroundColor Yellow
+                    Write-Host ''
+                }
+            } catch {
+                Write-Host "- npm install (post-winget) failed: $_" -ForegroundColor Yellow
+                Write-Host ''
+            }
         }
-        Write-Host 'Now installing Claude CLI via npm...'
-        npm install -g '@anthropic-ai/claude-code'
-    } else {
-        Write-Host 'Neither npm nor winget found — cannot auto-install Claude CLI.' `
-                   -ForegroundColor Red
-        Write-Host 'Install it manually first:'
-        Write-Host '  https://docs.anthropic.com/claude-code'
-        Write-Host 'Then re-run this installer.'
-        exit 1
     }
 
-    Refresh-Path
-
-    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-        Write-Host 'Claude CLI installed but not on PATH.' -ForegroundColor Yellow
-        Write-Host 'Open a new PowerShell window and re-run:'
+    if (-not $installed) {
+        Write-Host ''
+        Write-Host 'Could not install a working Claude CLI automatically.' -ForegroundColor Red
+        Write-Host ''
+        Write-Host 'Manual install options:'
+        Write-Host '  Anthropic:  https://docs.anthropic.com/claude-code'
+        Write-Host '  npm:        npm install -g @anthropic-ai/claude-code' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host 'After installing, verify with:  claude --version'
+        Write-Host 'Then re-run this installer in a NEW PowerShell window:'
         Write-Host '  iwr https://clayrune.io/install.ps1 -useb | iex' -ForegroundColor Cyan
         exit 1
     }
-}
 
-$claudeVersion = (& claude --version 2>&1 | Select-Object -First 1)
-Write-Host "OK Claude CLI: $claudeVersion" -ForegroundColor Green
-Write-Host ''
+    $claudeVersion = (& claude --version 2>&1 | Select-Object -First 1)
+    Write-Host "OK Claude CLI: $claudeVersion" -ForegroundColor Green
+    Write-Host ''
+}
 
 # ── Step 2: Fetch install prompt ───────────────────────────────────────────
 Write-Host "Fetching install instructions from $PromptUrl"
