@@ -2332,7 +2332,16 @@ def _load_agent_log(project_id):
 
 
 def _save_agent_log(project_id, log):
+    """Persist the agent log, trimming to the most recent N entries.
+
+    Entries are inserted at index 0 (newest first), so list[:N] keeps the newest.
+    Cap is `agent_log_max_entries` in config.json (default 500). Set to 0 to
+    disable trimming (keep everything — file grows unbounded).
+    """
     filepath = DATA_DIR / f'{project_id}_agent_log.json'
+    cap = int(CONFIG.get('agent_log_max_entries', 500) or 0)
+    if cap > 0 and len(log) > cap:
+        log = log[:cap]
     filepath.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
@@ -2592,6 +2601,91 @@ def _revive_from_agent_log(project_id, session_id, message, p):
     return session
 
 
+def _log_agent_dispatch_pending(session):
+    """Write a placeholder agent_log row at dispatch time so trigger correlation
+    survives a server restart that kills the session before _log_agent_completion
+    can run.
+
+    Without this, scheduled / hivemind sessions that are still running (or are
+    Mode B sessions sitting idle forever) appear in the log only after either
+    (a) a clean finalization (rare for long-lived idle Mode B), or (b) a startup
+    transcript backfill — and the backfill cannot recover trigger_type/trigger_id,
+    so the schedule's "Runs" panel filter (`trigger_type==schedule AND trigger_id==X`)
+    finds nothing. By dropping a row immediately, the trigger info is durable from
+    the moment we spawn the process.
+
+    Caller: _dispatch_agent_internal, only when trigger_type != 'manual'.
+    Manual dispatches don't need correlation and would just double the agent_log
+    write traffic for the common case.
+    """
+    project_id = session.get('project_id')
+    if not project_id or session.get('incognito') or session.get('housekeeping'):
+        return
+    sid = session.get('session_id', '')
+    if not sid:
+        return
+    entry = {
+        'ts': now_iso(),
+        'task': session.get('task', ''),
+        'status': 'in_progress',
+        'summary': '',
+        'session_id': sid,
+        'claude_session_id': '',  # populated on completion (Claude assigns this after first message)
+        'started_at': session.get('started_at', ''),
+        'usage': {},
+        'cost_usd': 0,
+        'num_turns': 0,
+        'plan_file': '',
+        'hivemind_id': session.get('hivemind_id', ''),
+        'hivemind_ws_id': session.get('hivemind_ws_id', ''),
+        'hivemind_role': session.get('hivemind_role', ''),
+        'trigger_type': session.get('trigger_type', 'manual'),
+        'trigger_id': session.get('trigger_id', ''),
+    }
+    try:
+        log = _load_agent_log(project_id)
+        log.insert(0, entry)
+        _save_agent_log(project_id, log)
+    except Exception as e:
+        print(f"[dispatch-log] {project_id}: pending write failed: {e}")
+
+
+def _reconcile_pending_agent_log_entries():
+    """At startup, flip any leftover 'in_progress' agent_log rows to 'interrupted'.
+
+    Pending rows come from _log_agent_dispatch_pending. If the server restarts
+    while a session is in flight, the pending row never gets upserted by
+    _log_agent_completion. At startup nothing is live yet, so any in_progress
+    row is by definition orphaned.
+    """
+    try:
+        projects = load_projects()
+    except Exception as e:
+        print(f"[reconcile-pending] load_projects failed: {e}")
+        return
+    flipped_total = 0
+    for p in projects:
+        pid = p.get('id')
+        if not pid:
+            continue
+        if p.get('_is_incognito_project') or pid == INCOGNITO_PROJECT_ID:
+            continue
+        try:
+            log = _load_agent_log(pid)
+            changed = False
+            for e in log:
+                if e.get('status') == 'in_progress':
+                    e['status'] = 'interrupted'
+                    changed = True
+                    flipped_total += 1
+            if changed:
+                _save_agent_log(pid, log)
+        except Exception as e:
+            print(f"[reconcile-pending] {pid}: {e}")
+    if flipped_total:
+        print(f"[reconcile-pending] flipped {flipped_total} orphaned in_progress entr{'y' if flipped_total == 1 else 'ies'} to 'interrupted'")
+
+
 def _log_agent_completion(session):
     """Save a summary entry when an agent session finishes."""
     project_id = session.get('project_id')
@@ -2640,6 +2734,18 @@ def _log_agent_completion(session):
         'trigger_id': session.get('trigger_id', ''),
     }
     log = _load_agent_log(project_id)
+    # Upsert: if a pending entry was written at dispatch time (non-manual trigger),
+    # replace it in place so trigger_type/trigger_id survive the rewrite. Otherwise
+    # insert at the top as before. Move the row to position 0 on update so newest-
+    # finalized stays at the top (matches the "log.insert(0, ...)" convention).
+    sid = entry['session_id']
+    replaced = False
+    if sid:
+        for i, e in enumerate(log):
+            if e.get('session_id') == sid and e.get('status') == 'in_progress':
+                log.pop(i)
+                replaced = True
+                break
     log.insert(0, entry)
     _save_agent_log(project_id, log)
 
@@ -3078,6 +3184,13 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
 
             t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
             t.start()
+
+        # Drop a pending row in the agent log immediately for non-manual triggers
+        # so the schedule/hivemind "Runs" panel can correlate even if the session
+        # never gets to call _log_agent_completion (long-lived idle Mode B session
+        # killed by a server restart, etc.). Manual dispatches don't need this.
+        if trigger_type and trigger_type != 'manual':
+            _log_agent_dispatch_pending(session)
 
         # Context budget check — triggers auto-condensation if context too large
         if not resume_id:
@@ -3965,6 +4078,8 @@ def agent_status(project_id):
                 'hivemind_id': s.get('hivemind_id', ''),
                 'hivemind_ws_id': s.get('hivemind_ws_id', ''),
                 'hivemind_role': s.get('hivemind_role', ''),
+                'trigger_type': s.get('trigger_type', 'manual'),
+                'trigger_id': s.get('trigger_id', ''),
                 'waiting_for_plan_approval': s.get('waiting_for_plan_approval', False),
                 'guardian_state': s.get('guardian_state'),
                 'circuit_breaker_tripped': s.get('circuit_breaker_tripped', False),
@@ -6110,32 +6225,59 @@ def schedule_run_now(schedule_id):
 
 @app.route('/api/schedule/<schedule_id>/runs')
 def schedule_runs(schedule_id):
-    """Return all agent_log entries that were dispatched by this schedule."""
+    """Return paginated agent_log entries dispatched by this schedule.
+
+    Query params:
+      limit  page size (default 50)
+      offset rows to skip (default 0)
+
+    Response shape: {runs, total, offset, limit}.
+    `total` is the total matching across all pages (lets the FE render
+    pagination controls). `runs` is the requested slice.
+    """
     try:
         limit = int(request.args.get('limit', 50))
     except Exception:
         limit = 50
+    try:
+        offset = int(request.args.get('offset', 0))
+    except Exception:
+        offset = 0
+    if limit < 1: limit = 50
+    if limit > 200: limit = 200
+    if offset < 0: offset = 0
+
     schedules = _load_schedules()
     sched = next((s for s in schedules if s.get('id') == schedule_id), None)
     if not sched:
         return jsonify({'error': 'schedule not found'}), 404
     pid = sched.get('project_id', '')
     if not pid:
-        return jsonify([])
+        return jsonify({'runs': [], 'total': 0, 'offset': 0, 'limit': limit})
     log = _load_agent_log(pid)
     runs = [e for e in log
             if e.get('trigger_type') == 'schedule' and e.get('trigger_id') == schedule_id]
-    return jsonify(_enrich_run_entries(runs[:limit]))
+    total = len(runs)
+    page = runs[offset:offset + limit]
+    return jsonify({
+        'runs': _enrich_run_entries(page),
+        'total': total,
+        'offset': offset,
+        'limit': limit,
+    })
 
 
 @app.route('/api/hivemind/<hivemind_id>/runs')
 def hivemind_runs(hivemind_id):
-    """Return agent_log entries for this hivemind. Filter by role/ws_id via query.
+    """Return paginated agent_log entries for this hivemind.
 
     Query params:
       role=orchestrator|worker  (default: both)
       ws_id=<workstream_id>     (default: any)
-      limit=<n>                 (default: 50)
+      limit=<n>                 page size (default 50, max 200)
+      offset=<n>                rows to skip (default 0)
+
+    Response shape: {runs, total, offset, limit}.
     """
     role = request.args.get('role', '')
     ws_id = request.args.get('ws_id', '')
@@ -6143,12 +6285,20 @@ def hivemind_runs(hivemind_id):
         limit = int(request.args.get('limit', 50))
     except Exception:
         limit = 50
+    try:
+        offset = int(request.args.get('offset', 0))
+    except Exception:
+        offset = 0
+    if limit < 1: limit = 50
+    if limit > 200: limit = 200
+    if offset < 0: offset = 0
+
     manifest = _hm_load_manifest(hivemind_id)
     if not manifest:
         return jsonify({'error': 'hivemind not found'}), 404
     pid = manifest.get('project_id', '')
     if not pid:
-        return jsonify([])
+        return jsonify({'runs': [], 'total': 0, 'offset': 0, 'limit': limit})
     log = _load_agent_log(pid)
     runs = [e for e in log if e.get('hivemind_id') == hivemind_id]
     if role == 'orchestrator':
@@ -6157,7 +6307,14 @@ def hivemind_runs(hivemind_id):
         runs = [e for e in runs if e.get('hivemind_role') != 'orchestrator']
     if ws_id:
         runs = [e for e in runs if e.get('hivemind_ws_id') == ws_id]
-    return jsonify(_enrich_run_entries(runs[:limit]))
+    total = len(runs)
+    page = runs[offset:offset + limit]
+    return jsonify({
+        'runs': _enrich_run_entries(page),
+        'total': total,
+        'offset': offset,
+        'limit': limit,
+    })
 
 
 @app.route('/api/project/<project_id>/conversations')
@@ -8728,6 +8885,15 @@ if __name__ == '__main__':
         _ensure_incognito_project()
     except Exception as e:
         print(f"[incognito] bootstrap failed: {e}")
+    # Reconcile pending agent_log rows: any 'in_progress' entry leftover from a
+    # session that was killed by the previous shutdown is by definition orphaned
+    # (no live sessions exist yet at startup). Flip those to 'interrupted' so
+    # they don't show as forever-running in the Agent Log / Runs panels.
+    # Cheap, synchronous; runs before backfill so the two helpers don't race.
+    try:
+        _reconcile_pending_agent_log_entries()
+    except Exception as e:
+        print(f"[reconcile-pending] bootstrap failed: {e}")
     # Backfill agent_log from Claude transcripts: makes mid-flight sessions that
     # never finalized (server killed before stream reader's finally) visible in
     # the Agent Log tab. Runs once, in the background, so app.run() isn't blocked.

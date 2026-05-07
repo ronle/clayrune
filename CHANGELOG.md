@@ -4,6 +4,86 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-07] — Scheduled-task UI hang + empty Runs panel
+
+Two related symptoms users hit when the scheduler ran heavily over hours:
+
+1. **Page becomes unresponsive** every so often. Closing & reopening the tab restored it.
+2. **No actual run registered in a schedule's "Runs" panel** even after the schedule had clearly fired.
+
+### Symptom 1 — root cause: SSE slot exhaustion via the 15s fallback poll
+
+The 2026-04-27 SSE-slot fix closes the EventSource on `turn_complete` so idle Mode B sessions don't burn one of Chromium's 6 per-origin connection slots. `fetchAgentStatus` was updated to only auto-reconnect for `running`. But the 15s "fallback for missed completions" loop at `static/index.html` (the one that piggybacks `_checkServerRestart`) was still reconnecting for both `running` AND `idle`:
+
+```js
+} else if ((ss.status === 'running' || ss.status === 'idle') && !agentEventSources[rh.sessionId]) {
+  connectAgentStream(h.projectId, rh.sessionId);
+}
+```
+
+Server-side, the 30-min stale-session sweep (`server.py:_scheduler_loop` purge block) explicitly skips `running` and `idle` — so idle Mode B sessions accumulate forever (until restart). Each scheduler fire that completes a turn leaves another idle session in `agentHistory`. Within hours, 6+ idle sessions had a live SSE re-opened by the 15s poll → all 6 Chromium slots saturated → `/api/processes`, `/api/config`, `/api/project/<id>/agent_log` etc. queued forever → page hung. Rebuilding `agentHistory` from a fresh page load cleared the slots and the page worked again until the next accumulation.
+
+**Fix** (`static/index.html`): drop the `=== 'idle'` branch from the 15s-poll reconnection block. Mirrors the `fetchAgentStatus` fix. `sendFollowup()` already reopens the stream when the user sends a message.
+
+### Symptom 2 — root cause: trigger info doesn't survive long-lived idle sessions
+
+A scheduler-dispatched session in Mode B finishes its turn → goes idle → process stays alive forever. The stream reader's `finally` block (where `_log_agent_completion` lives) only runs on process exit, so the agent_log entry — the one carrying `trigger_type='schedule'` and `trigger_id=<schedule_id>` — is never written. When the server eventually restarts, the next-startup `_backfill_agent_log_from_transcripts` recreates a row from the Claude transcript on disk, but that helper has no way to recover the trigger info — it's not in the transcript. The `/api/schedule/<id>/runs` filter (`trigger_type==schedule AND trigger_id==X`) then finds nothing, even though the schedule clearly fired.
+
+Verified on `data/projects/day_trading_engulfing_scanner_agent_log.json`: the `3d9ba6f0` schedule had ~10 dispatches in a single day, **0** of which carried `trigger_type='schedule'` in the agent_log; all were `synthesized: True` with empty trigger fields.
+
+**Fix** (`server.py`):
+
+- New `_log_agent_dispatch_pending(session)` helper: at dispatch time, drops a placeholder row into the project's agent_log with `status='in_progress'` and full trigger info (session_id, trigger_type, trigger_id, hivemind ids if present, etc.). `claude_session_id` is empty until completion — Claude assigns it after the first message.
+- `_dispatch_agent_internal` calls the helper for non-manual triggers only (manual dispatches don't need correlation and would just double the agent_log write traffic).
+- `_log_agent_completion` upserts: looks for an existing row with the same `session_id` and `status=='in_progress'`, removes it, and inserts the finalized entry at the top. Preserves trigger info even though the in-flight row gets replaced.
+- New `_reconcile_pending_agent_log_entries()` runs at server startup: any leftover `in_progress` entry is by definition orphaned (no live sessions exist yet), so it gets flipped to `interrupted`. Hooked in `__main__` before the existing transcript backfill so the two helpers don't race.
+- Frontend (`static/index.html`): `_runStatusIcon` shows the live accent dot for `in_progress` (matches `running`/`idle`).
+
+**Effect**: a scheduled run shows up in the Runs panel the moment the dispatch happens. Marked `in_progress` while live (accent dot), `completed`/`stopped`/`error` once the session finalizes, or `interrupted` if the server was killed mid-run. Hivemind-orchestrator and hivemind-worker triggers benefit from the same path.
+
+**Rollback**: revert this commit. The existing `manual`-default path in `_log_agent_completion` is unchanged for manual dispatches, so reverting only loses the new pending-row behavior — agent_log shape stays compatible.
+
+**Restart**: server restart required for the backend pieces (helpers + dispatch hook + startup reconcile). Frontend changes apply on next page load.
+
+### Tab strip filter — completed/stopped automated tabs hidden
+
+**Why**: opening a project that had a schedule firing repeatedly showed 8+ near-identical agent tabs ("Run python scripts/he..."). Unusable on mobile, noisy on desktop. Now that scheduled runs surface in the Scheduler's Runs panel + Agent Log, completed automated tabs in the strip are pure noise.
+
+**Files**:
+- `server.py` — `agent_status` endpoint now also returns `trigger_type` + `trigger_id` per session.
+- `static/index.html` — `fetchAgentStatus` captures the new fields into `agentHistory[].triggerType` + `agentStatusCache[sid].triggerType`. New `getProjectTabSessions(projectId)` filters out `trigger_type ∈ {'schedule', 'hivemind_worker'}` whose status ∈ `{'completed', 'stopped', 'error'}`. `agentPanelHTML` uses this filtered list for the tab strip.
+
+**Behavior**: scheduled / hivemind-worker runs only show as tabs while running. Manual + hivemind-orchestrator tabs unaffected. Completed automated tabs are still reachable via the Scheduler's Runs panel and the Agent Log.
+
+### Runs panel timestamp fix — `started_at` over `ts`
+
+**Why**: after a restart, the Runs panel showed every shutdown-finalized session as "12m ago" because `renderRunRows` was reading `ts` (= finalize time, which becomes uniform for all sessions stopped during shutdown) instead of `started_at` (= dispatch time, which preserves real chronology).
+
+**Fix** (`static/index.html`): `renderRunRows` now picks `r.started_relative || r.started_at || r.ts_relative || r.ts`. Comment explains the pitfall.
+
+### agent_log retention cap (500 entries) + Runs pagination (50 per page)
+
+**Why**: agent_log files grew unbounded — for a schedule firing every 30 min that's ~17k entries/year. Plus the Runs panel was a single scrollable list of up to 200 rows; too much to scan.
+
+**Disk retention** (`server.py`):
+- New config `agent_log_max_entries`, default **500**. Set to `0` to disable.
+- `_save_agent_log` slices to the most recent N before persisting (newest at index 0). Existing oversized files don't get retroactively trimmed; they shrink the next time anything writes.
+
+**Endpoint pagination** (`server.py`):
+- `/api/schedule/<id>/runs` and `/api/hivemind/<id>/runs` now accept `?limit=` (default 50, max 200) and `?offset=` (default 0).
+- Response shape changed from a flat array to `{runs, total, offset, limit}` — `total` is the across-all-pages count so the FE can render pagination controls.
+
+**Pagination UI** (`static/index.html`):
+- New `renderRunsPagination(total, offset, limit, pageFnTemplate)` helper renders `« ‹ Prev   Page X of Y · N total   Next › »` below the rows. Buttons disabled at bounds.
+- `toggleScheduleRuns` delegates to `loadScheduleRunsPage(scheduleId, projectId, offset)`.
+- `openHmRunsModal` delegates to `loadHmRunsPage(hivemindId, projectId, role, wsId, offset)`.
+- Each panel resets to page 1 on (re-)open.
+- New CSS class `.runs-pagination`.
+
+**Restart**: server restart required (response shape change). Frontend on next page load.
+
+---
+
 ## [2026-05-06] — Hivemind global surface, trigger-aware run history, sizeAgentChat fix
 
 Three threads of work in one session.

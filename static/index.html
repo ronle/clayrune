@@ -3054,6 +3054,23 @@
 
   /* ── Run history rows + transcript viewer ──────────────────────────── */
   .runs-panel { padding:6px 12px 8px 12px; background:var(--surface2); border-radius:0 0 6px 6px; }
+  .runs-pagination {
+    display:flex; align-items:center; justify-content:center; gap:6px;
+    padding:10px 4px 4px 4px; margin-top:6px;
+    border-top:1px solid var(--border-faint, var(--border));
+    flex-wrap:wrap;
+  }
+  .runs-page-btn {
+    background:transparent; border:1px solid var(--border); color:var(--text-faint);
+    padding:3px 10px; border-radius:4px; cursor:pointer; font-size:11px;
+    transition:all 0.15s; font-family:inherit;
+  }
+  .runs-page-btn:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+  .runs-page-btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .runs-page-label {
+    font-size:11px; color:var(--text-faint);
+    padding:0 8px; font-variant-numeric:tabular-nums;
+  }
   .schedule-card-wrap { margin-bottom: 8px; }
   .schedule-card-wrap .schedule-card { margin-bottom: 0; }
   .runs-empty {
@@ -6330,6 +6347,20 @@ function getProjectSessions(projectId) {
   return agentHistory.filter(h => h.projectId === projectId && !isHivemindWorker(h));
 }
 
+// Tabs visible in the per-project agent strip. Filters out automated runs that
+// have already finished — they're available in the Scheduler's Runs panel
+// (and Agent Log tab), so showing them as tabs forever just buries the tabs
+// the user actually cares about. Active automated runs DO stay visible so a
+// "Run Now" or live schedule fire is watchable in the strip.
+function getProjectTabSessions(projectId) {
+  const TERMINAL = new Set(['completed', 'stopped', 'error']);
+  const HIDDEN_TRIGGERS = new Set(['schedule', 'hivemind_worker']);
+  return getProjectSessions(projectId).filter(h => {
+    if (!HIDDEN_TRIGGERS.has(h.triggerType)) return true;  // manual + orchestrator always visible
+    return !TERMINAL.has(h.status);  // automated: only while active
+  });
+}
+
 // ── Hivemind worker popover ─────────────────────────────────────────────────
 let hmPopoverTimer = null;
 let hmPopoverSessionId = null;
@@ -6401,7 +6432,9 @@ function agentPanelHTML(p) {
     </div>`;
   }
 
-  const sessions = getProjectSessions(p.id);
+  // Visible tab list: hides completed schedule/hivemind-worker runs since
+  // those are surfaced in the Scheduler's Runs panel + Agent Log tab.
+  const sessions = getProjectTabSessions(p.id);
   // Sort tabs chronologically so newest appears on the right (next to "+ New")
   sessions.sort((a, b) => (a.startedAt || '').localeCompare(b.startedAt || ''));
   const activeSessionId = activeAgentTab[p.id];
@@ -8008,15 +8041,17 @@ async function fetchAgentStatus(projectId) {
       if (stoppedAt && (Date.now() - stoppedAt >= 15000)) {
         delete _recentlyStoppedSessions[sid];
       }
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
       }
       const existingHist = agentHistory.find(h => h.sessionId === sid);
       if (!existingHist) {
-        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', incognito: !!s.incognito });
-      } else if (s.incognito && !existingHist.incognito) {
-        existingHist.incognito = true;
+        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', incognito: !!s.incognito });
+      } else {
+        if (s.incognito && !existingHist.incognito) existingHist.incognito = true;
+        if (s.trigger_type && !existingHist.triggerType) existingHist.triggerType = s.trigger_type;
+        if (s.trigger_id && !existingHist.triggerId) existingHist.triggerId = s.trigger_id;
       }
       // Only auto-connect SSE for actively-running sessions. Idle sessions don't
       // produce output until a follow-up arrives, so holding a live socket just
@@ -9156,20 +9191,31 @@ async function openHmRunsModal(hivemindId, projectId, role, wsId, label) {
   centerModalElement(win);
   focusModal(modalId);
 
+  await loadHmRunsPage(hivemindId, projectId, role, wsId, 0);
+}
+
+async function loadHmRunsPage(hivemindId, projectId, role, wsId, offset) {
   const bodyId = `hm-runs-body-${hivemindId}-${role}-${wsId || 'all'}`;
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  body.innerHTML = '<div class="runs-empty">Loading runs...</div>';
   try {
+    const limit = 50;
     const params = new URLSearchParams({ role });
     if (wsId) params.set('ws_id', wsId);
-    params.set('limit', '30');
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
     const res = await fetch(API_BASE + `/api/hivemind/${encodeURIComponent(hivemindId)}/runs?${params}`);
     if (!res.ok) {
-      const body = document.getElementById(bodyId);
-      if (body) body.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
+      body.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
       return;
     }
-    const runs = await res.json();
-    const body = document.getElementById(bodyId);
-    if (body) body.innerHTML = renderRunRows(runs, projectId);
+    const data = await res.json();
+    const runs = data.runs || [];
+    const total = data.total || 0;
+    const pageFnTemplate = `loadHmRunsPage('${esc(hivemindId)}','${esc(projectId)}','${esc(role)}','${esc(wsId || '')}',$OFFSET)`;
+    body.innerHTML = renderRunRows(runs, projectId)
+                   + renderRunsPagination(total, data.offset || 0, data.limit || limit, pageFnTemplate);
   } catch(e) {
     const body = document.getElementById(bodyId);
     if (body) body.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
@@ -10517,15 +10563,27 @@ async function toggleScheduleRuns(scheduleId, projectId) {
     return;
   }
   panel.style.display = 'block';
+  await loadScheduleRunsPage(scheduleId, projectId, 0);
+}
+
+async function loadScheduleRunsPage(scheduleId, projectId, offset) {
+  const panel = document.getElementById('schedule-runs-' + scheduleId);
+  if (!panel) return;
   panel.innerHTML = '<div class="runs-empty">Loading runs...</div>';
   try {
-    const res = await fetch(API_BASE + `/api/schedule/${encodeURIComponent(scheduleId)}/runs?limit=20`);
+    const limit = 50;
+    const url = `${API_BASE}/api/schedule/${encodeURIComponent(scheduleId)}/runs?limit=${limit}&offset=${offset}`;
+    const res = await fetch(url);
     if (!res.ok) {
       panel.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
       return;
     }
-    const runs = await res.json();
-    panel.innerHTML = renderRunRows(runs, projectId);
+    const data = await res.json();
+    const runs = data.runs || [];
+    const total = data.total || 0;
+    const pageFnTemplate = `loadScheduleRunsPage('${esc(scheduleId)}','${esc(projectId)}',$OFFSET)`;
+    panel.innerHTML = renderRunRows(runs, projectId)
+                    + renderRunsPagination(total, data.offset || 0, data.limit || limit, pageFnTemplate);
   } catch(e) {
     panel.innerHTML = '<div class="runs-empty">Failed to load runs.</div>';
   }
@@ -12465,8 +12523,35 @@ function _runStatusIcon(status) {
   if (status === 'completed') return '<span style="color:#22c55e">&#x2714;</span>';
   if (status === 'error' || status === 'failed') return '<span style="color:#ef4444">&#x26A0;</span>';
   if (status === 'interrupted' || status === 'stopped') return '<span style="color:#f59e0b">&#x25A0;</span>';
-  if (status === 'running' || status === 'idle') return '<span style="color:var(--accent)">&#x25CF;</span>';
+  if (status === 'running' || status === 'idle' || status === 'in_progress') return '<span style="color:var(--accent)">&#x25CF;</span>';
   return '<span style="color:var(--text-faint)">&#x25CB;</span>';
+}
+
+// Build the pagination footer ("‹ Prev | Page X of Y (N total) | Next › | Last »").
+// `pageFn` is the JS expression to call when a button is clicked, taking a
+// new offset as its argument (e.g. "loadScheduleRuns('abc',$OFFSET)" — the
+// caller substitutes $OFFSET for the actual numeric expression).
+function renderRunsPagination(total, offset, limit, pageFnTemplate) {
+  if (!total || total <= limit) return '';
+  const limit_ = limit || 50;
+  const offset_ = offset || 0;
+  const currentPage = Math.floor(offset_ / limit_) + 1;
+  const totalPages = Math.ceil(total / limit_);
+  const prevDisabled = offset_ === 0;
+  const nextDisabled = offset_ + limit_ >= total;
+  const lastOffset = (totalPages - 1) * limit_;
+  const callFn = (newOffset) => pageFnTemplate.replace('$OFFSET', String(newOffset));
+  return `<div class="runs-pagination">
+    <button class="runs-page-btn" ${prevDisabled ? 'disabled' : ''}
+      onclick="${callFn(0)}" title="First page">&laquo;</button>
+    <button class="runs-page-btn" ${prevDisabled ? 'disabled' : ''}
+      onclick="${callFn(Math.max(0, offset_ - limit_))}" title="Previous page">&lsaquo; Prev</button>
+    <span class="runs-page-label">Page ${currentPage} of ${totalPages} &middot; ${total} total</span>
+    <button class="runs-page-btn" ${nextDisabled ? 'disabled' : ''}
+      onclick="${callFn(offset_ + limit_)}" title="Next page">Next &rsaquo;</button>
+    <button class="runs-page-btn" ${nextDisabled ? 'disabled' : ''}
+      onclick="${callFn(lastOffset)}" title="Last page">&raquo;</button>
+  </div>`;
 }
 
 function renderRunRows(runs, projectId) {
@@ -12476,7 +12561,11 @@ function renderRunRows(runs, projectId) {
   return runs.map(r => {
     const csid = r.claude_session_id || '';
     const summary = (r.summary || r.task || '').replace(/\s+/g, ' ').substring(0, 140);
-    const ts = r.ts_relative || r.ts || '';
+    // Display the DISPATCH time, not the finalize time. They differ
+    // dramatically when a Mode B session sits idle for hours/days before the
+    // server stops it (every such session ends up with the same 'ts' = the
+    // shutdown moment), which would render as "everything ran 12m ago".
+    const ts = r.started_relative || r.started_at || r.ts_relative || r.ts || '';
     const statusIcon = _runStatusIcon(r.status);
     const clickAction = csid
       ? `openTranscriptViewer('${esc(projectId)}','${esc(csid)}','${esc(ts)}')`
@@ -13596,8 +13685,13 @@ setInterval(async () => {
           refreshModal();
           renderAgentConsole();
           refreshSilent();
-        } else if ((ss.status === 'running' || ss.status === 'idle') && !agentEventSources[rh.sessionId]) {
-          // Still running but SSE dropped — reconnect
+        } else if (ss.status === 'running' && !agentEventSources[rh.sessionId]) {
+          // Still running but SSE dropped — reconnect.
+          // Idle sessions are intentionally NOT reconnected: turn_complete closes
+          // the SSE to free a Chromium per-origin slot (cap 6); reopening here
+          // would re-burn the slot and accumulate over time as scheduled tasks
+          // pile up idle Mode B sessions, eventually starving /api/* fetches.
+          // sendFollowup() reopens the stream when the user sends a message.
           connectAgentStream(h.projectId, rh.sessionId);
         }
       }

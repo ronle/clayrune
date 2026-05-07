@@ -1,19 +1,152 @@
 # Clayrune — Resume Here
 
-**Last updated:** 2026-05-06 (PM)
+**Last updated:** 2026-05-07 (PM)
 **Branch:** `master`
-**Latest in-flight work:** Hivemind global surface (shipped), trigger-aware run history (shipped), `sizeAgentChat` measurement-loop fix (shipped). See CHANGELOG `[2026-05-06]`.
+**Latest committed:** `4a7dd4b` — Hivemind global surface + trigger-aware run history + sizeAgentChat fix.
+**In working tree, NOT yet committed:** see section 0 below — five discrete units of work from today's session, plus the Claydo design.
 
-> Pick this up after a system restart. Skim section 1 for state-of-the-world,
-> then jump to section 4 for the next-step recommendation.
+> Pick this up after a system restart. Skim section 0 for what's pending,
+> then section 1 for state-of-the-world, then section 4 for next steps.
 
 ---
 
-## 1. Where we are
+## 0. What's in flight RIGHT NOW (today, 2026-05-07)
 
-- **Hivemind elevated to a first-class surface (commit forthcoming).** Sidebar gets a 🐝 Hivemind entry that opens a cross-project list (`__all_hivemind`) with status / project / search filters, status pills, short ID hashes, planner/worker tree mini-viz per card, pause/stop/resume controls. Mobile bottom-tab bar swapped Settings → Hivemind (Settings via avatar). Per-project Hivemind tab REMOVED — replaced by 🐝 Hiveminds + ✨ Start Hivemind in the project's 3-dot menu. Start Hivemind auto-dispatches the setup prompt instead of leaving the user staring at a populated form. Stale heuristic: `active`/`paused` + no activity > 24h = rendered as "stale" with grey badge + Restart control; server-side `_hm_reconcile_stale_on_startup` rewrites the manifest at boot so the disk reflects reality.
-- **Trigger-aware run history (commit forthcoming).** Every `agent_log` entry now carries `trigger_type` (`manual` / `schedule` / `hivemind_orchestrator` / `hivemind_worker`) and `trigger_id`. Three new endpoints: `GET /api/schedule/<id>/runs`, `GET /api/hivemind/<id>/runs?role=&ws_id=`, `GET /api/project/<pid>/transcript/<csid>` (read-only parsed transcript). UI: Runs button on every schedule card (inline expanding panel), Runs button on each Hivemind workstream + Orchestrator Runs in overview. Each row click opens a shared transcript viewer modal. Plus a **▶ Run Now** button on the far right of every schedule card (and in the edit form) that fires the task immediately, stamps trigger metadata, and updates `last_run` without touching `next_run`.
-- **`sizeAgentChat` measurement-loop fix (commit forthcoming).** Fixed Send-button bottom-border clipping caused by `chatInputEl.offsetHeight` returning the squashed value from the previous over-allocation, feeding back into a smaller `desiredOutH` each refresh. Now resets output's explicit sizing before measuring AND computes `inputH = max(offsetHeight, scrollHeight, rowH + paddingV, 80)` — three independent signals plus an 80px safety floor.
+Working tree contains **five units of code** (A, B, B′, B″, C) **and one design-only item** (D, Claydo helper). The five code units split naturally into:
+
+- **A + B + B′ + B″** — scheduler reliability & run-history UX. Tightly related, share files (`server.py` + `static/index.html`), one commit makes sense.
+- **C** — installer scaffold. Untracked `installer/` dir + `assets/clayrune.png`. Independent.
+
+Run `git status` to see the file list; `git diff` to review individual hunks.
+
+### A. SSE-slot fix + dispatch-pending agent_log rows (CHANGELOG `[2026-05-07]` already drafted)
+
+**Why** (two related symptoms users hit when the scheduler ran heavily):
+1. **Page becomes unresponsive** every so often — closing & reopening the tab restored it.
+2. **Empty "Runs" panel** even after a schedule had clearly fired.
+
+**Root causes** (full detail in CHANGELOG.md `[2026-05-07]`):
+- The 15s fallback-poll loop in `static/index.html` was still reconnecting EventSources for both `running` AND `idle` sessions. Idle Mode B sessions accumulate forever (server's stale-session sweep skips them), so within hours 6+ live SSEs saturated Chromium's 6 per-origin slot cap → `/api/processes`, `/api/config`, etc. queued forever → page hung. Mirrors the earlier `fetchAgentStatus` fix; this loop was the missed sibling.
+- Mode B scheduler-dispatched sessions go idle without exiting, so `_log_agent_completion`'s finally block never runs → the `trigger_type='schedule'` row never reaches `agent_log.json`. The `/api/schedule/<id>/runs` filter then finds nothing.
+
+**Files touched**:
+- `server.py` — new `_log_agent_dispatch_pending(session)` (writes a placeholder row at dispatch time with full trigger info, status `'in_progress'`); `_log_agent_completion` upserts that row; new `_reconcile_pending_agent_log_entries()` runs at startup to flip orphaned `'in_progress'` rows to `'interrupted'`; `_dispatch_agent_internal` calls the helper when `trigger_type != 'manual'`.
+- `static/index.html` — drop the `=== 'idle'` reconnect branch from the 15s-poll block; `_runStatusIcon` shows the live accent dot for `'in_progress'`.
+
+**Test after restart**: trigger a schedule fire (Run Now or wait); the Runs panel should show the run *immediately* with an `in_progress` indicator, then transition to `completed` when the turn finishes. Idle sessions accumulating no longer freezes the page over hours.
+
+### B. Tab strip filter — completed/stopped automated tabs hidden (NEW, not yet in CHANGELOG)
+
+**Why**: opening a project that had a schedule firing repeatedly showed 8+ near-identical agent tabs ("Run python scripts/he..."). Unusable on mobile, noisy on desktop.
+
+**Files touched** (additive on top of A):
+- `server.py` — `agent_status` endpoint also returns `trigger_type` + `trigger_id` per session (already added; consumed below).
+- `static/index.html` — `fetchAgentStatus` captures the new fields into `agentHistory[].triggerType` + `agentStatusCache[sid].triggerType`. New `getProjectTabSessions(projectId)` filters out `trigger_type ∈ {'schedule', 'hivemind_worker'}` whose status ∈ `{'completed', 'stopped', 'error'}`. `agentPanelHTML` uses this filtered list for the tab strip.
+
+**Behavior after restart**: scheduled runs only show as tabs while running. Completed runs stay in the Scheduler's "Runs" panel (and Agent Log). Manual + hivemind-orchestrator tabs unaffected.
+
+**Test**: trigger a Run Now → tab appears while in_progress/running → disappears once `completed`. View it via Scheduler → Runs.
+
+### B′. Runs panel timestamp fix (small, frontend-only — added this session)
+
+**Why**: after the restart, the Runs panel showed every shutdown-finalized session as "12m ago" because `renderRunRows` was reading `ts` (= finalize time, which becomes uniform for all sessions stopped during shutdown) instead of `started_at` (= dispatch time, which preserves real chronology).
+
+**File touched**: `static/index.html` only — `renderRunRows` now picks `r.started_relative || r.started_at || r.ts_relative || r.ts`. Comment in the code explains the pitfall.
+
+**Test**: hard-refresh; reopen any Runs panel — timestamps should now span the actual schedule fire times (yesterday/today), not the shutdown moment.
+
+### B″. agent_log retention + Runs pagination (server + frontend, added this session)
+
+**Why**: agent_log files grow unbounded. For a schedule firing every 30 min that's ~17k entries/year. Plus the Runs panel was a single scrollable list of up to 200 rows — too much to scan.
+
+**Disk retention** (`server.py`):
+- New config `agent_log_max_entries`, default **500**. Set to `0` to disable.
+- `_save_agent_log` slices to the most recent N before persisting (newest are at index 0). Existing oversized files don't get retroactively trimmed; they shrink the next time anything writes to them.
+
+**Endpoint pagination** (`server.py`):
+- `/api/schedule/<id>/runs` and `/api/hivemind/<id>/runs` now accept `?limit=` (default 50, max 200) and `?offset=` (default 0).
+- Response shape changed to `{runs, total, offset, limit}` — total is the across-all-pages count so the frontend can render pagination controls.
+
+**Pagination footer** (`static/index.html`):
+- New `renderRunsPagination(total, offset, limit, pageFnTemplate)` helper renders `«   ‹ Prev   Page X of Y · N total   Next ›   »` below the rows. Buttons disabled at bounds. CSS class `.runs-pagination`.
+- `toggleScheduleRuns` now delegates to `loadScheduleRunsPage(scheduleId, projectId, offset)`. Pagination buttons re-call this with new offset.
+- `openHmRunsModal` similarly delegates to `loadHmRunsPage(hivemindId, projectId, role, wsId, offset)`.
+- Each panel resets to page 1 on (re-)open.
+
+**Test after restart**: open Runs on any schedule that has > 50 entries → first 50 rows + footer with Next/Last; click Next → next page loads; first/last buttons jump to bounds.
+
+### Commit suggestion for A + B + B′ + B″
+
+All four are about scheduler/run visibility & quality. Cleanest:
+
+- **One commit**: `"Scheduler reliability + run history pagination"` — pulls in the CHANGELOG `[2026-05-07]` entry, appends sub-sections for the tab strip filter, started_at fix, retention cap, and pagination. Code-wise these touch the same files (server.py + static/index.html) and are mutually consistent.
+
+If you'd rather split, the natural break is A+B (the bug fixes) vs. B′+B″ (the run-history UX).
+
+### C. Installer scaffold (untracked — `installer/` and `assets/clayrune.png`)
+
+**Why**: today's design conversation about a "Claude-driven installer" — bootstrap shell script verifies/installs Claude CLI, fetches a prescriptive prompt from `clayrune.io/install-prompt.md`, pipes it into `claude --dangerously-skip-permissions` which performs the actual install. No installer pipeline to build. Cross-platform "for free."
+
+**New files** (all in `installer/`):
+- `install-prompt.md` — the prescriptive Claude prompt, ~200 lines, 6 STEPs. Already existed from a prior partial session; verified solid.
+- `install.sh` — macOS/Linux bootstrap (~110 lines).
+- `install.ps1` — Windows PowerShell bootstrap (~110 lines).
+- `start.sh` — Linux launcher (activates venv, runs `python server.py`, opens browser via `xdg-open`).
+- `start.command` — macOS launcher (same role; opens via `open`).
+- `start.bat` — Windows launcher (same role; opens via `start http://...`).
+- `README.md` — architecture diagram + hosting plan + testing checklist.
+
+**Plus**: `assets/clayrune.png` — 1024×1024 RGBA Claydo character icon, source for all per-platform icon variants (`.ico`, `.icns`, scaled PNGs). Generated by Ron from the design system; saved from `data/uploads/agent_2b72e64f18.png`.
+
+**Hosting plan**: `clayrune.io/install.sh`, `clayrune.io/install.ps1`, `clayrune.io/install-prompt.md`. Domain not yet up — for first round of testing point bootstraps at `raw.githubusercontent.com/ronle/mission-control/master/installer/<file>` via the `CLAYRUNE_PROMPT_URL` env var.
+
+**Testing checklist** (from `installer/README.md`): clean Windows 11, macOS 14+, Ubuntu 22.04 VMs. Each install should complete in <5 min, end with the browser open at localhost:5199, place a clickable launcher on Desktop + OS app menu, and survive a re-run (idempotent).
+
+**Suggested commit message**: "Installer scaffold: Claude-driven bootstrap + install prompt + per-OS launchers"
+
+### D. "Ask Playdo" helper — design locked, NOT YET STARTED
+
+> **Naming convention (2026-05-07):**
+> - **Playdo** = the mascot character (the cute clay figure at `assets/clayrune.png`). Originally proposed as "Claydo" but that was unavailable; "Playdo" is the final character name.
+> - **Clayrune** = the product/brand.
+> - **The helper** is "Ask Playdo" — Playdo is the in-app guide. Keeps the mascot's voice distinct from the product.
+
+The design conversation locked the v1 plan. **No code written.** Three open questions resolved, ready to start whenever Ron says go:
+
+**The plan**:
+- **Surface**: floating circular button bottom-right, always visible (desktop + mobile, mobile sits 70px above bottom-tab bar). Icon: the Playdo mascot character. Tooltip: "Ask Playdo." Pulse animation until first open (persisted in `localStorage`).
+- **Naming**: "Ask Playdo." Modal title: "Ask Playdo."
+- **No sidebar entry** — floating button is the universal pattern (Intercom / Copilot Chat / Slack).
+- **Behind the scenes**: an incognito Claude session spawned via existing agent infra, system prompt loaded from `docs/USER_GUIDE.md`. Streaming response via SSE.
+- **UI control markers** that the assistant emits inline; frontend strips them and acts. Marker prefix is `clayrune:` (the product, not the mascot — keeps the namespace tied to the app):
+  - `[clayrune:goto view="hivemind"]` → `sidebarNav('hivemind')`
+  - `[clayrune:open-modal project="abc123"]` → `openProjectModal('abc123')`
+  - `[clayrune:highlight selector="#sidebar-item-hivemind" duration=2500]` → CSS pulse animation
+  Markers are read-only — no destructive actions in v1.
+- **Knowledge source**: new `docs/USER_GUIDE.md` (sibling to existing developer-focused `CLAUDE_KB.md`). Sections: Quick start / Features overview / Common tasks (with marker recipes baked in) / Keyboard shortcuts / Glossary / Troubleshooting. Maintained in repo so updates ship with releases.
+- **First-time tour integration**: at the end of `startWalkthrough()`, auto-open the "Ask Playdo" modal pre-focused on the input with a welcome message.
+
+**Three open decisions Ron has now resolved** (going into v1 build):
+1. Streaming response token-by-token via SSE — yes, friendlier, reuses existing infra.
+2. Walkthrough's last step opens the Claydo modal directly — yes, eliminates one click on the most important first impression.
+3. Pulse animation cadence: pulse the floating button on every page load until the user opens it once, then stop forever (persisted in `localStorage`).
+
+**Build order** (when starting):
+1. Write `docs/USER_GUIDE.md` — the foundation. Without this the assistant has nothing to say.
+2. Floating "Ask Claydo" button — fixed-position circular button bottom-right with pulse animation.
+3. `__clayrune_guide` modal — chat-style interface, opens on button click. Reuse existing modal infrastructure.
+4. Backend endpoint `POST /api/guide/ask` — spawns a Claude session with `USER_GUIDE.md` as system prompt + the user's question, streams back via SSE. Treats it like an incognito agent session under the hood (no project memory writes).
+5. Marker parser — frontend regex strips `[clayrune:...]` markers from the assistant's text and dispatches the corresponding actions.
+6. Highlight CSS — `.clayrune-highlight` class with orange-pulse animation, auto-removes after the marker's duration.
+7. Walkthrough integration — auto-open modal on tour completion.
+
+---
+
+## 1. Where we are (committed work)
+
+- **Hivemind elevated to a first-class surface (committed in `4a7dd4b`).** Sidebar gets a 🐝 Hivemind entry that opens a cross-project list (`__all_hivemind`) with status / project / search filters, status pills, short ID hashes, planner/worker tree mini-viz per card, pause/stop/resume controls. Mobile bottom-tab bar swapped Settings → Hivemind (Settings via avatar). Per-project Hivemind tab REMOVED — replaced by 🐝 Hiveminds + ✨ Start Hivemind in the project's 3-dot menu. Start Hivemind auto-dispatches the setup prompt instead of leaving the user staring at a populated form. Stale heuristic: `active`/`paused` + no activity > 24h = rendered as "stale" with grey badge + Restart control; server-side `_hm_reconcile_stale_on_startup` rewrites the manifest at boot so the disk reflects reality.
+- **Trigger-aware run history (committed in `4a7dd4b`).** Every `agent_log` entry now carries `trigger_type` (`manual` / `schedule` / `hivemind_orchestrator` / `hivemind_worker`) and `trigger_id`. Three new endpoints: `GET /api/schedule/<id>/runs`, `GET /api/hivemind/<id>/runs?role=&ws_id=`, `GET /api/project/<pid>/transcript/<csid>` (read-only parsed transcript). UI: Runs button on every schedule card (inline expanding panel), Runs button on each Hivemind workstream + Orchestrator Runs in overview. Each row click opens a shared transcript viewer modal. Plus a **▶ Run Now** button on the far right of every schedule card (and in the edit form) that fires the task immediately, stamps trigger metadata, and updates `last_run` without touching `next_run`.
+- **`sizeAgentChat` measurement-loop fix (committed in `4a7dd4b`).** Fixed Send-button bottom-border clipping caused by `chatInputEl.offsetHeight` returning the squashed value from the previous over-allocation, feeding back into a smaller `desiredOutH` each refresh. Now resets output's explicit sizing before measuring AND computes `inputH = max(offsetHeight, scrollHeight, rowH + paddingV, 80)` — three independent signals plus an 80px safety floor.
 - **Remote server restart shipped (commit `5ce48eb`).** Settings → Server → Restart server lets the user restart the Python process from anywhere, including mobile via the `clayrune.io` tunnel. Active-flow warning before confirmation, server-side recheck, audit trail in `data/restart_log.json` (gitignored), heartbeat-based cross-dashboard detection so observers don't get stuck on stale "Blocked" state. Major Windows-specific gotcha worked around: `os.execv` inherits open FDs from child agent processes — switched to `subprocess.Popen(close_fds=True)`. POSIX adapter gaps (netstat equivalent + log redirection) flagged as TODOs in `_check_port_conflict` and `_perform_server_restart_async`.
 - **Modal persistence** (commit `5ce48eb`). Open conversation modals + their canvas positions survive page refresh (`mc_open_modals` snapshot). Per-project window size and zoom level survive app/system reboot (`mc_modal_prefs`). Both flushed before any in-app restart so the snapshot bridges the reload.
 - **Conversation input drag** (commit `5ce48eb`). Dragging the agent chat separator now resizes the output area in lock-step with the textarea — the deferred-flex-layout snap that used to fire seconds later is gone. `sizeAgentChat` drives `agent-output` height explicitly with `!important` and is called live during the drag.
