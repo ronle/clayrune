@@ -142,6 +142,18 @@ _validate_claude() {
   return 0
 }
 
+# Returns 0 iff Claude CLI is authenticated. Costs a few tokens for users who
+# ARE logged in; for users who aren't, the CLI prints the "Not logged in"
+# sentinel without calling the API at all. We grep for that sentinel rather
+# than relying on exit codes (transient errors / rate limits also non-zero).
+_check_claude_auth() {
+  out=$(claude -p "ok" --max-turns 1 </dev/null 2>&1 || true)
+  if echo "$out" | grep -qiE 'not logged in|please run /login'; then
+    return 1
+  fi
+  return 0
+}
+
 # ── Step 0: Ensure Node 18+ is available ───────────────────────────────────
 
 # This must run BEFORE any Claude CLI install attempt because npm-installed
@@ -178,9 +190,11 @@ else
   # Method 1: Anthropic's official installer. Self-contained — bundles its own
   # runtime, sidesteps Node version mismatches (the failure mode we hit on WSL
   # where npm + nvm + system Node disagreed).
-  if [ "$installed" -eq 0 ] && command -v curl >/dev/null 2>&1; then
+  # Pipe to bash explicitly: their installer uses bash-only syntax (subshell
+  # `(...)` constructs etc.) that dash on Ubuntu chokes on with `Syntax error`.
+  if [ "$installed" -eq 0 ] && command -v curl >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then
     printf "Trying Anthropic's official installer (curl)...\n"
-    if curl -fsSL https://claude.ai/install.sh | sh; then
+    if curl -fsSL https://claude.ai/install.sh | bash; then
       _refresh_claude_path
       if _validate_claude; then
         printf "%s✓ Anthropic installer succeeded%s\n\n" "$G" "$R"
@@ -226,6 +240,23 @@ else
   CLAUDE_VERSION=$(claude --version 2>&1 | head -n1 || echo "unknown")
   printf "%sOK%s Claude CLI: %s\n\n" "$G" "$R" "$CLAUDE_VERSION"
 fi
+
+# ── Step 1.5: Verify Claude CLI is authenticated ───────────────────────────
+
+# A freshly-installed CLI isn't logged in. Without this check, the install
+# prompt gets handed off to a CLI that responds with "Not logged in · Please
+# run /login" and silently exits. Catch that here and tell the user clearly.
+printf "Checking Claude CLI authentication...\n"
+if ! _check_claude_auth; then
+  printf "\n%sClaude CLI is installed but not authenticated.%s\n\n" "$Y" "$R"
+  printf "Please log in first:\n"
+  printf "  %sclaude /login%s\n\n" "$C" "$R"
+  printf "Follow the OAuth prompts (or paste an Anthropic API key), then re-run this installer:\n"
+  printf "  %scurl -sSL https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.sh | CLAYRUNE_PROMPT_URL=https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md sh%s\n" "$C" "$R"
+  printf "\n  (or once clayrune.io is up: %scurl -sSL https://clayrune.io/install.sh | sh%s)\n" "$C" "$R"
+  exit 1
+fi
+printf "%sOK%s Authenticated\n\n" "$G" "$R"
 
 # ── Step 2: Fetch install prompt ───────────────────────────────────────────
 printf "Fetching install instructions from %s\n" "$PROMPT_URL"

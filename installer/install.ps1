@@ -100,6 +100,22 @@ function Test-ClaudeWorks {
     }
 }
 
+# Returns $true iff Claude CLI is authenticated. Costs a few tokens for users
+# who are; for users who aren't, the CLI prints the "Not logged in" sentinel
+# without calling the API. We grep for that sentinel rather than rely on exit
+# codes (transient errors / rate limits also non-zero).
+function Test-ClaudeAuth {
+    try {
+        $out = (& claude -p "ok" --max-turns 1 2>&1 | Out-String)
+    } catch {
+        $out = "$_"
+    }
+    if ($out -match '(?i)not logged in|please run /login') {
+        return $false
+    }
+    return $true
+}
+
 Write-Host '======================================' -ForegroundColor Cyan
 Write-Host '  Clayrune Installer' -ForegroundColor White
 Write-Host '======================================'
@@ -200,6 +216,23 @@ if (Test-ClaudeWorks) {
     Write-Host "OK Claude CLI: $claudeVersion" -ForegroundColor Green
     Write-Host ''
 }
+
+# ── Step 1.5: Verify Claude CLI is authenticated ───────────────────────────
+
+Write-Host 'Checking Claude CLI authentication...'
+if (-not (Test-ClaudeAuth)) {
+    Write-Host ''
+    Write-Host 'Claude CLI is installed but not authenticated.' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host 'Please log in first:'
+    Write-Host '  claude /login' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host 'Follow the OAuth prompts (or paste an Anthropic API key), then re-run:'
+    Write-Host '  iwr https://clayrune.io/install.ps1 -useb | iex' -ForegroundColor Cyan
+    exit 1
+}
+Write-Host 'OK Authenticated' -ForegroundColor Green
+Write-Host ''
 
 # ── Step 2: Fetch install prompt ───────────────────────────────────────────
 Write-Host "Fetching install instructions from $PromptUrl"
