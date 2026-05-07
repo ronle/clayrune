@@ -254,8 +254,9 @@ fi
 printf "Checking Claude CLI authentication...\n"
 if ! _check_claude_auth; then
   printf "\n%sClaude CLI is installed but not authenticated.%s\n\n" "$Y" "$R"
-  printf "%sStep 1.%s Open a NEW terminal window so nvm/Node loads into PATH.\n" "$B" "$R"
-  printf "         (Or in this shell: %sexport NVM_DIR=\"\$HOME/.nvm\" && . \"\$NVM_DIR/nvm.sh\"%s)\n\n" "$C" "$R"
+  printf "%sStep 1.%s Open a NEW terminal window so PATH picks up Claude CLI.\n" "$B" "$R"
+  printf "         (Or in this shell, force a login-shell reload: %sexec bash -l%s)\n" "$C" "$R"
+  printf "         (This sources ~/.profile for ~/.local/bin AND ~/.bashrc for nvm.)\n\n"
   printf "%sStep 2.%s Log in to Claude:\n" "$B" "$R"
   printf "         %sclaude /login%s\n" "$C" "$R"
   printf "         (Follow the OAuth prompts, or paste an Anthropic API key.)\n\n"
