@@ -96,7 +96,12 @@ _setup_node() {
       return 1
     fi
     printf "Installing nvm (sets up ~/.nvm + adds sourcing line to your shell rc)...\n"
-    if ! curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | PROFILE=/dev/null bash; then
+    # Let nvm's installer add `[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"`
+    # to the user's shell rc so freshly-opened terminals can find `node` and
+    # `claude` (which lives under nvm's node bin dir). Suppressing this with
+    # PROFILE=/dev/null leaves the user with `command not found` after the
+    # bootstrap exits — which trapped us on WSL.
+    if ! curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash; then
       printf "%snvm install failed.%s\n" "$E" "$R"
       return 1
     fi
@@ -249,11 +254,14 @@ fi
 printf "Checking Claude CLI authentication...\n"
 if ! _check_claude_auth; then
   printf "\n%sClaude CLI is installed but not authenticated.%s\n\n" "$Y" "$R"
-  printf "Please log in first:\n"
-  printf "  %sclaude /login%s\n\n" "$C" "$R"
-  printf "Follow the OAuth prompts (or paste an Anthropic API key), then re-run this installer:\n"
-  printf "  %scurl -sSL https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.sh | CLAYRUNE_PROMPT_URL=https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md sh%s\n" "$C" "$R"
-  printf "\n  (or once clayrune.io is up: %scurl -sSL https://clayrune.io/install.sh | sh%s)\n" "$C" "$R"
+  printf "%sStep 1.%s Open a NEW terminal window so nvm/Node loads into PATH.\n" "$B" "$R"
+  printf "         (Or in this shell: %sexport NVM_DIR=\"\$HOME/.nvm\" && . \"\$NVM_DIR/nvm.sh\"%s)\n\n" "$C" "$R"
+  printf "%sStep 2.%s Log in to Claude:\n" "$B" "$R"
+  printf "         %sclaude /login%s\n" "$C" "$R"
+  printf "         (Follow the OAuth prompts, or paste an Anthropic API key.)\n\n"
+  printf "%sStep 3.%s Re-run this installer:\n" "$B" "$R"
+  printf "         %scurl -sSL https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.sh | CLAYRUNE_PROMPT_URL=https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md sh%s\n" "$C" "$R"
+  printf "         (Once clayrune.io is up: %scurl -sSL https://clayrune.io/install.sh | sh%s)\n" "$C" "$R"
   exit 1
 fi
 printf "%sOK%s Authenticated\n\n" "$G" "$R"
