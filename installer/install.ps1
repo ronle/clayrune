@@ -290,11 +290,16 @@ if (-not (Test-ClaudeAuth)) {
     Write-Host ''
     Write-Host 'Claude CLI is installed but not authenticated.' -ForegroundColor Yellow
     Write-Host ''
-    Write-Host 'Please log in first:'
-    Write-Host '  claude /login' -ForegroundColor Cyan
+    Write-Host 'Step 1.' -ForegroundColor White -NoNewline; Write-Host ' Log in to Claude. Run:'
+    Write-Host '         claude /login' -ForegroundColor Cyan
+    Write-Host '         Follow the OAuth prompts (or paste an Anthropic API key).'
+    Write-Host '         When you see "' -NoNewline; Write-Host 'Logged in' -ForegroundColor Cyan -NoNewline; Write-Host '", type ' -NoNewline; Write-Host 'exit' -ForegroundColor Cyan -NoNewline; Write-Host ' to leave the Claude REPL.'
     Write-Host ''
-    Write-Host 'Follow the OAuth prompts (or paste an Anthropic API key), then re-run:'
-    Write-Host '  iwr https://clayrune.io/install.ps1 -useb | iex' -ForegroundColor Cyan
+    Write-Host 'Step 2.' -ForegroundColor White -NoNewline; Write-Host ' Re-run this installer in a NEW PowerShell window:'
+    Write-Host '         $env:CLAYRUNE_PROMPT_URL = ''https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md''' -ForegroundColor Cyan
+    Write-Host '         iwr https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.ps1 -useb | iex' -ForegroundColor Cyan
+    Write-Host '         (or, if you ran the double-click installer, just double-click it again.)'
+    Write-Host ''
     exit 1
 }
 Write-Host 'OK Authenticated' -ForegroundColor Green

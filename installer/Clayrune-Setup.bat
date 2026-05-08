@@ -35,6 +35,7 @@ echo   https://raw.githubusercontent.com/ronle/mission-control/master/installer/
 echo.
 pause
 
+:run_installer
 echo.
 echo Starting installer...
 echo.
@@ -51,20 +52,40 @@ set "PSEXIT=%ERRORLEVEL%"
 
 echo.
 echo ============================================================
-if "%PSEXIT%"=="0" (
-    echo   Done.
-    echo.
-    echo   If installation succeeded, you'll find a "Clayrune"
-    echo   shortcut on your Desktop and in your Start Menu. Double-click
-    echo   it any time to launch the dashboard.
-) else (
-    echo   Installer exited with error code %PSEXIT%.
-    echo.
-    echo   The output above shows what went wrong. If you need to retry,
-    echo   just double-click this file again — the installer is idempotent
-    echo   and will pick up where it left off.
-)
+if "%PSEXIT%"=="0" goto :success
+
+echo   Installer exited with error code %PSEXIT%.
+echo.
+echo   The full output is above this line. Common cases:
+echo     - "Claude CLI is installed but not authenticated":
+echo       run  claude /login  in another window, log in, type exit,
+echo       then come back here and pick R below to retry.
+echo     - Network or winget hiccup: pick R to retry.
+echo.
 echo ============================================================
 echo.
-pause
+echo   What now?
+echo     [R] Retry the installer ^(after you've fixed the issue^)
+echo     [Q] Quit and close this window
+echo.
+
+:choice_loop
+set "choice="
+set /p choice="Press R or Q then Enter: "
+if /i "%choice%"=="R" goto :run_installer
+if /i "%choice%"=="Q" goto :end
+echo Please enter R or Q.
+goto :choice_loop
+
+:success
+echo   Done.
+echo.
+echo   You'll find a "Clayrune" shortcut on your Desktop and in
+echo   your Start Menu. Double-click it any time to launch.
+echo ============================================================
+echo.
+echo Press any key to close this window . . .
+pause >nul
+
+:end
 endlocal
