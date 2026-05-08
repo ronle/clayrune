@@ -313,110 +313,203 @@ if (-not (Test-ClaudeAuth)) {
 Write-Host 'OK Authenticated' -ForegroundColor Green
 Write-Host ''
 
-# ── Step 2: Fetch install prompt ───────────────────────────────────────────
-Write-Host "Fetching install instructions from $PromptUrl"
-try {
-    $prompt = (Invoke-WebRequest -Uri $PromptUrl -UseBasicParsing).Content
-} catch {
-    Write-Host "Failed to fetch install prompt: $_" -ForegroundColor Red
-    exit 1
-}
-Write-Host "OK Got install prompt ($($prompt.Length) bytes)" -ForegroundColor Green
-Write-Host ''
+# ── Direct deterministic install (no Claude handoff) ──────────────────────
+#
+# We previously fetched install-prompt.md and asked Claude to run the install
+# steps via `claude --dangerously-skip-permissions -p "<24KB markdown>"`.
+# That broke for two reasons:
+#   1. The 24 KB user-message-styled "you are an automated installer, do not
+#      ask for confirmation" prompt is the textbook shape of a prompt-injection
+#      attack. Newer Claude models flag it and refuse, then exit 0 — leaving
+#      the wrapper to mistakenly declare success.
+#   2. None of the steps actually need an LLM. `git clone`, venv setup,
+#      pip install, shortcut creation, and `start` are all deterministic
+#      shell commands. PowerShell is already running on the user's machine
+#      with full privileges; we don't need to ask Claude permission to run
+#      what we wrote ourselves.
+# So we skip Claude entirely from here. Clayrune still uses Claude AT RUNTIME
+# (that's the product), but installing Clayrune doesn't.
 
-# ── Step 3: Disclosure ─────────────────────────────────────────────────────
-Write-Host '──────────────────────────────────────' -ForegroundColor Yellow
-Write-Host 'About to run:' -ForegroundColor White
-Write-Host '  claude --dangerously-skip-permissions -p "<install prompt>"'
-Write-Host ''
-Write-Host 'Claude will execute commands on your machine to install Clayrune.'
-Write-Host 'Estimated time: 3-5 minutes.'
-Write-Host "Read the prompt: $PromptUrl"
-Write-Host '──────────────────────────────────────' -ForegroundColor Yellow
-Write-Host ''
+$installDir = if ($env:CLAYRUNE_HOME) { $env:CLAYRUNE_HOME } else { "$env:USERPROFILE\Clayrune" }
+$repoUrl = 'https://github.com/ronle/mission-control.git'
 
+Write-Host '──────────────────────────────────────' -ForegroundColor Yellow
+Write-Host 'About to install Clayrune to:' -ForegroundColor White
+Write-Host "  $installDir" -ForegroundColor Cyan
+Write-Host 'Steps: clone repo, set up Python venv, create Desktop shortcut, launch dashboard.'
+Write-Host '──────────────────────────────────────' -ForegroundColor Yellow
+Write-Host ''
 if (-not $env:CLAYRUNE_NO_CONFIRM) {
     Write-Host 'Press Ctrl+C in the next 5 seconds to abort, or wait...'
     Start-Sleep -Seconds 5
 }
-
-# ── Step 4: Hand off to Claude ─────────────────────────────────────────────
-Write-Host ''
-Write-Host '>>> Handing off to Claude (this can take 3-5 minutes; progress streams below)' -ForegroundColor White
 Write-Host ''
 
-# Stream Claude's output as it works. Without --output-format stream-json,
-# `claude -p` only prints the FINAL response — meaning the user sees nothing
-# for 3-5 minutes while Claude is running tool calls (Bash, Edit, Write).
-# With stream-json + this parser, we surface text blocks (the [STEP N/6]
-# markers from the install prompt) and tool-call indicators in real time.
-$claudeArgs = @(
-    '--dangerously-skip-permissions',
-    '-p', $prompt,
-    '--print', '--verbose',
-    '--output-format', 'stream-json'
-)
-
-& claude @claudeArgs |
-  ForEach-Object {
-    $line = $_
-    if (-not $line) { return }
-    try {
-        $obj = $line | ConvertFrom-Json -ErrorAction Stop
-    } catch {
-        # Not JSON (banner / stderr leak) — print raw so nothing's hidden.
-        Write-Host $line
-        return
+# ── [STEP 1/5] Clone or update the repository ─────────────────────────────
+Write-Host '[STEP 1/5] Cloning repository...' -ForegroundColor White
+if (Test-Path $installDir) {
+    if (Test-Path (Join-Path $installDir '.git')) {
+        Write-Host "  Existing checkout at $installDir — pulling latest."
+        & git -C $installDir pull --ff-only
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host '[STEP 1/5] FAIL git pull failed' -ForegroundColor Red
+            [Environment]::Exit(2)
+        }
+    } else {
+        Write-Host "[STEP 1/5] FAIL $installDir exists but is not a git checkout." -ForegroundColor Red
+        Write-Host '          Remove it or set CLAYRUNE_HOME to a different path, then re-run.' -ForegroundColor Red
+        [Environment]::Exit(2)
     }
-    if ($obj.type -eq 'assistant' -and $obj.message -and $obj.message.content) {
-        foreach ($block in $obj.message.content) {
-            if ($block.type -eq 'text' -and $block.text) {
-                Write-Host $block.text
-            } elseif ($block.type -eq 'tool_use' -and $block.name) {
-                Write-Host "  [tool: $($block.name)]" -ForegroundColor DarkGray
+} else {
+    & git clone $repoUrl $installDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '[STEP 1/5] FAIL git clone failed' -ForegroundColor Red
+        [Environment]::Exit(2)
+    }
+}
+Write-Host '[STEP 1/5] OK' -ForegroundColor Green
+Write-Host ''
+
+# ── [STEP 2/5] Python 3.11+ ───────────────────────────────────────────────
+Write-Host '[STEP 2/5] Setting up Python 3.11+...' -ForegroundColor White
+function Find-Python311 {
+    foreach ($cmd in @('python3.12', 'python3.11', 'python3', 'python', 'py')) {
+        $found = Get-Command $cmd -ErrorAction SilentlyContinue
+        if (-not $found) { continue }
+        $verOut = & $found.Source --version 2>&1 | Out-String
+        if ($verOut -match 'Python\s+(\d+)\.(\d+)') {
+            $maj = [int]$Matches[1]
+            $min = [int]$Matches[2]
+            if (($maj -eq 3 -and $min -ge 11) -or $maj -gt 3) {
+                return $found.Source
             }
         }
-    } elseif ($obj.type -eq 'result' -and $obj.is_error) {
-        Write-Host "  [error] $($obj.result)" -ForegroundColor Red
     }
-    # system / user / result-success events are intentionally suppressed —
-    # text blocks already cover everything user-relevant.
-  }
+    return $null
+}
+$pythonExe = Find-Python311
+if (-not $pythonExe) {
+    Write-Host '  Python 3.11+ not found. Installing via winget...' -ForegroundColor Yellow
+    & winget install --id Python.Python.3.11 -e --silent --accept-source-agreements --accept-package-agreements
+    Refresh-Path
+    $pythonExe = Find-Python311
+}
+if (-not $pythonExe) {
+    Write-Host '[STEP 2/5] FAIL could not find or install Python 3.11+' -ForegroundColor Red
+    Write-Host '          Install manually from https://python.org/downloads, then re-run.' -ForegroundColor Red
+    [Environment]::Exit(2)
+}
+Write-Host "  Using: $pythonExe"
 
-$claudeExit = $LASTEXITCODE
+$venvPath = Join-Path $installDir '.venv'
+if (-not (Test-Path (Join-Path $venvPath 'Scripts\python.exe'))) {
+    & $pythonExe -m venv $venvPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '[STEP 2/5] FAIL venv creation failed' -ForegroundColor Red
+        [Environment]::Exit(2)
+    }
+}
+$venvPip = Join-Path $venvPath 'Scripts\pip.exe'
+$reqPath = Join-Path $installDir 'requirements.txt'
+if (Test-Path $reqPath) {
+    & $venvPip install --quiet -r $reqPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '[STEP 2/5] FAIL pip install failed' -ForegroundColor Red
+        [Environment]::Exit(2)
+    }
+}
+Write-Host '[STEP 2/5] OK' -ForegroundColor Green
+Write-Host ''
 
-# Post-install verification — DO NOT trust Claude's exit code alone. There
-# have been cases where Claude exited 0 after preamble-philosophizing about
-# the prompt but never actually ran git clone / etc. Without this check, the
-# .bat wrapper would happily show "Clayrune is installed!" while the user's
-# Desktop has a Clayrune.lnk pointing at a non-existent start.bat.
-$installDir = if ($env:CLAYRUNE_HOME) { $env:CLAYRUNE_HOME } else { "$env:USERPROFILE\Clayrune" }
+# ── [STEP 3/5] Desktop + Start Menu shortcut ──────────────────────────────
+Write-Host '[STEP 3/5] Creating Desktop + Start Menu shortcut...' -ForegroundColor White
+$startBat = Join-Path $installDir 'installer\start.bat'
+if (-not (Test-Path $startBat)) {
+    Write-Host "[STEP 3/5] FAIL $startBat not found in checkout" -ForegroundColor Red
+    [Environment]::Exit(2)
+}
+$iconPath = Join-Path $installDir 'assets\clayrune.ico'
+$wsh = New-Object -ComObject WScript.Shell
+$lnks = @(
+    "$env:USERPROFILE\Desktop\Clayrune.lnk",
+    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Clayrune.lnk"
+)
+foreach ($lnk in $lnks) {
+    try {
+        $sc = $wsh.CreateShortcut($lnk)
+        $sc.TargetPath = $startBat
+        $sc.WorkingDirectory = $installDir
+        if (Test-Path $iconPath) { $sc.IconLocation = $iconPath }
+        $sc.Description = 'Clayrune'
+        $sc.Save()
+        Write-Host "  Created $lnk"
+    } catch {
+        Write-Host "  WARN could not create $lnk: $_" -ForegroundColor Yellow
+    }
+}
+Write-Host '[STEP 3/5] OK' -ForegroundColor Green
+Write-Host ''
+
+# ── [STEP 4/5] Launch the server in a background window ───────────────────
+Write-Host '[STEP 4/5] Launching server in a minimized window...' -ForegroundColor White
+Start-Process -WindowStyle Minimized -FilePath $startBat -WorkingDirectory $installDir
+Write-Host '  Polling http://localhost:5199/ for up to 30s...'
+$serverUp = $false
+for ($i = 0; $i -lt 30; $i++) {
+    Start-Sleep -Seconds 1
+    try {
+        $resp = Invoke-WebRequest -Uri 'http://localhost:5199/' -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        $serverUp = $true
+        break
+    } catch {
+        # Connection refused = server not up yet — keep polling
+    }
+}
+if ($serverUp) {
+    Write-Host '[STEP 4/5] OK' -ForegroundColor Green
+} else {
+    Write-Host '[STEP 4/5] WARN server did not respond within 30s.' -ForegroundColor Yellow
+    Write-Host '          The install completed; you can launch manually via the' -ForegroundColor Yellow
+    Write-Host '          Clayrune shortcut on your Desktop.' -ForegroundColor Yellow
+}
+Write-Host ''
+
+# ── [STEP 5/5] Open the dashboard in the default browser ──────────────────
+Write-Host '[STEP 5/5] Opening dashboard in your browser...' -ForegroundColor White
+try {
+    Start-Process 'http://localhost:5199'
+    Write-Host '[STEP 5/5] OK' -ForegroundColor Green
+} catch {
+    Write-Host "[STEP 5/5] WARN could not auto-open browser: $_" -ForegroundColor Yellow
+    Write-Host '          Open http://localhost:5199 manually.' -ForegroundColor Yellow
+}
+Write-Host ''
+
+# ── Final verification ─────────────────────────────────────────────────────
+Write-Host "[install] Verifying install at: $installDir" -ForegroundColor Cyan
 $mustExist = @(
     (Join-Path $installDir 'server.py'),
     (Join-Path $installDir 'installer\start.bat')
 )
-$missing = $mustExist | Where-Object { -not (Test-Path $_) }
-if ($missing) {
+$missing = @($mustExist | Where-Object { -not (Test-Path $_) })
+if ($missing.Count -gt 0) {
     Write-Host ''
     Write-Host '============================================================' -ForegroundColor Red
-    Write-Host '  Install verification FAILED' -ForegroundColor Red
+    Write-Host '  Install verification FAILED after deterministic install' -ForegroundColor Red
     Write-Host '============================================================' -ForegroundColor Red
-    Write-Host "  Expected install dir: $installDir"
-    Write-Host '  Missing files:'
+    Write-Host '  Missing:'
     foreach ($m in $missing) { Write-Host "    - $m" -ForegroundColor Red }
-    Write-Host ''
-    Write-Host "  Claude reported exit code $claudeExit but the install"
-    Write-Host '  directory does not look complete. Common causes:'
-    Write-Host '    - Claude refused to run the install commands'
-    Write-Host '    - git clone silently failed (network / auth / disk)'
-    Write-Host '    - The user closed the install mid-flight'
-    Write-Host ''
-    Write-Host '  Re-run the installer from the parent window. If it keeps'
-    Write-Host '  failing here, open the GitHub issues page.'
-    Write-Host '============================================================' -ForegroundColor Red
-    exit 2
+    Write-Host '  This should not happen — please report this output as an issue.'
+    [Environment]::Exit(2)
 }
 
-# Propagate Claude's exit code so the .bat wrapper shows the right success
-# / retry prompt. $LASTEXITCODE is set by the last native command (claude).
-exit $claudeExit
+Write-Host ''
+Write-Host '============================================================' -ForegroundColor Green
+Write-Host '  Clayrune is installed and running.' -ForegroundColor Green
+Write-Host '============================================================' -ForegroundColor Green
+Write-Host "  Open:     http://localhost:5199"
+Write-Host "  Location: $installDir"
+Write-Host '  Relaunch: double-click the Clayrune shortcut on your Desktop'
+Write-Host '            (also available in your Start Menu).'
+Write-Host '============================================================' -ForegroundColor Green
+[Environment]::Exit(0)
