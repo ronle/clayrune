@@ -10,7 +10,7 @@
 #   3. Discloses what is about to happen, with a short Ctrl-C abort window.
 #   4. Pipes the prompt into `claude --dangerously-skip-permissions`.
 #
-# After authorization, Claude itself executes the install — clones the repo,
+# After authorization, Claude itself executes the install - clones the repo,
 # installs Python and Node deps, creates a Desktop / Start Menu shortcut,
 # and opens the app in the user's browser.
 #
@@ -43,7 +43,7 @@ function Get-NodeMajor {
     }
 }
 
-# Ensure Node 18+ is on PATH. Already-good Node → no-op. Old or missing →
+# Ensure Node 18+ is on PATH. Already-good Node -> no-op. Old or missing ->
 # install Node LTS via winget. Must run BEFORE any Claude CLI install attempt
 # because npm-installed Claude CLI requires Node 18+ to even parse its own
 # source.
@@ -98,7 +98,7 @@ function Test-ClaudeRuntimeShell {
         "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe"
     )) {
         if (Test-Path $p) {
-            # Git is installed but its bin dir isn't on PATH — add it for this
+            # Git is installed but its bin dir isn't on PATH - add it for this
             # session so subsequent `bash` lookups succeed.
             $bin = Split-Path $p
             if (-not (";${env:Path};".ToLower().Contains((";$bin;").ToLower()))) {
@@ -113,14 +113,14 @@ function Test-ClaudeRuntimeShell {
 # Ensure Claude Code can run on Windows: install Git for Windows (provides
 # bash.exe) if missing. Claude shells out to bash internally; without it the
 # CLI errors with "Claude Code on Windows requires either Git for Windows or
-# PowerShell" the moment we hand off — this preflight catches that BEFORE we
+# PowerShell" the moment we hand off - this preflight catches that BEFORE we
 # spawn the install-prompt subprocess.
 function Setup-ClaudeRuntimeShell {
     if (Test-ClaudeRuntimeShell) { return $true }
 
     Write-Host 'Claude Code needs bash.exe (Git for Windows) or PowerShell 7+ to run.' -ForegroundColor Yellow
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host 'winget not available — cannot auto-install Git for Windows.' -ForegroundColor Red
+        Write-Host 'winget not available - cannot auto-install Git for Windows.' -ForegroundColor Red
         Write-Host 'Install Git for Windows manually from https://git-scm.com/downloads/win and re-run.'
         return $false
     }
@@ -144,7 +144,7 @@ function Setup-ClaudeRuntimeShell {
 }
 
 # Returns $true iff `claude --version` runs cleanly with non-empty output.
-# This is the *real* working-state check — Get-Command alone only proves a
+# This is the *real* working-state check - Get-Command alone only proves a
 # binary is on PATH, not that it actually runs (the same trap that bit us on
 # WSL where npm completed "successfully" but produced a broken CLI).
 function Test-ClaudeWorks {
@@ -178,7 +178,7 @@ Write-Host '  Clayrune Installer' -ForegroundColor White
 Write-Host '======================================'
 Write-Host ''
 
-# ── Step 0: Ensure Node 18+ is available ───────────────────────────────────
+# -- Step 0: Ensure Node 18+ is available -----------------------------------
 
 if (-not (Setup-Node)) {
     Write-Host ''
@@ -187,7 +187,7 @@ if (-not (Setup-Node)) {
     exit 1
 }
 
-# ── Step 1: Ensure a working Claude CLI ────────────────────────────────────
+# -- Step 1: Ensure a working Claude CLI ------------------------------------
 
 if (Test-ClaudeWorks) {
     $claudeVersion = (& claude --version 2>&1 | Select-Object -First 1)
@@ -205,7 +205,7 @@ if (Test-ClaudeWorks) {
 
     $installed = $false
 
-    # Method 1: npm (preferred on Windows — ships natively with Node).
+    # Method 1: npm (preferred on Windows - ships natively with Node).
     if (-not $installed -and (Get-Command npm -ErrorAction SilentlyContinue)) {
         Write-Host 'Trying npm install -g @anthropic-ai/claude-code...'
         try {
@@ -274,7 +274,7 @@ if (Test-ClaudeWorks) {
     Write-Host ''
 }
 
-# ── Step 1.4: Verify Claude Code can run (bash.exe / PowerShell 7) ─────────
+# -- Step 1.4: Verify Claude Code can run (bash.exe / PowerShell 7) ---------
 
 # Skip on non-Windows (the .ps1 only runs on Windows but be defensive).
 if (-not (Setup-ClaudeRuntimeShell)) {
@@ -283,7 +283,7 @@ if (-not (Setup-ClaudeRuntimeShell)) {
     exit 1
 }
 
-# ── Step 1.5: Verify Claude CLI is authenticated ───────────────────────────
+# -- Step 1.5: Verify Claude CLI is authenticated ---------------------------
 
 Write-Host 'Checking Claude CLI authentication...'
 if (-not (Test-ClaudeAuth)) {
@@ -291,7 +291,7 @@ if (-not (Test-ClaudeAuth)) {
     Write-Host 'Claude CLI is installed but not authenticated.' -ForegroundColor Yellow
     Write-Host ''
     Write-Host 'Easiest path: re-run this installer via the double-click setup' -ForegroundColor White
-    Write-Host '(Clayrune-Setup.bat) and pick the [L] option — it logs you in'
+    Write-Host '(Clayrune-Setup.bat) and pick the [L] option - it logs you in'
     Write-Host 'and continues the install automatically.'
     Write-Host ''
     Write-Host 'Otherwise, do it manually:' -ForegroundColor White
@@ -313,14 +313,14 @@ if (-not (Test-ClaudeAuth)) {
 Write-Host 'OK Authenticated' -ForegroundColor Green
 Write-Host ''
 
-# ── Direct deterministic install (no Claude handoff) ──────────────────────
+# -- Direct deterministic install (no Claude handoff) ----------------------
 #
 # We previously fetched install-prompt.md and asked Claude to run the install
 # steps via `claude --dangerously-skip-permissions -p "<24KB markdown>"`.
 # That broke for two reasons:
 #   1. The 24 KB user-message-styled "you are an automated installer, do not
 #      ask for confirmation" prompt is the textbook shape of a prompt-injection
-#      attack. Newer Claude models flag it and refuse, then exit 0 — leaving
+#      attack. Newer Claude models flag it and refuse, then exit 0 - leaving
 #      the wrapper to mistakenly declare success.
 #   2. None of the steps actually need an LLM. `git clone`, venv setup,
 #      pip install, shortcut creation, and `start` are all deterministic
@@ -333,11 +333,11 @@ Write-Host ''
 $installDir = if ($env:CLAYRUNE_HOME) { $env:CLAYRUNE_HOME } else { "$env:USERPROFILE\Clayrune" }
 $repoUrl = 'https://github.com/ronle/mission-control.git'
 
-Write-Host '──────────────────────────────────────' -ForegroundColor Yellow
+Write-Host '--------------------------------------' -ForegroundColor Yellow
 Write-Host 'About to install Clayrune to:' -ForegroundColor White
 Write-Host "  $installDir" -ForegroundColor Cyan
 Write-Host 'Steps: clone repo, set up Python venv, create Desktop shortcut, launch dashboard.'
-Write-Host '──────────────────────────────────────' -ForegroundColor Yellow
+Write-Host '--------------------------------------' -ForegroundColor Yellow
 Write-Host ''
 if (-not $env:CLAYRUNE_NO_CONFIRM) {
     Write-Host 'Press Ctrl+C in the next 5 seconds to abort, or wait...'
@@ -345,11 +345,11 @@ if (-not $env:CLAYRUNE_NO_CONFIRM) {
 }
 Write-Host ''
 
-# ── [STEP 1/5] Clone or update the repository ─────────────────────────────
+# -- [STEP 1/5] Clone or update the repository -----------------------------
 Write-Host '[STEP 1/5] Cloning repository...' -ForegroundColor White
 if (Test-Path $installDir) {
     if (Test-Path (Join-Path $installDir '.git')) {
-        Write-Host "  Existing checkout at $installDir — pulling latest."
+        Write-Host "  Existing checkout at $installDir - pulling latest."
         & git -C $installDir pull --ff-only
         if ($LASTEXITCODE -ne 0) {
             Write-Host '[STEP 1/5] FAIL git pull failed' -ForegroundColor Red
@@ -370,7 +370,7 @@ if (Test-Path $installDir) {
 Write-Host '[STEP 1/5] OK' -ForegroundColor Green
 Write-Host ''
 
-# ── [STEP 2/5] Python 3.11+ ───────────────────────────────────────────────
+# -- [STEP 2/5] Python 3.11+ -----------------------------------------------
 Write-Host '[STEP 2/5] Setting up Python 3.11+...' -ForegroundColor White
 function Find-Python311 {
     foreach ($cmd in @('python3.12', 'python3.11', 'python3', 'python', 'py')) {
@@ -421,7 +421,7 @@ if (Test-Path $reqPath) {
 Write-Host '[STEP 2/5] OK' -ForegroundColor Green
 Write-Host ''
 
-# ── [STEP 3/5] Desktop + Start Menu shortcut ──────────────────────────────
+# -- [STEP 3/5] Desktop + Start Menu shortcut ------------------------------
 Write-Host '[STEP 3/5] Creating Desktop + Start Menu shortcut...' -ForegroundColor White
 $startBat = Join-Path $installDir 'installer\start.bat'
 if (-not (Test-Path $startBat)) {
@@ -444,13 +444,16 @@ foreach ($lnk in $lnks) {
         $sc.Save()
         Write-Host "  Created $lnk"
     } catch {
-        Write-Host "  WARN could not create $lnk: $_" -ForegroundColor Yellow
+        # `${lnk}` braces required: `$lnk:` would be parsed as a drive-
+        # qualified variable (like $env: / $function:) and crash the script
+        # with "InvalidVariableReferenceWithDrive".
+        Write-Host "  WARN could not create ${lnk}: $_" -ForegroundColor Yellow
     }
 }
 Write-Host '[STEP 3/5] OK' -ForegroundColor Green
 Write-Host ''
 
-# ── [STEP 4/5] Launch the server in a background window ───────────────────
+# -- [STEP 4/5] Launch the server in a background window -------------------
 Write-Host '[STEP 4/5] Launching server in a minimized window...' -ForegroundColor White
 Start-Process -WindowStyle Minimized -FilePath $startBat -WorkingDirectory $installDir
 Write-Host '  Polling http://localhost:5199/ for up to 30s...'
@@ -462,7 +465,7 @@ for ($i = 0; $i -lt 30; $i++) {
         $serverUp = $true
         break
     } catch {
-        # Connection refused = server not up yet — keep polling
+        # Connection refused = server not up yet - keep polling
     }
 }
 if ($serverUp) {
@@ -474,7 +477,7 @@ if ($serverUp) {
 }
 Write-Host ''
 
-# ── [STEP 5/5] Open the dashboard in the default browser ──────────────────
+# -- [STEP 5/5] Open the dashboard in the default browser ------------------
 Write-Host '[STEP 5/5] Opening dashboard in your browser...' -ForegroundColor White
 try {
     Start-Process 'http://localhost:5199'
@@ -485,7 +488,7 @@ try {
 }
 Write-Host ''
 
-# ── Final verification ─────────────────────────────────────────────────────
+# -- Final verification -----------------------------------------------------
 Write-Host "[install] Verifying install at: $installDir" -ForegroundColor Cyan
 $mustExist = @(
     (Join-Path $installDir 'server.py'),
@@ -499,7 +502,7 @@ if ($missing.Count -gt 0) {
     Write-Host '============================================================' -ForegroundColor Red
     Write-Host '  Missing:'
     foreach ($m in $missing) { Write-Host "    - $m" -ForegroundColor Red }
-    Write-Host '  This should not happen — please report this output as an issue.'
+    Write-Host '  This should not happen - please report this output as an issue.'
     [Environment]::Exit(2)
 }
 
