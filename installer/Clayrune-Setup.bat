@@ -105,13 +105,23 @@ echo This window will keep running and pick up where you left off.
 echo.
 pause
 
-REM Spawn claude /login in a SEPARATE cmd window with start /WAIT. We block
-REM here until that window closes. Crucially: our window can't be affected
-REM by anything claude does — if claude crashes / detaches / closes its own
-REM parent cmd, only the spawned window dies, and start /WAIT returns control
-REM to us cleanly. Calling `call claude /login` directly was vulnerable to
-REM the spawned process terminating our cmd in some edge cases.
-start "Clayrune - Claude Login" /WAIT cmd /c "claude /login"
+REM Spawn claude /login in a SEPARATE window with start /WAIT. We block here
+REM until that window closes. Two reasons we use PowerShell (not cmd /c):
+REM
+REM 1) PATH refresh. install.ps1 just installed Claude CLI, which adds
+REM    %APPDATA%\npm to the USER PATH in the registry. Our running .bat's
+REM    PATH was captured at launch — BEFORE the install — and inherits to
+REM    any cmd /c child, so `claude` won't be found there. PowerShell can
+REM    rebuild $env:Path from registry per call, so the spawned shell DOES
+REM    see claude. Without this fix the spawned cmd window prints
+REM    "'claude' is not recognized" and immediately exits, taking the
+REM    window with it before the user can react.
+REM
+REM 2) Read-Host at the end keeps the window open even on error or after
+REM    claude exits, so the user always gets a chance to read the output.
+REM    Plain `cmd /c "claude /login"` closed the window the instant
+REM    claude exited.
+start "Clayrune - Claude Login" /WAIT powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User'); $cl = Get-Command claude -ErrorAction SilentlyContinue; if (-not $cl) { Write-Host '' ; Write-Host 'ERROR: claude command not found on this system.' -ForegroundColor Red ; Write-Host 'The Clayrune installer should have installed it. If you see this,' ; Write-Host 'something went wrong earlier in the install. Close this window' ; Write-Host 'and pick [R] in the main installer window to retry.' } else { Write-Host \"Found claude at: $($cl.Path)\" -ForegroundColor DarkGray ; Write-Host '' ; & claude /login }; Write-Host '' ; Read-Host 'Press Enter to close this window'"
 
 echo.
 echo ============================================================
