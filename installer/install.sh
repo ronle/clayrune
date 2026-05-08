@@ -294,8 +294,60 @@ fi
 # ── Step 4: Hand off to Claude ─────────────────────────────────────────────
 printf "\n%s>>> Handing off to Claude%s\n\n" "$B" "$R"
 
-# Pipe the prompt as a single user message via stdin. The CLI accepts a prompt
-# on stdin when run with `-` or with no positional arg in interactive mode, but
-# the most reliable cross-version path is `-p <prompt>` on the command line.
-# We use heredoc-via-env-var to avoid shell quoting issues with multi-line text.
-exec claude --dangerously-skip-permissions -p "$PROMPT"
+# Stream Claude's progress in real time so the user can see what's happening
+# during the 3-5 minute install. Without this, the terminal looks frozen.
+#
+# `claude -p` alone prints only the final assistant response. Adding
+# `--output-format stream-json --print --verbose` emits one JSON object per
+# line covering every step (assistant text blocks, tool_use calls, results).
+# We pipe through python3 to surface the human-readable bits and dim the
+# tool-call lines.
+#
+# If python3 isn't available, fall back to plain `-p` mode so the install
+# still works (just silently for a few minutes).
+if command -v python3 >/dev/null 2>&1; then
+  # Capture claude's exit code via a temp file (POSIX sh has no PIPESTATUS).
+  EXIT_FILE=$(mktemp 2>/dev/null || echo "/tmp/clayrune-exit.$$")
+  trap 'rm -f "$EXIT_FILE"' EXIT
+  # `set +e` so a non-zero exit from claude doesn't abort this LHS-of-pipe
+  # subshell before we capture $? into EXIT_FILE. Restored implicitly when
+  # the subshell ends.
+  {
+    set +e
+    claude --dangerously-skip-permissions \
+           -p "$PROMPT" \
+           --print --verbose \
+           --output-format stream-json
+    echo "$?" > "$EXIT_FILE"
+  } | python3 -c '
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        obj = json.loads(line)
+    except Exception:
+        print(line)
+        continue
+    t = obj.get("type")
+    if t == "assistant":
+        msg = obj.get("message") or {}
+        for block in (msg.get("content") or []):
+            bt = block.get("type")
+            if bt == "text":
+                txt = block.get("text") or ""
+                if txt:
+                    print(txt, flush=True)
+            elif bt == "tool_use":
+                name = block.get("name") or "?"
+                print(f"  [tool: {name}]", flush=True)
+    elif t == "result" and obj.get("is_error"):
+        print(f"  [error] {obj.get(\"result\", \"\")}", flush=True)
+'
+  CLAUDE_EXIT=$(cat "$EXIT_FILE" 2>/dev/null || echo 0)
+  exit "$CLAUDE_EXIT"
+else
+  printf "%sNote:%s python3 not found; running without progress streaming.\n\n" "$Y" "$R"
+  exec claude --dangerously-skip-permissions -p "$PROMPT"
+fi

@@ -342,8 +342,47 @@ if (-not $env:CLAYRUNE_NO_CONFIRM) {
 
 # ── Step 4: Hand off to Claude ─────────────────────────────────────────────
 Write-Host ''
-Write-Host '>>> Handing off to Claude' -ForegroundColor White
+Write-Host '>>> Handing off to Claude (this can take 3-5 minutes; progress streams below)' -ForegroundColor White
 Write-Host ''
 
-# Pass the prompt via -p so it survives multi-line shell quoting.
-& claude --dangerously-skip-permissions -p $prompt
+# Stream Claude's output as it works. Without --output-format stream-json,
+# `claude -p` only prints the FINAL response — meaning the user sees nothing
+# for 3-5 minutes while Claude is running tool calls (Bash, Edit, Write).
+# With stream-json + this parser, we surface text blocks (the [STEP N/6]
+# markers from the install prompt) and tool-call indicators in real time.
+$claudeArgs = @(
+    '--dangerously-skip-permissions',
+    '-p', $prompt,
+    '--print', '--verbose',
+    '--output-format', 'stream-json'
+)
+
+& claude @claudeArgs |
+  ForEach-Object {
+    $line = $_
+    if (-not $line) { return }
+    try {
+        $obj = $line | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        # Not JSON (banner / stderr leak) — print raw so nothing's hidden.
+        Write-Host $line
+        return
+    }
+    if ($obj.type -eq 'assistant' -and $obj.message -and $obj.message.content) {
+        foreach ($block in $obj.message.content) {
+            if ($block.type -eq 'text' -and $block.text) {
+                Write-Host $block.text
+            } elseif ($block.type -eq 'tool_use' -and $block.name) {
+                Write-Host "  [tool: $($block.name)]" -ForegroundColor DarkGray
+            }
+        }
+    } elseif ($obj.type -eq 'result' -and $obj.is_error) {
+        Write-Host "  [error] $($obj.result)" -ForegroundColor Red
+    }
+    # system / user / result-success events are intentionally suppressed —
+    # text blocks already cover everything user-relevant.
+  }
+
+# Propagate Claude's exit code so the .bat wrapper shows the right success
+# / retry prompt. $LASTEXITCODE is set by the last native command (claude).
+exit $LASTEXITCODE
