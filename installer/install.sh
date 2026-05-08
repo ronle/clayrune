@@ -480,10 +480,26 @@ printf "%s[STEP 3/5] OK%s\n\n" "$G" "$R"
 # ── [STEP 4/5] Launch the server in a background process ──────────────────
 printf "%s[STEP 4/5]%s Launching server in the background...\n" "$B" "$R"
 if [ "$OS" = "macos" ]; then
-  nohup "$INSTALL_DIR/installer/start.command" >/dev/null 2>&1 &
+  START_SCRIPT="$INSTALL_DIR/installer/start.command"
 else
-  nohup "$INSTALL_DIR/installer/start.sh" >/dev/null 2>&1 &
+  START_SCRIPT="$INSTALL_DIR/installer/start.sh"
 fi
+LOG_FILE="$INSTALL_DIR/install-launch.log"
+# Daemonize properly. On Ubuntu under `curl | sh`, the parent shell's stdin
+# is the curl pipe — when curl finishes, the pipe closes, the parent shell
+# exits, and `nohup ... &` children receive SIGHUP / SIGPIPE and die unless
+# they're in a brand new session. setsid creates that new session, fully
+# detaching from the controlling terminal. Also redirect stdin from /dev/null
+# so the server isn't waiting on a closed pipe. Capture stdout+stderr to a
+# log file so a startup crash leaves a forensic trail (the Polling loop
+# below catches "server didn't come up", but knowing WHY needs the log).
+if command -v setsid >/dev/null 2>&1; then
+  setsid "$START_SCRIPT" </dev/null >"$LOG_FILE" 2>&1 &
+else
+  nohup "$START_SCRIPT" </dev/null >"$LOG_FILE" 2>&1 &
+fi
+SERVER_PID=$!
+printf "  PID %s, log: %s\n" "$SERVER_PID" "$LOG_FILE"
 printf "  Polling http://localhost:5199/ for up to 30s...\n"
 server_up=0
 i=0
@@ -499,6 +515,10 @@ if [ "$server_up" -eq 1 ]; then
   printf "%s[STEP 4/5] OK%s\n\n" "$G" "$R"
 else
   printf "%s[STEP 4/5] WARN%s server did not respond within 30s.\n" "$Y" "$R"
+  if [ -s "$LOG_FILE" ]; then
+    printf "          Last 20 lines of %s:\n" "$LOG_FILE"
+    tail -n 20 "$LOG_FILE" 2>/dev/null | sed 's/^/            /'
+  fi
   printf "          Install completed; you can launch manually via the launcher created above.\n\n"
 fi
 
