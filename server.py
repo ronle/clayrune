@@ -9246,7 +9246,17 @@ def system_restart_status():
 # ── Update Clayrune (git pull from inside the dashboard) ───────────────────
 
 def _git(args, cwd, timeout=30):
-    """Run git with the given args in cwd. Returns (returncode, stdout+stderr)."""
+    """Run git with the given args in cwd. Returns (returncode, stdout+stderr).
+
+    Hardened against the most common hang on Windows: Git Credential Manager
+    (GCM) popping a hidden auth dialog (we use STARTF_USESHOWWINDOW=SW_HIDE,
+    so the dialog never appears, but git waits for it forever until our
+    timeout). GIT_TERMINAL_PROMPT=0 + GCM_INTERACTIVE=Never make git fail
+    fast instead of prompting — for a public repo no auth is needed anyway.
+    """
+    env = os.environ.copy()
+    env['GIT_TERMINAL_PROMPT'] = '0'
+    env['GCM_INTERACTIVE'] = 'Never'
     try:
         r = subprocess.run(
             ['git', *args],
@@ -9255,6 +9265,7 @@ def _git(args, cwd, timeout=30):
             encoding='utf-8', errors='replace',
             timeout=timeout,
             creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+            env=env,
         )
         out = (r.stdout or '') + (r.stderr or '')
         return r.returncode, out.strip()
@@ -9284,8 +9295,12 @@ def system_update_status():
     rc, branch = _git(['rev-parse', '--abbrev-ref', 'HEAD'], repo_root)
     current_branch = branch if rc == 0 else 'unknown'
 
-    # Fetch silently to learn what's on the remote.
-    _git(['fetch', '--quiet', 'origin'], repo_root, timeout=30)
+    # Fetch silently to learn what's on the remote. Tighter timeout (12s)
+    # so the Settings UI doesn't sit on "Checking for updates..." for half a
+    # minute when the network is slow or git's credential helper is
+    # misbehaving. If fetch fails, we still report local-tip behind=0 below
+    # rather than blocking the whole status response.
+    _git(['fetch', '--quiet', 'origin'], repo_root, timeout=12)
     rc, ahead_behind = _git(
         ['rev-list', '--left-right', '--count', f'origin/{current_branch}...HEAD'],
         repo_root,
