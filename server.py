@@ -854,6 +854,20 @@ def serve_asset(filename):
 
 # ── "Ask Playdo" guide assistant ────────────────────────────────────────────
 
+# Dedicated cwd for Playdo's claude subprocess. Without an explicit cwd, claude
+# would inherit the server's working directory (= the Mission Control project's
+# project_path) and dump its session transcripts into
+# `~/.claude/projects/<encoded-mc-path>/`. The startup transcript-backfill then
+# scans that directory and synthesizes agent_log entries — so Playdo
+# conversations would appear in MC's Agent Log tab. Routing Playdo's claude
+# into a sandbox dir under data/ encodes to a path no project owns, so the
+# transcripts stay isolated.
+def _playdo_cwd():
+    d = Path(__file__).parent / 'data' / 'playdo'
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
+
+
 @app.route('/api/guide/stream', methods=['POST'])
 def guide_stream():
     """Streaming variant of /api/guide/ask. Spawns claude with stream-json output
@@ -920,6 +934,7 @@ def guide_stream():
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                cwd=_playdo_cwd(),
                 text=True, encoding='utf-8', errors='replace',
                 creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
             )
@@ -1046,6 +1061,7 @@ def guide_ask():
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True,
+            cwd=_playdo_cwd(),
             timeout=60, encoding='utf-8', errors='replace',
             creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
         )
@@ -6372,9 +6388,29 @@ def _start_hivemind_orchestrator():
 
 # ── Agent log endpoint ────────────────────────────────────────────────────────
 
+def _looks_like_playdo_entry(entry):
+    """Heuristic: does this agent_log entry look like a Playdo conversation
+    that ended up in a project's log via transcript-backfill pollution?
+
+    We catch the unmistakable signature: tasks that start with
+    "Previous exchange in this conversation:" — that's the prefix WE
+    generate when sending Playdo's history context. No real MC user task
+    would ever start that way.
+
+    First-turn Playdo entries (no history prefix) are indistinguishable
+    from real questions, so we leave them. The cwd fix in `_playdo_cwd`
+    prevents any new Playdo transcripts from leaking into project
+    agent_logs going forward; this filter just suppresses the leftover
+    follow-up entries that landed before the cwd fix.
+    """
+    task = (entry.get('task') or '').lstrip()
+    return task.startswith('Previous exchange in this conversation:')
+
+
 @app.route('/api/project/<project_id>/agent/log')
 def get_agent_log(project_id):
     log = _load_agent_log(project_id)
+    log = [e for e in log if not _looks_like_playdo_entry(e)]
     for entry in log:
         entry['ts_relative'] = time_ago(entry.get('ts'))
         entry['started_relative'] = time_ago(entry.get('started_at'))
