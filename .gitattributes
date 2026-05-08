@@ -1,0 +1,29 @@
+# Default: text files normalize to LF in the repo, native EOLs on checkout.
+* text=auto
+
+# Windows-only files MUST use CRLF — cmd.exe misparses LF-only .bat files
+# (multi-line `^` continuations in particular silently break, causing the
+# Clayrune-Setup.bat window to flash and die when downloaded via Chrome
+# from raw.githubusercontent.com). `-text` prevents git from normalizing
+# line endings on commit, so the bytes we commit are exactly what GitHub
+# serves and what users get when they download. The files in the working
+# tree must already be CRLF when committed.
+*.bat       -text
+*.cmd       -text
+*.ps1       -text
+
+# POSIX shell + macOS .command files MUST use LF — bash chokes on the \r in
+# CRLF lines with "command not found" or syntax errors.
+*.sh        text eol=lf
+*.command   text eol=lf
+
+# Binary assets — never touch.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.icns      binary
+*.pdf       binary
+*.zip       binary
+*.gz        binary

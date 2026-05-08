@@ -52,8 +52,12 @@ REM We pre-set CLAYRUNE_PROMPT_URL so the bootstrap fetches the install prompt
 REM from the GitHub raw URL until clayrune.io DNS is configured. Once the
 REM domain is live, the inner default URL takes over and this line can be
 REM dropped.
-powershell.exe -ExecutionPolicy Bypass -NoProfile -Command ^
-  "$env:CLAYRUNE_PROMPT_URL = 'https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md'; iwr https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.ps1 -useb | iex"
+REM
+REM IMPORTANT: this is a single line — no `^` continuation. Multi-line cmd
+REM commands with `^` silently break when the .bat has Unix line endings
+REM (which can happen if downloaded raw and the file's EOLs get mangled).
+REM Keeping it on one line is more verbose but bulletproof.
+powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "$env:CLAYRUNE_PROMPT_URL = 'https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md'; iwr https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.ps1 -useb | iex"
 
 set "PSEXIT=%ERRORLEVEL%"
 
