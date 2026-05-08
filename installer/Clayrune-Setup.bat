@@ -54,28 +54,51 @@ echo.
 echo ============================================================
 if "%PSEXIT%"=="0" goto :success
 
-echo   Installer exited with error code %PSEXIT%.
+echo   Installer paused.
 echo.
-echo   The full output is above this line. Common cases:
-echo     - "Claude CLI is installed but not authenticated":
-echo       run  claude /login  in another window, log in, type exit,
-echo       then come back here and pick R below to retry.
-echo     - Network or winget hiccup: pick R to retry.
+echo   Most often this means Claude CLI isn't logged in yet. The full
+echo   output above shows what happened. We can handle the login for
+echo   you — just pick L below.
 echo.
 echo ============================================================
 echo.
 echo   What now?
-echo     [R] Retry the installer ^(after you've fixed the issue^)
+echo     [L] Log me in to Claude now ^(opens browser, then re-runs installer^)
+echo     [R] Retry the installer ^(if you've already fixed the issue^)
 echo     [Q] Quit and close this window
 echo.
 
 :choice_loop
 set "choice="
-set /p choice="Press R or Q then Enter: "
+set /p choice="Press L, R, or Q then Enter: "
+if /i "%choice%"=="L" goto :do_login
 if /i "%choice%"=="R" goto :run_installer
 if /i "%choice%"=="Q" goto :end
-echo Please enter R or Q.
+echo Please enter L, R, or Q.
 goto :choice_loop
+
+:do_login
+echo.
+echo ============================================================
+echo   Launching Claude login
+echo ============================================================
+echo.
+echo A browser window will open shortly. Sign in with your Anthropic
+echo account ^(Claude Pro/Max OAuth^), or paste an API key when prompted.
+echo.
+echo When you see "Logged in successfully", type:  exit
+echo Then this installer will continue automatically.
+echo.
+
+REM Run claude from cmd directly. Cmd.exe uses claude.cmd (the npm shim),
+REM which doesn't trigger PowerShell ExecutionPolicy issues like running
+REM claude.ps1 from a fresh PowerShell would.
+call claude /login
+
+echo.
+echo Login flow finished. Re-running the installer...
+echo.
+goto :run_installer
 
 :success
 echo   Done.

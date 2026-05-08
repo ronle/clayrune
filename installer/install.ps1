@@ -290,15 +290,23 @@ if (-not (Test-ClaudeAuth)) {
     Write-Host ''
     Write-Host 'Claude CLI is installed but not authenticated.' -ForegroundColor Yellow
     Write-Host ''
-    Write-Host 'Step 1.' -ForegroundColor White -NoNewline; Write-Host ' Log in to Claude. Run:'
+    Write-Host 'Easiest path: re-run this installer via the double-click setup' -ForegroundColor White
+    Write-Host '(Clayrune-Setup.bat) and pick the [L] option — it logs you in'
+    Write-Host 'and continues the install automatically.'
+    Write-Host ''
+    Write-Host 'Otherwise, do it manually:' -ForegroundColor White
+    Write-Host ''
+    Write-Host 'Step 1.' -ForegroundColor White -NoNewline; Write-Host ' Open Command Prompt (cmd.exe, NOT PowerShell) and run:'
     Write-Host '         claude /login' -ForegroundColor Cyan
+    Write-Host '         (PowerShell users: this fails on default Windows due to ExecutionPolicy.'
+    Write-Host '          Use ' -NoNewline; Write-Host 'cmd.exe' -ForegroundColor Cyan -NoNewline; Write-Host ' instead, or run:'
+    Write-Host '          ' -NoNewline; Write-Host 'powershell -ExecutionPolicy Bypass -Command "claude /login"' -ForegroundColor Cyan -NoNewline; Write-Host ')'
     Write-Host '         Follow the OAuth prompts (or paste an Anthropic API key).'
     Write-Host '         When you see "' -NoNewline; Write-Host 'Logged in' -ForegroundColor Cyan -NoNewline; Write-Host '", type ' -NoNewline; Write-Host 'exit' -ForegroundColor Cyan -NoNewline; Write-Host ' to leave the Claude REPL.'
     Write-Host ''
     Write-Host 'Step 2.' -ForegroundColor White -NoNewline; Write-Host ' Re-run this installer in a NEW PowerShell window:'
     Write-Host '         $env:CLAYRUNE_PROMPT_URL = ''https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md''' -ForegroundColor Cyan
     Write-Host '         iwr https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.ps1 -useb | iex' -ForegroundColor Cyan
-    Write-Host '         (or, if you ran the double-click installer, just double-click it again.)'
     Write-Host ''
     exit 1
 }
