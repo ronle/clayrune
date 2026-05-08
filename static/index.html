@@ -2276,6 +2276,98 @@
     cursor: pointer; transition: all 0.15s; white-space: nowrap; flex-shrink: 0;
   }
   .btn-import:hover { background: var(--accent); color: var(--bg); }
+  .btn-browse {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-family: 'Inter', sans-serif;
+    font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 4px;
+    cursor: pointer; transition: all 0.15s; white-space: nowrap; flex-shrink: 0;
+  }
+  .btn-browse:hover { background: var(--surface3); border-color: var(--accent); color: var(--accent); }
+
+  /* ── FOLDER PICKER ────────────────────────────────────────────── */
+  .fp-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100000; padding: 20px;
+  }
+  .fp-dialog {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; width: 560px; max-width: 100%;
+    max-height: 80vh; display: flex; flex-direction: column;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  }
+  .fp-header {
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .fp-title { font-weight: 700; font-size: 14px; color: var(--text); }
+  .fp-close {
+    background: transparent; border: none; color: var(--text-faint);
+    font-size: 18px; cursor: pointer; padding: 0 6px;
+  }
+  .fp-close:hover { color: var(--text); }
+  .fp-path-bar {
+    padding: 10px 18px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
+    color: var(--text-faint); background: var(--bg);
+  }
+  .fp-path-bar input {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 10px; border-radius: 4px;
+    font-family: var(--mono, monospace); font-size: 12px; outline: none;
+  }
+  .fp-path-bar input:focus { border-color: var(--accent); }
+  .fp-shortcuts {
+    padding: 8px 18px; display: flex; gap: 6px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border); font-size: 11px;
+  }
+  .fp-shortcut {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 3px 10px; border-radius: 4px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .fp-shortcut:hover { border-color: var(--accent); color: var(--accent); }
+  .fp-list {
+    flex: 1; overflow-y: auto; padding: 8px 0; min-height: 200px;
+  }
+  .fp-row {
+    padding: 8px 18px; cursor: pointer; display: flex; align-items: center;
+    gap: 10px; font-size: 13px; color: var(--text);
+  }
+  .fp-row:hover { background: var(--surface2); }
+  .fp-row.parent { color: var(--text-faint); }
+  .fp-row .fp-icon { font-size: 14px; opacity: 0.8; }
+  .fp-empty, .fp-error {
+    padding: 30px 18px; text-align: center; color: var(--text-faint);
+    font-size: 12px;
+  }
+  .fp-error { color: var(--red, #d66); }
+  .fp-footer {
+    padding: 12px 18px; border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; flex-wrap: wrap;
+  }
+  .fp-new-folder {
+    display: flex; gap: 6px; flex: 1; min-width: 200px;
+  }
+  .fp-new-folder input {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 10px; border-radius: 4px;
+    font-size: 12px; outline: none;
+  }
+  .fp-new-folder input:focus { border-color: var(--accent); }
+  .fp-actions { display: flex; gap: 8px; }
+  .fp-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); font-size: 12px; font-weight: 600;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .fp-btn:hover { background: var(--surface3); }
+  .fp-btn.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  .fp-btn.primary:hover { filter: brightness(1.1); }
 
   /* ── EDITABLE NAME & DOMAIN ──────────────────────────────────── */
   .name-edit {
@@ -4300,10 +4392,11 @@ function modalContentHTML(p) {
       <div class="path-row">
         <span class="path-label">Path</span>
         <input class="path-input" type="text" value="${esc(p.project_path||'')}"
-          placeholder="No path set — click to edit"
+          placeholder="No folder selected — click Browse, or type a path"
           onblur="saveProjectPath('${esc(p.id)}',this)"
           onkeydown="if(event.key==='Enter'){this.blur()}"
         >
+        <button class="btn-browse" onclick="openFolderPicker('${esc(p.id)}')" title="Browse for folder">Browse...</button>
         ${p.project_path ? `<button class="btn-import" onclick="importFromProject('${esc(p.id)}')" title="Import from CHANGELOG.md">Import</button>` : ''}
       </div>
       ${p.summary ? `<div class="project-summary" style="margin-top:8px">${esc(p.summary)}</div>` : ''}
@@ -10080,6 +10173,142 @@ async function saveProjectPath(projectId, inputEl) {
   } catch(e) {}
 }
 
+// ── Folder picker (project_path) ────────────────────────────────────────────
+let _fpState = { projectId: null, currentPath: '', parent: null, home: '', workspaceBase: '' };
+
+function openFolderPicker(projectId) {
+  _fpState.projectId = projectId;
+  const p = allProjects.find(x => x.id === projectId);
+  const startPath = (p && p.project_path) || '';
+
+  let overlay = document.getElementById('fp-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'fp-overlay';
+    overlay.className = 'fp-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) closeFolderPicker(); };
+    overlay.innerHTML = `
+      <div class="fp-dialog">
+        <div class="fp-header">
+          <div class="fp-title">Choose project folder</div>
+          <button class="fp-close" onclick="closeFolderPicker()">&times;</button>
+        </div>
+        <div class="fp-path-bar">
+          <button class="fp-btn" onclick="fpGoUp()" title="Parent folder">&#x2191;</button>
+          <input id="fp-path-input" type="text" placeholder="Type or paste a path..."
+            onkeydown="if(event.key==='Enter'){fpLoad(this.value)}">
+          <button class="fp-btn" onclick="fpLoad(document.getElementById('fp-path-input').value)">Go</button>
+        </div>
+        <div class="fp-shortcuts" id="fp-shortcuts"></div>
+        <div class="fp-list" id="fp-list"></div>
+        <div class="fp-footer">
+          <div class="fp-new-folder">
+            <input id="fp-new-name" type="text" placeholder="New folder name..."
+              onkeydown="if(event.key==='Enter'){fpCreateFolder()}">
+            <button class="fp-btn" onclick="fpCreateFolder()">+ Create</button>
+          </div>
+          <div class="fp-actions">
+            <button class="fp-btn" onclick="closeFolderPicker()">Cancel</button>
+            <button class="fp-btn primary" id="fp-select" onclick="fpSelectCurrent()">Use this folder</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+  } else {
+    overlay.style.display = 'flex';
+  }
+  fpLoad(startPath);
+}
+
+function closeFolderPicker() {
+  const overlay = document.getElementById('fp-overlay');
+  if (overlay) overlay.remove();
+  _fpState.projectId = null;
+}
+
+async function fpLoad(path) {
+  const list = document.getElementById('fp-list');
+  if (!list) return;
+  list.innerHTML = '<div class="fp-empty">Loading...</div>';
+  try {
+    const url = API_BASE + '/api/browse/folders' + (path ? '?path=' + encodeURIComponent(path) : '');
+    const r = await fetch(url);
+    const data = await r.json();
+    if (!r.ok) {
+      list.innerHTML = `<div class="fp-error">${esc(data.error || 'Failed to load')}</div>`;
+      return;
+    }
+    _fpState.currentPath = data.path;
+    _fpState.parent = data.parent;
+    _fpState.home = data.home || '';
+    _fpState.workspaceBase = data.workspace_base || '';
+    const pathInput = document.getElementById('fp-path-input');
+    if (pathInput) pathInput.value = data.path;
+    fpRenderShortcuts();
+
+    if (!data.folders || !data.folders.length) {
+      list.innerHTML = '<div class="fp-empty">No subfolders here. Create one below, or use this folder.</div>';
+      return;
+    }
+    list.innerHTML = data.folders.map(f =>
+      `<div class="fp-row" onclick="fpLoad('${esc(f.path).replace(/'/g, "\\'")}')">` +
+      `<span class="fp-icon">&#x1F4C1;</span><span>${esc(f.name)}</span></div>`
+    ).join('');
+  } catch (e) {
+    list.innerHTML = `<div class="fp-error">${esc(String(e))}</div>`;
+  }
+}
+
+function fpRenderShortcuts() {
+  const sc = document.getElementById('fp-shortcuts');
+  if (!sc) return;
+  const items = [];
+  if (_fpState.workspaceBase) items.push({ label: 'Workspace', path: _fpState.workspaceBase });
+  if (_fpState.home) items.push({ label: 'Home', path: _fpState.home });
+  sc.innerHTML = items.map(i =>
+    `<button class="fp-shortcut" onclick="fpLoad('${esc(i.path).replace(/'/g, "\\'")}')">${esc(i.label)}</button>`
+  ).join('');
+}
+
+function fpGoUp() {
+  if (_fpState.parent) fpLoad(_fpState.parent);
+}
+
+async function fpCreateFolder() {
+  const nameEl = document.getElementById('fp-new-name');
+  const name = (nameEl ? nameEl.value : '').trim();
+  if (!name) return;
+  try {
+    const r = await fetch(API_BASE + '/api/browse/create_folder', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ parent: _fpState.currentPath, name })
+    });
+    const data = await r.json();
+    if (!r.ok) { alert(data.error || 'Failed to create folder'); return; }
+    if (nameEl) nameEl.value = '';
+    fpLoad(data.path); // jump into the freshly-created folder
+  } catch (e) {
+    alert(String(e));
+  }
+}
+
+async function fpSelectCurrent() {
+  const projectId = _fpState.projectId;
+  const chosen = _fpState.currentPath;
+  if (!projectId || !chosen) { closeFolderPicker(); return; }
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ project_path: chosen })
+    });
+    await refreshSilent();
+    refreshModalById(projectId);
+  } catch (e) {}
+  closeFolderPicker();
+}
+
 async function importFromProject(projectId) {
   try {
     const res = await fetch(API_BASE + `/api/project/${projectId}/import`, { method: 'POST' });
@@ -13740,6 +13969,24 @@ const WT_STEPS = [
     title: 'Agent Console',
     body: 'Running agent sessions \u2014 from any project, manual or automated \u2014 appear in this bottom tray. Expand it to view output, send follow-ups, or stop a session without leaving wherever you are.',
     target: '#agent-console', pos: 'top',
+    // The console is hidden when no sessions are running (default state). Force
+    // it visible for this step so the highlight has something to point at,
+    // restore the prior class set on leave.
+    onEnter: () => {
+      const el = document.getElementById('agent-console');
+      if (el) {
+        el.dataset.wtPrevHidden = el.classList.contains('hidden') ? '1' : '';
+        el.classList.remove('hidden');
+      }
+    },
+    onLeave: () => {
+      const el = document.getElementById('agent-console');
+      if (el && el.dataset.wtPrevHidden === '1') {
+        el.classList.add('hidden');
+        delete el.dataset.wtPrevHidden;
+      }
+    },
+    skip: () => window.innerWidth <= 960, // bottom tab bar covers this on mobile
   },
   {
     id: 'bottom-tabs',
@@ -13753,20 +14000,26 @@ const WT_STEPS = [
     title: 'Command Palette',
     body: 'Press <strong>Ctrl+K</strong> anywhere to fuzzy-search projects, jump to any view, open settings, or re-take this tour.',
     target: '.cmd-palette', pos: 'bottom',
+    // The CSS class is `.visible` (not `.open` — that was a copy-paste bug).
+    // Without this, the overlay stays hidden and the highlight box appears
+    // to point at empty space.
+    // Also pre-render results so the palette has visible content (otherwise
+    // it's just an empty input box).
     onEnter: () => {
       const overlay = document.getElementById('cmd-overlay');
       if (overlay) {
-        overlay.classList.add('open');
+        overlay.classList.add('visible');
         overlay.style.background = 'transparent';
         overlay.style.backdropFilter = 'none';
         overlay.style.webkitBackdropFilter = 'none';
         cmdPaletteOpen = true;
+        try { renderCommandResults(''); } catch (e) {}
       }
     },
     onLeave: () => {
       const overlay = document.getElementById('cmd-overlay');
       if (overlay) {
-        overlay.classList.remove('open');
+        overlay.classList.remove('visible');
         overlay.style.background = '';
         overlay.style.backdropFilter = '';
         overlay.style.webkitBackdropFilter = '';
@@ -14101,7 +14354,10 @@ async function wtShow(idx) {
     </div>`;
   }
 
-  const bodyHTML = typeof step.body === 'function' ? step.body() : esc(step.body);
+  // Body strings are author-controlled hardcoded text (WT_STEPS const), so they
+  // can include <strong>/<em> markup. Don't esc() — that would render the tags
+  // as literal text. Functions return pre-built HTML and pass through too.
+  const bodyHTML = typeof step.body === 'function' ? step.body() : step.body;
   card.innerHTML = `
     <div class="wt-title">${esc(step.title)}</div>
     <div class="wt-body">${bodyHTML}</div>
