@@ -5,27 +5,27 @@
 #   curl -sSL https://clayrune.io/install.sh | sh
 #
 # What this script does:
-#   1. Verifies Claude CLI is installed (or installs it via npm / Anthropic's
-#      installer if missing).
-#   2. Fetches the install prompt from clayrune.io.
-#   3. Discloses what is about to happen, with a short Ctrl-C abort window.
-#   4. Pipes the prompt into `claude --dangerously-skip-permissions`.
+#   1. Sets up Node 18+ via nvm (needed for Claude CLI itself).
+#   2. Installs Claude CLI if missing (Anthropic curl-installer or npm).
+#   3. Verifies Claude CLI is authenticated.
+#   4. Clones the Clayrune repo to ~/Clayrune.
+#   5. Sets up a Python 3.11+ venv + installs dependencies.
+#   6. Creates a launcher (~/Applications/Clayrune.command on macOS,
+#      ~/.local/share/applications/clayrune.desktop on Linux).
+#   7. Launches the server and opens the dashboard in your browser.
 #
-# After authorization, Claude itself executes the install — clones the repo,
-# installs Python and Node deps, creates a Desktop / Applications launcher,
-# and opens the app in the user's browser.
+# Steps 4-7 used to be done by handing off to `claude -p` with a markdown
+# install prompt. That broke on newer Claude models because the
+# "you are an automated installer, do not ask for confirmation" framing
+# is the textbook shape of a prompt-injection attack and Claude refuses
+# to run it. The install steps don't need an LLM anyway -- this shell
+# script does them directly.
 #
-# Read the install prompt before running:
-#   curl -sSL https://clayrune.io/install-prompt.md
-#
-# Override URLs (for testing):
-#   CLAYRUNE_BOOTSTRAP_URL=...     (this file's URL — informational only)
-#   CLAYRUNE_PROMPT_URL=...        (where to fetch the install prompt)
-#   CLAYRUNE_NO_CONFIRM=1          (skip the 5-second abort window)
+# Override:
+#   CLAYRUNE_HOME=...        (override default ~/Clayrune install dir)
+#   CLAYRUNE_NO_CONFIRM=1    (skip the 5-second abort window)
 
 set -e
-
-PROMPT_URL="${CLAYRUNE_PROMPT_URL:-https://clayrune.io/install-prompt.md}"
 
 # ANSI colors only when stdout is a tty
 if [ -t 1 ]; then
@@ -268,86 +268,277 @@ if ! _check_claude_auth; then
 fi
 printf "%sOK%s Authenticated\n\n" "$G" "$R"
 
-# ── Step 2: Fetch install prompt ───────────────────────────────────────────
-printf "Fetching install instructions from %s\n" "$PROMPT_URL"
-PROMPT=$(curl -fsSL "$PROMPT_URL" 2>/dev/null) || {
-  printf "%sFailed to fetch install prompt.%s\n" "$E" "$R"
-  printf "URL: %s\n" "$PROMPT_URL"
-  exit 1
-}
-printf "%sOK%s Got install prompt (%d bytes)\n\n" "$G" "$R" "${#PROMPT}"
+# ── Direct deterministic install (no Claude handoff) ──────────────────────
+#
+# We previously fetched install-prompt.md and asked Claude to run the install
+# steps via `claude --dangerously-skip-permissions -p "<24KB markdown>"`.
+# That broke for two reasons:
+#   1. The 24 KB user-message-styled "you are an automated installer, do not
+#      ask for confirmation" prompt is the textbook shape of a prompt-injection
+#      attack. Newer Claude models flag it and refuse, then exit 0 — leaving
+#      the wrapper to mistakenly declare success.
+#   2. None of the steps actually need an LLM. git clone, venv setup,
+#      pip install, launcher creation, and starting the server are all
+#      deterministic shell commands. The shell is already running on the
+#      user's machine; we don't need to ask Claude permission to run what
+#      we wrote ourselves.
+# So we skip Claude entirely from here. Clayrune still uses Claude AT RUNTIME
+# (that's the product), but installing Clayrune doesn't.
 
-# ── Step 3: Disclosure ─────────────────────────────────────────────────────
+INSTALL_DIR="${CLAYRUNE_HOME:-$HOME/Clayrune}"
+REPO_URL="https://github.com/ronle/mission-control.git"
+
+# Detect OS — macOS and Linux take different paths for venv install + launcher.
+case "$(uname)" in
+  Darwin) OS="macos" ;;
+  Linux)  OS="linux" ;;
+  *)
+    printf "%sUnsupported OS: %s%s\n" "$E" "$(uname)" "$R"
+    exit 1
+    ;;
+esac
+
 printf "%s──────────────────────────────────────%s\n" "$Y" "$R"
-printf "%sAbout to run:%s\n" "$B" "$R"
-printf "  claude --dangerously-skip-permissions \"<install prompt>\"\n\n"
-printf "Claude will execute shell commands on your machine to install Clayrune.\n"
-printf "Estimated time: 3-5 minutes.\n"
-printf "Read the prompt: %s\n" "$PROMPT_URL"
+printf "%sAbout to install Clayrune to:%s\n" "$B" "$R"
+printf "  %s%s%s\n" "$C" "$INSTALL_DIR" "$R"
+printf "Steps: clone repo, set up Python venv, create launcher, start dashboard.\n"
 printf "%s──────────────────────────────────────%s\n\n" "$Y" "$R"
 
 if [ -z "${CLAYRUNE_NO_CONFIRM:-}" ]; then
   printf "Press Ctrl+C in the next 5 seconds to abort, or wait...\n"
   sleep 5
 fi
+printf "\n"
 
-# ── Step 4: Hand off to Claude ─────────────────────────────────────────────
-printf "\n%s>>> Handing off to Claude%s\n\n" "$B" "$R"
-
-# Stream Claude's progress in real time so the user can see what's happening
-# during the 3-5 minute install. Without this, the terminal looks frozen.
-#
-# `claude -p` alone prints only the final assistant response. Adding
-# `--output-format stream-json --print --verbose` emits one JSON object per
-# line covering every step (assistant text blocks, tool_use calls, results).
-# We pipe through python3 to surface the human-readable bits and dim the
-# tool-call lines.
-#
-# If python3 isn't available, fall back to plain `-p` mode so the install
-# still works (just silently for a few minutes).
-if command -v python3 >/dev/null 2>&1; then
-  # Capture claude's exit code via a temp file (POSIX sh has no PIPESTATUS).
-  EXIT_FILE=$(mktemp 2>/dev/null || echo "/tmp/clayrune-exit.$$")
-  trap 'rm -f "$EXIT_FILE"' EXIT
-  # `set +e` so a non-zero exit from claude doesn't abort this LHS-of-pipe
-  # subshell before we capture $? into EXIT_FILE. Restored implicitly when
-  # the subshell ends.
-  {
-    set +e
-    claude --dangerously-skip-permissions \
-           -p "$PROMPT" \
-           --print --verbose \
-           --output-format stream-json
-    echo "$?" > "$EXIT_FILE"
-  } | python3 -c '
-import json, sys
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        obj = json.loads(line)
-    except Exception:
-        print(line)
-        continue
-    t = obj.get("type")
-    if t == "assistant":
-        msg = obj.get("message") or {}
-        for block in (msg.get("content") or []):
-            bt = block.get("type")
-            if bt == "text":
-                txt = block.get("text") or ""
-                if txt:
-                    print(txt, flush=True)
-            elif bt == "tool_use":
-                name = block.get("name") or "?"
-                print(f"  [tool: {name}]", flush=True)
-    elif t == "result" and obj.get("is_error"):
-        print(f"  [error] {obj.get(\"result\", \"\")}", flush=True)
-'
-  CLAUDE_EXIT=$(cat "$EXIT_FILE" 2>/dev/null || echo 0)
-  exit "$CLAUDE_EXIT"
+# ── [STEP 1/5] Clone or update the repository ─────────────────────────────
+printf "%s[STEP 1/5]%s Cloning repository...\n" "$B" "$R"
+if [ -d "$INSTALL_DIR" ]; then
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    printf "  Existing checkout at %s — pulling latest.\n" "$INSTALL_DIR"
+    if ! git -C "$INSTALL_DIR" pull --ff-only; then
+      printf "%s[STEP 1/5] FAIL%s git pull failed\n" "$E" "$R"
+      exit 2
+    fi
+  else
+    printf "%s[STEP 1/5] FAIL%s %s exists but is not a git checkout.\n" "$E" "$R" "$INSTALL_DIR"
+    printf "          Remove it or set CLAYRUNE_HOME to a different path, then re-run.\n"
+    exit 2
+  fi
 else
-  printf "%sNote:%s python3 not found; running without progress streaming.\n\n" "$Y" "$R"
-  exec claude --dangerously-skip-permissions -p "$PROMPT"
+  if ! command -v git >/dev/null 2>&1; then
+    printf "  git not found. Attempting auto-install...\n"
+    if [ "$OS" = "linux" ]; then
+      if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update -qq >/dev/null 2>&1 || true
+        sudo apt-get install -y -qq git || true
+      elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y -q git || true
+      elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -S --noconfirm git || true
+      fi
+    elif [ "$OS" = "macos" ]; then
+      printf "%s[STEP 1/5] FAIL%s git not on PATH. Run %sxcode-select --install%s, then re-run.\n" "$E" "$R" "$C" "$R"
+      exit 2
+    fi
+    if ! command -v git >/dev/null 2>&1; then
+      printf "%s[STEP 1/5] FAIL%s could not auto-install git\n" "$E" "$R"
+      exit 2
+    fi
+  fi
+  if ! git clone "$REPO_URL" "$INSTALL_DIR"; then
+    printf "%s[STEP 1/5] FAIL%s git clone failed\n" "$E" "$R"
+    exit 2
+  fi
 fi
+printf "%s[STEP 1/5] OK%s\n\n" "$G" "$R"
+
+# ── [STEP 2/5] Python 3.11+ + venv + dependencies ─────────────────────────
+printf "%s[STEP 2/5]%s Setting up Python 3.11+...\n" "$B" "$R"
+
+_find_python() {
+  for cmd in python3.12 python3.11 python3 python; do
+    command -v "$cmd" >/dev/null 2>&1 || continue
+    ver=$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    [ -n "$ver" ] || continue
+    major=$(echo "$ver" | cut -d. -f1)
+    minor=$(echo "$ver" | cut -d. -f2)
+    case "$major" in ''|*[!0-9]*) continue ;; esac
+    case "$minor" in ''|*[!0-9]*) continue ;; esac
+    if [ "$major" -gt 3 ] 2>/dev/null; then echo "$cmd"; return 0; fi
+    if [ "$major" -eq 3 ] && [ "$minor" -ge 11 ] 2>/dev/null; then echo "$cmd"; return 0; fi
+  done
+  return 1
+}
+
+PYTHON_CMD=$(_find_python || true)
+if [ -z "$PYTHON_CMD" ]; then
+  printf "  Python 3.11+ not found. Attempting auto-install...\n"
+  if [ "$OS" = "linux" ]; then
+    if command -v apt-get >/dev/null 2>&1; then
+      sudo apt-get update -qq >/dev/null 2>&1 || true
+      # python3.11 may not be in default repos on older Ubuntu — fall back to
+      # whatever python3 + venv the distro provides. Ubuntu 22.04 ships 3.10;
+      # the version check below will reject if too old, then user installs
+      # manually.
+      sudo apt-get install -y -qq python3.11 python3.11-venv python3-pip 2>/dev/null || \
+        sudo apt-get install -y -qq python3 python3-venv python3-pip || true
+    elif command -v dnf >/dev/null 2>&1; then
+      sudo dnf install -y -q python3.11 python3-pip 2>/dev/null || \
+        sudo dnf install -y -q python3 python3-pip || true
+    elif command -v pacman >/dev/null 2>&1; then
+      sudo pacman -S --noconfirm python python-pip || true
+    fi
+  elif [ "$OS" = "macos" ]; then
+    if command -v brew >/dev/null 2>&1; then
+      brew install python@3.11 || brew install python@3.12 || true
+    else
+      printf "  Homebrew not found. Install from https://brew.sh, then re-run.\n"
+    fi
+  fi
+  PYTHON_CMD=$(_find_python || true)
+fi
+
+if [ -z "$PYTHON_CMD" ]; then
+  printf "%s[STEP 2/5] FAIL%s Python 3.11+ not found and could not auto-install.\n" "$E" "$R"
+  printf "          Install manually then re-run:\n"
+  printf "            %sUbuntu/Debian:  sudo apt install python3.11 python3.11-venv%s\n" "$C" "$R"
+  printf "            %sFedora/RHEL:    sudo dnf install python3.11%s\n" "$C" "$R"
+  printf "            %smacOS:          brew install python@3.11%s\n" "$C" "$R"
+  exit 2
+fi
+printf "  Using: %s ($("$PYTHON_CMD" --version 2>&1))\n" "$PYTHON_CMD"
+
+VENV_DIR="$INSTALL_DIR/.venv"
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  if ! "$PYTHON_CMD" -m venv "$VENV_DIR" 2>/dev/null; then
+    # Ubuntu's "minimal" Python ships without the venv module; you have to
+    # install python3.11-venv (or the distro-equivalent) separately. Try.
+    if [ "$OS" = "linux" ] && command -v apt-get >/dev/null 2>&1; then
+      printf "  venv creation failed; installing python3-venv via apt...\n"
+      sudo apt-get install -y -qq python3-venv python3.11-venv 2>/dev/null || \
+        sudo apt-get install -y -qq python3-venv
+      "$PYTHON_CMD" -m venv "$VENV_DIR" || true
+    fi
+  fi
+  if [ ! -x "$VENV_DIR/bin/python" ]; then
+    printf "%s[STEP 2/5] FAIL%s could not create venv at %s\n" "$E" "$R" "$VENV_DIR"
+    exit 2
+  fi
+fi
+
+REQ_PATH="$INSTALL_DIR/requirements.txt"
+if [ -f "$REQ_PATH" ]; then
+  if ! "$VENV_DIR/bin/pip" install --quiet --disable-pip-version-check -r "$REQ_PATH"; then
+    printf "%s[STEP 2/5] FAIL%s pip install -r requirements.txt failed\n" "$E" "$R"
+    exit 2
+  fi
+fi
+printf "%s[STEP 2/5] OK%s\n\n" "$G" "$R"
+
+# ── [STEP 3/5] Launcher entry ─────────────────────────────────────────────
+printf "%s[STEP 3/5]%s Creating launcher...\n" "$B" "$R"
+if [ "$OS" = "macos" ]; then
+  START_CMD="$INSTALL_DIR/installer/start.command"
+  if [ ! -f "$START_CMD" ]; then
+    printf "%s[STEP 3/5] FAIL%s %s not found in checkout\n" "$E" "$R" "$START_CMD"
+    exit 2
+  fi
+  chmod +x "$START_CMD" 2>/dev/null || true
+  mkdir -p "$HOME/Applications"
+  cp "$START_CMD" "$HOME/Applications/Clayrune.command"
+  chmod +x "$HOME/Applications/Clayrune.command"
+  printf "  Created %s\n" "$HOME/Applications/Clayrune.command"
+elif [ "$OS" = "linux" ]; then
+  START_SH="$INSTALL_DIR/installer/start.sh"
+  if [ ! -f "$START_SH" ]; then
+    printf "%s[STEP 3/5] FAIL%s %s not found in checkout\n" "$E" "$R" "$START_SH"
+    exit 2
+  fi
+  chmod +x "$START_SH" 2>/dev/null || true
+  APPS_DIR="$HOME/.local/share/applications"
+  mkdir -p "$APPS_DIR"
+  ICON_PATH="$INSTALL_DIR/assets/clayrune.png"
+  cat > "$APPS_DIR/clayrune.desktop" << EOF
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Clayrune
+Comment=Operator console for long-running Claude agents
+Exec=$START_SH
+Icon=$ICON_PATH
+Terminal=true
+Categories=Development;
+EOF
+  chmod +x "$APPS_DIR/clayrune.desktop" 2>/dev/null || true
+  printf "  Created %s\n" "$APPS_DIR/clayrune.desktop"
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$APPS_DIR" 2>/dev/null || true
+  fi
+fi
+printf "%s[STEP 3/5] OK%s\n\n" "$G" "$R"
+
+# ── [STEP 4/5] Launch the server in a background process ──────────────────
+printf "%s[STEP 4/5]%s Launching server in the background...\n" "$B" "$R"
+if [ "$OS" = "macos" ]; then
+  nohup "$INSTALL_DIR/installer/start.command" >/dev/null 2>&1 &
+else
+  nohup "$INSTALL_DIR/installer/start.sh" >/dev/null 2>&1 &
+fi
+printf "  Polling http://localhost:5199/ for up to 30s...\n"
+server_up=0
+i=0
+while [ $i -lt 30 ]; do
+  sleep 1
+  i=$((i + 1))
+  if curl -s -o /dev/null --max-time 2 http://localhost:5199/ 2>/dev/null; then
+    server_up=1
+    break
+  fi
+done
+if [ "$server_up" -eq 1 ]; then
+  printf "%s[STEP 4/5] OK%s\n\n" "$G" "$R"
+else
+  printf "%s[STEP 4/5] WARN%s server did not respond within 30s.\n" "$Y" "$R"
+  printf "          Install completed; you can launch manually via the launcher created above.\n\n"
+fi
+
+# ── [STEP 5/5] Open the dashboard in the default browser ──────────────────
+printf "%s[STEP 5/5]%s Opening dashboard in your browser...\n" "$B" "$R"
+if [ "$OS" = "macos" ]; then
+  open http://localhost:5199 2>/dev/null || true
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open http://localhost:5199 >/dev/null 2>&1 &
+else
+  printf "  No xdg-open found. Open this URL manually: http://localhost:5199\n"
+fi
+printf "%s[STEP 5/5] OK%s\n\n" "$G" "$R"
+
+# ── Final verification ────────────────────────────────────────────────────
+printf "[install] Verifying install at: %s\n" "$INSTALL_DIR"
+missing=""
+for f in "$INSTALL_DIR/server.py" "$INSTALL_DIR/installer/start.sh" "$INSTALL_DIR/.venv/bin/python"; do
+  [ -e "$f" ] || missing="$missing $f"
+done
+if [ -n "$missing" ]; then
+  printf "\n%s============================================================%s\n" "$E" "$R"
+  printf "%s  Install verification FAILED%s\n" "$E" "$R"
+  printf "%s============================================================%s\n" "$E" "$R"
+  printf "  Missing:\n"
+  for f in $missing; do printf "    - %s\n" "$f"; done
+  printf "  This should not happen — please report this output as an issue.\n"
+  exit 2
+fi
+
+printf "\n%s============================================================%s\n" "$G" "$R"
+printf "%s  Clayrune is installed and running.%s\n" "$G" "$R"
+printf "%s============================================================%s\n" "$G" "$R"
+printf "  Open:     http://localhost:5199\n"
+printf "  Location: %s\n" "$INSTALL_DIR"
+if [ "$OS" = "macos" ]; then
+  printf "  Relaunch: open ~/Applications/Clayrune.command\n"
+else
+  printf "  Relaunch: launch \"Clayrune\" from your application menu, or run\n"
+  printf "            %s\n" "$INSTALL_DIR/installer/start.sh"
+fi
+printf "%s============================================================%s\n" "$G" "$R"
+exit 0
