@@ -370,13 +370,53 @@ if (Test-Path $installDir) {
 Write-Host '[STEP 1/5] OK' -ForegroundColor Green
 Write-Host ''
 
+# Switch to 'Continue' for the deterministic install phase. Native commands
+# (winget, git, python, pip) frequently write to stderr even on success-equivalent
+# outcomes ("warnings", "deprecation notices", App Execution Alias stubs). Under
+# 'Stop' that becomes a NativeCommandError -> terminating error -> script halts
+# halfway through. We do our own exit-code + Test-Path checks per step, so we
+# don't need PowerShell's auto-stop here.
+$ErrorActionPreference = 'Continue'
+
 # -- [STEP 2/5] Python 3.11+ -----------------------------------------------
 Write-Host '[STEP 2/5] Setting up Python 3.11+...' -ForegroundColor White
 function Find-Python311 {
-    foreach ($cmd in @('python3.12', 'python3.11', 'python3', 'python', 'py')) {
+    # Probe `py -3.12 --version` / `py -3.11 --version` first via the Python
+    # launcher (Windows convention; preferred when present because it skips
+    # the App Execution Alias trap entirely).
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        foreach ($vTag in @('-3.12', '-3.11')) {
+            try {
+                $out = & $pyLauncher.Source $vTag --version 2>$null | Out-String
+                if ($LASTEXITCODE -eq 0 -and $out -match 'Python\s+3\.(\d+)') {
+                    $min = [int]$Matches[1]
+                    if ($min -ge 11) {
+                        $exe = (& $pyLauncher.Source $vTag -c "import sys; print(sys.executable)" 2>$null | Out-String).Trim()
+                        if ($exe -and (Test-Path $exe)) { return $exe }
+                    }
+                }
+            } catch {}
+        }
+    }
+
+    foreach ($cmd in @('python3.12', 'python3.11', 'python3', 'python')) {
         $found = Get-Command $cmd -ErrorAction SilentlyContinue
         if (-not $found) { continue }
-        $verOut = & $found.Source --version 2>&1 | Out-String
+        # Skip Windows 11 / 10 App Execution Alias stubs at
+        # %LOCALAPPDATA%\Microsoft\WindowsApps. They are NOT Python -- they
+        # redirect to the Microsoft Store. Running --version against them
+        # prints "Python was not found..." to stderr; in PowerShell 5.1 that
+        # surfaces as a NativeCommandError and (depending on ErrorActionPref
+        # inherited from iex) halts the whole script before we can reach
+        # the winget install fallback. Recognizing the path sidesteps it.
+        if ($found.Source -match '\\WindowsApps\\') { continue }
+        try {
+            # Stderr -> $null so a misbehaving binary's error text doesn't
+            # become a PowerShell error record.
+            $verOut = & $found.Source --version 2>$null | Out-String
+            if ($LASTEXITCODE -ne 0) { continue }
+        } catch { continue }
         if ($verOut -match 'Python\s+(\d+)\.(\d+)') {
             $maj = [int]$Matches[1]
             $min = [int]$Matches[2]
