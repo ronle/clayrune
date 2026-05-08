@@ -11,7 +11,7 @@
 #    - $env:USERPROFILE\Clayrune (install dir)
 #    - Desktop + Start Menu Clayrune.lnk shortcuts
 #    - npm-installed Claude CLI
-#    - $env:USERPROFILE\.claude (auth + transcripts) — RE-LOGIN NEEDED
+#    - $env:USERPROFILE\.claude (auth + transcripts) - RE-LOGIN NEEDED
 #    - Any process listening on :5199 (the local server)
 #
 #  Does NOT remove by default:
@@ -93,7 +93,7 @@ if ($cl -and $cl.Path -and (Test-Path $cl.Path)) {
 Write-Host ''
 Write-Host '-- 5. ~\.claude (auth + transcripts)' -ForegroundColor Yellow
 if (Test-Path "$env:USERPROFILE\.claude") {
-    Write-Host '  Removing in 5s. Ctrl+C to KEEP — re-login needed if removed.'
+    Write-Host '  Removing in 5s. Ctrl+C to KEEP - re-login needed if removed.'
     Start-Sleep -Seconds 5
     Remove-Item "$env:USERPROFILE\.claude" -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "  removed $env:USERPROFILE\.claude"
