@@ -11874,10 +11874,6 @@ async function _renderSettings() {
   // Refresh remote-access status alongside config so the panel renders with
   // live state (no provider / not enrolled / enrolled).
   fetchRemoteStatus().then(s => { window._remoteState = s; refreshRemoteAccessSection(); });
-  // Async git-status check for the Update Clayrune row (`refreshUpdateStatus`
-  // populates #update-status-hint + #update-btn after the settings body is in
-  // the DOM; safe to fire-and-forget).
-  setTimeout(() => refreshUpdateStatus(), 100);
   let cfg;
   try {
     const res = await fetch(API_BASE + '/api/config');
@@ -12087,6 +12083,12 @@ async function _renderSettings() {
         <button class="btn-dispatch" onclick="closeModalById('__settings');startWalkthrough()">Take Tour</button>
       </div>
     </div>`;
+
+  // Now that #update-status-hint and #update-btn are in the DOM, kick off the
+  // git-status check. (Earlier we fired this with a 100 ms setTimeout BEFORE
+  // body.innerHTML was set, which raced and left the row stuck on the
+  // "Checking for updates..." placeholder.)
+  refreshUpdateStatus();
 }
 
 // ── Remote Access ────────────────────────────────────────────────────────────
