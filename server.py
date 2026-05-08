@@ -980,9 +980,22 @@ def guide_stream():
     if len(full_question) > 8000:
         full_question = full_question[-8000:]
 
-    cmd = [_resolve_claude(), '-p', full_question,
+    # Send the question via stdin (JSONL stream-json input) instead of via
+    # `-p <full_question>`. On Windows, claude.cmd is invoked through cmd.exe
+    # which has an 8191-char command-line limit (much smaller than
+    # CreateProcess's 32K). An 8 KB question + flags + the cmd.exe wrapper
+    # blows past that — surfacing as "The command line is too long". stdin
+    # has no such limit. Command line stays well under 200 chars regardless
+    # of question length.
+    cmd = [_resolve_claude(),
            '--max-turns', '1',
-           '--print', '--verbose', '--output-format', 'stream-json']
+           '--print', '--verbose',
+           '--input-format', 'stream-json',
+           '--output-format', 'stream-json']
+    stdin_msg = json.dumps({
+        'type': 'user',
+        'message': {'role': 'user', 'content': full_question},
+    }) + '\n'
 
     def sse(payload):
         return f'data: {json.dumps(payload)}\n\n'
@@ -993,13 +1006,20 @@ def guide_stream():
         try:
             proc = subprocess.Popen(
                 cmd,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=_playdo_cwd(),
                 text=True, encoding='utf-8', errors='replace',
                 creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
             )
+            try:
+                proc.stdin.write(stdin_msg)
+                proc.stdin.flush()
+                proc.stdin.close()
+            except Exception as e:
+                yield sse({'type': 'error', 'message': f'stdin write failed: {e}'})
+                return
         except FileNotFoundError:
             yield sse({'type': 'error', 'message': 'Claude CLI not found on this server'})
             return
@@ -1128,12 +1148,23 @@ def guide_ask():
     if len(full_question) > 8000:
         full_question = full_question[-8000:]
 
-    cmd = [_resolve_claude(), '-p', full_question,
-           '--max-turns', '1']
+    # See /api/guide/stream — Windows' cmd.exe wrapper around claude.cmd is
+    # capped at 8191 chars, so an 8 KB question pushed via -p triggers
+    # "command line too long". Send it through stdin (stream-json) instead.
+    cmd = [_resolve_claude(),
+           '--max-turns', '1',
+           '--print', '--verbose',
+           '--input-format', 'stream-json',
+           '--output-format', 'stream-json']
+    stdin_msg = json.dumps({
+        'type': 'user',
+        'message': {'role': 'user', 'content': full_question},
+    }) + '\n'
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True,
             cwd=_playdo_cwd(),
+            input=stdin_msg,
             timeout=60, encoding='utf-8', errors='replace',
             creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
         )
@@ -1147,7 +1178,27 @@ def guide_ask():
     if result.returncode != 0:
         err = (result.stderr or 'claude failed').strip()[:500]
         return jsonify({'error': err}), 500
-    return jsonify({'answer': result.stdout.strip()})
+
+    # With --output-format stream-json, stdout is JSONL. Reassemble the
+    # assistant text from `assistant` events the same way the streaming
+    # endpoint does.
+    parts = []
+    for raw in (result.stdout or '').splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if obj.get('type') == 'assistant':
+            msg = obj.get('message', {}) or {}
+            for block in (msg.get('content') or []):
+                if isinstance(block, dict) and block.get('type') == 'text':
+                    t = str(block.get('text') or '')
+                    if t:
+                        parts.append(t)
+    return jsonify({'answer': ''.join(parts).strip()})
 
 
 # ── Project endpoints ────────────────────────────────────────────────────────

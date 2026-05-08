@@ -14015,6 +14015,17 @@ const WT_STEPS = [
     // to point at empty space.
     // Also pre-render results so the palette has visible content (otherwise
     // it's just an empty input box).
+    //
+    // Critical: cmd-overlay has z-index 9999 which is ABOVE the walkthrough
+    // overlay (2000). When .visible is added the overlay also has
+    // pointer-events: auto + an onclick that closes the palette on
+    // backdrop clicks. Result: when the user tries to click "Next" on the
+    // wt-card, the click is intercepted by cmd-overlay, which closes the
+    // palette — leaving the wt-highlight glowing around an empty rectangle
+    // ("the second step 14 shows blank square"). We disable click-through
+    // on the overlay (pointer-events: none) and re-enable it on the palette
+    // itself so the rendered palette stays visible but the wt-card's Next
+    // button isn't shadowed by the overlay anymore.
     onEnter: async () => {
       const overlay = document.getElementById('cmd-overlay');
       if (!overlay) return;
@@ -14023,14 +14034,17 @@ const WT_STEPS = [
       overlay.style.background = 'transparent';
       overlay.style.backdropFilter = 'none';
       overlay.style.webkitBackdropFilter = 'none';
-      // Defeat the open-animation transition so we don't measure mid-flight
-      // (cmd-palette uses transform translateY(-10px) scale(0.98) → 0/1 over
-      // 0.15s, so getBoundingClientRect right after .visible is added returns
-      // the pre-animation rect, leaving the highlight pointing at the empty
-      // pre-position). Force final state synchronously.
+      overlay.style.pointerEvents = 'none';
       if (palette) {
+        // Defeat the open-animation transition so we don't measure
+        // mid-flight (cmd-palette uses transform translateY(-10px)
+        // scale(0.98) → 0/1 over 0.15s, so getBoundingClientRect right
+        // after .visible is added returns the pre-animation rect, leaving
+        // the highlight pointing at the empty pre-position). Force final
+        // state synchronously.
         palette.style.transition = 'none';
         palette.style.transform = 'translateY(0) scale(1)';
+        palette.style.pointerEvents = 'auto';
       }
       cmdPaletteOpen = true;
       try { renderCommandResults(''); } catch (e) {}
@@ -14045,9 +14059,11 @@ const WT_STEPS = [
       overlay.style.background = '';
       overlay.style.backdropFilter = '';
       overlay.style.webkitBackdropFilter = '';
+      overlay.style.pointerEvents = '';
       if (palette) {
         palette.style.transition = '';
         palette.style.transform = '';
+        palette.style.pointerEvents = '';
       }
       cmdPaletteOpen = false;
     },
