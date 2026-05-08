@@ -87,24 +87,34 @@ goto :choice_loop
 :do_login
 echo.
 echo ============================================================
-echo   Launching Claude login
+echo   Launching Claude login in a new window
 echo ============================================================
 echo.
-echo A browser window will open shortly. Sign in with your Anthropic
-echo account ^(Claude Pro/Max OAuth^), or paste an API key when prompted.
+echo A second cmd window is about to open with `claude /login` running.
+echo Inside that window:
+echo   1. A browser will open. Sign in with your Anthropic account
+echo      ^(Claude Pro/Max OAuth^), or paste an API key when prompted.
+echo   2. When you see "Logged in successfully", type:  exit
+echo   3. The login window will close on its own.
 echo.
-echo When you see "Logged in successfully", type:  exit
-echo Then this installer will continue automatically.
+echo This window will keep running and pick up where you left off.
 echo.
+pause
 
-REM Run claude from cmd directly. Cmd.exe uses claude.cmd (the npm shim),
-REM which doesn't trigger PowerShell ExecutionPolicy issues like running
-REM claude.ps1 from a fresh PowerShell would.
-call claude /login
+REM Spawn claude /login in a SEPARATE cmd window with start /WAIT. We block
+REM here until that window closes. Crucially: our window can't be affected
+REM by anything claude does — if claude crashes / detaches / closes its own
+REM parent cmd, only the spawned window dies, and start /WAIT returns control
+REM to us cleanly. Calling `call claude /login` directly was vulnerable to
+REM the spawned process terminating our cmd in some edge cases.
+start "Clayrune - Claude Login" /WAIT cmd /c "claude /login"
 
 echo.
-echo Login flow finished. Re-running the installer...
-echo.
+echo ============================================================
+echo Login window closed. Press any key to retry the installer ^(or
+echo Ctrl+C if you want to abort instead^).
+echo ============================================================
+pause >nul
 goto :run_installer
 
 :success
