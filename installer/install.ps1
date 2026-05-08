@@ -383,6 +383,40 @@ $claudeArgs = @(
     # text blocks already cover everything user-relevant.
   }
 
+$claudeExit = $LASTEXITCODE
+
+# Post-install verification — DO NOT trust Claude's exit code alone. There
+# have been cases where Claude exited 0 after preamble-philosophizing about
+# the prompt but never actually ran git clone / etc. Without this check, the
+# .bat wrapper would happily show "Clayrune is installed!" while the user's
+# Desktop has a Clayrune.lnk pointing at a non-existent start.bat.
+$installDir = if ($env:CLAYRUNE_HOME) { $env:CLAYRUNE_HOME } else { "$env:USERPROFILE\Clayrune" }
+$mustExist = @(
+    (Join-Path $installDir 'server.py'),
+    (Join-Path $installDir 'installer\start.bat')
+)
+$missing = $mustExist | Where-Object { -not (Test-Path $_) }
+if ($missing) {
+    Write-Host ''
+    Write-Host '============================================================' -ForegroundColor Red
+    Write-Host '  Install verification FAILED' -ForegroundColor Red
+    Write-Host '============================================================' -ForegroundColor Red
+    Write-Host "  Expected install dir: $installDir"
+    Write-Host '  Missing files:'
+    foreach ($m in $missing) { Write-Host "    - $m" -ForegroundColor Red }
+    Write-Host ''
+    Write-Host "  Claude reported exit code $claudeExit but the install"
+    Write-Host '  directory does not look complete. Common causes:'
+    Write-Host '    - Claude refused to run the install commands'
+    Write-Host '    - git clone silently failed (network / auth / disk)'
+    Write-Host '    - The user closed the install mid-flight'
+    Write-Host ''
+    Write-Host '  Re-run the installer from the parent window. If it keeps'
+    Write-Host '  failing here, open the GitHub issues page.'
+    Write-Host '============================================================' -ForegroundColor Red
+    exit 2
+}
+
 # Propagate Claude's exit code so the .bat wrapper shows the right success
 # / retry prompt. $LASTEXITCODE is set by the last native command (claude).
-exit $LASTEXITCODE
+exit $claudeExit
