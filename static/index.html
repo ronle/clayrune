@@ -13947,7 +13947,15 @@ const WT_STEPS = [
   {
     id: 'menu',
     title: 'Three-Dot Menu',
-    body: 'The three-dot button in any project modal opens this menu: <strong>\ud83d\udc1d Hiveminds</strong> for this project, <strong>\u2728 Start Hivemind</strong>, <strong>Memory &amp; Rules</strong> editor, <strong>Status</strong> / <strong>Color</strong> / <strong>Domain</strong> / <strong>Model</strong> per project, <strong>GitHub Sync</strong>, and more. On mobile, the project tabs (Agent / Backlog / etc.) live at the top of this menu.',
+    body: 'The three-dot button in any project modal opens a menu with:' +
+      '<ul style="margin:8px 0 0 18px;padding:0">' +
+      '<li><strong>\ud83d\udc1d Hiveminds</strong> for this project</li>' +
+      '<li><strong>\u2728 Start Hivemind</strong></li>' +
+      '<li><strong>Memory &amp; Rules</strong> editor</li>' +
+      '<li><strong>Status</strong> / <strong>Color</strong> / <strong>Domain</strong> / <strong>Model</strong> per project</li>' +
+      '<li><strong>GitHub Sync</strong></li>' +
+      '</ul>' +
+      '<div style="margin-top:8px">On mobile, the project tabs (Agent / Backlog / etc.) move to the top of this menu.</div>',
     target: null, pos: 'bottom', demo: 'modal', demoTarget: '.modal-menu-btn',
   },
   {
@@ -14005,26 +14013,41 @@ const WT_STEPS = [
     // to point at empty space.
     // Also pre-render results so the palette has visible content (otherwise
     // it's just an empty input box).
-    onEnter: () => {
+    onEnter: async () => {
       const overlay = document.getElementById('cmd-overlay');
-      if (overlay) {
-        overlay.classList.add('visible');
-        overlay.style.background = 'transparent';
-        overlay.style.backdropFilter = 'none';
-        overlay.style.webkitBackdropFilter = 'none';
-        cmdPaletteOpen = true;
-        try { renderCommandResults(''); } catch (e) {}
+      if (!overlay) return;
+      const palette = overlay.querySelector('.cmd-palette');
+      overlay.classList.add('visible');
+      overlay.style.background = 'transparent';
+      overlay.style.backdropFilter = 'none';
+      overlay.style.webkitBackdropFilter = 'none';
+      // Defeat the open-animation transition so we don't measure mid-flight
+      // (cmd-palette uses transform translateY(-10px) scale(0.98) → 0/1 over
+      // 0.15s, so getBoundingClientRect right after .visible is added returns
+      // the pre-animation rect, leaving the highlight pointing at the empty
+      // pre-position). Force final state synchronously.
+      if (palette) {
+        palette.style.transition = 'none';
+        palette.style.transform = 'translateY(0) scale(1)';
       }
+      cmdPaletteOpen = true;
+      try { renderCommandResults(''); } catch (e) {}
+      // Yield one frame so DOM/layout flush before wtShow measures the rect.
+      await new Promise(r => requestAnimationFrame(() => r()));
     },
     onLeave: () => {
       const overlay = document.getElementById('cmd-overlay');
-      if (overlay) {
-        overlay.classList.remove('visible');
-        overlay.style.background = '';
-        overlay.style.backdropFilter = '';
-        overlay.style.webkitBackdropFilter = '';
-        cmdPaletteOpen = false;
+      if (!overlay) return;
+      const palette = overlay.querySelector('.cmd-palette');
+      overlay.classList.remove('visible');
+      overlay.style.background = '';
+      overlay.style.backdropFilter = '';
+      overlay.style.webkitBackdropFilter = '';
+      if (palette) {
+        palette.style.transition = '';
+        palette.style.transform = '';
       }
+      cmdPaletteOpen = false;
     },
   },
   {
@@ -14358,11 +14381,20 @@ async function wtShow(idx) {
   // can include <strong>/<em> markup. Don't esc() — that would render the tags
   // as literal text. Functions return pre-built HTML and pass through too.
   const bodyHTML = typeof step.body === 'function' ? step.body() : step.body;
+
+  // Skip-aware progress count: skipped steps shouldn't count toward total or
+  // create gaps in the numbering. Otherwise desktop users see 13 → 15 (the
+  // mobile-only bottom-tabs step at idx 13 gets eaten silently).
+  const visibleSteps = WT_STEPS.filter(s => !(s.skip && s.skip()));
+  const visibleIdx = visibleSteps.findIndex(s => s.id === step.id);
+  const visiblePos = (visibleIdx >= 0 ? visibleIdx : 0) + 1;
+  const visibleTotal = visibleSteps.length;
+
   card.innerHTML = `
     <div class="wt-title">${esc(step.title)}</div>
     <div class="wt-body">${bodyHTML}</div>
     <div class="wt-actions">
-      <span class="wt-progress">${idx + 1} / ${WT_STEPS.length}</span>
+      <span class="wt-progress">${visiblePos} / ${visibleTotal}</span>
       ${btns}
     </div>
     ${dismissHTML}

@@ -952,6 +952,19 @@ def guide_stream():
     except Exception as e:
         return jsonify({'error': f'guide read failed: {e}'}), 500
 
+    # Materialize the guide as CLAUDE.md in Playdo's working directory so the
+    # Claude CLI auto-loads it as project context. Avoids the Windows 32 KB
+    # CreateProcess command-line limit which the 24 KB guide hit when passed
+    # via `--append-system-prompt`. Only re-write when the on-disk content
+    # has drifted from the source (cheap idempotent check).
+    cwd = _playdo_cwd()
+    try:
+        guide_md = Path(cwd) / 'CLAUDE.md'
+        if not guide_md.exists() or guide_md.read_text(encoding='utf-8') != system_prompt:
+            guide_md.write_text(system_prompt, encoding='utf-8')
+    except Exception:
+        pass  # Non-fatal — fall through with question only.
+
     if history:
         lines = ['Previous exchange in this conversation:']
         for m in history:
@@ -968,7 +981,6 @@ def guide_stream():
         full_question = full_question[-8000:]
 
     cmd = [_resolve_claude(), '-p', full_question,
-           '--append-system-prompt', system_prompt,
            '--max-turns', '1',
            '--print', '--verbose', '--output-format', 'stream-json']
 
@@ -1088,6 +1100,17 @@ def guide_ask():
     except Exception as e:
         return jsonify({'error': f'guide read failed: {e}'}), 500
 
+    # See /api/guide/stream for the rationale: passing the 24 KB guide via
+    # `--append-system-prompt` blows past Windows' 32 KB CreateProcess limit.
+    # Drop it as CLAUDE.md so Claude auto-loads it as project context instead.
+    cwd = _playdo_cwd()
+    try:
+        guide_md = Path(cwd) / 'CLAUDE.md'
+        if not guide_md.exists() or guide_md.read_text(encoding='utf-8') != system_prompt:
+            guide_md.write_text(system_prompt, encoding='utf-8')
+    except Exception:
+        pass
+
     # Build the user prompt: prior turns (if any) + current question.
     if history:
         lines = ['Previous exchange in this conversation:']
@@ -1106,7 +1129,6 @@ def guide_ask():
         full_question = full_question[-8000:]
 
     cmd = [_resolve_claude(), '-p', full_question,
-           '--append-system-prompt', system_prompt,
            '--max-turns', '1']
     try:
         result = subprocess.run(
