@@ -86,6 +86,63 @@ function Setup-Node {
     return $false
 }
 
+# Returns $true iff bash.exe is reachable OR PowerShell 7+ is the host. Claude
+# Code on Windows shells out to bash for its scripting and refuses to run
+# without one. Git for Windows ships bash.exe; PowerShell 7+ also satisfies.
+function Test-ClaudeRuntimeShell {
+    if (Get-Command bash.exe -ErrorAction SilentlyContinue) { return $true }
+    if ($PSVersionTable.PSVersion.Major -ge 7) { return $true }
+    foreach ($p in @(
+        "$env:ProgramFiles\Git\bin\bash.exe",
+        "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
+        "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe"
+    )) {
+        if (Test-Path $p) {
+            # Git is installed but its bin dir isn't on PATH — add it for this
+            # session so subsequent `bash` lookups succeed.
+            $bin = Split-Path $p
+            if (-not (";${env:Path};".ToLower().Contains((";$bin;").ToLower()))) {
+                $env:Path = "$bin;$env:Path"
+            }
+            return $true
+        }
+    }
+    return $false
+}
+
+# Ensure Claude Code can run on Windows: install Git for Windows (provides
+# bash.exe) if missing. Claude shells out to bash internally; without it the
+# CLI errors with "Claude Code on Windows requires either Git for Windows or
+# PowerShell" the moment we hand off — this preflight catches that BEFORE we
+# spawn the install-prompt subprocess.
+function Setup-ClaudeRuntimeShell {
+    if (Test-ClaudeRuntimeShell) { return $true }
+
+    Write-Host 'Claude Code needs bash.exe (Git for Windows) or PowerShell 7+ to run.' -ForegroundColor Yellow
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host 'winget not available — cannot auto-install Git for Windows.' -ForegroundColor Red
+        Write-Host 'Install Git for Windows manually from https://git-scm.com/downloads/win and re-run.'
+        return $false
+    }
+    Write-Host 'Installing Git for Windows via winget (also gives Claude its bash runtime)...'
+    try {
+        winget install --id Git.Git -e --silent --accept-source-agreements --accept-package-agreements
+    } catch {
+        Write-Host "winget install Git failed: $_" -ForegroundColor Red
+        Write-Host 'Install Git for Windows manually from https://git-scm.com/downloads/win and re-run.'
+        return $false
+    }
+    Refresh-Path
+    if (Test-ClaudeRuntimeShell) {
+        Write-Host 'OK Git for Windows / bash available' -ForegroundColor Green
+        Write-Host ''
+        return $true
+    }
+    Write-Host 'Git installed but bash.exe still not on PATH.' -ForegroundColor Red
+    Write-Host 'Open a new PowerShell window and re-run this installer.'
+    return $false
+}
+
 # Returns $true iff `claude --version` runs cleanly with non-empty output.
 # This is the *real* working-state check — Get-Command alone only proves a
 # binary is on PATH, not that it actually runs (the same trap that bit us on
@@ -215,6 +272,15 @@ if (Test-ClaudeWorks) {
     $claudeVersion = (& claude --version 2>&1 | Select-Object -First 1)
     Write-Host "OK Claude CLI: $claudeVersion" -ForegroundColor Green
     Write-Host ''
+}
+
+# ── Step 1.4: Verify Claude Code can run (bash.exe / PowerShell 7) ─────────
+
+# Skip on non-Windows (the .ps1 only runs on Windows but be defensive).
+if (-not (Setup-ClaudeRuntimeShell)) {
+    Write-Host ''
+    Write-Host 'Could not provide a runtime shell for Claude Code. Aborting.' -ForegroundColor Red
+    exit 1
 }
 
 # ── Step 1.5: Verify Claude CLI is authenticated ───────────────────────────
