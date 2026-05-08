@@ -1,6 +1,13 @@
 @echo off
 setlocal enabledelayedexpansion
 
+REM Switch the current cmd window to UTF-8 codepage so any non-ASCII text
+REM in echo statements (em-dashes, smart quotes, accented chars in package
+REM names, etc.) renders correctly. Default Windows cmd uses OEM codepages
+REM (CP437 / CP850 / etc.) that mangle UTF-8 bytes into garbage characters.
+REM Suppressing chcp's "Active code page" stdout line - it would just be noise.
+chcp 65001 >nul
+
 REM ============================================================
 REM  Clayrune Installer (Windows)
 REM
@@ -58,7 +65,7 @@ echo   Installer paused.
 echo.
 echo   Most often this means Claude CLI isn't logged in yet. The full
 echo   output above shows what happened. We can handle the login for
-echo   you — just pick L below.
+echo   you - just pick L below.
 echo.
 echo ============================================================
 echo.
