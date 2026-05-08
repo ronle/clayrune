@@ -48,16 +48,18 @@ echo Starting installer...
 echo.
 
 REM Hand off to PowerShell with execution policy bypass for THIS session only.
-REM We pre-set CLAYRUNE_PROMPT_URL so the bootstrap fetches the install prompt
-REM from the GitHub raw URL until clayrune.io DNS is configured. Once the
-REM domain is live, the inner default URL takes over and this line can be
-REM dropped.
 REM
-REM IMPORTANT: this is a single line — no `^` continuation. Multi-line cmd
+REM IMPORTANT: this is a single line - no `^` continuation. Multi-line cmd
 REM commands with `^` silently break when the .bat has Unix line endings
 REM (which can happen if downloaded raw and the file's EOLs get mangled).
 REM Keeping it on one line is more verbose but bulletproof.
-powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "$env:CLAYRUNE_PROMPT_URL = 'https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md'; iwr https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.ps1 -useb | iex"
+REM
+REM Cache-bust: GitHub raw uses a CDN that can hold a stale copy for several
+REM minutes after a push. The `?t=<ticks>` query param is ignored by the
+REM origin but forces the CDN to fetch fresh, so users always run the latest
+REM install.ps1 (critical when shipping a hotfix while the previous version
+REM is broken on a fresh VM).
+powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "$cb = [DateTimeOffset]::Now.ToUnixTimeSeconds(); iwr \"https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.ps1?t=$cb\" -useb | iex"
 
 set "PSEXIT=%ERRORLEVEL%"
 
