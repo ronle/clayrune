@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 import uuid
 import mimetypes
 import subprocess
@@ -39,6 +40,55 @@ if sys.platform == 'win32':
     _STARTUPINFO = subprocess.STARTUPINFO()
     _STARTUPINFO.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     _STARTUPINFO.wShowWindow = 0  # SW_HIDE
+
+
+# ── Claude CLI binary resolution ────────────────────────────────────────────
+# On Windows, npm-installed Claude CLI is `claude.cmd` (a .cmd shim) — there's
+# no `claude.exe`. Python's subprocess.Popen(['claude', ...]) only looks for
+# .exe by default (CreateProcess ignores PATHEXT), so it FileNotFoundErrors
+# even when `claude` works fine in cmd / powershell. shutil.which respects
+# PATHEXT and returns the full path to the .cmd shim, which subprocess CAN
+# execute (Windows recognizes .cmd extension and dispatches via cmd.exe).
+#
+# Re-resolved on each call (cheap) so a Claude install AFTER server startup
+# is picked up without restart.
+def _resolve_claude():
+    """Return absolute path to the claude executable, or 'claude' as last
+    resort (will then FileNotFoundError, matching prior behavior)."""
+    found = shutil.which('claude')
+    if found:
+        return found
+    # Fallbacks for common install locations not yet on PATH (e.g. winget
+    # adds claude to PATH for new shells, but the running server still has
+    # the pre-install PATH).
+    if sys.platform == 'win32':
+        candidates = [
+            Path(os.environ.get('APPDATA', '')) / 'npm' / 'claude.cmd',
+            Path(os.environ.get('USERPROFILE', '')) / '.claude' / 'bin' / 'claude.cmd',
+            Path(os.environ.get('USERPROFILE', '')) / '.claude' / 'bin' / 'claude.exe',
+            Path(os.environ.get('USERPROFILE', '')) / 'AppData' / 'Roaming' / 'npm' / 'claude.cmd',
+        ]
+    else:
+        home = Path(os.environ.get('HOME', str(Path.home())))
+        candidates = [
+            home / '.claude' / 'bin' / 'claude',
+            home / '.local' / 'bin' / 'claude',
+            home / '.npm-global' / 'bin' / 'claude',
+            Path('/usr/local/bin/claude'),
+            Path('/opt/homebrew/bin/claude'),
+        ]
+    for c in candidates:
+        try:
+            if c.exists():
+                return str(c)
+        except Exception:
+            pass
+    return 'claude'
+
+
+def _claude(*args):
+    """Build a subprocess command list with claude resolved to its full path."""
+    return [_resolve_claude(), *args]
 
 
 def _pid_is_alive(pid):
@@ -917,7 +967,7 @@ def guide_stream():
     if len(full_question) > 8000:
         full_question = full_question[-8000:]
 
-    cmd = ['claude', '-p', full_question,
+    cmd = [_resolve_claude(), '-p', full_question,
            '--append-system-prompt', system_prompt,
            '--max-turns', '1',
            '--print', '--verbose', '--output-format', 'stream-json']
@@ -1055,7 +1105,7 @@ def guide_ask():
     if len(full_question) > 8000:
         full_question = full_question[-8000:]
 
-    cmd = ['claude', '-p', full_question,
+    cmd = [_resolve_claude(), '-p', full_question,
            '--append-system-prompt', system_prompt,
            '--max-turns', '1']
     try:
@@ -1188,7 +1238,7 @@ def generate_project_summary(project_id):
     )
 
     model = CONFIG.get('condense_model', '') or 'haiku'
-    cmd = ['claude', '-p', prompt, '--model', model, '--output-format', 'json',
+    cmd = [_resolve_claude(), '-p', prompt, '--model', model, '--output-format', 'json',
            '--dangerously-skip-permissions']
 
     try:
@@ -1404,12 +1454,24 @@ def create_sample_project():
     if filepath.exists():
         return jsonify({'ok': True, 'id': pid, 'existed': True})
 
+    # Auto-assign a workspace folder so the agent can dispatch immediately.
+    # Without this the user opens the sample project, types a prompt, and
+    # gets blocked on "Set project_path to enable agent dispatch" — defeats
+    # the point of a tour-time walkthrough.
+    base = Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
+    workspace = base / 'sample-project'
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
     ts = now_iso()
     project = {
         'id': pid,
         'name': 'Sample Project',
         'domain': 'general',
         'status': 'active',
+        'project_path': str(workspace),
         'description': 'A sample project created during the walkthrough. Feel free to explore, modify, or delete it!',
         'current_task': 'Learn how to use Clayrune',
         'next_action': 'Try adding tasks to the backlog',
@@ -2470,7 +2532,7 @@ def _auto_recover_failed_resume(session):
 
     try:
         if mode == 'B':
-            cmd = ['claude', *_build_claude_flags(p, streaming=True),
+            cmd = [_resolve_claude(), *_build_claude_flags(p, streaming=True),
                    '--append-system-prompt', context]
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -2506,7 +2568,7 @@ def _auto_recover_failed_resume(session):
 
         else:
             # Mode A
-            cmd = ['claude', '-p', fresh_task, *_build_claude_flags(p),
+            cmd = [_resolve_claude(), '-p', fresh_task, *_build_claude_flags(p),
                    '--append-system-prompt', context]
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -2729,7 +2791,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
     revive_note = f'[Session revived from agent log — resuming claude_session={claude_sid[:12]}]'
 
     if use_streaming:
-        cmd = ['claude', *resume_flags, *_build_claude_flags(p, streaming=True)]
+        cmd = [_resolve_claude(), *resume_flags, *_build_claude_flags(p, streaming=True)]
         if not resume_flags and context:
             cmd.extend(['--append-system-prompt', context])
         try:
@@ -2786,11 +2848,11 @@ def _revive_from_agent_log(project_id, session_id, message, p):
 
     # Mode A
     if resume_flags:
-        cmd = ['claude', *resume_flags, '-p', revival_msg, *_build_claude_flags(p)]
+        cmd = [_resolve_claude(), *resume_flags, '-p', revival_msg, *_build_claude_flags(p)]
     else:
         if not context:
             context = _build_agent_context(p)
-        cmd = ['claude', '-p', revival_msg, *_build_claude_flags(p),
+        cmd = [_resolve_claude(), '-p', revival_msg, *_build_claude_flags(p),
                '--append-system-prompt', context]
     try:
         proc = subprocess.Popen(
@@ -3063,7 +3125,7 @@ def _auto_dispatch_followup(session, message):
     else:
         resume_flags = ['--continue']
 
-    cmd = ['claude', *resume_flags, '-p', message, *_build_claude_flags(p)]
+    cmd = [_resolve_claude(), *resume_flags, '-p', message, *_build_claude_flags(p)]
 
     try:
         proc = subprocess.Popen(
@@ -3200,7 +3262,7 @@ def _dispatch_condense(project):
     prompt = '\n'.join(prompt_parts)
 
     model = CONFIG.get('condense_model', '') or 'sonnet'
-    cmd = ['claude', '-p', prompt, '--model', model, '--max-turns', '5',
+    cmd = [_resolve_claude(), '-p', prompt, '--model', model, '--max-turns', '5',
            '--print', '--verbose', '--output-format', 'stream-json',
            '--dangerously-skip-permissions']
 
@@ -3306,10 +3368,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
         if use_streaming:
             # Mode B: persistent process with stream-json stdin
             if resume_id:
-                cmd = ['claude', '-r', resume_id, *_build_claude_flags(p, streaming=True)]
+                cmd = [_resolve_claude(), '-r', resume_id, *_build_claude_flags(p, streaming=True)]
             else:
                 context = _build_agent_context(p, incognito=incognito)
-                cmd = ['claude', *_build_claude_flags(p, streaming=True),
+                cmd = [_resolve_claude(), *_build_claude_flags(p, streaming=True),
                        '--append-system-prompt', context]
 
             proc = subprocess.Popen(
@@ -3369,10 +3431,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
         else:
             # Mode A: spawn-per-turn (existing behavior)
             if resume_id:
-                cmd = ['claude', '-r', resume_id, '-p', task, *_build_claude_flags(p)]
+                cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *_build_claude_flags(p)]
             else:
                 context = _build_agent_context(p, incognito=incognito)
-                cmd = ['claude', '-p', task, *_build_claude_flags(p),
+                cmd = [_resolve_claude(), '-p', task, *_build_claude_flags(p),
                        '--append-system-prompt', context]
 
             proc = subprocess.Popen(
@@ -3758,7 +3820,7 @@ def agent_followup(project_id):
                     except Exception:
                         pass
                 # Build command while under lock, spawn outside to avoid blocking
-                cmd = ['claude', *resume_flags,
+                cmd = [_resolve_claude(), *resume_flags,
                        *_build_claude_flags(p, streaming=True)]
                 if not resume_flags and context:
                     cmd.extend(['--append-system-prompt', context])
@@ -3895,7 +3957,7 @@ def agent_followup(project_id):
                     resume_flags = ['-r', claude_sid]
             else:
                 resume_flags = ['--continue']
-            cmd = ['claude', *resume_flags, '-p', followup_msg, *_build_claude_flags(p)]
+            cmd = [_resolve_claude(), *resume_flags, '-p', followup_msg, *_build_claude_flags(p)]
             if not resume_flags:
                 cmd.extend(['--append-system-prompt', context])
             proc = subprocess.Popen(
@@ -4079,7 +4141,7 @@ def agent_interrupt(project_id):
                 context = _build_agent_context(p)
 
             if is_mode_b:
-                cmd = ['claude', *resume_flags,
+                cmd = [_resolve_claude(), *resume_flags,
                        *_build_claude_flags(p, streaming=True)]
                 if not resume_flags and context:
                     cmd.extend(['--append-system-prompt', context])
@@ -4115,12 +4177,12 @@ def agent_interrupt(project_id):
             else:
                 # Mode A
                 if resume_flags:
-                    cmd = ['claude', *resume_flags, '-p', respawn_msg,
+                    cmd = [_resolve_claude(), *resume_flags, '-p', respawn_msg,
                            *_build_claude_flags(p)]
                 else:
                     if not context:
                         context = _build_agent_context(p)
-                    cmd = ['claude', '-p', respawn_msg, *_build_claude_flags(p),
+                    cmd = [_resolve_claude(), '-p', respawn_msg, *_build_claude_flags(p),
                            '--append-system-prompt', context]
 
                 proc = subprocess.Popen(
@@ -5577,7 +5639,7 @@ def hivemind_workstream_spawn(hivemind_id, ws_id):
     )
 
     # Build command — Mode A (spawn-per-turn) for workers
-    cmd = ['claude', '-p', task, '--print', '--verbose', '--output-format', 'stream-json',
+    cmd = [_resolve_claude(), '-p', task, '--print', '--verbose', '--output-format', 'stream-json',
            '--dangerously-skip-permissions', '--append-system-prompt', worker_context]
     if model:
         cmd.extend(['--model', model])
@@ -5798,7 +5860,7 @@ def _hm_dispatch_orchestrator(hivemind_id, task_type, extra_context=''):
     )
 
     model = manifest.get('config', {}).get('orchestrator_model', '') or 'sonnet'
-    cmd = ['claude', '-p', prompt, '--model', model, '--max-turns', '5',
+    cmd = [_resolve_claude(), '-p', prompt, '--model', model, '--max-turns', '5',
            '--print', '--verbose', '--output-format', 'stream-json',
            '--dangerously-skip-permissions']
 
@@ -5914,7 +5976,7 @@ def _hm_auto_spawn_workers(hivemind_id):
             f"Begin your analysis. Follow the two-phase protocol described in your system prompt."
         )
 
-        cmd = ['claude', '-p', task, '--print', '--verbose', '--output-format', 'stream-json',
+        cmd = [_resolve_claude(), '-p', task, '--print', '--verbose', '--output-format', 'stream-json',
                '--dangerously-skip-permissions', '--append-system-prompt', worker_context]
         if model:
             cmd.extend(['--model', model])
@@ -6920,6 +6982,83 @@ def update_config():
         except Exception as e:
             return jsonify({'error': f'failed to save config: {e}'}), 500
     return jsonify({'ok': True, 'updated': list(updated.keys())})
+
+
+# ── Folder browse (for project_path picker) ─────────────────────────────────
+
+@app.route('/api/browse/folders')
+def browse_folders():
+    """List immediate subdirectories of the requested path. Used by the
+    project_path picker UI so users can choose a folder without typing.
+    Hidden / dot-prefixed dirs are filtered out."""
+    raw = (request.args.get('path') or '').strip()
+    if not raw:
+        # Default landing: the auto-workspace base (creates if missing).
+        base = Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        target = base
+    else:
+        target = Path(raw).expanduser()
+
+    try:
+        target = target.resolve()
+    except Exception:
+        return jsonify({'error': 'invalid path'}), 400
+
+    if not target.exists() or not target.is_dir():
+        return jsonify({'error': 'not a directory', 'path': str(target)}), 404
+
+    folders = []
+    try:
+        for entry in sorted(target.iterdir(), key=lambda p: p.name.lower()):
+            try:
+                if not entry.is_dir():
+                    continue
+                if entry.name.startswith('.'):
+                    continue
+                folders.append({'name': entry.name, 'path': str(entry)})
+            except Exception:
+                continue
+    except PermissionError:
+        return jsonify({'error': 'permission denied', 'path': str(target)}), 403
+    except Exception as e:
+        return jsonify({'error': str(e), 'path': str(target)}), 500
+
+    parent = str(target.parent) if target.parent != target else None
+    home = str(Path.home())
+    base = str(Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl')))
+    return jsonify({
+        'path': str(target),
+        'parent': parent,
+        'folders': folders,
+        'home': home,
+        'workspace_base': base,
+    })
+
+
+@app.route('/api/browse/create_folder', methods=['POST'])
+def browse_create_folder():
+    """Create a new subdirectory inside the given parent. Used by the picker
+    so users can spin up a fresh workspace folder without leaving the UI."""
+    data = request.get_json() or {}
+    parent = (data.get('parent') or '').strip()
+    name = (data.get('name') or '').strip()
+    if not parent or not name:
+        return jsonify({'error': 'parent and name required'}), 400
+    # Reject path-traversal / absolute names.
+    if any(c in name for c in ('/', '\\', ':')) or name in ('.', '..'):
+        return jsonify({'error': 'invalid folder name'}), 400
+    target = Path(parent).expanduser() / name
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return jsonify({'error': 'folder already exists', 'path': str(target)}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True, 'path': str(target)})
 
 
 # ── Domain settings ─────────────────────────────────────────────────────────
