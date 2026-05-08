@@ -92,9 +92,25 @@
       <div class="feat"><strong>🤖 Ask Playdo</strong><br><span>In-app guide that highlights UI as it explains</span></div>
     </div>
 
-    <h2>Install</h2>
+    <h2>Install — double-click way</h2>
 
-    <p>One command. Claude CLI installs Clayrune for you on your local machine.</p>
+    <p>Easiest option: download one file, double-click, walk through the prompts.</p>
+
+    <div class="install-block">
+      <div class="os">Windows</div>
+      <p style="margin:6px 0 12px 0;font-size:14px"><a href="/Clayrune-Setup.bat" download style="display:inline-block;background:var(--accent);color:#fff;padding:10px 18px;border-radius:5px;text-decoration:none;font-weight:600">⬇ Download Clayrune-Setup.bat</a></p>
+      <div class="note">Windows Defender SmartScreen may show an "unrecognized app" warning the first time. Click <strong>More info</strong> → <strong>Run anyway</strong>. The script is auditable — it's plain text you can read in any editor.</div>
+    </div>
+
+    <div class="install-block">
+      <div class="os">macOS</div>
+      <p style="margin:6px 0 12px 0;font-size:14px"><a href="/Clayrune-Setup.command" download style="display:inline-block;background:var(--accent);color:#fff;padding:10px 18px;border-radius:5px;text-decoration:none;font-weight:600">⬇ Download Clayrune-Setup.command</a></p>
+      <div class="note">After downloading, <strong>right-click → Open</strong> the first time (Gatekeeper blocks "unidentified developer" on a normal double-click). Future double-clicks work normally.</div>
+    </div>
+
+    <h2>Install — terminal way</h2>
+
+    <p>Prefer pasting one command? These do exactly what the double-click installers do, just in your terminal of choice.</p>
 
     <div class="install-block">
       <div class="os">macOS / Linux</div>
@@ -105,7 +121,7 @@
     <div class="install-block">
       <div class="os">Windows (PowerShell)</div>
       <pre>iwr https://clayrune.io/install.ps1 -useb | iex</pre>
-      <div class="note">Tested on Windows 11. May need <code>Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass</code> first if your policy is restrictive.</div>
+      <div class="note">May need <code>Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass</code> first if your policy is restrictive.</div>
     </div>
 
     <h2>What the installer does</h2>

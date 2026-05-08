@@ -25,3 +25,16 @@
 /start.bat
   Content-Type: text/plain; charset=utf-8
   Cache-Control: public, max-age=300
+
+# Double-click installer wrappers — served as octet-stream so they download
+# instead of rendering as text in the browser. The `download` attribute on
+# the anchor would suffice in modern browsers, but this is belt + suspenders.
+/Clayrune-Setup.bat
+  Content-Type: application/octet-stream
+  Content-Disposition: attachment; filename="Clayrune-Setup.bat"
+  Cache-Control: public, max-age=300
+
+/Clayrune-Setup.command
+  Content-Type: application/octet-stream
+  Content-Disposition: attachment; filename="Clayrune-Setup.command"
+  Cache-Control: public, max-age=300
