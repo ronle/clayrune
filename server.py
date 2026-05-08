@@ -6418,10 +6418,24 @@ def get_agent_log(project_id):
 
 
 def _enrich_run_entries(entries):
-    """Add ts_relative + started_relative for FE display, in place."""
+    """Add ts_relative + started_relative for FE display. Also fill in
+    `claude_session_id` for in-progress rows by looking up the live
+    `agent_sessions[session_id].claude_session_id` — these rows are written
+    at dispatch time before claude assigns a csid, and Mode B idle sessions
+    that never finalize would otherwise have an empty csid forever, leaving
+    the FE with no way to open the transcript even though it exists on disk.
+    """
     for e in entries:
         e['ts_relative'] = time_ago(e.get('ts'))
         e['started_relative'] = time_ago(e.get('started_at'))
+        if not e.get('claude_session_id'):
+            sid = e.get('session_id')
+            if sid:
+                live = agent_sessions.get(sid)
+                if live:
+                    live_csid = live.get('claude_session_id', '')
+                    if live_csid:
+                        e['claude_session_id'] = live_csid
     return entries
 
 

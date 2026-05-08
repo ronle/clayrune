@@ -13168,15 +13168,41 @@ function renderRunRows(runs, projectId) {
     // shutdown moment), which would render as "everything ran 12m ago".
     const ts = r.started_relative || r.started_at || r.ts_relative || r.ts || '';
     const statusIcon = _runStatusIcon(r.status);
-    const clickAction = csid
-      ? `openTranscriptViewer('${esc(projectId)}','${esc(csid)}','${esc(ts)}')`
-      : `showToast('No transcript available for this run', 3000)`;
+    const isLive = r.status === 'in_progress' || r.status === 'running' || r.status === 'idle';
+    let clickAction;
+    if (csid) {
+      clickAction = `openTranscriptViewer('${esc(projectId)}','${esc(csid)}','${esc(ts)}')`;
+    } else if (isLive) {
+      // No csid yet AND the run is alive — user wants to see live output. Jump
+      // to the project modal where the active session is rendering instead of
+      // showing a misleading "no transcript" toast.
+      clickAction = `_jumpToLiveRun('${esc(projectId)}','${esc(r.session_id || '')}')`;
+    } else {
+      clickAction = `showToast('No transcript saved for this run (claude session id missing)', 4000)`;
+    }
     return `<div class="run-row" onclick="${clickAction}" title="${esc(summary)}">
       <span class="run-row-ts">${esc(ts)}</span>
       <span class="run-row-status">${statusIcon}</span>
       <span class="run-row-summary">${esc(summary || '(no summary)')}</span>
     </div>`;
   }).join('');
+}
+
+// Open the project modal and switch to the active agent session for `sid`,
+// so the user sees live output for an in-progress run.
+function _jumpToLiveRun(projectId, sessionId) {
+  if (!projectId) {
+    showToast('No project for this run', 3000);
+    return;
+  }
+  openProjectModal(projectId);
+  setTimeout(() => {
+    if (sessionId && typeof activeAgentTab !== 'undefined') {
+      activeAgentTab[projectId] = sessionId;
+      modalActiveTab[projectId] = 'agent';
+      refreshModal();
+    }
+  }, 200);
 }
 
 const _transcriptCache = {};  // csid -> {messages, size, message_count}
