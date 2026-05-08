@@ -89,6 +89,18 @@ Behavior:
   remove the directory or set `CLAYRUNE_HOME` to a different path, and exit
   cleanly. Do not delete anything.
 
+**Mandatory post-clone verification**: after the clone/pull, confirm both of
+these paths exist on disk before printing `[STEP 2/6] OK`:
+
+- `<INSTALL_DIR>/installer/start.bat` (Windows) **or** `<INSTALL_DIR>/installer/start.command` (macOS) **or** `<INSTALL_DIR>/installer/start.sh` (Linux)
+- `<INSTALL_DIR>/server.py`
+
+If either is missing, the clone is broken — emit the failure block from
+"## On failure" and stop. **Do not proceed to subsequent steps.** Subsequent
+steps (especially STEP 5's launcher shortcut) assume the working tree is
+intact; creating a Desktop shortcut to a file that doesn't exist gives the
+user a broken icon.
+
 Then create `<INSTALL_DIR>/install.log` (or append if it exists) with a header:
 `=== Clayrune install: <ISO timestamp> | OS=<os> arch=<arch> ===`
 
@@ -128,14 +140,22 @@ Make them executable and create a clickable launcher that points to them.
 
 **Windows**:
 
-- The script `<INSTALL_DIR>\installer\start.bat` is already there.
+- **First**, verify `<INSTALL_DIR>\installer\start.bat` exists. If not,
+  STOP — the clone is broken; emit the failure block. Do not proceed to
+  create a shortcut pointing at a non-existent target (it would give the
+  user a broken icon and a "Windows cannot find" dialog on first click).
 - Create a Windows shortcut (`.lnk`) on the Desktop and in the Start Menu via
-  PowerShell:
+  PowerShell. The script below pre-checks the target one more time before
+  saving the shortcut — belt + suspenders:
   ```powershell
+  $target = "<INSTALL_DIR>\installer\start.bat"
+  if (-not (Test-Path $target)) {
+      throw "Cannot create shortcut: target $target does not exist."
+  }
   $WshShell = New-Object -ComObject WScript.Shell
   function New-Shortcut($path) {
       $sc = $WshShell.CreateShortcut($path)
-      $sc.TargetPath = "<INSTALL_DIR>\installer\start.bat"
+      $sc.TargetPath = $target
       $sc.WorkingDirectory = "<INSTALL_DIR>"
       $iconPath = "<INSTALL_DIR>\assets\clayrune.ico"
       if (Test-Path $iconPath) { $sc.IconLocation = $iconPath }
