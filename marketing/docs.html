@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs — Mission Control</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-screen-label="Docs">
+
+<nav class="nav">
+  <div class="wrap nav-inner">
+    <a href="index.html" class="logo"><span class="logo-mark">M</span>Mission Control</a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="docs.html" class="active">Docs</a>
+      <a href="download.html">Download</a>
+      <a href="about.html">About</a>
+    </div>
+    <div class="nav-spacer"></div>
+    <a href="https://github.com/ronle/mission-control" class="nav-github">Star on GitHub</a>
+  </div>
+</nav>
+
+<section class="page-hero">
+  <div class="wrap">
+    <span class="eyebrow">Documentation</span>
+    <h1>Get to know your team.</h1>
+    <p>Everything you need to install Mission Control, meet your first assistants, and start making your own.</p>
+  </div>
+</section>
+
+<div class="wrap docs-layout">
+  <aside class="docs-side">
+    <h5>Getting started</h5>
+    <a href="#install" class="active">Install</a>
+    <a href="#first-project">Your first project</a>
+    <a href="#settings">Settings &amp; theme</a>
+    <h5>Using Mission Control</h5>
+    <a href="#statuses">Understanding statuses</a>
+    <a href="#answering">Answering questions</a>
+    <a href="#custom">Custom assistants</a>
+    <h5>For developers</h5>
+    <a href="#advanced">Advanced mode</a>
+    <a href="#contribute">Contributing</a>
+  </aside>
+
+  <main class="docs-body">
+    <h2 id="install">Install</h2>
+    <p>Mission Control runs locally on macOS, Windows, and Linux. Head to the <a class="underline" href="download.html">Download page</a> to grab the right build.</p>
+    <pre><code># macOS (Homebrew)
+brew install ronle/tap/mission-control
+
+# Linux / manual
+curl -sSL https://get.missioncontrol.sh | sh</code></pre>
+    <div class="note"><strong>Note:</strong> You'll need an API key from your AI provider (Anthropic, OpenAI, or a local model). Mission Control will prompt for this on first run.</div>
+
+    <h2 id="first-project">Your first project</h2>
+    <p>On first launch, Mission Control sets up a sample <em>Birthday party planner</em> project and walks you through a four-step tour. Poke around without worry — the sample is safe to dismiss any time.</p>
+    <ol>
+      <li>Pick an assistant from the starter pack, or start blank.</li>
+      <li>Give your project a name and a one-line goal.</li>
+      <li>Hit <strong>Start</strong>. The assistant begins on its own.</li>
+      <li>When it needs you, its card turns amber.</li>
+    </ol>
+
+    <h2 id="settings">Settings &amp; theme</h2>
+    <p>Open <strong>⚙ Settings</strong> from the sidebar to change:</p>
+    <ul>
+      <li><strong>Theme</strong> — Soft dark or Warm</li>
+      <li><strong>Accent color</strong> — Sunset, Rose, Lilac, Lagoon, Ink</li>
+      <li><strong>Density</strong> — Cozy or Compact</li>
+      <li><strong>Voice</strong> — Casual or Professional</li>
+    </ul>
+
+    <h2 id="statuses">Understanding statuses</h2>
+    <p>Every card wears one of five statuses. That's it.</p>
+    <ul>
+      <li><strong>Working on it</strong> — the assistant is actively making progress</li>
+      <li><strong>Needs you</strong> — it has a question or decision it can't make alone</li>
+      <li><strong>Stuck</strong> — something broke; it needs help to recover</li>
+      <li><strong>All done</strong> — finished, ready for your review</li>
+      <li><strong>Resting</strong> — nothing on its plate right now</li>
+    </ul>
+
+    <h2 id="answering">Answering questions</h2>
+    <p>When a card turns amber, click the primary button. You'll see the question and a short set of choices. Pick one, add context if you want, and send. The assistant picks back up immediately.</p>
+
+    <h2 id="custom">Custom assistants</h2>
+    <p>An assistant is a single YAML file. Drop it in <code>~/.mission-control/assistants/</code> and it appears in the starter pack.</p>
+    <pre><code>name: Book Club Organizer
+emoji: 📚
+prompt: |
+  You help me run a monthly book club.
+  Pick books, schedule meetings, summarize discussions.
+tools:
+  - calendar
+  - email</code></pre>
+
+    <h2 id="advanced">Advanced mode</h2>
+    <p>Developers: toggle <strong>Advanced</strong> in Settings to unlock the original power-user dashboard — raw streams, plan approvals, token counters, schedules, memory files, and GitHub issues sync.</p>
+
+    <h2 id="contribute">Contributing</h2>
+    <p>Mission Control is open source under MIT. We welcome issues, PRs, translations, custom assistants, and documentation fixes of any size. See <a class="underline" href="https://github.com/ronle/mission-control/blob/master/CONTRIBUTING.md">CONTRIBUTING.md</a> on GitHub.</p>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-bottom" style="border:0; padding:0;">
+      <span>© 2026 Mission Control contributors · MIT licensed</span>
+      <span><a href="https://github.com/ronle/mission-control">GitHub</a></span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
