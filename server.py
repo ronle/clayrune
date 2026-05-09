@@ -914,6 +914,11 @@ def serve_asset(filename):
 @app.route('/marketing/<path:filename>')
 def serve_marketing(filename='index.html'):
     marketing_dir = Path(__file__).parent / 'marketing'
+    # Directory-style URLs (e.g. /marketing/v2/) — Flask hands us the path
+    # as 'v2/' but send_from_directory expects a file. Map to index.html.
+    target = (marketing_dir / filename)
+    if target.is_dir():
+        filename = filename.rstrip('/') + '/index.html'
     return send_from_directory(str(marketing_dir), filename)
 
 
