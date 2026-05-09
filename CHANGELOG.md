@@ -4,6 +4,49 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-08c] — Claydo state animations (thinking) + sheet-slicing pipeline
+
+First state-driven Claydo animation lands: when the user submits a
+question, the FAB and chat-avatar swap from the static idle PNG to
+an animated WebP that loops through 4 thinking poses (chin-on-hand
+->  eyes-closed -> chart in the code window -> COMPLETED checkmark).
+Reverts to idle when the answer is done or errors. Adds two new
+tools to make this repeatable for future states.
+
+`tools/sheet-to-frames.sh` (new): slice a 2x2 (or NxM) character
+sheet from Gemini / DALL-E / etc. into separate PNG frames.
+ffmpeg-based, preserves alpha, autodetects gutter widths so panel
+boundaries don't bleed into each other. Output: <name>_frames/frame_N.png.
+
+`tools/frames-to-animation.sh` (new): stitch a sequence of stills
+into a looping animated WebP (or GIF / APNG via -f). Takes any
+number of frame files, holds each for the configured duration
+(default 250ms), loops forever. Hardened for Git Bash on Windows
+where ffmpeg.exe needs Windows-format paths even though the shell
+uses POSIX paths -- two-step realpath + cygpath -w.
+
+Pipeline: Gemini sheet -> sheet-to-frames -> N PNGs ->
+frames-to-animation -> assets/claydo-<state>.webp -> drop into
+_CLAYDO_STATE_SRC map.
+
+`static/index.html` wiring:
+- `_CLAYDO_STATE_SRC` map: { idle: clayrune.png, thinking: claydo-thinking.webp }
+- `_setClaydoState(state)` helper: swaps both the FAB img AND the
+  chat-modal avatar (newly given id="claydo-avatar"). Skips DOM
+  writes when the basename hasn't changed so animated WebPs don't
+  reset their loop on incidental re-renders.
+- submitClaydo flips to 'thinking' on entry and back to 'idle' in
+  the finally block (covers success, error, and disconnect paths).
+
+Followups:
+- assets/claydo-thinking.webp has a white background because Gemini
+  didn't generate transparency. On the dark FAB background it shows
+  as a white square. Re-prompt for a transparent source, OR use
+  ffmpeg's colorkey filter to chroma-key it out post-hoc.
+- More states to add: error / answering / celebrating. Same pipeline
+  works -- generate sheet in Gemini, run the two scripts, append
+  to _CLAYDO_STATE_SRC.
+
 ## [2026-05-08b] — Video frame extraction for Claude Code sessions
 
 `tools/extract-frames.sh` (new) + `CLAUDE.md` (new at project root).

@@ -13130,7 +13130,7 @@ async function openClaydo() {
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 22px 12px 24px">
       <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
-        <img src="/assets/clayrune.png" alt="" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);object-fit:contain;background:var(--surface2)" draggable="false">
+        <img id="claydo-avatar" src="/assets/clayrune.png" alt="" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);object-fit:contain;background:var(--surface2)" draggable="false">
         <div style="min-width:0">
           <div style="font-size:14px;font-weight:700;color:var(--text)">Ask Claydo</div>
           <div style="font-size:11px;color:var(--text-faint)">Your in-app guide to Clayrune</div>
@@ -13160,6 +13160,28 @@ async function openClaydo() {
   setTimeout(() => document.getElementById('claydo-input')?.focus(), 50);
 }
 
+// Swap the mascot's image between idle / thinking / (future: error,
+// answering, celebrating). Updates BOTH the floating FAB and the avatar
+// inside the chat modal so the animation is visible regardless of which
+// surface the user is looking at. Source files are static stills (idle)
+// + animated WebPs (thinking et al.) so a state change is just an
+// img.src swap — the browser handles the loop without any JS player.
+const _CLAYDO_STATE_SRC = {
+  idle:     '/assets/clayrune.png',
+  thinking: '/assets/claydo-thinking.webp',
+};
+function _setClaydoState(state) {
+  const src = _CLAYDO_STATE_SRC[state] || _CLAYDO_STATE_SRC.idle;
+  const fabImg = document.querySelector('#claydo-fab img');
+  if (fabImg && fabImg.src.split('/').pop() !== src.split('/').pop()) {
+    fabImg.src = src;
+  }
+  const av = document.getElementById('claydo-avatar');
+  if (av && av.src.split('/').pop() !== src.split('/').pop()) {
+    av.src = src;
+  }
+}
+
 async function submitClaydo() {
   const input = document.getElementById('claydo-input');
   const send = document.getElementById('claydo-send');
@@ -13167,6 +13189,8 @@ async function submitClaydo() {
   if (!input || !histDiv) return;
   const question = input.value.trim();
   if (!question) return;
+
+  _setClaydoState('thinking');
 
   // User's message
   const userMsg = document.createElement('div');
@@ -13270,6 +13294,7 @@ async function submitClaydo() {
     send.disabled = false;
     input.focus();
     histDiv.scrollTop = histDiv.scrollHeight;
+    _setClaydoState('idle');
   }
 }
 
