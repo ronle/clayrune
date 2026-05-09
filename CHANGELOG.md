@@ -4,6 +4,39 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-08b] — Video frame extraction for Claude Code sessions
+
+`tools/extract-frames.sh` (new) + `CLAUDE.md` (new at project root).
+
+Claude (this model) doesn't read videos natively — only images, PDFs,
+notebooks. When a user attaches an `.mp4` (typically as
+`data/uploads/agent_*.mp4` from Mission Control's upload pipeline) we'd
+just say "I can't see this." Now there's a one-command path that gets
+the model useful frames:
+
+- **`tools/extract-frames.sh <video> [fps] [max_frames]`** — wraps ffmpeg.
+  Defaults to 2 fps capped at 24 frames; writes
+  `<basename>_frames/frame_001.png ... frame_NNN.png` next to the source.
+  When the naive fps would exceed `max_frames`, switches to even
+  sampling across the full duration so we get coverage rather than just
+  the opening clip. Prints the output paths so the caller can grep.
+- Tells the user how to install ffmpeg per OS if it's not on PATH.
+- **`CLAUDE.md`** at the repo root: a one-paragraph instruction that
+  any Claude Code session running in this repo automatically picks up
+  ("when given a video file, run the extractor first"). No more
+  "I can't see videos" friction during dev work.
+
+Why this design over alternatives:
+- Not server-side: keeping it as a dev-time utility means it doesn't
+  depend on MC running, doesn't slow down upload, and works for any
+  video the user wants Claude to look at, not just MC uploads.
+- Not auto-extracting in the upload handler: most videos uploaded to
+  MC are user reference material the agent doesn't need to see; we'd
+  burn disk on every reference clip.
+- Not video-native models (Gemini / GPT-4o): the frame-extract approach
+  preserves the same Claude session, no provider switch, no separate
+  context. Costs an ffmpeg invocation per video, which is free.
+
 ## [2026-05-07c] — Ask Playdo helper + walkthrough rewrite + USER_GUIDE.md
 
 Three pieces shipped together to close the "new user has no idea what's possible" gap:
