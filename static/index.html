@@ -293,6 +293,43 @@
   }
   .sidebar-item:hover { background: var(--surface2); color: var(--text); }
   .sidebar-item.active { background: var(--accent-dim); color: var(--accent); }
+  .sidebar-item { position: relative; }
+  /* "Update available" badge: small accent-colored dot on the icon. Pulses
+     gently to draw attention without being aggressive. Only present on
+     items with .has-update (set by checkClayruneUpdateAvailable). */
+  .sidebar-item.has-update::after {
+    content: '';
+    position: absolute;
+    top: 6px; right: 6px;
+    width: 8px; height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--bg);
+    animation: si-update-pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes si-update-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.55; transform: scale(0.85); }
+  }
+  /* Toast variant with action buttons (used by the update-available toast). */
+  .toast.toast-action {
+    flex-direction: column; align-items: stretch;
+    background: var(--surface); border: 1px solid var(--accent);
+    padding: 14px 16px; min-width: 320px; max-width: 380px;
+  }
+  .toast-action .toast-msg { margin-bottom: 10px; }
+  .toast-action .toast-actions {
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+  .toast-action .toast-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 12px; border-radius: 4px;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  .toast-action .toast-btn:hover { border-color: var(--accent); }
+  .toast-action .toast-btn.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
   .sidebar-item .si-icon {
     width: 24px; height: 24px; display: flex;
     align-items: center; justify-content: center;
@@ -5902,6 +5939,122 @@ function showToast(message, durationMs = 5000) {
     el.classList.add('toast-out');
     el.addEventListener('animationend', () => el.remove());
   }, durationMs);
+}
+
+// Action toast: a richer toast variant with buttons. Used for the
+// proactive "update available" notification + future similar prompts.
+// Returns the element so callers can dismiss it programmatically.
+//
+// actions: [{label: '...', primary: true|false, onclick: fn}]
+// dismissOnAction: if true (default), clicking any action closes the toast.
+function showActionToast(message, actions, opts = {}) {
+  const container = document.getElementById('toast-container');
+  if (!container) return null;
+  const el = document.createElement('div');
+  el.className = 'toast toast-action';
+  const msg = document.createElement('div');
+  msg.className = 'toast-msg';
+  msg.innerHTML = message; // intentional: callers control the markup
+  const row = document.createElement('div');
+  row.className = 'toast-actions';
+  const dismissOnAction = opts.dismissOnAction !== false;
+  const close = () => {
+    el.classList.add('toast-out');
+    el.addEventListener('animationend', () => el.remove());
+  };
+  (actions || []).forEach(a => {
+    const b = document.createElement('button');
+    b.className = 'toast-btn' + (a.primary ? ' primary' : '');
+    b.textContent = a.label;
+    b.onclick = () => {
+      try { a.onclick && a.onclick(); } catch (e) {}
+      if (dismissOnAction) close();
+    };
+    row.appendChild(b);
+  });
+  el.appendChild(msg);
+  el.appendChild(row);
+  container.appendChild(el);
+  if (opts.autoDismissMs) {
+    setTimeout(close, opts.autoDismissMs);
+  }
+  return el;
+}
+
+// ── Proactive Clayrune-update notification ──────────────────────────────────
+// Polls the server's CACHED update status (cheap, no git fetch on the
+// dashboard side -- the server's background loop refreshes every 6h).
+// When an update is available:
+//   - Adds .has-update on the Settings sidebar entry (always visible)
+//   - Shows a one-time toast IF this commit's notification hasn't been
+//     dismissed yet (localStorage 'mc_update_dismissed_for' tracks the
+//     remote_commit the user already saw)
+//   - "Remind me later" defers re-showing the toast for 24h regardless of
+//     commit (localStorage 'mc_update_remind_after_ts')
+//
+// User clicks "Update now" → opens Settings; the existing Update Clayrune
+// row handles the actual git pull + restart.
+async function checkClayruneUpdateAvailable() {
+  let data;
+  try {
+    const res = await fetch(API_BASE + '/api/system/update/cached');
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (e) { return; }
+
+  // Reflect on sidebar regardless of toast state — passive, always honest.
+  const settingsItem = document.querySelector('.sidebar-item[data-nav="settings"]');
+  if (settingsItem) {
+    settingsItem.classList.toggle('has-update', !!data.update_available);
+  }
+
+  if (!data.update_available || !data.remote_commit) return;
+
+  // Dismissal honor checks
+  const dismissedFor = localStorage.getItem('mc_update_dismissed_for');
+  if (dismissedFor === data.remote_commit) return; // already saw THIS commit
+
+  const remindAfter = parseInt(localStorage.getItem('mc_update_remind_after_ts') || '0', 10);
+  if (remindAfter && Date.now() < remindAfter) return; // snoozed window
+
+  // Build a brief message: "<N> commit(s) behind · <newcommit>"
+  const n = data.behind || 0;
+  const cur = (data.commit || '').slice(0, 7);
+  const remote = (data.remote_commit || '').slice(0, 7);
+  const msg = `<strong>Clayrune update available</strong><br>` +
+              `<span style="color:var(--text-faint);font-size:12px">` +
+              `${n} commit${n === 1 ? '' : 's'} behind &middot; ` +
+              `${esc(cur)} → ${esc(remote)}</span>`;
+
+  showActionToast(msg, [
+    {
+      label: 'Later',
+      onclick: () => {
+        // Snooze 24h
+        localStorage.setItem('mc_update_remind_after_ts', String(Date.now() + 24 * 3600 * 1000));
+      },
+    },
+    {
+      label: 'Dismiss',
+      onclick: () => {
+        // Don't bug the user again about THIS specific commit. They'll get
+        // a fresh toast when a new commit lands.
+        localStorage.setItem('mc_update_dismissed_for', data.remote_commit);
+      },
+    },
+    {
+      label: 'Update',
+      primary: true,
+      onclick: () => {
+        // Open Settings; the existing Update Clayrune row handles the
+        // actual pull + restart prompt.
+        try { sidebarNav('settings'); } catch (e) {}
+        // Clear any prior dismissal for this commit so it doesn't reappear
+        // as "dismissed" if they bail out of the Settings flow.
+        localStorage.removeItem('mc_update_dismissed_for');
+      },
+    },
+  ], { dismissOnAction: true });
 }
 
 function timeAgoJS(ts) {
@@ -11662,6 +11815,12 @@ async function performClayruneUpdate() {
     if (data.restart_recommended) {
       btn.onclick = () => { closeModalById('__settings'); openRestartConfirmation(); };
     }
+    // Update succeeded -- clear the sidebar dot + reset the dismissal markers
+    // so the NEXT update gets a fresh toast cleanly.
+    const settingsItem = document.querySelector('.sidebar-item[data-nav="settings"]');
+    if (settingsItem) settingsItem.classList.remove('has-update');
+    localStorage.removeItem('mc_update_dismissed_for');
+    localStorage.removeItem('mc_update_remind_after_ts');
   } catch (e) {
     hint.textContent = 'Update error: ' + (e.message || e);
     btn.textContent = 'Failed';
@@ -14611,6 +14770,11 @@ fetchProjects().then(async () => {
   fetchGlobalUsage();
   refreshScheduleBanner();
   renderSidebarProjects();
+  // Proactive update-available indicator. Reads a CACHED status from the
+  // server (no git fetch on this code path — server's daemon refreshes
+  // every 6h). Sets a sidebar dot on Settings and shows a one-time toast
+  // when a new commit becomes available; respects dismiss + snooze.
+  checkClayruneUpdateAvailable();
   // Auto-start walkthrough on first run (zero REAL projects, never completed).
   // Filter out the auto-created `_incognito` pseudo-project — it always exists
   // even on fresh installs, so counting it would suppress the walkthrough on

@@ -9436,6 +9436,112 @@ def system_update_status():
     })
 
 
+# ── Background update-check daemon ──────────────────────────────────────────
+# Runs `git fetch` every 6h and caches the answer. Lets the dashboard show a
+# passive "update available" badge without doing a 12-second git operation on
+# every page load. Settings -> Update Clayrune still does a fresh fetch via
+# /api/system/update/status when the user actively asks.
+
+_UPDATE_CHECK_LOCK = threading.Lock()
+_UPDATE_CHECK_CACHE = {
+    'last_check_ts': 0,           # 0 = never checked yet
+    'is_git_repo': True,
+    'branch': '',
+    'commit': '',                  # local HEAD short SHA
+    'remote_commit': '',           # origin/<branch> short SHA at last fetch
+    'behind': 0,
+    'ahead': 0,
+    'has_local_changes': False,
+    'update_available': False,
+    'recent_log': '',              # `git log HEAD..origin -5 --oneline`
+}
+_UPDATE_CHECK_INTERVAL_S = 6 * 3600   # 6 hours
+_UPDATE_CHECK_BOOT_DELAY_S = 60       # wait 1 min after server start
+
+
+def _refresh_update_cache():
+    """Run git fetch + recompute the update status, store in
+    _UPDATE_CHECK_CACHE. Idempotent; safe to call from any thread."""
+    repo_root = Path(__file__).parent
+    if not (repo_root / '.git').exists():
+        with _UPDATE_CHECK_LOCK:
+            _UPDATE_CHECK_CACHE.update({
+                'last_check_ts': _time.time(),
+                'is_git_repo': False,
+            })
+        return
+
+    rc, sha = _git(['rev-parse', '--short', 'HEAD'], repo_root)
+    current_commit = sha if rc == 0 else 'unknown'
+    rc, branch = _git(['rev-parse', '--abbrev-ref', 'HEAD'], repo_root)
+    current_branch = branch if rc == 0 else 'unknown'
+
+    _git(['fetch', '--quiet', 'origin'], repo_root, timeout=12)
+    rc, ahead_behind = _git(
+        ['rev-list', '--left-right', '--count', f'origin/{current_branch}...HEAD'],
+        repo_root,
+    )
+    behind = ahead = 0
+    if rc == 0 and ahead_behind:
+        try:
+            behind, ahead = (int(x) for x in ahead_behind.split())
+        except Exception:
+            pass
+
+    rc, status_out = _git(['status', '--porcelain'], repo_root)
+    has_local_changes = bool(status_out)
+
+    rc, remote_sha = _git(['rev-parse', '--short', f'origin/{current_branch}'], repo_root)
+    remote_commit = remote_sha if rc == 0 else ''
+
+    rc, log_out = _git(
+        ['log', f'HEAD..origin/{current_branch}', '-5', '--pretty=format:%h %s'],
+        repo_root,
+    )
+    recent_log = log_out if rc == 0 else ''
+
+    with _UPDATE_CHECK_LOCK:
+        _UPDATE_CHECK_CACHE.update({
+            'last_check_ts': _time.time(),
+            'is_git_repo': True,
+            'branch': current_branch,
+            'commit': current_commit,
+            'remote_commit': remote_commit,
+            'behind': behind,
+            'ahead': ahead,
+            'has_local_changes': has_local_changes,
+            'update_available': behind > 0 and not has_local_changes and ahead == 0,
+            'recent_log': recent_log,
+        })
+
+
+def _update_check_loop():
+    """Daemon thread: refresh the update cache every _UPDATE_CHECK_INTERVAL_S
+    seconds. First check fires after _UPDATE_CHECK_BOOT_DELAY_S so we don't
+    fight server startup."""
+    _time.sleep(_UPDATE_CHECK_BOOT_DELAY_S)
+    while True:
+        try:
+            _refresh_update_cache()
+        except Exception as e:
+            print(f"[update-check] loop error: {e}", flush=True)
+        _time.sleep(_UPDATE_CHECK_INTERVAL_S)
+
+
+@app.route('/api/system/update/cached')
+def system_update_cached():
+    """Cheap snapshot of the update cache. No git operations -- just reads
+    memory. Frontend polls this on dashboard load to decide whether to show
+    the "update available" badge / toast.
+
+    For a fresh fetch (manual "Check now" path), use /api/system/update/status.
+    """
+    with _UPDATE_CHECK_LOCK:
+        snap = dict(_UPDATE_CHECK_CACHE)
+    snap['stale_seconds'] = int(_time.time() - snap['last_check_ts']) if snap['last_check_ts'] else None
+    return jsonify(snap)
+
+
 @app.route('/api/system/update', methods=['POST'])
 def system_update():
     """Run `git pull --ff-only` in the install dir. The Settings UI calls this
@@ -9550,5 +9656,10 @@ if __name__ == '__main__':
     # first interaction (Enable / Resume / Disconnect) hits a warm CP instance.
     # Cheap; idempotent; safe even if remote-access provider is absent.
     threading.Thread(target=_warmup_control_plane, daemon=True).start()
+    # Background update-check: fetches origin every 6h, caches behind-count.
+    # Lets the dashboard show a passive "update available" badge without
+    # firing a 12s git operation on every page load. Frontend polls
+    # /api/system/update/cached.
+    threading.Thread(target=_update_check_loop, daemon=True, name='update-check').start()
     print(f"Clayrune running at http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
