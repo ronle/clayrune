@@ -902,6 +902,21 @@ def serve_asset(filename):
     return send_from_directory(str(assets_dir), filename)
 
 
+# ── Marketing-site preview (dev convenience) ─────────────────────────────────
+# Lets you iterate on marketing/index.html etc. by hitting
+# http://localhost:5199/marketing/ in a browser instead of spinning up a
+# separate http server. Also reachable through the Cloudflare tunnel
+# (clayrune.io/marketing/) once remote access is enabled, which is how this
+# preview is useful from a phone before the real website goes live.
+# Not a production hosting path — when the site ships it'll be served by
+# Cloudflare Pages directly off the marketing/ folder, not by Flask.
+@app.route('/marketing/')
+@app.route('/marketing/<path:filename>')
+def serve_marketing(filename='index.html'):
+    marketing_dir = Path(__file__).parent / 'marketing'
+    return send_from_directory(str(marketing_dir), filename)
+
+
 # ── "Ask Claydo" guide assistant ────────────────────────────────────────────
 
 # Dedicated cwd for Claydo's claude subprocess. Without an explicit cwd, claude
