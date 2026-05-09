@@ -3601,9 +3601,12 @@
 <div id="toast-container"></div>
 <div id="hm-worker-popover" class="hm-worker-popover hidden" onmouseenter="cancelHideHmPopover()" onmouseleave="scheduleHideHmPopover()"></div>
 
-<!-- Floating "Ask Claydo" button — draggable; tap opens the helper. -->
+<!-- Floating "Ask Claydo" button — draggable; tap opens the helper. The
+     image src is the animated idle WebP so the mascot feels alive from
+     page load (subtle bob/blink). _setClaydoState swaps this to the
+     other states (thinking / error) when the chat flow fires. -->
 <button id="claydo-fab" class="claydo-fab" title="Ask Claydo (drag to reposition)" aria-label="Ask Claydo">
-  <img src="/assets/clayrune.png" alt="" draggable="false">
+  <img src="/assets/claydo-idle.webp" alt="" draggable="false">
 </button>
 
 <!-- Command Palette -->
@@ -13130,7 +13133,7 @@ async function openClaydo() {
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 22px 12px 24px">
       <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
-        <img id="claydo-avatar" src="/assets/clayrune.png" alt="" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);object-fit:contain;background:var(--surface2)" draggable="false">
+        <img id="claydo-avatar" src="/assets/claydo-idle.webp" alt="" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);object-fit:contain;background:var(--surface2)" draggable="false">
         <div style="min-width:0">
           <div style="font-size:14px;font-weight:700;color:var(--text)">Ask Claydo</div>
           <div style="font-size:11px;color:var(--text-faint)">Your in-app guide to Clayrune</div>
@@ -13166,9 +13169,17 @@ async function openClaydo() {
 // surface the user is looking at. Source files are static stills (idle)
 // + animated WebPs (thinking et al.) so a state change is just an
 // img.src swap — the browser handles the loop without any JS player.
+// State map for the Claydo mascot. Each entry is the image src that gets
+// swapped onto the FAB and chat-modal avatar when the matching state is set.
+// idle = static-ish ambient pose, thinking = while a question is in flight,
+// working = brief "got it!" beat between thinking and idle (currently unused
+// but reserved for a future "answer arrived" celebration), error = when the
+// stream fails or API errors.
 const _CLAYDO_STATE_SRC = {
-  idle:     '/assets/clayrune.png',
+  idle:     '/assets/claydo-idle.webp',
   thinking: '/assets/claydo-thinking.webp',
+  working:  '/assets/claydo-working.webp',
+  error:    '/assets/claydo-error.webp',
 };
 function _setClaydoState(state) {
   const src = _CLAYDO_STATE_SRC[state] || _CLAYDO_STATE_SRC.idle;
@@ -13294,7 +13305,15 @@ async function submitClaydo() {
     send.disabled = false;
     input.focus();
     histDiv.scrollTop = histDiv.scrollHeight;
-    _setClaydoState('idle');
+    // On error: hold the confused/error pose for ~3s so the user notices,
+    // then revert to idle. On success: revert immediately. The errored
+    // flag was set in the catch / payload-error branches above.
+    if (errored) {
+      _setClaydoState('error');
+      setTimeout(() => _setClaydoState('idle'), 3000);
+    } else {
+      _setClaydoState('idle');
+    }
   }
 }
 
