@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clayrune — operator console for long-running Claude agents</title>
+<meta name="description" content="Run 5–20 long-lived Claude agents on your own machine. Multi-project dashboard, sessions that survive everything, plan-approval gate.">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+:root {
+  --bg:        #0c0e12;
+  --bg2:       #14171d;
+  --surface:   #1a1e26;
+  --surface2:  #232836;
+  --line:      #2a2f3a;
+  --line-2:    #3a4156;
+  --ink:       #e8eaf0;
+  --ink-dim:   #8b94a5;
+  --ink-faint: #6c748a;
+  --accent:    #e8824a;
+  --accent-2:  #f0a070;
+  --green:     #7edcb4;
+  --amber:     #f5c76d;
+  --red:       #f89191;
+  --green-bg:  rgba(126, 220, 180, 0.10);
+  --amber-bg:  rgba(245, 199, 109, 0.12);
+  --red-bg:    rgba(248, 145, 145, 0.10);
+  --grey-bg:   rgba(255, 255, 255, 0.04);
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--accent); color: var(--bg); }
+
+a { color: var(--ink); text-decoration: none; }
+a:hover { color: var(--accent); }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+.mono { font-family: var(--mono); }
+
+/* ── nav ────────────────────────────────────────────────────────────── */
+nav.top {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(12, 14, 18, 0.85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.top-inner {
+  display: flex; align-items: center; gap: 24px;
+  height: 56px;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; }
+.brand img { width: 24px; height: 24px; }
+.brand span { font-size: 16px; }
+.top nav-links { display: flex; gap: 22px; flex: 1; margin-left: 16px; }
+.top a.link { color: var(--ink-dim); font-size: 14px; }
+.top a.link:hover { color: var(--ink); }
+.top .spacer { flex: 1; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  font-size: 14px; font-weight: 500;
+  background: transparent; color: var(--ink);
+  cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.btn:hover { border-color: var(--ink-dim); background: var(--surface); color: var(--ink); }
+.btn.primary {
+  background: var(--accent); border-color: var(--accent); color: #1a0f08;
+  font-weight: 600;
+}
+.btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); color: #1a0f08; }
+.btn.lg { padding: 13px 22px; font-size: 15px; }
+
+/* ── hero ────────────────────────────────────────────────────────────── */
+.hero { padding: 96px 0 60px; position: relative; overflow: hidden; }
+.hero::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(800px 400px at 70% 0%, rgba(232, 130, 74, 0.08), transparent 60%);
+  pointer-events: none;
+}
+.eyebrow {
+  display: inline-block;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--ink-faint); letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+.eyebrow .dot {
+  display: inline-block; width: 6px; height: 6px;
+  background: var(--green); border-radius: 50%;
+  margin-right: 8px; vertical-align: middle;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+h1 {
+  font-size: 64px; line-height: 1.05; font-weight: 700;
+  letter-spacing: -0.025em;
+  max-width: 880px;
+  margin-bottom: 24px;
+}
+h1 .mono { font-weight: 500; color: var(--accent); font-size: 54px; }
+.hero-sub {
+  font-size: 19px; line-height: 1.55;
+  color: var(--ink-dim);
+  max-width: 660px;
+  margin-bottom: 36px;
+}
+.hero-sub strong { color: var(--ink); font-weight: 600; }
+.hero-ctas { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 28px; }
+.hero-meta { display: flex; gap: 18px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint); flex-wrap: wrap; }
+.hero-meta span::before { content: '·  '; color: var(--ink-faint); margin-right: 6px; }
+.hero-meta span:first-child::before { display: none; }
+
+/* ── hero dashboard mockup ───────────────────────────────────────────── */
+.mockup {
+  margin-top: 60px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg2);
+  overflow: hidden;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+.m-titlebar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+}
+.m-dots { display: flex; gap: 6px; }
+.m-dots span { width: 11px; height: 11px; border-radius: 50%; background: #4a525e; }
+.m-dots span:nth-child(1) { background: #ff5f57; }
+.m-dots span:nth-child(2) { background: #ffbd2e; }
+.m-dots span:nth-child(3) { background: #28c940; }
+.m-titlebar .url { color: var(--ink-dim); }
+.m-header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 20px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.m-breadcrumb { color: var(--ink-dim); font-family: var(--mono); }
+.m-pill {
+  font-family: var(--mono); font-size: 11px;
+  padding: 4px 10px; border: 1px solid var(--line-2); border-radius: 999px;
+  color: var(--ink-dim);
+}
+.m-pill.live { color: var(--green); border-color: rgba(126, 220, 180, 0.25); background: var(--green-bg); }
+.m-pill.live::before { content: '●'; margin-right: 6px; animation: pulse 2s ease-in-out infinite; }
+.m-pill.agents { color: var(--accent); border-color: rgba(232, 130, 74, 0.25); background: rgba(232, 130, 74, 0.06); }
+.m-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  padding: 20px;
+  background: var(--bg);
+}
+.m-tile {
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px;
+  position: relative;
+}
+.m-tile.t-running { border-color: rgba(126, 220, 180, 0.4); }
+.m-tile.t-waiting { border-color: rgba(245, 199, 109, 0.5); }
+.m-tile.t-blocked { border-color: rgba(248, 145, 145, 0.5); }
+.m-tile.t-done    { border-color: var(--line); opacity: 0.85; }
+.m-tile-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--ink); }
+.m-tile-task { font-size: 12px; color: var(--ink-dim); line-height: 1.5; }
+.m-status {
+  position: absolute; top: 12px; right: 12px;
+  font-family: var(--mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 2px 8px; border-radius: 999px;
+}
+.m-status.s-running { color: var(--green); background: var(--green-bg); }
+.m-status.s-waiting { color: var(--amber); background: var(--amber-bg); }
+.m-status.s-blocked { color: var(--red);   background: var(--red-bg); }
+.m-status.s-done    { color: var(--ink-faint); background: var(--grey-bg); }
+.m-tile-meta {
+  display: flex; gap: 10px; margin-top: 12px;
+  font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
+}
+.m-console {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-dim);
+}
+.m-console .lbl { color: var(--ink); font-weight: 500; }
+.m-console .session-pill {
+  padding: 3px 10px; border-radius: 999px;
+  background: var(--green-bg); color: var(--green);
+}
+
+/* ── divider ─────────────────────────────────────────────────────────── */
+.divider {
+  margin: 80px 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line) 30%, var(--line) 70%, transparent);
+}
+.section-tag {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-faint); letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+
+/* ── what-it-is ──────────────────────────────────────────────────────── */
+.what-itis {
+  padding: 60px 0;
+}
+.what-itis p {
+  font-size: 22px; line-height: 1.5; color: var(--ink); max-width: 820px;
+  font-weight: 400;
+}
+.what-itis p .accent { color: var(--accent); }
+.what-itis p .dim { color: var(--ink-dim); }
+
+/* ── features ────────────────────────────────────────────────────────── */
+.features { padding: 60px 0 100px; }
+.features h2 {
+  font-size: 36px; font-weight: 700; letter-spacing: -0.02em;
+  margin-bottom: 60px; max-width: 760px;
+}
+.features h2 .dim { color: var(--ink-dim); font-weight: 400; }
+
+.feat {
+  display: grid; grid-template-columns: 1fr 1.1fr;
+  gap: 60px; align-items: center;
+  padding: 60px 0;
+  border-top: 1px solid var(--line);
+}
+.feat:first-of-type { border-top: 0; padding-top: 0; }
+.feat.flip > .feat-text { order: 2; }
+.feat-tag {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--accent); letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.feat h3 { font-size: 28px; line-height: 1.15; letter-spacing: -0.02em; margin-bottom: 16px; }
+.feat p { color: var(--ink-dim); font-size: 16px; line-height: 1.65; max-width: 480px; }
+.feat p strong { color: var(--ink); font-weight: 600; }
+
+.feat-art {
+  background: var(--bg2); border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 24px;
+  position: relative;
+  min-height: 240px;
+}
+
+/* per-feature artworks */
+.art-tree { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); line-height: 1.9; }
+.art-tree .branch { color: var(--ink-faint); }
+.art-tree .self { color: var(--accent); }
+.art-tree .worker { color: var(--green); }
+
+.art-jsonl {
+  font-family: var(--mono); font-size: 11px; line-height: 1.7;
+  color: var(--ink-dim); white-space: pre-wrap; overflow: hidden;
+}
+.art-jsonl .key { color: var(--accent-2); }
+.art-jsonl .val { color: var(--green); }
+.art-jsonl .note { color: var(--ink-faint); display: block; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+
+.art-plan {
+  background: var(--surface); border: 1px solid var(--line-2);
+  border-radius: var(--r-md); padding: 14px;
+}
+.art-plan-h { font-size: 12px; color: var(--accent); font-family: var(--mono); margin-bottom: 8px; }
+.art-plan-step { display: flex; align-items: start; gap: 8px; font-size: 12px; color: var(--ink-dim); margin-bottom: 6px; }
+.art-plan-step::before { content: '·'; color: var(--ink-faint); margin-top: -2px; }
+.art-plan-actions { display: flex; gap: 8px; margin-top: 14px; }
+.art-plan-actions .btn { padding: 6px 12px; font-size: 12px; }
+
+.art-mobile {
+  width: 200px; height: 380px;
+  border: 8px solid var(--surface2);
+  border-radius: 28px;
+  margin: 0 auto;
+  background: var(--bg);
+  position: relative;
+  overflow: hidden;
+}
+.art-mobile::before {
+  content: ''; position: absolute; top: 6px; left: 50%;
+  transform: translateX(-50%);
+  width: 60px; height: 4px; background: var(--surface2); border-radius: 4px;
+}
+.art-mobile-content { padding: 22px 14px; font-size: 11px; }
+.art-mobile h4 { font-size: 14px; margin-bottom: 10px; }
+.art-mobile-tile {
+  background: var(--surface); border: 1px solid var(--line);
+  padding: 8px 10px; border-radius: var(--r-sm); margin-bottom: 6px;
+}
+.art-mobile-tile .name { color: var(--ink); font-size: 11px; font-weight: 500; }
+.art-mobile-tile .stat { font-family: var(--mono); font-size: 9px; color: var(--green); margin-top: 2px; }
+
+.art-memory { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); line-height: 1.7; }
+.art-memory .file { color: var(--ink); margin-top: 12px; }
+.art-memory .file:first-child { margin-top: 0; }
+.art-memory .file::before { content: '# '; color: var(--accent); }
+.art-memory .line { padding-left: 16px; }
+.art-memory .line::before { content: '·  '; color: var(--ink-faint); }
+
+.art-backlog .row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.art-backlog .check {
+  width: 14px; height: 14px;
+  border: 1.5px solid var(--ink-faint); border-radius: 3px;
+  flex-shrink: 0;
+}
+.art-backlog .row.done .check {
+  background: var(--green); border-color: var(--green);
+}
+.art-backlog .text { flex: 1; color: var(--ink); }
+.art-backlog .row.done .text { text-decoration: line-through; color: var(--ink-faint); }
+.art-backlog .pri { font-family: var(--mono); font-size: 10px; padding: 2px 7px; border-radius: 999px; }
+.art-backlog .pri.h { color: var(--red); background: var(--red-bg); }
+.art-backlog .pri.m { color: var(--amber); background: var(--amber-bg); }
+.art-backlog .pri.l { color: var(--ink-faint); background: var(--grey-bg); }
+
+/* ── vs. matrix ──────────────────────────────────────────────────────── */
+.vs-section { padding: 80px 0; border-top: 1px solid var(--line); }
+.vs-section h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+.vs-section .sub { color: var(--ink-dim); font-size: 16px; max-width: 600px; margin-bottom: 40px; }
+.vs-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 14px;
+}
+.vs-table th, .vs-table td {
+  padding: 16px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.vs-table th {
+  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-faint);
+  background: transparent;
+}
+.vs-table td:first-child {
+  color: var(--ink); font-weight: 600;
+  font-family: var(--mono); font-size: 13px;
+}
+.vs-table td.win { color: var(--green); font-size: 13px; }
+.vs-table td.lose { color: var(--ink-dim); font-size: 13px; }
+
+/* ── for / not for ───────────────────────────────────────────────────── */
+.fnf {
+  padding: 80px 0;
+  border-top: 1px solid var(--line);
+}
+.fnf-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.fnf-box {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 28px;
+  background: var(--bg2);
+}
+.fnf-box.yes { border-color: rgba(126, 220, 180, 0.25); }
+.fnf-box .lbl {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  text-transform: uppercase; margin-bottom: 14px;
+}
+.fnf-box.yes .lbl { color: var(--green); }
+.fnf-box.no  .lbl { color: var(--ink-faint); }
+.fnf-box li {
+  list-style: none; padding: 8px 0 8px 22px; position: relative;
+  color: var(--ink-dim); font-size: 14px; line-height: 1.55;
+}
+.fnf-box li::before {
+  position: absolute; left: 0; top: 8px;
+  font-family: var(--mono); font-size: 13px;
+}
+.fnf-box.yes li::before { content: '+'; color: var(--green); }
+.fnf-box.no li::before  { content: '−'; color: var(--ink-faint); }
+
+/* ── install ─────────────────────────────────────────────────────────── */
+.install { padding: 80px 0; border-top: 1px solid var(--line); }
+.install h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 14px; }
+.install .sub { color: var(--ink-dim); margin-bottom: 36px; max-width: 580px; }
+.install-tabs {
+  display: flex; gap: 8px; margin-bottom: 14px;
+}
+.install-tab {
+  font-family: var(--mono); font-size: 12px;
+  padding: 6px 12px; color: var(--ink-faint);
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.install-tab.active {
+  color: var(--ink); border-color: var(--accent); background: rgba(232, 130, 74, 0.06);
+}
+.install-cmd {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md);
+  padding: 22px 24px;
+  font-family: var(--mono); font-size: 14px;
+  color: var(--ink);
+  white-space: pre; overflow-x: auto;
+}
+.install-cmd .prompt { color: var(--accent); user-select: none; }
+.install-cmd .comment { color: var(--ink-faint); }
+.install-or {
+  font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+  margin: 22px 0 14px; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.install-bat {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 14px 22px;
+  background: var(--surface); border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  color: var(--ink); font-size: 14px;
+  text-decoration: none;
+  font-weight: 500;
+}
+.install-bat:hover { border-color: var(--accent); }
+.install-meta { font-size: 13px; color: var(--ink-faint); margin-top: 22px; max-width: 600px; line-height: 1.7; }
+
+/* ── footer ──────────────────────────────────────────────────────────── */
+footer {
+  padding: 60px 0 40px;
+  border-top: 1px solid var(--line);
+  font-size: 13px; color: var(--ink-faint);
+}
+.footer-row {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+}
+.footer-row .spacer { flex: 1; }
+.footer-row .brand { color: var(--ink); }
+footer a { color: var(--ink-dim); }
+footer a:hover { color: var(--ink); }
+
+/* ── responsive ──────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  h1 { font-size: 44px; }
+  h1 .mono { font-size: 36px; }
+  .hero-sub { font-size: 17px; }
+  .feat { grid-template-columns: 1fr; gap: 28px; }
+  .feat.flip > .feat-text { order: 0; }
+  .m-grid { grid-template-columns: 1fr 1fr; }
+  .fnf-grid { grid-template-columns: 1fr; }
+  .vs-table { font-size: 13px; }
+  .vs-table th, .vs-table td { padding: 12px 8px; }
+  .top a.link { display: none; }
+}
+@media (max-width: 600px) {
+  .wrap { padding: 0 18px; }
+  h1 { font-size: 36px; }
+  h1 .mono { font-size: 28px; }
+  .m-grid { grid-template-columns: 1fr; }
+  .install-cmd { font-size: 12px; padding: 16px; }
+  .features h2, .vs-section h2, .install h2 { font-size: 26px; }
+}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap top-inner">
+    <a class="brand" href="/">
+      <img src="/assets/clayrune.png" alt="">
+      <span>Clayrune</span>
+    </a>
+    <a class="link" href="#features">Features</a>
+    <a class="link" href="#vs">vs.</a>
+    <a class="link" href="#install">Install</a>
+    <a class="link" href="https://github.com/ronle/mission-control">GitHub</a>
+    <span class="spacer"></span>
+    <a class="btn primary" href="#install">Install</a>
+  </div>
+</nav>
+
+<!-- ─────────────────────── HERO ─────────────────────── -->
+<section class="hero">
+  <div class="wrap">
+    <span class="eyebrow"><span class="dot"></span>Self-hosted · Open source · MIT</span>
+
+    <h1>
+      Tuesday, 3pm.<br>
+      <span class="mono">14 agents running. 3 waiting on you.</span>
+    </h1>
+
+    <p class="hero-sub">
+      Clayrune is the <strong>operator console for long-running Claude agents</strong> —
+      the niche between single-pane CLI (Claude CLI) and autonomous SaaS (Devin).
+      Run 5–20 long-lived agents on your own machine without losing track.
+    </p>
+
+    <div class="hero-ctas">
+      <a class="btn primary lg" href="#install">Install →</a>
+      <a class="btn lg" href="https://github.com/ronle/mission-control">GitHub</a>
+    </div>
+
+    <div class="hero-meta">
+      <span>macOS · Windows · Linux</span>
+      <span>Local-first</span>
+      <span>~15s to run, 5–10 min to install</span>
+    </div>
+
+    <!-- mock dashboard -->
+    <div class="mockup">
+      <div class="m-titlebar">
+        <div class="m-dots"><span></span><span></span><span></span></div>
+        <span class="url">localhost:5199</span>
+      </div>
+      <div class="m-header">
+        <span class="m-breadcrumb">Dashboard</span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="m-pill agents">14 active</span>
+        <span class="m-pill live">Live</span>
+      </div>
+      <div class="m-grid">
+        <div class="m-tile t-running">
+          <span class="m-status s-running">Running</span>
+          <div class="m-tile-name">Engulfing Dashboard</div>
+          <div class="m-tile-task">Refactoring scanner-live to share queries</div>
+          <div class="m-tile-meta"><span>2m ago</span><span>turn 4/8</span></div>
+        </div>
+        <div class="m-tile t-waiting">
+          <span class="m-status s-waiting">Asking</span>
+          <div class="m-tile-name">Mission Control</div>
+          <div class="m-tile-task">Should we switch from venv to uv?</div>
+          <div class="m-tile-meta"><span>just now</span><span>plan</span></div>
+        </div>
+        <div class="m-tile t-running">
+          <span class="m-status s-running">Running</span>
+          <div class="m-tile-name">Trading Models</div>
+          <div class="m-tile-task">Sweeping BD threshold across 5 horizons</div>
+          <div class="m-tile-meta"><span>14m ago</span><span>turn 12/30</span></div>
+        </div>
+        <div class="m-tile t-blocked">
+          <span class="m-status s-blocked">Blocked</span>
+          <div class="m-tile-name">News Digest</div>
+          <div class="m-tile-task">RSS source returning 503; needs backup</div>
+          <div class="m-tile-meta"><span>1h ago</span><span>error</span></div>
+        </div>
+        <div class="m-tile t-running">
+          <span class="m-status s-running">Running</span>
+          <div class="m-tile-name">Wedding Planner</div>
+          <div class="m-tile-task">Drafting vendor outreach emails</div>
+          <div class="m-tile-meta"><span>just now</span><span>turn 1/3</span></div>
+        </div>
+        <div class="m-tile t-done">
+          <span class="m-status s-done">Done</span>
+          <div class="m-tile-name">Tax Prep Helper</div>
+          <div class="m-tile-task">Itemized 27 receipts; categorized.</div>
+          <div class="m-tile-meta"><span>3h ago</span><span>complete</span></div>
+        </div>
+      </div>
+      <div class="m-console">
+        <span class="lbl">Agent Console</span>
+        <span class="session-pill">3 running</span>
+        <span class="session-pill" style="background: var(--amber-bg); color: var(--amber)">1 idle</span>
+        <span style="flex:1"></span>
+        <span>last update 2s</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────── WHAT IT IS ─────────────────────── -->
+<section class="what-itis wrap">
+  <p>
+    Most AI tooling assumes you're doing one heads-down session.
+    Clayrune assumes you're <span class="accent">running 5–20 streams</span> in parallel — research, drafts, refactors, scrapes — and that the
+    <span class="accent">primary problem</span> is keeping track of what each one is doing,
+    <span class="dim">where each one got stuck, and which ones need you next.</span>
+  </p>
+</section>
+
+<div class="wrap"><div class="divider"></div></div>
+
+<!-- ─────────────────────── FEATURES ─────────────────────── -->
+<section class="features wrap" id="features">
+
+  <h2>The three things <span class="dim">no one else does.</span></h2>
+
+  <!-- 1. Multi-project dashboard -->
+  <div class="feat">
+    <div class="feat-text">
+      <div class="feat-tag">01 / Multi-project dashboard</div>
+      <h3>Many agents, one operator console.</h3>
+      <p>
+        Open <strong>5–20 project modals at once</strong>, drag them around your screen,
+        watch them all stream. Per-project locks, per-project memory,
+        per-project session history. Status pills surface what needs you first —
+        <strong>asking</strong>, <strong>blocked</strong>, <strong>stuck</strong> —
+        before everything else. <strong>No direct competitor at this positioning.</strong>
+      </p>
+    </div>
+    <div class="feat-art">
+      <div class="art-tree">
+        <span class="self">Clayrune</span><br>
+        <span class="branch">├─ </span>Engulfing Dashboard <span class="worker">● running</span><br>
+        <span class="branch">├─ </span>Mission Control <span style="color: var(--amber)">⊙ asking</span><br>
+        <span class="branch">├─ </span>Trading Models <span class="worker">● running</span><br>
+        <span class="branch">├─ </span>News Digest <span style="color: var(--red)">× blocked</span><br>
+        <span class="branch">├─ </span>Wedding Planner <span class="worker">● running</span><br>
+        <span class="branch">└─ </span><span style="color: var(--ink-faint)">+ 9 more</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Sessions survive everything -->
+  <div class="feat flip">
+    <div class="feat-text">
+      <div class="feat-tag">02 / Persistence</div>
+      <h3>Sessions that actually survive.</h3>
+      <p>
+        Crash the app, reboot the laptop, lose the tab.
+        Clayrune <strong>auto-revives sessions</strong> from its own log
+        and from Claude's own JSONL transcripts on disk.
+        24-hour stale-session window. <strong>"Continue"</strong> button on every past run.
+        The conversation comes back where you left it.
+      </p>
+    </div>
+    <div class="feat-art">
+      <pre class="art-jsonl">{<span class="key">"type"</span>: <span class="val">"user"</span>, <span class="key">"text"</span>: <span class="val">"refactor scanner-live to..."</span>}
+{<span class="key">"type"</span>: <span class="val">"assistant"</span>, <span class="key">"text"</span>: <span class="val">"I'll start by..."</span>}
+{<span class="key">"type"</span>: <span class="val">"tool_use"</span>, <span class="key">"name"</span>: <span class="val">"Read"</span>}
+{<span class="key">"type"</span>: <span class="val">"tool_result"</span>, <span class="key">"text"</span>: <span class="val">"...1264 lines..."</span>}
+{<span class="key">"type"</span>: <span class="val">"assistant"</span>, <span class="key">"text"</span>: <span class="val">"OK, I see..."</span>}
+<span class="note">~/.claude/projects/&lt;cwd&gt;/&lt;sid&gt;.jsonl
+Auto-found · click "Continue" to resume.</span></pre>
+    </div>
+  </div>
+
+  <!-- 3. Plan Approval -->
+  <div class="feat">
+    <div class="feat-text">
+      <div class="feat-tag">03 / Plan-approval gate</div>
+      <h3>The tool that asks before it acts.</h3>
+      <p>
+        When an agent emits a plan, Clayrune <strong>collapses it into Approve / Collapse
+        buttons</strong>. Nothing dangerous runs without your click. The opposite of
+        autonomous-agent design — <strong>counter-positioning vs. Devin</strong> and
+        the "let it loose, hope for the best" school.
+      </p>
+    </div>
+    <div class="feat-art">
+      <div class="art-plan">
+        <div class="art-plan-h">▾  Plan: refactor scanner-live</div>
+        <div class="art-plan-step">Move shared SQL into util/queries.py</div>
+        <div class="art-plan-step">Update both services to import from there</div>
+        <div class="art-plan-step">Add type hints to query signatures</div>
+        <div class="art-plan-step">Run black + ruff; verify green</div>
+        <div class="art-plan-step">Commit with descriptive message</div>
+        <div class="art-plan-actions">
+          <button class="btn primary">Approve plan</button>
+          <button class="btn">Collapse</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<div class="wrap"><div class="divider"></div></div>
+
+<!-- ─────────────────────── SECONDARY FEATURES ─────────────────────── -->
+<section class="features wrap">
+  <h2>And also <span class="dim">what makes it ship-able day-to-day.</span></h2>
+
+  <!-- Mobile remote -->
+  <div class="feat flip">
+    <div class="feat-text">
+      <div class="feat-tag">04 / Mobile + remote access</div>
+      <h3>Restart the server from your phone.</h3>
+      <p>
+        Cloudflare tunnel + named devices put your dashboard at <code class="mono">clayrune.io</code>
+        from any phone or laptop. Watch agents stream remotely, send follow-ups, approve plans.
+        <strong>Including a remote server-restart button</strong> after deploying a fix —
+        so you don't need to walk back to the desktop just to bounce the process.
+      </p>
+    </div>
+    <div class="feat-art" style="background: transparent; border: 0; padding: 0;">
+      <div class="art-mobile">
+        <div class="art-mobile-content">
+          <h4>Clayrune</h4>
+          <div class="art-mobile-tile">
+            <div class="name">Engulfing</div>
+            <div class="stat">● running · 2m ago</div>
+          </div>
+          <div class="art-mobile-tile">
+            <div class="name">News Digest</div>
+            <div class="stat" style="color: var(--red)">× blocked</div>
+          </div>
+          <div class="art-mobile-tile">
+            <div class="name">Trading Models</div>
+            <div class="stat">● running · just now</div>
+          </div>
+          <div class="art-mobile-tile">
+            <div class="name">Tax Prep Helper</div>
+            <div class="stat" style="color: var(--ink-faint)">done · 3h</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Memory -->
+  <div class="feat">
+    <div class="feat-text">
+      <div class="feat-tag">05 / Two-tier memory</div>
+      <h3>Memory that curates itself.</h3>
+      <p>
+        Per-project <code class="mono">CLAUDE.md</code> + <code class="mono">MEMORY.md</code> with auto-condense.
+        When memory gets stale, a housekeeping agent compacts it in the background — <strong>no manual pruning.</strong>
+        Cross-project shared rules + per-project overrides. The agent always knows
+        what was decided yesterday, last week, and three projects ago.
+      </p>
+    </div>
+    <div class="feat-art">
+      <div class="art-memory">
+        <div class="file">CLAUDE.md</div>
+        <div class="line">Use psycopg2 raw SQL · we don't trust ORMs here</div>
+        <div class="line">Tests under tests/integration/, not unit/</div>
+        <div class="file">MEMORY.md</div>
+        <div class="line">2026-05-08: refactored scanner-live to share queries</div>
+        <div class="line">2026-05-04: BD9+ resolved-only WR confirmed 91.8%</div>
+        <div class="line">2026-04-22: GCP Cloud SQL = fr3-pg (shared with FL3 — careful)</div>
+        <div class="file">MEMORY_ARCHIVE.md <span style="color: var(--ink-faint)">·  auto-condensed weekly</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backlog -->
+  <div class="feat flip">
+    <div class="feat-text">
+      <div class="feat-tag">06 / First-class backlog</div>
+      <h3>Tasks linked to the agents that ran them.</h3>
+      <p>
+        Each backlog item tracks priority, status, source — and <strong>links back to the
+        agent session that worked it.</strong> Cross-project view lets you triage everything
+        in one list. GitHub Issues sync. The progress bar on each project tile is real,
+        not decorative — it's actual backlog completion.
+      </p>
+    </div>
+    <div class="feat-art">
+      <div class="art-backlog">
+        <div class="row">
+          <div class="check"></div>
+          <div class="text">Auto-cleanup unnamed CF Access sessions (revoke loop)</div>
+          <span class="pri h">high</span>
+        </div>
+        <div class="row">
+          <div class="check"></div>
+          <div class="text">Hivemind dashboard view (out of modal tab)</div>
+          <span class="pri h">high</span>
+        </div>
+        <div class="row">
+          <div class="check"></div>
+          <div class="text">Per-step plan approval (approve only steps 1–3)</div>
+          <span class="pri m">med</span>
+        </div>
+        <div class="row done">
+          <div class="check"></div>
+          <div class="text">Resume from JSONL transcript on revival fallback</div>
+          <span class="pri l">done</span>
+        </div>
+        <div class="row done">
+          <div class="check"></div>
+          <div class="text">Mobile filter pills (urgent / active / completed)</div>
+          <span class="pri l">done</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<!-- ─────────────────────── VS. MATRIX ─────────────────────── -->
+<section class="vs-section" id="vs">
+  <div class="wrap">
+    <h2>Where Clayrune fits.</h2>
+    <p class="sub">Honest comparison. Clayrune wins on operator-grade orchestration; loses on single-task depth.</p>
+
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>vs.</th>
+          <th>Wins on</th>
+          <th>Loses on</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Claude CLI</td>
+          <td class="win">Multi-project, persistence, mobile, plan approval, backlog</td>
+          <td class="lose">Freshness, portability, official support</td>
+        </tr>
+        <tr>
+          <td>Cursor / Windsurf</td>
+          <td class="win">Project-agnostic, multi-project, scheduler, hivemind</td>
+          <td class="lose">Editor-depth, inline diff, autocomplete</td>
+        </tr>
+        <tr>
+          <td>Devin</td>
+          <td class="win">Local infra, plan-approval gate, multi-project oversight</td>
+          <td class="lose">Sandboxed compute, built-in browser</td>
+        </tr>
+        <tr>
+          <td>Claude / ChatGPT Desktop</td>
+          <td class="win">Multi-project, persistent sessions, scheduler, backlog</td>
+          <td class="lose">Polish, native OS integrations</td>
+        </tr>
+        <tr>
+          <td>Aider / Cline / Continue.dev</td>
+          <td class="win">Multi-project orchestration, mobile remote, scheduler</td>
+          <td class="lose">Smaller ecosystem, no git-commit native flow</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─────────────────────── FOR / NOT FOR ─────────────────────── -->
+<section class="fnf">
+  <div class="wrap">
+    <div class="fnf-grid">
+      <div class="fnf-box yes">
+        <div class="lbl">For</div>
+        <ul>
+          <li>People running 5–20 long-lived AI work-streams on their own machine</li>
+          <li>Operators who want a dashboard, not another single-pane editor</li>
+          <li>Anyone who's lost a session to a crash and wants that not to happen</li>
+          <li>Users who want plan-gate safety before agents run shell commands</li>
+          <li>Developers, PMs, ops people, traders, researchers — non-coding work too</li>
+        </ul>
+      </div>
+      <div class="fnf-box no">
+        <div class="lbl">Not for</div>
+        <ul>
+          <li>Cursor users who want autocomplete + inline diff in a coding session</li>
+          <li>People wanting an autonomous agent to "just figure it out"</li>
+          <li>Users who don't want anything running on their own machine</li>
+          <li>Single-task workflows that finish in under a few minutes</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────── INSTALL ─────────────────────── -->
+<section class="install" id="install">
+  <div class="wrap">
+    <h2>Install in one command.</h2>
+    <p class="sub">Clones the repo, sets up a Python venv, installs Claude CLI if missing, creates a desktop shortcut, opens the dashboard. Tested on macOS 14+, Ubuntu 22.04+, Windows 11.</p>
+
+    <div class="install-tabs">
+      <span class="install-tab active">macOS / Linux</span>
+      <span class="install-tab">Windows (PowerShell)</span>
+    </div>
+    <div class="install-cmd"><span class="prompt">$ </span>curl -sSL https://clayrune.io/install.sh | sh</div>
+
+    <div class="install-or">— or —</div>
+
+    <a class="install-bat" href="https://raw.githubusercontent.com/ronle/mission-control/master/installer/Clayrune-Setup.bat">
+      ⬇  Download Clayrune-Setup.bat (Windows)
+    </a>
+
+    <p class="install-meta">
+      Source on GitHub: <a href="https://github.com/ronle/mission-control" style="color: var(--accent)">github.com/ronle/mission-control</a>.
+      MIT licensed. Read the install prompt before you run:
+      <a href="https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md" style="color: var(--accent)">install-prompt.md</a>.
+    </p>
+  </div>
+</section>
+
+<!-- ─────────────────────── FOOTER ─────────────────────── -->
+<footer>
+  <div class="wrap footer-row">
+    <span class="brand">Clayrune</span>
+    <span>· operator console for long-running Claude agents</span>
+    <span class="spacer"></span>
+    <a href="https://github.com/ronle/mission-control">GitHub</a>
+    <a href="/marketing/docs.html">Docs</a>
+    <a href="/install.sh">install.sh</a>
+    <span style="color: var(--ink-faint)">MIT · v0.1</span>
+  </div>
+</footer>
+
+</body>
+</html>
