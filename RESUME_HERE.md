@@ -2,15 +2,15 @@
 
 **Last updated:** 2026-05-07 (end-of-session)
 **Branch:** `master` — clean tree (after the final retry-button commit), everything pushed.
-**Latest committed:** `25651f0` — Playdo streaming + Settings update button + clayrune.io hosting prep, plus a small Playdo error-retry-button polish on top.
+**Latest committed:** `25651f0` — Claydo streaming + Settings update button + clayrune.io hosting prep, plus a small Claydo error-retry-button polish on top.
 
 **This session's commits** (most recent first):
-- *(uncommitted on disk: small Playdo retry-button polish)* — error UX in Playdo modal
-- `25651f0` — **Playdo streaming + Settings update button + clayrune.io hosting prep**
-- `8edd80d` — Playdo: draggable FAB (mistitled — same subject as 010de5a)
-- `010de5a` — Playdo: marker reliability + within-session memory
-- `34c93d8` — RESUME_HERE: post-Playdo session summary + verification checklist
-- `4b65248` — **Ask Playdo helper + walkthrough rewrite + USER_GUIDE.md**
+- *(uncommitted on disk: small Claydo retry-button polish)* — error UX in Claydo modal
+- `25651f0` — **Claydo streaming + Settings update button + clayrune.io hosting prep**
+- `8edd80d` — Claydo: draggable FAB (mistitled — same subject as 010de5a)
+- `010de5a` — Claydo: marker reliability + within-session memory
+- `34c93d8` — RESUME_HERE: post-Claydo session summary + verification checklist
+- `4b65248` — **Ask Claydo helper + walkthrough rewrite + USER_GUIDE.md**
 - `24993da` — Walkthrough: filter out `_incognito` from first-run gate
 - `da932fe`, `9d2909f`, `3824658`, `18ead06`, `d498bb4`, `5607839`, `36be356` — **Installer hardening chain** (7 commits) tested end-to-end on WSL Ubuntu
 - `28ced41` — Scheduler reliability + run history pagination (paginated Runs panel + Run Now)
@@ -23,7 +23,7 @@
 
 ## 0. What's pending after the next reboot
 
-**Tree state**: one small uncommitted change (Playdo error retry button) — needs to be committed before pushing. Everything else from today is shipped.
+**Tree state**: one small uncommitted change (Claydo error retry button) — needs to be committed before pushing. Everything else from today is shipped.
 
 **Server restart needed** to pick up: `/api/guide/stream` (new), `/api/system/update/status` (new), `/api/system/update` (new) — all from `25651f0`.
 
@@ -31,7 +31,7 @@
 
 - [ ] **Validate the install on a vanilla Windows host** (the only thing not yet tested end-to-end this session). PowerShell command in section "Vanilla Windows install — test recipe" below.
 - [ ] **Set up Cloudflare Pages for clayrune.io** following `docs/HOSTING.md`. ~10 minutes — domain DNS to Cloudflare, Pages project, output dir = `installer/`, custom domain attach. After that, `clayrune.io/install.sh` works directly (no `CLAYRUNE_PROMPT_URL` env var needed).
-- [ ] **Test the new Playdo features** that landed today after restart + hard-refresh: streaming token-by-token, draggable FAB, retry button on errors, marker reliability with new few-shot prompt.
+- [ ] **Test the new Claydo features** that landed today after restart + hard-refresh: streaming token-by-token, draggable FAB, retry button on errors, marker reliability with new few-shot prompt.
 - [ ] **Test the Settings → Update Clayrune** button. Make a deliberate small change on master + push, then click Update from the dashboard — should report "1 commit behind", click Update, see the pull succeed, click Restart now.
 
 Three things to do *immediately* after reboot:
@@ -43,23 +43,23 @@ The new endpoints in `4b65248` (`POST /api/guide/ask`, `GET /assets/<path>`) nee
 
 ### B. Hard-refresh the browser dashboard
 
-Picks up the rewritten walkthrough + the floating Playdo button + the marker parser CSS.
+Picks up the rewritten walkthrough + the floating Claydo button + the marker parser CSS.
 
-### C. Manual end-to-end test of "Ask Playdo"
+### C. Manual end-to-end test of "Ask Claydo"
 
 Walk through the verification checklist below to confirm `4b65248` is solid.
 
 ---
 
-## Verification checklist for "Ask Playdo" (after restart + hard-refresh)
+## Verification checklist for "Ask Claydo" (after restart + hard-refresh)
 
 **Floating button**:
 - [ ] Bottom-right of dashboard — visible? Pulsing accent-orange ring (until first click)?
-- [ ] Click it → `__playdo` modal opens, pulse stops, `localStorage.playdo_opened` is set.
+- [ ] Click it → `__claydo` modal opens, pulse stops, `localStorage.claydo_opened` is set.
 
 **Chat flow**:
-- [ ] Welcome message renders with Playdo's greeting.
-- [ ] Type `"how do I start a hivemind?"` → "Playdo is thinking..." indicator → answer renders within ~10s.
+- [ ] Welcome message renders with Claydo's greeting.
+- [ ] Type `"how do I start a hivemind?"` → "Claydo is thinking..." indicator → answer renders within ~10s.
 - [ ] Answer references the 3-dot menu and ✨ Start Hivemind item.
 - [ ] **Markers fire**: a UI element should pulse (highlighted by `.clayrune-highlight`) — most likely the 3-dot button or the sidebar Hivemind entry.
 
@@ -67,12 +67,12 @@ Walk through the verification checklist below to confirm `4b65248` is solid.
 - [ ] In an incognito browser (or after `localStorage.clear()`), reload the dashboard.
 - [ ] Walkthrough fires after ~600ms on the empty dashboard (project list excluding `_incognito` is empty).
 - [ ] All 16 steps render with current copy. Last two steps:
-  - [ ] **ask-playdo** highlights the floating Playdo button (left-positioned card pointing at it).
+  - [ ] **ask-claydo** highlights the floating Claydo button (left-positioned card pointing at it).
   - [ ] **done** wraps up with "Get Started" button.
 
 **If anything fails**:
-- Check `claude --version` works on the host the server runs on (Playdo subprocesses `claude` to answer).
-- Check `docs/USER_GUIDE.md` exists in the install dir (Playdo loads it as system prompt).
+- Check `claude --version` works on the host the server runs on (Claydo subprocesses `claude` to answer).
+- Check `docs/USER_GUIDE.md` exists in the install dir (Claydo loads it as system prompt).
 - Check `assets/clayrune.png` is fetchable at `/assets/clayrune.png` (the FAB icon).
 
 ---
@@ -109,24 +109,24 @@ Old 19-step walkthrough referenced removed surfaces (Hivemind tab) and missed ev
 ```
 welcome → advanced-picker → sidebar → header → toolbar → sample-tile →
 open-modal → tabs → agent → menu → hivemind-sidebar → scheduler →
-console → bottom-tabs → cmd-palette → ask-playdo → done
+console → bottom-tabs → cmd-palette → ask-claydo → done
 ```
 
-Each step's copy reflects the current UI: 3-dot menu lists Hiveminds + Start Hivemind + Memory & Rules + Status/Color/Domain/Model + GitHub Sync; Tabs no longer mentions Hivemind; new dedicated steps for Hivemind sidebar, Scheduler, and the new floating Playdo button.
+Each step's copy reflects the current UI: 3-dot menu lists Hiveminds + Start Hivemind + Memory & Rules + Status/Color/Domain/Model + GitHub Sync; Tabs no longer mentions Hivemind; new dedicated steps for Hivemind sidebar, Scheduler, and the new floating Claydo button.
 
 **Walkthrough trigger fix** (also shipped): the first-run gate was `allProjects.length === 0`, but the auto-created `_incognito` project always counts as 1, so first-run never fired. Fix: filter via `isIncognitoProject()` before counting.
 
-### Thread 3 — "Ask Playdo" in-app helper (NEW)
+### Thread 3 — "Ask Claydo" in-app helper (NEW)
 
-A floating circular button bottom-right of every viewport, opens a chat modal where users ask plain-English questions about Clayrune. Playdo answers + emits inline UI control markers that highlight the relevant element while explaining.
+A floating circular button bottom-right of every viewport, opens a chat modal where users ask plain-English questions about Clayrune. Claydo answers + emits inline UI control markers that highlight the relevant element while explaining.
 
 - **Surface** (`static/index.html`):
-  - `<button id="playdo-fab">` — 56 px FAB with the mascot icon, accent border. Pulses on first visit until the user opens it once (persisted in `localStorage.playdo_opened`). Mobile sits 70 px above the bottom tab bar.
-  - `__playdo` modal — chat history + input pinned bottom. Each open is a fresh conversation (no per-session memory in v1).
-  - `submitPlaydo()` POSTs the question, renders the answer.
-  - `_playdoParseMarkers()` strips `[clayrune:...]` markers + queues actions.
-  - `_playdoDispatchActions()` runs them with 350 ms stagger.
-  - `_playdoFormatText()` light markdown (bold + inline code + newlines).
+  - `<button id="claydo-fab">` — 56 px FAB with the mascot icon, accent border. Pulses on first visit until the user opens it once (persisted in `localStorage.claydo_opened`). Mobile sits 70 px above the bottom tab bar.
+  - `__claydo` modal — chat history + input pinned bottom. Each open is a fresh conversation (no per-session memory in v1).
+  - `submitClaydo()` POSTs the question, renders the answer.
+  - `_claydoParseMarkers()` strips `[clayrune:...]` markers + queues actions.
+  - `_claydoDispatchActions()` runs them with 350 ms stagger.
+  - `_claydoFormatText()` light markdown (bold + inline code + newlines).
 - **Backend** (`server.py`):
   - `POST /api/guide/ask` — single-shot. Reads `docs/USER_GUIDE.md` as system prompt, runs `claude -p <question> --append-system-prompt <guide> --max-turns 1`. 60 s timeout, 2000-char question cap.
   - `GET /assets/<filename>` — static-file route serving the mascot icon and any other repo assets the FE needs.
@@ -135,20 +135,20 @@ A floating circular button bottom-right of every viewport, opens a chat modal wh
   - `[clayrune:open-modal project="abc123"]` → `openProjectModal('abc123')`
   - `[clayrune:highlight selector="#sidebar-item-hivemind" duration=2500]` → `.clayrune-highlight` CSS pulse + `scrollIntoView`
   - All read-only — no destructive actions in v1.
-- **Knowledge source**: new `docs/USER_GUIDE.md` (~310 lines). Comprehensive user-facing reference. Sections cover every surface, common-tasks recipes (with marker syntax baked in), keyboard shortcuts, glossary, troubleshooting. Plays double duty as Playdo's system prompt AND a human reference.
-- **Naming convention** (saved as memory `naming_playdo_clayrune.md`): Playdo = mascot character, Clayrune = product. Marker prefix stays `clayrune:` (product-namespaced); only the user-facing helper is "Ask Playdo."
+- **Knowledge source**: new `docs/USER_GUIDE.md` (~310 lines). Comprehensive user-facing reference. Sections cover every surface, common-tasks recipes (with marker syntax baked in), keyboard shortcuts, glossary, troubleshooting. Plays double duty as Claydo's system prompt AND a human reference.
+- **Naming convention** (saved as memory `naming_claydo_clayrune.md`): Claydo = mascot character, Clayrune = product. Marker prefix stays `clayrune:` (product-namespaced); only the user-facing helper is "Ask Claydo."
 
-**Voice**: deliberately not playful or childish (per Ron). Friendly + tight register. The system prompt at the bottom of `USER_GUIDE.md` instructs Playdo on tone.
+**Voice**: deliberately not playful or childish (per Ron). Friendly + tight register. The system prompt at the bottom of `USER_GUIDE.md` instructs Claydo on tone.
 
-### Thread 4 — Playdo polish iterations (`010de5a`, `8edd80d`, `25651f0`)
+### Thread 4 — Claydo polish iterations (`010de5a`, `8edd80d`, `25651f0`)
 
-After the initial Playdo landed, several refinements followed in the same session:
+After the initial Claydo landed, several refinements followed in the same session:
 
-- **Marker reliability** (`010de5a` part 1): the original system prompt described markers as a soft guideline; the model treated emission as optional. Live testing surfaced "Playdo answered correctly but didn't open/highlight the menu." Strengthened the system prompt with **hard rules** (marker emission is MANDATORY for how/where questions), **7 concrete few-shot Q→A pairs**, a **CSS selector cheatsheet** (17 entries pulled from live UI), and a hard ban on `[clayrune:open-modal project="<id>"]` placeholder fabrications. Common-tasks recipes rewritten to use only working selectors.
-- **Within-session memory** (`010de5a` part 2): `_playdoHistory` array tracks last 12 messages (~6 exchanges). Each request to `/api/guide/ask` now sends the last 6 messages as `history`; backend prepends them as "Previous exchange in this conversation: …". Cleaned text only (markers stripped before storing) so Playdo doesn't re-emit prior highlights. Reset on close+reopen, preserved across minimize+restore.
-- **Draggable FAB** (`8edd80d`): tap-vs-drag detection via 5px movement threshold. Tap → opens modal as before. Drag → button follows cursor; on release, position persists in `localStorage.playdo_fab_pos`. Touch + mouse both supported. Re-clamps to viewport on resize so it can't get trapped off-screen.
-- **Streaming responses** (`25651f0` part 1): replaces the 5–15s blocking wait with token-by-token streaming via SSE. New `/api/guide/stream` endpoint spawns claude with `--output-format stream-json`, parses assistant text blocks, emits `delta` / `done` / `error` events. Subprocess killed on client disconnect (GeneratorExit handler) so abandoned conversations don't burn tokens. Frontend `submitPlaydo` rewritten to use `fetch + ReadableStream`; bot message div fills incrementally; markers parsed from final assembled answer at done event (mid-stream marker firing is v2 polish).
-- **Error retry button** (uncommitted on disk): error bubbles in the chat now have a **Retry** button. Removes the failed user message from `_playdoHistory`, refills the input box, lets the user re-submit (or edit + re-submit). Surfaced after a transient `claude exit 1` that didn't recover gracefully.
+- **Marker reliability** (`010de5a` part 1): the original system prompt described markers as a soft guideline; the model treated emission as optional. Live testing surfaced "Claydo answered correctly but didn't open/highlight the menu." Strengthened the system prompt with **hard rules** (marker emission is MANDATORY for how/where questions), **7 concrete few-shot Q→A pairs**, a **CSS selector cheatsheet** (17 entries pulled from live UI), and a hard ban on `[clayrune:open-modal project="<id>"]` placeholder fabrications. Common-tasks recipes rewritten to use only working selectors.
+- **Within-session memory** (`010de5a` part 2): `_claydoHistory` array tracks last 12 messages (~6 exchanges). Each request to `/api/guide/ask` now sends the last 6 messages as `history`; backend prepends them as "Previous exchange in this conversation: …". Cleaned text only (markers stripped before storing) so Claydo doesn't re-emit prior highlights. Reset on close+reopen, preserved across minimize+restore.
+- **Draggable FAB** (`8edd80d`): tap-vs-drag detection via 5px movement threshold. Tap → opens modal as before. Drag → button follows cursor; on release, position persists in `localStorage.claydo_fab_pos`. Touch + mouse both supported. Re-clamps to viewport on resize so it can't get trapped off-screen.
+- **Streaming responses** (`25651f0` part 1): replaces the 5–15s blocking wait with token-by-token streaming via SSE. New `/api/guide/stream` endpoint spawns claude with `--output-format stream-json`, parses assistant text blocks, emits `delta` / `done` / `error` events. Subprocess killed on client disconnect (GeneratorExit handler) so abandoned conversations don't burn tokens. Frontend `submitClaydo` rewritten to use `fetch + ReadableStream`; bot message div fills incrementally; markers parsed from final assembled answer at done event (mid-stream marker firing is v2 polish).
+- **Error retry button** (uncommitted on disk): error bubbles in the chat now have a **Retry** button. Removes the failed user message from `_claydoHistory`, refills the input box, lets the user re-submit (or edit + re-submit). Surfaced after a transient `claude exit 1` that didn't recover gracefully.
 
 ### Thread 5 — Settings → Update Clayrune (`25651f0` part 2)
 
@@ -176,20 +176,20 @@ Files in place; still needs Ron to set up Cloudflare Pages + DNS.
 
 - [ ] **Validate vanilla Windows install** (the only platform not tested end-to-end this session — `install.ps1` path).
 - [ ] **Set up Cloudflare Pages for clayrune.io** following `docs/HOSTING.md`. ~10 min.
-- [ ] **Test the new Playdo features** end-to-end after restart (streaming, draggable FAB, retry button, marker reliability with new prompt).
+- [ ] **Test the new Claydo features** end-to-end after restart (streaming, draggable FAB, retry button, marker reliability with new prompt).
 - [ ] **Commit the uncommitted retry-button polish** if it's still on disk in the next session.
 
 ### Engineering items still TBD
 
-- **Mid-stream marker firing** — Playdo currently parses markers only at the `done` event. Mid-stream firing (so highlights appear as Playdo "speaks them" rather than after) is the next polish layer.
-- **Suggested follow-up chips** — after each answer, Playdo could offer 3 clickable next-questions ("Want to know how to schedule one?"). A new `[clayrune:suggest "Q1" "Q2" "Q3"]` marker shape.
-- **Playdo as actor** — v1 is read-only. v2 could add safe destructive markers (`create-schedule`, etc.) gated by explicit user confirmations.
+- **Mid-stream marker firing** — Claydo currently parses markers only at the `done` event. Mid-stream firing (so highlights appear as Claydo "speaks them" rather than after) is the next polish layer.
+- **Suggested follow-up chips** — after each answer, Claydo could offer 3 clickable next-questions ("Want to know how to schedule one?"). A new `[clayrune:suggest "Q1" "Q2" "Q3"]` marker shape.
+- **Claydo as actor** — v1 is read-only. v2 could add safe destructive markers (`create-schedule`, etc.) gated by explicit user confirmations.
 - **Telemetry on installer success/failure** — anonymous, opt-in. Count successful installs and where they fail. Helps drive the install prompt iteration.
-- **CI check** that any user-visible UI/server change also touches `docs/USER_GUIDE.md` so Playdo's knowledge stays current. Soft warning, not a block.
+- **CI check** that any user-visible UI/server change also touches `docs/USER_GUIDE.md` so Claydo's knowledge stays current. Soft warning, not a block.
 - **Versioned install prompts** at clayrune.io (e.g. `install-prompt-v1.md`) so updates can ship without breaking in-flight installs.
 - **POSIX adapter parity for the existing remote-restart code** (CHANGELOG `[2026-05-05]` flagged this as a TODO — netstat equivalent + log redirection for non-Windows).
 - **Mobile clay icon** — the FAB on mobile is 50 px which feels right; verify it doesn't clash with the bottom-tab bar in landscape orientation.
-- **First-launch UX**: walkthrough → Playdo. After the rewritten walkthrough completes, the Playdo button is pulsing for the user. The "ask-playdo" step calls it out. Could optionally auto-open the modal at the end of the tour — currently doesn't, by design (user clicks if they want).
+- **First-launch UX**: walkthrough → Claydo. After the rewritten walkthrough completes, the Claydo button is pulsing for the user. The "ask-claydo" step calls it out. Could optionally auto-open the modal at the end of the tour — currently doesn't, by design (user clicks if they want).
 
 ---
 

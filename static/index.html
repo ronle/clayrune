@@ -3214,8 +3214,8 @@
     margin-bottom:6px;
   }
 
-  /* ── Ask Playdo (in-app guide assistant) ───────────────────────────── */
-  .playdo-fab {
+  /* ── Ask Claydo (in-app guide assistant) ───────────────────────────── */
+  .claydo-fab {
     position: fixed; right: 18px; bottom: 18px; z-index: 1500;
     width: 56px; height: 56px; border-radius: 50%;
     background: var(--bg-card, var(--surface));
@@ -3226,118 +3226,118 @@
     transition: transform 0.18s, box-shadow 0.18s;
     touch-action: none; /* let our touch handlers manage drag without browser scroll */
   }
-  .playdo-fab:hover {
+  .claydo-fab:hover {
     transform: translateY(-2px) scale(1.04);
     box-shadow: 0 6px 18px rgba(0,0,0,0.45);
   }
-  .playdo-fab.dragging {
+  .claydo-fab.dragging {
     cursor: grabbing;
     transform: scale(1.06);
     transition: none;  /* responsive follow-cursor */
   }
-  .playdo-fab img {
+  .claydo-fab img {
     width: 100%; height: 100%; object-fit: contain;
     pointer-events: none;
   }
-  .playdo-fab.pulse {
-    animation: playdo-pulse 2.4s ease-out infinite;
+  .claydo-fab.pulse {
+    animation: claydo-pulse 2.4s ease-out infinite;
   }
-  @keyframes playdo-pulse {
+  @keyframes claydo-pulse {
     0%   { box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 0 0 var(--accent); }
     70%  { box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 0 14px transparent; }
     100% { box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 0 0 transparent; }
   }
   /* On mobile, lift above the bottom tab bar */
   @media (max-width: 960px) {
-    .playdo-fab {
+    .claydo-fab {
       bottom: 70px; right: 14px;
       width: 50px; height: 50px;
     }
   }
 
-  /* The Ask Playdo modal — chat-style: scroll history + input pinned bottom */
-  .playdo-history {
+  /* The Ask Claydo modal — chat-style: scroll history + input pinned bottom */
+  .claydo-history {
     flex: 1; min-height: 0; overflow-y: auto;
     padding: 14px 22px 14px 28px;
     display: flex; flex-direction: column; gap: 14px;
   }
-  .playdo-msg {
+  .claydo-msg {
     padding: 10px 12px; border-radius: 8px;
     font-size: 13px; line-height: 1.55;
     max-width: 92%;
   }
-  .playdo-msg.user {
+  .claydo-msg.user {
     align-self: flex-end;
     background: var(--accent-dim, var(--surface2));
     color: var(--text);
   }
-  .playdo-msg.bot {
+  .claydo-msg.bot {
     align-self: flex-start;
     background: var(--surface2);
     color: var(--text);
     white-space: pre-wrap; word-break: break-word;
   }
-  .playdo-msg.bot strong { color: var(--accent); }
-  .playdo-msg.bot code {
+  .claydo-msg.bot strong { color: var(--accent); }
+  .claydo-msg.bot code {
     font-family: var(--mono, monospace); font-size: 12px;
     background: var(--surface); padding: 1px 5px; border-radius: 3px;
   }
-  .playdo-msg.error {
+  .claydo-msg.error {
     align-self: stretch;
     background: #ef444420; color: #fca5a5;
     border: 1px solid #ef444460; font-size: 12px;
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   }
-  .playdo-retry-btn {
+  .claydo-retry-btn {
     margin-left: auto;
     background: transparent; border: 1px solid #ef444480;
     color: #fca5a5; padding: 3px 12px; border-radius: 4px;
     cursor: pointer; font-size: 12px; font-family: inherit;
     transition: all 0.15s;
   }
-  .playdo-retry-btn:hover {
+  .claydo-retry-btn:hover {
     background: #ef444430; color: #fed7d7; border-color: #ef4444;
   }
-  .playdo-thinking {
+  .claydo-thinking {
     align-self: flex-start;
     color: var(--text-faint); font-size: 12px; font-style: italic;
     padding: 6px 12px;
   }
-  .playdo-thinking::after {
+  .claydo-thinking::after {
     content: ''; display: inline-block; width: 0;
-    animation: playdo-dots 1.4s steps(4, end) infinite;
+    animation: claydo-dots 1.4s steps(4, end) infinite;
     overflow: hidden; vertical-align: bottom;
   }
-  @keyframes playdo-dots {
+  @keyframes claydo-dots {
     0%   { content: ''; }
     25%  { content: '.'; }
     50%  { content: '..'; }
     75%  { content: '...'; }
     100% { content: ''; }
   }
-  .playdo-input-row {
+  .claydo-input-row {
     flex-shrink: 0; padding: 10px 22px 16px 28px;
     border-top: 1px solid var(--border);
     display: flex; gap: 8px; align-items: flex-end;
   }
-  .playdo-input {
+  .claydo-input {
     flex: 1; min-width: 0;
     background: var(--bg); border: 1px solid var(--border);
     color: var(--text); font-family: 'Inter', sans-serif; font-size: 13px;
     padding: 8px 12px; border-radius: 5px; outline: none; resize: none;
     min-height: 38px; max-height: 120px; line-height: 1.5;
   }
-  .playdo-input:focus { border-color: var(--accent); }
-  .playdo-send {
+  .claydo-input:focus { border-color: var(--accent); }
+  .claydo-send {
     background: var(--accent); border: none; color: #fff;
     padding: 8px 16px; border-radius: 5px; cursor: pointer;
     font-size: 12px; font-weight: 600; flex-shrink: 0;
     transition: opacity 0.15s;
   }
-  .playdo-send:hover { opacity: 0.85; }
-  .playdo-send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .claydo-send:hover { opacity: 0.85; }
+  .claydo-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  /* The orange pulse Playdo emits via [clayrune:highlight] markers. */
+  /* The orange pulse Claydo emits via [clayrune:highlight] markers. */
   .clayrune-highlight {
     position: relative;
     animation: clayrune-highlight-pulse 1.8s ease-in-out;
@@ -3601,8 +3601,8 @@
 <div id="toast-container"></div>
 <div id="hm-worker-popover" class="hm-worker-popover hidden" onmouseenter="cancelHideHmPopover()" onmouseleave="scheduleHideHmPopover()"></div>
 
-<!-- Floating "Ask Playdo" button — draggable; tap opens the helper. -->
-<button id="playdo-fab" class="playdo-fab" title="Ask Playdo (drag to reposition)" aria-label="Ask Playdo">
+<!-- Floating "Ask Claydo" button — draggable; tap opens the helper. -->
+<button id="claydo-fab" class="claydo-fab" title="Ask Claydo (drag to reposition)" aria-label="Ask Claydo">
   <img src="/assets/clayrune.png" alt="" draggable="false">
 </button>
 
@@ -12965,21 +12965,37 @@ function _jumpToBacklogItem(projectId, itemId) {
   }, 150);
 }
 
-// ── Ask Playdo (in-app guide assistant) ───────────────────────────────────
+// ── Ask Claydo (in-app guide assistant) ───────────────────────────────────
 // Floating button → modal chat → POST /api/guide/ask → render answer +
-// strip + dispatch [clayrune:...] UI control markers emitted by Playdo.
+// strip + dispatch [clayrune:...] UI control markers emitted by Claydo.
 
 // Per-modal-session conversation history. Reset each time the modal is
 // opened fresh (i.e. after being closed). Minimize+restore preserves it.
 // Cap at 6 messages (3 exchanges) — anything older falls off the front.
-let _playdoHistory = [];
+let _claydoHistory = [];
+
+// One-time localStorage migration from the previous "Playdo" name. Read the
+// old key, write to the new key if not already set, then delete the old.
+// Idempotent — safe to run on every page load.
+(function _migrateClaydoKeys() {
+  for (const [oldK, newK] of [['playdo_opened', 'claydo_opened'],
+                              ['playdo_fab_pos', 'claydo_fab_pos']]) {
+    try {
+      const v = localStorage.getItem(oldK);
+      if (v != null) {
+        if (localStorage.getItem(newK) == null) localStorage.setItem(newK, v);
+        localStorage.removeItem(oldK);
+      }
+    } catch (e) {}
+  }
+})();
 
 // Pulse the floating button until the user opens the modal once.
-(function _initPlaydoPulse() {
-  if (localStorage.getItem('playdo_opened')) return;
+(function _initClaydoPulse() {
+  if (localStorage.getItem('claydo_opened')) return;
   // Apply on next tick so the button has been added to DOM.
   setTimeout(() => {
-    const fab = document.getElementById('playdo-fab');
+    const fab = document.getElementById('claydo-fab');
     if (fab) fab.classList.add('pulse');
   }, 300);
 })();
@@ -12988,11 +13004,11 @@ let _playdoHistory = [];
 // reposition + persist the new spot in localStorage. Touch + mouse both
 // supported. Position re-clamped on viewport resize so the button can't get
 // trapped off-screen.
-const _playdoDrag = {active: false, startX: 0, startY: 0, startLeft: 0, startTop: 0, moved: 0};
-const PLAYDO_DRAG_THRESHOLD = 5;  // px before a press becomes a drag
+const _claydoDrag = {active: false, startX: 0, startY: 0, startLeft: 0, startTop: 0, moved: 0};
+const CLAYDO_DRAG_THRESHOLD = 5;  // px before a press becomes a drag
 
-function _playdoApplyFabPosition(left, top) {
-  const fab = document.getElementById('playdo-fab');
+function _claydoApplyFabPosition(left, top) {
+  const fab = document.getElementById('claydo-fab');
   if (!fab) return;
   const size = fab.offsetWidth || 56;
   // Clamp within viewport with an 8px margin so it doesn't kiss the edge.
@@ -13005,65 +13021,65 @@ function _playdoApplyFabPosition(left, top) {
   fab.style.top = top + 'px';
 }
 
-function _playdoLoadFabPosition() {
+function _claydoLoadFabPosition() {
   try {
-    const s = JSON.parse(localStorage.getItem('playdo_fab_pos') || 'null');
+    const s = JSON.parse(localStorage.getItem('claydo_fab_pos') || 'null');
     if (s && typeof s.left === 'number' && typeof s.top === 'number') {
-      _playdoApplyFabPosition(s.left, s.top);
+      _claydoApplyFabPosition(s.left, s.top);
     }
   } catch {}
 }
 
-(function _initPlaydoDrag() {
+(function _initClaydoDrag() {
   // Wait for the FAB to exist in the DOM.
   setTimeout(() => {
-    const fab = document.getElementById('playdo-fab');
+    const fab = document.getElementById('claydo-fab');
     if (!fab) return;
 
-    _playdoLoadFabPosition();
+    _claydoLoadFabPosition();
 
     const onDown = (e) => {
       const t = e.touches ? e.touches[0] : e;
-      _playdoDrag.active = true;
-      _playdoDrag.startX = t.clientX;
-      _playdoDrag.startY = t.clientY;
+      _claydoDrag.active = true;
+      _claydoDrag.startX = t.clientX;
+      _claydoDrag.startY = t.clientY;
       const r = fab.getBoundingClientRect();
-      _playdoDrag.startLeft = r.left;
-      _playdoDrag.startTop  = r.top;
-      _playdoDrag.moved = 0;
+      _claydoDrag.startLeft = r.left;
+      _claydoDrag.startTop  = r.top;
+      _claydoDrag.moved = 0;
       // Don't preventDefault on mousedown — we want focus + browser hover state
       // to behave normally. We'll preventDefault on touchmove instead so the
       // page doesn't scroll while dragging.
     };
 
     const onMove = (e) => {
-      if (!_playdoDrag.active) return;
+      if (!_claydoDrag.active) return;
       const t = e.touches ? e.touches[0] : e;
-      const dx = t.clientX - _playdoDrag.startX;
-      const dy = t.clientY - _playdoDrag.startY;
+      const dx = t.clientX - _claydoDrag.startX;
+      const dy = t.clientY - _claydoDrag.startY;
       const dist = Math.abs(dx) + Math.abs(dy);
-      if (dist > _playdoDrag.moved) _playdoDrag.moved = dist;
-      if (_playdoDrag.moved < PLAYDO_DRAG_THRESHOLD) return;
+      if (dist > _claydoDrag.moved) _claydoDrag.moved = dist;
+      if (_claydoDrag.moved < CLAYDO_DRAG_THRESHOLD) return;
       // Past the threshold — we're dragging.
       if (e.cancelable && e.touches) e.preventDefault();
       fab.classList.add('dragging');
-      _playdoApplyFabPosition(_playdoDrag.startLeft + dx, _playdoDrag.startTop + dy);
+      _claydoApplyFabPosition(_claydoDrag.startLeft + dx, _claydoDrag.startTop + dy);
     };
 
     const onUp = () => {
-      if (!_playdoDrag.active) return;
-      _playdoDrag.active = false;
-      const wasDrag = _playdoDrag.moved >= PLAYDO_DRAG_THRESHOLD;
+      if (!_claydoDrag.active) return;
+      _claydoDrag.active = false;
+      const wasDrag = _claydoDrag.moved >= CLAYDO_DRAG_THRESHOLD;
       fab.classList.remove('dragging');
       if (wasDrag) {
         // Persist the final spot.
         const r = fab.getBoundingClientRect();
         try {
-          localStorage.setItem('playdo_fab_pos', JSON.stringify({left: r.left, top: r.top}));
+          localStorage.setItem('claydo_fab_pos', JSON.stringify({left: r.left, top: r.top}));
         } catch {}
       } else {
         // It was a tap (no movement) — open the modal.
-        openPlaydo();
+        openClaydo();
       }
     };
 
@@ -13081,29 +13097,29 @@ function _playdoLoadFabPosition() {
       const r = fab.getBoundingClientRect();
       // Only re-apply if a custom position was set (i.e. the user dragged).
       if (fab.style.left || fab.style.top) {
-        _playdoApplyFabPosition(r.left, r.top);
+        _claydoApplyFabPosition(r.left, r.top);
       }
     });
   }, 200);
 })();
 
-async function openPlaydo() {
+async function openClaydo() {
   // Stop the pulse the first time the user opens it (persisted).
-  localStorage.setItem('playdo_opened', '1');
-  const fab = document.getElementById('playdo-fab');
+  localStorage.setItem('claydo_opened', '1');
+  const fab = document.getElementById('claydo-fab');
   if (fab) fab.classList.remove('pulse');
 
-  const modalId = '__playdo';
+  const modalId = '__claydo';
   if (openModals.has(modalId)) {
     const entry = openModals.get(modalId);
     if (entry.minimized) restoreModal(modalId);
     focusModal(modalId);
-    setTimeout(() => document.getElementById('playdo-input')?.focus(), 50);
+    setTimeout(() => document.getElementById('claydo-input')?.focus(), 50);
     return;
   }
   // Fresh open → fresh conversation. (Minimize keeps history; close+reopen
   // resets, since closeModalById removes the modal from the DOM.)
-  _playdoHistory = [];
+  _claydoHistory = [];
 
   const win = document.createElement('div');
   win.className = 'modal-window';
@@ -13116,7 +13132,7 @@ async function openPlaydo() {
       <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
         <img src="/assets/clayrune.png" alt="" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);object-fit:contain;background:var(--surface2)" draggable="false">
         <div style="min-width:0">
-          <div style="font-size:14px;font-weight:700;color:var(--text)">Ask Playdo</div>
+          <div style="font-size:14px;font-weight:700;color:var(--text)">Ask Claydo</div>
           <div style="font-size:11px;color:var(--text-faint)">Your in-app guide to Clayrune</div>
         </div>
       </div>
@@ -13125,13 +13141,13 @@ async function openPlaydo() {
         <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
       </div>
     </div>
-    <div class="playdo-history" id="playdo-history">
-      <div class="playdo-msg bot">Hi — I'm Playdo. Ask me anything about Clayrune. I can highlight UI elements while I explain. Try: <em>"how do I start a hivemind?"</em> or <em>"where do I see scheduled runs?"</em></div>
+    <div class="claydo-history" id="claydo-history">
+      <div class="claydo-msg bot">Hi — I'm Claydo. Ask me anything about Clayrune. I can highlight UI elements while I explain. Try: <em>"how do I start a hivemind?"</em> or <em>"where do I see scheduled runs?"</em></div>
     </div>
-    <div class="playdo-input-row">
-      <textarea id="playdo-input" class="playdo-input" rows="1" placeholder="Ask a question..."
-        onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitPlaydo();}"></textarea>
-      <button id="playdo-send" class="playdo-send" onclick="submitPlaydo()">Send</button>
+    <div class="claydo-input-row">
+      <textarea id="claydo-input" class="claydo-input" rows="1" placeholder="Ask a question..."
+        onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitClaydo();}"></textarea>
+      <button id="claydo-send" class="claydo-send" onclick="submitClaydo()">Send</button>
     </div>`;
   win.appendChild(content);
   document.getElementById('modal-layer').appendChild(win);
@@ -13141,30 +13157,30 @@ async function openPlaydo() {
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
   centerModalElement(win);
   focusModal(modalId);
-  setTimeout(() => document.getElementById('playdo-input')?.focus(), 50);
+  setTimeout(() => document.getElementById('claydo-input')?.focus(), 50);
 }
 
-async function submitPlaydo() {
-  const input = document.getElementById('playdo-input');
-  const send = document.getElementById('playdo-send');
-  const histDiv = document.getElementById('playdo-history');
+async function submitClaydo() {
+  const input = document.getElementById('claydo-input');
+  const send = document.getElementById('claydo-send');
+  const histDiv = document.getElementById('claydo-history');
   if (!input || !histDiv) return;
   const question = input.value.trim();
   if (!question) return;
 
   // User's message
   const userMsg = document.createElement('div');
-  userMsg.className = 'playdo-msg user';
+  userMsg.className = 'claydo-msg user';
   userMsg.textContent = question;
   histDiv.appendChild(userMsg);
 
   // Bot message div — will be filled with streaming tokens.
   // Starts empty + shows the typing dots; replaced with real text as we go.
   const botMsg = document.createElement('div');
-  botMsg.className = 'playdo-msg bot';
+  botMsg.className = 'claydo-msg bot';
   const thinking = document.createElement('span');
-  thinking.className = 'playdo-thinking';
-  thinking.textContent = 'Playdo is thinking';
+  thinking.className = 'claydo-thinking';
+  thinking.textContent = 'Claydo is thinking';
   botMsg.appendChild(thinking);
   histDiv.appendChild(botMsg);
   histDiv.scrollTop = histDiv.scrollHeight;
@@ -13174,10 +13190,10 @@ async function submitPlaydo() {
   send.disabled = true;
 
   // Snapshot prior history (last 6 messages = ~3 exchanges).
-  const historyPayload = _playdoHistory.slice(-6);
+  const historyPayload = _claydoHistory.slice(-6);
   // Push the user's message into history NOW so the next turn sees it even
   // if streaming fails midway.
-  _playdoHistory.push({role: 'user', text: question});
+  _claydoHistory.push({role: 'user', text: question});
 
   // Accumulate streamed text chunks here so we can render incrementally
   // AND parse markers at the end from the full assembled answer.
@@ -13193,7 +13209,7 @@ async function submitPlaydo() {
     });
     if (!res.ok || !res.body) {
       const data = await res.json().catch(() => ({}));
-      _playdoRenderError(botMsg, data.error || `Request failed (${res.status})`, question);
+      _claydoRenderError(botMsg, data.error || `Request failed (${res.status})`, question);
       errored = true;
       return;
     }
@@ -13223,31 +13239,31 @@ async function submitPlaydo() {
           assembled += payload.text || '';
           // Render the assembled-so-far with markers stripped (they'll be
           // dispatched on `done`). Light formatting matches non-streaming path.
-          const {cleanText} = _playdoParseMarkers(assembled);
-          botMsg.innerHTML = _playdoFormatText(cleanText);
+          const {cleanText} = _claydoParseMarkers(assembled);
+          botMsg.innerHTML = _claydoFormatText(cleanText);
           histDiv.scrollTop = histDiv.scrollHeight;
         } else if (payload.type === 'error') {
-          _playdoRenderError(botMsg, payload.message || 'Playdo errored', question);
+          _claydoRenderError(botMsg, payload.message || 'Claydo errored', question);
           errored = true;
           return;
         } else if (payload.type === 'done') {
           // Final assembled answer — use it as ground truth in case any
           // delta got dropped. Then parse markers and dispatch.
           const finalText = (payload.answer || assembled).trim();
-          const {cleanText, actions} = _playdoParseMarkers(finalText);
-          botMsg.innerHTML = _playdoFormatText(cleanText);
-          // Store the cleaned text (NO markers) so Playdo's next turn doesn't
+          const {cleanText, actions} = _claydoParseMarkers(finalText);
+          botMsg.innerHTML = _claydoFormatText(cleanText);
+          // Store the cleaned text (NO markers) so Claydo's next turn doesn't
           // re-emit the same highlights from seeing them in its own prior reply.
-          _playdoHistory.push({role: 'assistant', text: cleanText});
-          if (_playdoHistory.length > 12) {
-            _playdoHistory = _playdoHistory.slice(-12);
+          _claydoHistory.push({role: 'assistant', text: cleanText});
+          if (_claydoHistory.length > 12) {
+            _claydoHistory = _claydoHistory.slice(-12);
           }
-          _playdoDispatchActions(actions);
+          _claydoDispatchActions(actions);
         }
       }
     }
   } catch (e) {
-    _playdoRenderError(botMsg, 'Network error: ' + (e.message || e), question);
+    _claydoRenderError(botMsg, 'Network error: ' + (e.message || e), question);
     errored = true;
   } finally {
     input.disabled = false;
@@ -13258,24 +13274,24 @@ async function submitPlaydo() {
 }
 
 // Render an error in the bot message slot with a Retry button. The retry
-// pops the failed user message back out of _playdoHistory + the input box
+// pops the failed user message back out of _claydoHistory + the input box
 // so the user just clicks Send again (or edits the question first).
-function _playdoRenderError(botMsg, message, originalQuestion) {
+function _claydoRenderError(botMsg, message, originalQuestion) {
   botMsg.innerHTML = '';
   botMsg.classList.remove('bot'); botMsg.classList.add('error');
   const msg = document.createElement('div');
   msg.textContent = message;
   botMsg.appendChild(msg);
   const retry = document.createElement('button');
-  retry.className = 'playdo-retry-btn';
+  retry.className = 'claydo-retry-btn';
   retry.textContent = 'Retry';
   retry.onclick = () => {
     // Drop the failed user message from history (we pushed it pre-fetch).
-    if (_playdoHistory.length && _playdoHistory[_playdoHistory.length - 1].role === 'user') {
-      _playdoHistory.pop();
+    if (_claydoHistory.length && _claydoHistory[_claydoHistory.length - 1].role === 'user') {
+      _claydoHistory.pop();
     }
     // Refill the input so the user can edit if they want, then resubmit.
-    const input = document.getElementById('playdo-input');
+    const input = document.getElementById('claydo-input');
     if (input) {
       input.value = originalQuestion;
       input.focus();
@@ -13287,9 +13303,9 @@ function _playdoRenderError(botMsg, message, originalQuestion) {
 }
 
 // Parse [clayrune:goto view="..."], [clayrune:open-modal project="..."],
-// [clayrune:highlight selector="..." duration=N] markers out of Playdo's
+// [clayrune:highlight selector="..." duration=N] markers out of Claydo's
 // reply. Returns the cleaned text + an array of action objects to dispatch.
-function _playdoParseMarkers(raw) {
+function _claydoParseMarkers(raw) {
   const actions = [];
   const re = /\[clayrune:(goto|open-modal|highlight)\s+([^\]]+)\]/g;
   const cleanText = raw.replace(re, (_match, kind, attrs) => {
@@ -13306,17 +13322,17 @@ function _playdoParseMarkers(raw) {
   return {cleanText: cleanText.trim(), actions};
 }
 
-function _playdoDispatchActions(actions) {
+function _claydoDispatchActions(actions) {
   if (!actions.length) return;
   // Stagger by 300ms so the user can follow what's happening.
   let delay = 0;
   for (const a of actions) {
-    setTimeout(() => _playdoRunAction(a), delay);
+    setTimeout(() => _claydoRunAction(a), delay);
     delay += 350;
   }
 }
 
-function _playdoRunAction(a) {
+function _claydoRunAction(a) {
   try {
     if (a.kind === 'goto' && a.view) {
       if (typeof sidebarNav === 'function') sidebarNav(a.view);
@@ -13331,13 +13347,13 @@ function _playdoRunAction(a) {
       setTimeout(() => el.classList.remove('clayrune-highlight'), dur);
     }
   } catch (e) {
-    console.warn('Playdo action failed:', a, e);
+    console.warn('Claydo action failed:', a, e);
   }
 }
 
-// Light markdown-ish formatting for Playdo's text. Bold, inline code, and
+// Light markdown-ish formatting for Claydo's text. Bold, inline code, and
 // preserve newlines. Strip any HTML the agent might emit (defense in depth).
-function _playdoFormatText(s) {
+function _claydoFormatText(s) {
   return esc(s)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -14069,10 +14085,10 @@ const WT_STEPS = [
     },
   },
   {
-    id: 'ask-playdo',
-    title: 'Ask Playdo any time',
-    body: 'Click the floating <strong>Playdo</strong> button bottom-right (it\u2019s pulsing for you) to ask questions about Clayrune in plain English \u2014 Playdo can highlight the relevant UI element while explaining. It reads the same User Guide that powers this tour, so it always knows what\u2019s available.',
-    target: '#playdo-fab', pos: 'left',
+    id: 'ask-claydo',
+    title: 'Ask Claydo any time',
+    body: 'Click the floating <strong>Claydo</strong> button bottom-right (it\u2019s pulsing for you) to ask questions about Clayrune in plain English \u2014 Claydo can highlight the relevant UI element while explaining. It reads the same User Guide that powers this tour, so it always knows what\u2019s available.',
+    target: '#claydo-fab', pos: 'left',
   },
   {
     id: 'done',
