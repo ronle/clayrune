@@ -24,6 +24,18 @@ data/grid_layout.json
 data/schedules.json
 data/restart_log.json
 data/memory/
+# Claydo helper sandbox: server materializes USER_GUIDE.md as CLAUDE.md
+# under this dir on every /api/guide/* call so Claude auto-loads it as
+# project context. Regenerated; not source. (data/playdo/ is the same dir
+# under the pre-rename name — kept here so old installs that still have
+# it don't dirty the working tree before _claydo_cwd's auto-rename runs.)
+data/claydo/
+data/playdo/
+# Server writes install-launch.log into the install dir on Linux/macOS;
+# install-prompt.md execution writes install.log when the old prompt-based
+# install was used. Both are post-install runtime artifacts.
+install-launch.log
+install.log
 
 # Build artifacts
 build/
