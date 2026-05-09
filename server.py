@@ -902,18 +902,32 @@ def serve_asset(filename):
     return send_from_directory(str(assets_dir), filename)
 
 
-# ── "Ask Playdo" guide assistant ────────────────────────────────────────────
+# ── "Ask Claydo" guide assistant ────────────────────────────────────────────
 
-# Dedicated cwd for Playdo's claude subprocess. Without an explicit cwd, claude
+# Dedicated cwd for Claydo's claude subprocess. Without an explicit cwd, claude
 # would inherit the server's working directory (= the Mission Control project's
 # project_path) and dump its session transcripts into
 # `~/.claude/projects/<encoded-mc-path>/`. The startup transcript-backfill then
-# scans that directory and synthesizes agent_log entries — so Playdo
-# conversations would appear in MC's Agent Log tab. Routing Playdo's claude
+# scans that directory and synthesizes agent_log entries — so Claydo
+# conversations would appear in MC's Agent Log tab. Routing Claydo's claude
 # into a sandbox dir under data/ encodes to a path no project owns, so the
 # transcripts stay isolated.
-def _playdo_cwd():
-    d = Path(__file__).parent / 'data' / 'playdo'
+def _claydo_cwd():
+    d = Path(__file__).parent / 'data' / 'claydo'
+    # One-time rename of the old data/playdo/ sandbox dir from before the
+    # mascot was renamed Playdo -> Claydo. The directory holds Claude's
+    # CLAUDE.md (regenerated on every call) and ~/.claude transcripts keyed
+    # off this cwd. Renaming preserves transcript continuity.
+    if not d.exists():
+        old = Path(__file__).parent / 'data' / 'playdo'
+        if old.exists():
+            try:
+                old.rename(d)
+            except Exception:
+                # Cross-device rename or permission issue — fall through
+                # and just create the new dir; old transcripts stay where
+                # they are (not catastrophic, just lose continuity).
+                pass
     d.mkdir(parents=True, exist_ok=True)
     return str(d)
 
@@ -952,12 +966,12 @@ def guide_stream():
     except Exception as e:
         return jsonify({'error': f'guide read failed: {e}'}), 500
 
-    # Materialize the guide as CLAUDE.md in Playdo's working directory so the
+    # Materialize the guide as CLAUDE.md in Claydo's working directory so the
     # Claude CLI auto-loads it as project context. Avoids the Windows 32 KB
     # CreateProcess command-line limit which the 24 KB guide hit when passed
     # via `--append-system-prompt`. Only re-write when the on-disk content
     # has drifted from the source (cheap idempotent check).
-    cwd = _playdo_cwd()
+    cwd = _claydo_cwd()
     try:
         guide_md = Path(cwd) / 'CLAUDE.md'
         if not guide_md.exists() or guide_md.read_text(encoding='utf-8') != system_prompt:
@@ -1009,7 +1023,7 @@ def guide_stream():
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                cwd=_playdo_cwd(),
+                cwd=_claydo_cwd(),
                 text=True, encoding='utf-8', errors='replace',
                 creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
             )
@@ -1087,7 +1101,7 @@ def guide_stream():
 
 @app.route('/api/guide/ask', methods=['POST'])
 def guide_ask():
-    """Single-shot ask of the in-app Playdo guide assistant.
+    """Single-shot ask of the in-app Claydo guide assistant.
 
     Spawns a claude session with `docs/USER_GUIDE.md` as system prompt, runs
     the user's question (optionally with prior-turn context), returns the
@@ -1123,7 +1137,7 @@ def guide_ask():
     # See /api/guide/stream for the rationale: passing the 24 KB guide via
     # `--append-system-prompt` blows past Windows' 32 KB CreateProcess limit.
     # Drop it as CLAUDE.md so Claude auto-loads it as project context instead.
-    cwd = _playdo_cwd()
+    cwd = _claydo_cwd()
     try:
         guide_md = Path(cwd) / 'CLAUDE.md'
         if not guide_md.exists() or guide_md.read_text(encoding='utf-8') != system_prompt:
@@ -1163,13 +1177,13 @@ def guide_ask():
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True,
-            cwd=_playdo_cwd(),
+            cwd=_claydo_cwd(),
             input=stdin_msg,
             timeout=60, encoding='utf-8', errors='replace',
             creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
         )
     except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Playdo timed out (>60s)'}), 504
+        return jsonify({'error': 'Claydo timed out (>60s)'}), 504
     except FileNotFoundError:
         return jsonify({'error': 'Claude CLI not found on this server'}), 500
     except Exception as e:
@@ -6523,18 +6537,18 @@ def _start_hivemind_orchestrator():
 
 # ── Agent log endpoint ────────────────────────────────────────────────────────
 
-def _looks_like_playdo_entry(entry):
-    """Heuristic: does this agent_log entry look like a Playdo conversation
+def _looks_like_claydo_entry(entry):
+    """Heuristic: does this agent_log entry look like a Claydo conversation
     that ended up in a project's log via transcript-backfill pollution?
 
     We catch the unmistakable signature: tasks that start with
     "Previous exchange in this conversation:" — that's the prefix WE
-    generate when sending Playdo's history context. No real MC user task
+    generate when sending Claydo's history context. No real MC user task
     would ever start that way.
 
-    First-turn Playdo entries (no history prefix) are indistinguishable
-    from real questions, so we leave them. The cwd fix in `_playdo_cwd`
-    prevents any new Playdo transcripts from leaking into project
+    First-turn Claydo entries (no history prefix) are indistinguishable
+    from real questions, so we leave them. The cwd fix in `_claydo_cwd`
+    prevents any new Claydo transcripts from leaking into project
     agent_logs going forward; this filter just suppresses the leftover
     follow-up entries that landed before the cwd fix.
     """
@@ -6545,7 +6559,7 @@ def _looks_like_playdo_entry(entry):
 @app.route('/api/project/<project_id>/agent/log')
 def get_agent_log(project_id):
     log = _load_agent_log(project_id)
-    log = [e for e in log if not _looks_like_playdo_entry(e)]
+    log = [e for e in log if not _looks_like_claydo_entry(e)]
     for entry in log:
         entry['ts_relative'] = time_ago(entry.get('ts'))
         entry['started_relative'] = time_ago(entry.get('started_at'))
