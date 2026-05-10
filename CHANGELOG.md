@@ -4,6 +4,99 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-10b] — Skills import (paste / folder / Git URL / cross-project)
+
+Follow-up to the morning's Skills surface. Adds 4 import paths so users can
+bring in skills from outside Clayrune instead of authoring everything from
+scratch. All four ship together because they cover non-overlapping sources
+and share the same destination-scope picker.
+
+### Backend (`skills.py`)
+
+- `import_from_paste(content, scope, ...)` — parses pasted SKILL.md,
+  validates frontmatter, calls `write_skill`. Name comes from frontmatter
+  or an explicit override.
+- `import_from_folder(src_path, scope, ..., selected_rel_dir?)` — scans
+  the folder (depth-capped at 3) for SKILL.md files. Single hit installs
+  immediately; multi-hit returns `{multiple: True, candidates: [...]}`
+  so the caller can re-invoke with `selected_rel_dir`.
+- `git_clone_to_staging(url, ref?, timeout=60)` — shallow `git clone` into
+  `~/.claude/skills.staging/<uuid>/`, strips `.git`, scans for SKILL.md
+  files. Returns `{staging_id, candidates}`.
+- `install_from_staging(staging_id, rel_dir, scope, ...)` — copies the
+  chosen candidate from a previously-staged clone. Path-traversal-checked
+  (rel_dir must stay inside staging_path).
+- `cleanup_stale_staging(max_age_hours=24)` — sweeps abandoned staging
+  dirs at startup so they don't accumulate.
+- `_install_skill_dir` (private) — shared helper that copies a skill
+  folder + normalizes the destination SKILL.md's frontmatter `name` to
+  match the install name (so the install name and the frontmatter never
+  diverge).
+- `_scan_for_skills(root, max_depth)` — finds all SKILL.md files,
+  returns `{name, rel_dir, abs_dir, description, has_subassets}` for
+  each. Used by both folder and git flows.
+
+### Backend (`server.py`)
+
+- `POST /api/skills/import/paste` — body `{content, scope, project_id?, name?}`
+- `POST /api/skills/import/folder` — body `{path, scope, project_id?, name?, selected_rel_dir?}`;
+  returns `{multiple: true, candidates: [...]}` when ambiguous.
+- `POST /api/skills/import/git` — body `{url, ref?, scope, project_id?, name?, auto_install?}`.
+  Auto-installs when exactly one SKILL.md found; otherwise returns
+  `{staging_id, candidates}` for the picker.
+- `POST /api/skills/import/git/install` — body `{staging_id, rel_dir, scope, ...}`.
+  Path-checked so a malicious `rel_dir` can't escape the staging dir.
+- `POST /api/skills/import/git/cancel` — discards a staging dir without
+  installing.
+- Startup hook: `_skills.cleanup_stale_staging(max_age_hours=24)` runs
+  from `__main__` alongside `_install_builtin_skills()`.
+
+### Frontend (`static/index.html`)
+
+- New **Import ▾** dropdown beside "+ New Skill" in the Skills modal
+  header. 4 menu entries: Paste SKILL.md / From a folder / From a Git URL
+  / Browse other projects.
+- `_importContextHTML` shared component renders the scope radio + project
+  picker — used by all 4 import modals so destination-scope UX is uniform.
+- Defaults: when the Skills modal is filtered to a specific project, the
+  import context defaults to that project; else global.
+- **Paste modal**: large monospace textarea, optional name override,
+  scope picker. Single click installs.
+- **Folder modal**: path text input (Windows + POSIX accepted), optional
+  name override. If backend reports `multiple`, inline candidate picker
+  shows below the input with one-click install per candidate.
+- **Git modal**: URL input, optional branch/tag, optional name override
+  (single-skill repos only). Single-skill repos auto-install. Multi-skill
+  repos show inline candidate picker. Cancel cleans up the staging dir.
+- **Browse modal**: fan-out search across global pool + every loaded
+  project's pool, dedup + sort by score. Each result has "Read body"
+  (toggles inline body preview) and "Install here" (copies into the
+  chosen destination scope).
+
+### Notes / design decisions
+
+- Cross-project copy reuses existing `POST /api/skills` — no new endpoint
+  needed. Frontend fetches the source skill with `include_body=true`,
+  POSTs the same name/description/body to the destination.
+- Git clone is shallow + 60s timeout. `.git` is stripped after clone so
+  the skill folder looks like any other on-disk skill.
+- Multi-skill repo case routes through a staging dir to avoid double-clone
+  on candidate selection. Stale staging dirs are swept at startup.
+- Private repos: deliberately not supported in v1. Users can clone
+  manually with system git (which has their credentials) and import via
+  the folder path, or wait for a follow-up.
+- Marketplace / Anthropic registry: deliberately skipped. No registry to
+  point at yet; placeholder UI would be a liability.
+
+### Rollback
+
+Remove the `# ── Skills import (paste / folder / Git URL ...)` block in
+`server.py`, the `# ── Import (paste / folder / git URL)` block in
+`skills.py`, and the `// ── Skills import (paste / folder ...)` section in
+`static/index.html`. Also remove the staging cleanup call from `__main__`
+and the Import dropdown HTML inside `openAllSkills`. Existing skills are
+unaffected — only the import paths disappear.
+
 ## [2026-05-10] — Skills surface (Anthropic-format skill management)
 
 Adds a first-class Skills surface to Clayrune so users can author, organize,
