@@ -14,6 +14,8 @@ from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, send_from_directory, request, send_file, abort, Response, redirect
 import secrets
 
+import skills as _skills
+
 
 def _resolve_dirs():
     """Resolve application and data directories.
@@ -7059,6 +7061,248 @@ def append_memory(project_id):
 
 
 
+# ── Skills endpoints ────────────────────────────────────────────────────────
+#
+# Anthropic-format skills live at ~/.claude/skills/<name>/SKILL.md (global)
+# and <project_path>/.claude/skills/<name>/SKILL.md (project-local).  CC reads
+# them natively — Mission Control just provides the management surface (list,
+# read, create, update, archive, search, usage stats).
+#
+# Built-ins ship under data/skills/builtin/ and install once at startup via
+# `_install_builtin_skills()` with checksum-based update preservation.
+
+def _resolve_project_path_or_400(scope: str, project_id: str | None):
+    """Helper: validate that project scope has a usable project_path.
+
+    Returns (project_path: str|None, error_response|None). On error the caller
+    short-circuits with the (jsonify, status) tuple.
+    """
+    if scope != 'project':
+        return None, None
+    if not project_id:
+        return None, (jsonify({'error': 'project_id required for project scope'}), 400)
+    p = load_project(project_id)
+    if not p:
+        return None, (jsonify({'error': 'project not found'}), 404)
+    project_path = p.get('project_path') or None
+    if not project_path:
+        return None, (jsonify({'error': 'project has no project_path; configure it first'}), 400)
+    return project_path, None
+
+
+@app.route('/api/skills')
+def list_skills_route():
+    """List skills across global pool + (optionally) one project's pool.
+
+    Query params:
+      project_id: include this project's local skills and shadow-flag globals
+      include_archived: 'true' to also include archived globals
+      q: substring filter on name+description
+    """
+    project_id = request.args.get('project_id')
+    include_archived = (request.args.get('include_archived', '') or '').lower() in ('1', 'true', 'yes')
+    q = (request.args.get('q') or '').strip().lower()
+
+    project_path = None
+    if project_id:
+        p = load_project(project_id)
+        if p:
+            project_path = p.get('project_path') or None
+
+    items = _skills.list_skills(
+        project_path=project_path,
+        project_id=project_id,
+        include_archived=include_archived,
+        include_body=False,
+    )
+    if q:
+        items = [s for s in items if q in (s.get('name', '') + ' ' + s.get('description', '')).lower()]
+    return jsonify(items)
+
+
+@app.route('/api/skills/<scope>/<name>')
+def read_skill_route(scope, name):
+    if scope not in ('global', 'project', 'archive'):
+        return jsonify({'error': 'scope must be global|project|archive'}), 400
+    project_id = request.args.get('project_id')
+    include_body = (request.args.get('include_body', 'true') or 'true').lower() in ('1', 'true', 'yes')
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        rec = _skills.read_skill(
+            scope, name,
+            project_path=project_path,
+            project_id=project_id,
+            include_body=include_body,
+        )
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    if not rec:
+        return jsonify({'error': 'skill not found'}), 404
+    return jsonify(rec)
+
+
+@app.route('/api/skills', methods=['POST'])
+def create_skill_route():
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    description = (data.get('description') or '').strip()
+    body = data.get('body') or ''
+    scope = (data.get('scope') or 'global').strip()
+    project_id = data.get('project_id')
+
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        rec = _skills.write_skill(
+            name=name,
+            description=description,
+            body=body,
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            overwrite=False,
+        )
+        return jsonify(rec), 201
+    except FileExistsError as e:
+        return jsonify({'error': str(e)}), 409
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/skills/<scope>/<name>', methods=['PUT'])
+def update_skill_route(scope, name):
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'can only update global or project scope'}), 400
+    data = request.get_json() or {}
+    description = (data.get('description') or '').strip()
+    body = data.get('body') or ''
+    project_id = data.get('project_id') or request.args.get('project_id')
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        rec = _skills.write_skill(
+            name=name,
+            description=description,
+            body=body,
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            overwrite=True,
+        )
+        return jsonify(rec)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/skills/<scope>/<name>', methods=['DELETE'])
+def delete_skill_route(scope, name):
+    if scope not in ('global', 'project', 'archive'):
+        return jsonify({'error': 'scope must be global, project, or archive'}), 400
+    project_id = request.args.get('project_id')
+    # archive=true → soft archive (only meaningful for global scope).
+    # archive=false → hard delete. For scope=archive this is the only valid mode.
+    archive = (request.args.get('archive', 'true') or 'true').lower() in ('1', 'true', 'yes')
+    if scope == 'archive':
+        archive = False  # archived skills can only be hard-deleted
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        result = _skills.delete_skill(
+            scope=scope, name=name,
+            project_path=project_path,
+            archive=archive,
+        )
+        return jsonify(result)
+    except FileNotFoundError as e:
+        return jsonify({'error': str(e)}), 404
+
+
+@app.route('/api/skills/archive/<name>/restore', methods=['POST'])
+def restore_skill_route(name):
+    try:
+        result = _skills.restore_skill(name)
+        return jsonify(result)
+    except FileNotFoundError as e:
+        return jsonify({'error': str(e)}), 404
+    except FileExistsError as e:
+        return jsonify({'error': str(e)}), 409
+
+
+@app.route('/api/skills/search')
+def search_skills_route():
+    """Keyword search across global + named-project pools.
+
+    Used by the mc-skill-broker built-in skill for cross-project discovery.
+    """
+    q = (request.args.get('q') or '').strip()
+    try:
+        limit = int(request.args.get('limit', '10'))
+    except ValueError:
+        limit = 10
+    project_id = request.args.get('project_id')
+
+    project_path = None
+    if project_id:
+        p = load_project(project_id)
+        if p:
+            project_path = p.get('project_path') or None
+
+    results = _skills.search_skills(
+        query=q,
+        project_path=project_path,
+        project_id=project_id,
+        limit=max(1, min(limit, 50)),
+    )
+    return jsonify(results)
+
+
+@app.route('/api/skills/usage')
+def skill_usage_route():
+    """Skill invocation stats parsed from Claude Code transcripts."""
+    try:
+        days = int(request.args.get('days', '30'))
+    except ValueError:
+        days = 30
+    return jsonify(_skills.skill_usage_stats(days=max(1, min(days, 365))))
+
+
+def _install_builtin_skills():
+    """Install/update built-in skills bundled with MC.
+
+    Called from __main__ on startup. Safe to run on every boot: install_builtins
+    is checksum-aware and preserves user modifications.
+    """
+    try:
+        builtin_root = _APP_DIR / 'data' / 'skills' / 'builtin'
+        if not builtin_root.exists():
+            return
+        result = _skills.install_builtins(builtin_root)
+        installed = result.get('installed') or []
+        updated = result.get('updated') or []
+        preserved = result.get('preserved') or []
+        if installed or updated:
+            print(f"[skills] installed={installed} updated={updated}")
+        if preserved:
+            print(f"[skills] preserved user-modified builtins: {preserved}")
+    except Exception as e:
+        print(f"[skills] builtin install failed: {e}")
+
+
 # ── Global config endpoints ────────────────────────────────────────────────
 
 _CONFIG_EDITABLE_KEYS = {
@@ -9623,6 +9867,9 @@ if __name__ == '__main__':
     _start_scheduler()
     _start_hivemind_orchestrator()
     _start_session_guardian()
+    # Install built-in skills bundled with MC into ~/.claude/skills/.
+    # Checksum-aware: user edits to managed skills are preserved.
+    _install_builtin_skills()
     # Ensure the global incognito pseudo-project exists so it shows up in
     # /api/projects without the FE needing a first-touch bootstrap.
     try:
