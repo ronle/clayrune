@@ -2466,30 +2466,91 @@
   }
   .btn-header-action:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* ── SCHEDULE BANNER ────────────────────────────────────────── */
+  /* ── SCHEDULE BANNER (dropdown) ───────────────────────────────
+     Compact trigger button + dropdown panel. Replaces the previous
+     inline horizontal row of pills which overflowed horizontally on
+     desktop and was unreadable on mobile. Trigger summarizes
+     ("Upcoming · 3 · Next: Engulfing in 2h"); panel lists every
+     upcoming run on its own row with full task text. */
   .schedule-banner {
-    display: flex; align-items: center; gap: 12px;
+    position: relative;
     padding: 6px 28px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
-    font-size: 12px; color: var(--text-dim);
-    overflow-x: auto; white-space: nowrap;
+    font-size: 12px;
+    display: flex; align-items: center;
   }
   .schedule-banner.hidden { display: none; }
-  .schedule-banner-label {
+
+  .sb-trigger {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 4px 12px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface3); color: var(--text-dim);
+    font: inherit; cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    max-width: 100%;
+  }
+  .sb-trigger:hover { border-color: var(--accent); color: var(--text); }
+  .sb-trigger.open  { border-color: var(--accent); color: var(--text); }
+  .sb-trigger .sb-icon { font-size: 14px; opacity: 0.8; flex-shrink: 0; }
+  .sb-trigger .sb-label {
     color: var(--text-faint); font-size: 10px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0;
   }
-  .schedule-banner-item {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 2px 10px; border-radius: 4px;
-    background: var(--surface3); border: 1px solid var(--border);
-    cursor: pointer; transition: border-color 0.15s;
+  .sb-trigger .sb-count {
+    background: var(--accent); color: var(--bg);
+    font-weight: 700; font-size: 10px;
+    padding: 1px 7px; border-radius: 999px; flex-shrink: 0;
   }
-  .schedule-banner-item:hover { border-color: var(--accent); }
-  .schedule-banner-item .sb-project { color: var(--accent); font-weight: 600; }
-  .schedule-banner-item .sb-task { color: var(--text-dim); max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
-  .schedule-banner-item .sb-time { color: var(--text-faint); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .sb-trigger .sb-next {
+    color: var(--text-dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+  }
+  .sb-trigger .sb-next b { color: var(--accent); font-weight: 600; }
+  .sb-trigger .sb-chev {
+    margin-left: auto; opacity: 0.6; font-size: 10px;
+    transition: transform 0.15s; flex-shrink: 0;
+  }
+  .sb-trigger.open .sb-chev { transform: rotate(180deg); }
+
+  .sb-panel {
+    position: absolute;
+    top: calc(100% + 4px); left: 28px; right: 28px;
+    max-width: 560px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    z-index: 200;
+    max-height: 60vh; overflow-y: auto;
+    display: none;
+  }
+  .sb-panel.open { display: block; }
+  .sb-row {
+    display: grid;
+    grid-template-columns: minmax(110px, max-content) 1fr max-content;
+    gap: 14px; align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+  }
+  .sb-row:last-child { border-bottom: 0; }
+  .sb-row:hover { background: var(--surface2); }
+  .sb-row .sb-project { color: var(--accent); font-weight: 600; font-size: 12px; }
+  .sb-row .sb-task    { color: var(--text); font-size: 12px;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb-row .sb-time    { color: var(--text-faint); font-family: 'JetBrains Mono', monospace; font-size: 11px;
+                        white-space: nowrap; }
+
+  /* Mobile: panel goes full-width minus a small gutter and rows reflow
+     so the task wraps below the project + time. */
+  @media (max-width: 720px) {
+    .schedule-banner { padding: 6px 14px; }
+    .sb-panel { left: 14px; right: 14px; }
+    .sb-row { grid-template-columns: 1fr max-content; row-gap: 4px; }
+    .sb-row .sb-task { grid-column: 1 / -1; white-space: normal; }
+  }
 
   /* ── SCHEDULER MODAL ─────────────────────────────────────── */
   .scheduler-section { padding: 40px 28px 28px; overflow-y: auto; height: calc(100% - 56px); }
@@ -3504,6 +3565,10 @@
       <span class="si-icon">&#x25A6;</span>
       <span class="si-label">Dashboard</span>
     </div>
+    <div class="sidebar-item" data-nav="skills" onclick="sidebarNav('skills')">
+      <span class="si-icon">&#x1F9E9;</span>
+      <span class="si-label">Skills</span>
+    </div>
     <div class="sidebar-item" data-nav="backlog" onclick="sidebarNav('backlog')">
       <span class="si-icon">&#x1F4CB;</span>
       <span class="si-label">Backlog</span>
@@ -4411,6 +4476,9 @@ function modalContentHTML(p) {
           <button class="modal-menu-item mc-adv-memory" onclick="openRulesModal('${esc(p.id)}')">
             <span class="menu-icon">&#x2699;</span> Rules
           </button>
+          <button class="modal-menu-item" onclick="openAllSkillsForProject('${esc(p.id)}')">
+            <span class="menu-icon">&#x1F9E9;</span> Skills
+          </button>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item danger" onclick="deleteProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F5D1;</span> Delete Project
@@ -4993,6 +5061,7 @@ function sidebarNav(target) {
   else if (target === 'processes') openProcessManager();
   else if (target === 'backlog') openAllBacklog();
   else if (target === 'hivemind') openAllHiveminds();
+  else if (target === 'skills') openAllSkills();
   // Update active state in sidebar
   document.querySelectorAll('.sidebar-item').forEach(i =>
     i.classList.toggle('active', i.dataset.nav === target)
@@ -11328,7 +11397,12 @@ async function deleteSchedule(id) {
   } catch(e) {}
 }
 
-// ── Schedule Banner (upcoming jobs at top of page) ────────────────────────
+// ── Schedule Banner (upcoming jobs dropdown) ──────────────────────────────
+//
+// Was: inline horizontal row of pills that overflowed on desktop and
+// required side-scrolling on mobile.
+// Now: compact trigger button summarizing the count + the next-soonest
+// item; click expands a vertical dropdown panel listing every upcoming run.
 
 async function refreshScheduleBanner() {
   const banner = document.getElementById('schedule-banner');
@@ -11339,25 +11413,79 @@ async function refreshScheduleBanner() {
     const upcoming = schedules
       .filter(s => s.enabled && s.next_run)
       .sort((a, b) => (a.next_run || '').localeCompare(b.next_run || ''))
-      .slice(0, 5);
+      .slice(0, 10);  // up to 10 in the dropdown; was 5 inline
     if (!upcoming.length) {
       banner.classList.add('hidden');
       return;
     }
     banner.classList.remove('hidden');
-    banner.innerHTML = '<span class="schedule-banner-label">Upcoming</span>' +
-      upcoming.map(s => {
-        const desc = scheduleDescription(s);
-        return `<span class="schedule-banner-item" onclick="openScheduler()" title="${esc(s.task)}">
-          <span class="sb-project">${esc(s.project_name || s.project_id)}</span>
-          <span class="sb-task">${esc(s.task.length > 40 ? s.task.slice(0, 40) + '...' : s.task)}</span>
-          <span class="sb-time">${formatScheduleTime(s.next_run)}</span>
-        </span>`;
-      }).join('');
+
+    const next = upcoming[0];
+    const nextProj = esc(next.project_name || next.project_id);
+    const nextTime = esc(formatScheduleTime(next.next_run));
+
+    const rows = upcoming.map(s => `
+      <div class="sb-row" onclick="openScheduler()" title="${esc(s.task)}">
+        <span class="sb-project">${esc(s.project_name || s.project_id)}</span>
+        <span class="sb-task">${esc(s.task)}</span>
+        <span class="sb-time">${esc(formatScheduleTime(s.next_run))}</span>
+      </div>`).join('');
+
+    banner.innerHTML = `
+      <button class="sb-trigger" id="sb-trigger" type="button" onclick="toggleSchedulePanel(event)" aria-expanded="false">
+        <span class="sb-icon">&#x23F1;</span>
+        <span class="sb-label">Upcoming</span>
+        <span class="sb-count">${upcoming.length}</span>
+        <span class="sb-next">Next: <b>${nextProj}</b> &middot; ${nextTime}</span>
+        <span class="sb-chev">&#9662;</span>
+      </button>
+      <div class="sb-panel" id="sb-panel">${rows}</div>`;
   } catch(e) {
     banner.classList.add('hidden');
   }
 }
+
+// Toggle open/closed. Stops propagation so the document-level
+// click-outside handler doesn't immediately close us.
+function toggleSchedulePanel(ev) {
+  if (ev) ev.stopPropagation();
+  const trigger = document.getElementById('sb-trigger');
+  const panel = document.getElementById('sb-panel');
+  if (!trigger || !panel) return;
+  const isOpen = panel.classList.toggle('open');
+  trigger.classList.toggle('open', isOpen);
+  trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+}
+
+// Click anywhere outside the banner closes the panel.
+document.addEventListener('click', (ev) => {
+  const banner = document.getElementById('schedule-banner');
+  if (!banner || banner.classList.contains('hidden')) return;
+  if (banner.contains(ev.target)) return;
+  const panel = document.getElementById('sb-panel');
+  const trigger = document.getElementById('sb-trigger');
+  if (panel && panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    if (trigger) {
+      trigger.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+  }
+});
+
+// Esc closes too.
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  const panel = document.getElementById('sb-panel');
+  if (panel && panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    const trigger = document.getElementById('sb-trigger');
+    if (trigger) {
+      trigger.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+  }
+});
 
 
 // ── New Project Creation ────────────────────────────────────────────────────
@@ -14090,6 +14218,465 @@ async function cleanupOrphanedProcesses() {
     showToast('Cleanup failed: ' + e.message, 4000);
   }
   refreshProcessList();
+}
+
+// ── Skills (global + per-project Anthropic-format skill manager) ─────────────
+//
+// Skills live at ~/.claude/skills/<name>/SKILL.md (global) and
+// <project_path>/.claude/skills/<name>/SKILL.md (project-local).  MC's role
+// is the management surface — list, create, edit, archive, search, stats.
+// CC reads them natively at session start; no preamble injection needed.
+
+let _allSkillsCache = { items: [], loaded: false, loading: false };
+let _allSkillsFilter = { scope: 'all', project: 'all', search: '', includeArchived: false };
+let _skillUsageCache = { stats: null, loaded: false };
+
+function openAllSkillsForProject(projectId) {
+  _allSkillsFilter.project = projectId || 'all';
+  _allSkillsFilter.scope = 'all';
+  openAllSkills();
+}
+
+async function openAllSkills() {
+  const modalId = '__all_skills';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    renderAllSkills();
+    loadAllSkills();
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 1000);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x1F9E9; Skills</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:4px 24px 20px 28px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <input type="text" id="as-search" placeholder="Search name / description..." value="${esc(_allSkillsFilter.search)}"
+          style="flex:1;min-width:180px;padding:6px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+          oninput="_allSkillsFilter.search=this.value;renderAllSkills()">
+        <select id="as-scope" style="padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+          onchange="_allSkillsFilter.scope=this.value;renderAllSkills()">
+          <option value="all"${_allSkillsFilter.scope==='all'?' selected':''}>All scopes</option>
+          <option value="global"${_allSkillsFilter.scope==='global'?' selected':''}>Global only</option>
+          <option value="project"${_allSkillsFilter.scope==='project'?' selected':''}>Project only</option>
+          <option value="archive"${_allSkillsFilter.scope==='archive'?' selected':''}>Archived</option>
+        </select>
+        <select id="as-project" style="padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);max-width:200px"
+          onchange="_allSkillsFilter.project=this.value;loadAllSkills()">
+          <option value="all">All projects</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-faint);cursor:pointer">
+          <input type="checkbox" id="as-archived" ${_allSkillsFilter.includeArchived?'checked':''}
+            onchange="_allSkillsFilter.includeArchived=this.checked;loadAllSkills()">
+          Include archived
+        </label>
+        <span id="as-count" style="font-size:11px;color:var(--text-faint)"></span>
+        <button class="btn-add" style="margin-left:auto" onclick="openSkillEditor('global', '', null, true)">+ New Skill</button>
+      </div>
+      <div id="as-list" style="max-height:65vh;overflow-y:auto"></div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  renderAllSkills();
+  loadAllSkills();
+  loadSkillUsage();
+}
+
+async function loadAllSkills() {
+  if (_allSkillsCache.loading) return;
+  _allSkillsCache.loading = true;
+  try {
+    // If a specific project is selected, we pass project_id so project-local skills + shadow flags appear
+    const pid = _allSkillsFilter.project !== 'all' ? _allSkillsFilter.project : '';
+    const params = new URLSearchParams();
+    if (pid) params.set('project_id', pid);
+    if (_allSkillsFilter.includeArchived || _allSkillsFilter.scope === 'archive') {
+      params.set('include_archived', 'true');
+    }
+    const url = API_BASE + '/api/skills' + (params.toString() ? '?' + params.toString() : '');
+    const res = await fetch(url);
+    const items = await res.json();
+
+    // If the user has projects, eagerly fetch project-local skills for each so the
+    // "All projects" view actually shows them. Cheap (one call per project) and only
+    // runs when scope=all/project and no specific project filter.
+    let extra = [];
+    if ((_allSkillsFilter.project === 'all') && (_allSkillsFilter.scope === 'all' || _allSkillsFilter.scope === 'project')) {
+      const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+      await Promise.all(realProjects.map(async p => {
+        try {
+          const r = await fetch(API_BASE + '/api/skills?project_id=' + encodeURIComponent(p.id));
+          const arr = await r.json();
+          // Filter to scope==='project' only (we already have globals from the first call)
+          for (const s of arr) if (s.scope === 'project') extra.push(s);
+        } catch(e) {}
+      }));
+    }
+
+    _allSkillsCache = { items: items.concat(extra), loaded: true, loading: false };
+    renderAllSkills();
+  } catch(e) {
+    _allSkillsCache = { items: [], loaded: true, loading: false };
+    renderAllSkills();
+  }
+}
+
+async function loadSkillUsage() {
+  if (_skillUsageCache.loaded) return;
+  try {
+    const res = await fetch(API_BASE + '/api/skills/usage?days=30');
+    _skillUsageCache = { stats: await res.json(), loaded: true };
+    renderAllSkills();
+  } catch(e) {
+    _skillUsageCache = { stats: {}, loaded: true };
+  }
+}
+
+function renderAllSkills() {
+  const container = document.getElementById('as-list');
+  const countEl = document.getElementById('as-count');
+  const projectSel = document.getElementById('as-project');
+  if (!container) return;
+
+  // Populate project dropdown from currently loaded projects
+  if (projectSel) {
+    const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p));
+    const cur = _allSkillsFilter.project;
+    const opts = ['<option value="all">All projects</option>',
+      ...realProjects.map(p =>
+        `<option value="${esc(p.id)}"${cur===p.id?' selected':''}>${esc(p.name||p.id)}</option>`
+      )];
+    if (projectSel.innerHTML !== opts.join('')) {
+      projectSel.innerHTML = opts.join('');
+      projectSel.value = cur;
+    }
+  }
+
+  if (!_allSkillsCache.loaded) {
+    container.innerHTML = '<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">Loading skills...</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+
+  const f = _allSkillsFilter;
+  const q = (f.search || '').trim().toLowerCase();
+  let rows = _allSkillsCache.items.filter(s => {
+    if (f.scope !== 'all' && s.scope !== f.scope) return false;
+    if (f.project !== 'all') {
+      if (s.scope === 'project' && s.project_id !== f.project) return false;
+      // Global skills are visible across all projects, so don't filter them out
+    }
+    if (q) {
+      const hay = ((s.name || '') + ' ' + (s.description || '')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  // De-dup (a global+project might appear twice if shadowed)
+  const seen = new Set();
+  rows = rows.filter(s => {
+    const key = s.scope + ':' + s.name + ':' + (s.project_id || '');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Sort: scope (project first, then global, then archive), name asc
+  const scopeOrder = { project: 0, global: 1, archive: 2 };
+  rows.sort((a, b) => {
+    const oa = scopeOrder[a.scope] ?? 9;
+    const ob = scopeOrder[b.scope] ?? 9;
+    if (oa !== ob) return oa - ob;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  if (countEl) countEl.textContent = `${rows.length} skill${rows.length===1?'':'s'}`;
+
+  if (!rows.length) {
+    container.innerHTML = `<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">No skills match the current filters.<br><span style="font-size:11px">Click "+ New Skill" to author one.</span></div>`;
+    return;
+  }
+
+  container.innerHTML = rows.map(s => _renderSkillRow(s)).join('');
+}
+
+function _renderSkillRow(s) {
+  const usage = (_skillUsageCache.stats && _skillUsageCache.stats[s.name]) || null;
+  const usageStr = usage ? `<span title="Invocations in last 30 days" style="font-size:10px;color:var(--text-faint);margin-left:6px">${usage.invocations}× last 30d</span>` : '';
+  const scopeBadge = (() => {
+    if (s.scope === 'global') return '<span style="font-size:10px;background:var(--surface2);color:var(--text-faint);padding:1px 6px;border-radius:3px">global</span>';
+    if (s.scope === 'project') {
+      const pname = (allProjects || []).find(p => p.id === s.project_id);
+      const label = pname ? (pname.name || pname.id) : (s.project_id || 'project');
+      return `<span style="font-size:10px;background:var(--accent-dim);color:var(--accent);padding:1px 6px;border-radius:3px" title="Project-scoped">project: ${esc(label)}</span>`;
+    }
+    if (s.scope === 'archive') return '<span style="font-size:10px;background:var(--surface2);color:var(--text-faint);padding:1px 6px;border-radius:3px;opacity:0.7">archived</span>';
+    return '';
+  })();
+  const shadowBadge = s.shadowed_by_project
+    ? '<span style="font-size:10px;background:transparent;color:var(--amber);padding:1px 6px;border:1px solid var(--amber);border-radius:3px;margin-left:4px" title="A project skill of the same name shadows this global">shadowed</span>'
+    : '';
+  const editArgs = `'${esc(s.scope)}', '${esc(s.name)}', ${s.project_id ? `'${esc(s.project_id)}'` : 'null'}, false`;
+  const archiveArgs = `'${esc(s.scope)}', '${esc(s.name)}', ${s.project_id ? `'${esc(s.project_id)}'` : 'null'}`;
+  const actionsHTML = (() => {
+    if (s.scope === 'archive') {
+      return `<button class="btn-tiny" onclick="restoreSkillAction('${esc(s.name)}')">Restore</button>
+              <button class="btn-tiny danger" onclick="deleteSkillAction('archive', '${esc(s.name)}', null, true)">Delete</button>`;
+    }
+    return `<button class="btn-tiny" onclick="openSkillEditor(${editArgs})">Edit</button>
+            <button class="btn-tiny" onclick="archiveSkillAction(${archiveArgs})">${s.scope==='global'?'Archive':'Delete'}</button>`;
+  })();
+
+  const mtime = s.mtime_iso ? new Date(s.mtime_iso).toLocaleString() : '';
+
+  return `<div class="skill-row" style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:4px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-weight:600;color:var(--text);font-size:13px">${esc(s.name)}</span>
+      ${scopeBadge}
+      ${shadowBadge}
+      ${usageStr}
+      <div style="margin-left:auto;display:flex;gap:6px">${actionsHTML}</div>
+    </div>
+    <div style="font-size:12px;color:var(--text-mute);line-height:1.4">${esc(s.description || '(no description)')}</div>
+    <div style="font-size:10px;color:var(--text-faint);font-family:var(--mono)">${esc(s.path || '')} &middot; ${esc(mtime)}</div>
+  </div>`;
+}
+
+function lintSkillDescription(text) {
+  const out = [];
+  const t = (text || '').trim();
+  if (!t) return out;
+  if (t.length < 40) out.push('Description is short — aim for at least 40 characters so the model can pick the skill from the catalog.');
+  if (!/\btrigger\b/i.test(t)) out.push('No TRIGGER section detected. Include explicit phrases like "TRIGGER when user says X" so the model knows when to apply this skill.');
+  if (/\bwhen needed\b|\bif relevant\b|\bas appropriate\b/i.test(t)) out.push('Trigger language is vague ("when needed" / "if relevant"). Be specific about user phrasings or task shapes.');
+  return out;
+}
+
+function openSkillEditor(scope, name, projectId, isNew) {
+  const modalId = isNew ? '__skill_new' : `__skill_${scope}_${name}`;
+  if (openModals.has(modalId)) { focusModal(modalId); return; }
+
+  // Async fetch when editing an existing skill — open shell first, populate on load
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 820);
+
+  const title = isNew ? 'New skill' : `Edit: ${name}`;
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x1F9E9; ${esc(title)}</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:4px 24px 20px 28px;display:flex;flex-direction:column;gap:12px">
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Name (kebab-case, lowercase, hyphens)</label>
+        <input type="text" id="se-name" value="${esc(name || '')}" ${isNew?'':'readonly'}
+          placeholder="my-skill-name"
+          style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);${isNew?'':'opacity:0.6'}">
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Scope</label>
+        <div style="display:flex;gap:12px;align-items:center">
+          <label style="font-size:12px;color:var(--text);display:flex;gap:4px;align-items:center;cursor:${isNew?'pointer':'not-allowed'}">
+            <input type="radio" name="se-scope-${modalId}" value="global" ${scope==='global'?'checked':''} ${isNew?'':'disabled'} onchange="_seToggleProjectPicker('${modalId}')"> Global
+          </label>
+          <label style="font-size:12px;color:var(--text);display:flex;gap:4px;align-items:center;cursor:${isNew?'pointer':'not-allowed'}">
+            <input type="radio" name="se-scope-${modalId}" value="project" ${scope==='project'?'checked':''} ${isNew?'':'disabled'} onchange="_seToggleProjectPicker('${modalId}')"> Project
+          </label>
+          <select id="se-project" style="padding:5px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);${scope==='project'?'':'display:none'}" ${isNew?'':'disabled'}>
+            <option value="">— pick a project —</option>
+            ${(allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path).map(p =>
+              `<option value="${esc(p.id)}"${projectId===p.id?' selected':''}>${esc(p.name||p.id)}</option>`
+            ).join('')}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Description (used by the model to decide when to invoke this skill — include TRIGGER conditions)</label>
+        <textarea id="se-description" rows="3" placeholder="Use when... TRIGGER on user phrases like..."
+          oninput="_seLintDescription('${modalId}')"
+          style="width:100%;padding:8px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);resize:vertical;font-family:inherit"></textarea>
+        <div id="se-lint" style="margin-top:6px;font-size:11px;color:var(--amber);min-height:14px"></div>
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Body (markdown — full playbook loaded into context only when the skill is invoked)</label>
+        <textarea id="se-body" rows="18" placeholder="# Skill name&#10;&#10;## Steps&#10;&#10;1. ..."
+          style="width:100%;padding:8px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);resize:vertical;font-family:var(--mono);line-height:1.5"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+        <span id="se-status" style="font-size:11px;color:var(--text-faint);margin-right:auto"></span>
+        <button class="btn-secondary" onclick="closeModalById('${modalId}')">Cancel</button>
+        <button class="btn-add" onclick="saveSkillFromEditor('${modalId}', ${isNew?'true':'false'}, '${esc(scope)}', '${esc(name)}', ${projectId?`'${esc(projectId)}'`:'null'})">${isNew?'Create':'Save'}</button>
+      </div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: projectId || null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  if (!isNew) {
+    // Fetch existing skill content
+    const params = new URLSearchParams({ include_body: 'true' });
+    if (projectId) params.set('project_id', projectId);
+    fetch(API_BASE + `/api/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}?` + params.toString())
+      .then(r => r.json())
+      .then(data => {
+        if (data && !data.error) {
+          const descEl = win.querySelector('#se-description');
+          const bodyEl = win.querySelector('#se-body');
+          if (descEl) descEl.value = data.description || '';
+          if (bodyEl) bodyEl.value = data.body || '';
+          _seLintDescription(modalId);
+        }
+      })
+      .catch(() => {});
+  }
+}
+
+function _seToggleProjectPicker(modalId) {
+  const win = openModals.get(modalId)?.element;
+  if (!win) return;
+  const scopeRadio = win.querySelector(`input[name="se-scope-${modalId}"]:checked`);
+  const sel = win.querySelector('#se-project');
+  if (sel) sel.style.display = (scopeRadio?.value === 'project') ? '' : 'none';
+}
+
+function _seLintDescription(modalId) {
+  const win = openModals.get(modalId)?.element;
+  if (!win) return;
+  const descEl = win.querySelector('#se-description');
+  const lintEl = win.querySelector('#se-lint');
+  if (!descEl || !lintEl) return;
+  const warnings = lintSkillDescription(descEl.value);
+  lintEl.innerHTML = warnings.length
+    ? warnings.map(w => `&#x26A0; ${esc(w)}`).join('<br>')
+    : '';
+}
+
+async function saveSkillFromEditor(modalId, isNew, origScope, origName, origProjectId) {
+  const win = openModals.get(modalId)?.element;
+  if (!win) return;
+  const statusEl = win.querySelector('#se-status');
+  const name = isNew ? (win.querySelector('#se-name')?.value || '').trim() : origName;
+  const description = (win.querySelector('#se-description')?.value || '').trim();
+  const body = win.querySelector('#se-body')?.value || '';
+  const scopeRadio = win.querySelector(`input[name="se-scope-${modalId}"]:checked`);
+  const scope = isNew ? (scopeRadio?.value || 'global') : origScope;
+  const projectId = isNew
+    ? (scope === 'project' ? (win.querySelector('#se-project')?.value || '') : '')
+    : (origProjectId || '');
+
+  if (!name) { statusEl.textContent = 'Name is required'; statusEl.style.color = 'var(--red)'; return; }
+  if (!description) { statusEl.textContent = 'Description is required'; statusEl.style.color = 'var(--red)'; return; }
+  if (scope === 'project' && !projectId) { statusEl.textContent = 'Pick a project for project-scoped skills'; statusEl.style.color = 'var(--red)'; return; }
+
+  statusEl.textContent = 'Saving...';
+  statusEl.style.color = 'var(--text-faint)';
+
+  try {
+    const url = isNew
+      ? (API_BASE + '/api/skills')
+      : (API_BASE + `/api/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`);
+    const method = isNew ? 'POST' : 'PUT';
+    const payload = isNew
+      ? { name, description, body, scope, project_id: projectId || undefined }
+      : { description, body, project_id: projectId || undefined };
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      statusEl.textContent = data.error || ('HTTP ' + res.status);
+      statusEl.style.color = 'var(--red)';
+      return;
+    }
+    statusEl.textContent = 'Saved';
+    statusEl.style.color = 'var(--green)';
+    // Refresh list + close after a beat
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+    setTimeout(() => closeModalById(modalId), 400);
+  } catch(e) {
+    statusEl.textContent = 'Save failed: ' + e.message;
+    statusEl.style.color = 'var(--red)';
+  }
+}
+
+async function archiveSkillAction(scope, name, projectId) {
+  const verb = (scope === 'global') ? 'Archive' : 'Delete';
+  if (!confirm(`${verb} skill "${name}"?`)) return;
+  try {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project_id', projectId);
+    if (scope !== 'global') params.set('archive', 'false');
+    const res = await fetch(API_BASE + `/api/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}?` + params.toString(), { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok || data.error) { showToast(data.error || 'Failed', 4000); return; }
+    showToast(data.action === 'archived' ? 'Archived' : 'Deleted');
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+  } catch(e) { showToast('Action failed: ' + e.message, 4000); }
+}
+
+async function deleteSkillAction(scope, name, projectId, hard) {
+  if (!confirm(`Permanently delete archived skill "${name}"? This cannot be undone.`)) return;
+  try {
+    // For archive scope, we use a different delete endpoint pattern — currently
+    // archived skills delete via filesystem path; expose this through DELETE on
+    // archive scope. (Backend handles archive as a scope.)
+    const res = await fetch(API_BASE + `/api/skills/archive/${encodeURIComponent(name)}?archive=false`, { method: 'DELETE' });
+    if (!res.ok) {
+      // Fallback: archive scope delete may not be exposed; just hide locally
+      showToast('Could not delete archived skill (manual cleanup required)', 4000);
+    } else {
+      showToast('Deleted');
+    }
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+  } catch(e) { showToast('Delete failed: ' + e.message, 4000); }
+}
+
+async function restoreSkillAction(name) {
+  try {
+    const res = await fetch(API_BASE + `/api/skills/archive/${encodeURIComponent(name)}/restore`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || data.error) { showToast(data.error || 'Failed', 4000); return; }
+    showToast('Restored to global skills');
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+  } catch(e) { showToast('Restore failed: ' + e.message, 4000); }
 }
 
 // ── Walkthrough / Tour ────────────────────────────────────────────────────────
