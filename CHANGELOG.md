@@ -4,6 +4,153 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-10] — Skills surface (Anthropic-format skill management)
+
+Adds a first-class Skills surface to Clayrune so users can author, organize,
+and (eventually) share Anthropic-format skills the way they already manage
+backlog, scheduler routines, and hiveminds. Skills are the lazy-loadable
+instruction packs Claude Code reads from `~/.claude/skills/<name>/SKILL.md`
+(global) and `<project_path>/.claude/skills/<name>/SKILL.md` (project-local).
+Clayrune does NOT teach CC about skills — CC already loads them natively. The
+new surface is purely management (CRUD + archive + search + usage stats).
+
+**Why now.** Anthropic's skill ecosystem matured around `/loop`, `/schedule`,
+`/review`, `/security-review`, etc. Going full-live without a way to view /
+author / manage skills would leave a visible product gap; pre-launch is the
+right window to add it.
+
+**Distinct from the March 2026-03-17i removal.** That removal deleted MC's
+own homegrown "Skills" feature (markdown-blob injection — Memory replaced it).
+The new feature is a wrapper around CC's native skill system, not a re-do of
+the old one.
+
+### Backend — new module `skills.py`
+
+- `parse_skill_md` / `dump_skill_md` — tiny YAML-frontmatter parser/dumper
+  (no PyYAML dep). Handles `key: value`, block scalars (`|`, `>`), folded
+  multi-line continuations.
+- `list_skills(project_path, include_archived, include_body)` — merges
+  global pool + a named project's pool (+ optionally archived), annotates
+  `shadowed_by_project=True` when a global is overridden by a project skill
+  of the same name (CC's own resolution rule).
+- `read_skill` / `write_skill` / `delete_skill` / `restore_skill` —
+  filesystem CRUD. `delete_skill` archives globals by default (moves to
+  `~/.claude/skills.archive/`); project skills hard-delete (archiving them
+  globally would move files out of the user's project tree).
+- `search_skills(query, project_path, limit)` — keyword search over
+  name (×3) + description (×2) + body (×1). Deterministic, cheap. Used by
+  the `mc-skill-broker` skill for cross-project discovery.
+- `install_builtins(builtin_root)` — checksum-aware install of bundled
+  skills. For each `<name>/` in `data/skills/builtin/`: if not installed,
+  copy + write `.mc-builtin-hash` marker. On subsequent boots, if the
+  marker matches the installed SKILL.md hash AND the source has changed,
+  update it; if the user has modified the file (hash drift from marker),
+  leave alone and log `preserved=[...]`. Users always win.
+- `skill_usage_stats(days)` — greps `~/.claude/projects/*/*.jsonl` for
+  `Skill` tool-use blocks; returns `{name -> {invocations, last_invoked_at,
+  project_count}}`. Same transcript-parsing path the Agent Log tab already
+  uses (CHANGELOG `[2026-04-28]`). Surfaces dead skills.
+
+### Backend — endpoints (`server.py`)
+
+- `GET /api/skills?project_id=&include_archived=&q=` — list (no body)
+- `GET /api/skills/<scope>/<name>?project_id=&include_body=` — read one;
+  scope ∈ {`global`, `project`, `archive`}
+- `POST /api/skills` — create; body `{name, description, body, scope, project_id?}`
+- `PUT /api/skills/<scope>/<name>` — update
+- `DELETE /api/skills/<scope>/<name>?project_id=&archive=true|false` —
+  archive (global default) or hard-delete
+- `POST /api/skills/archive/<name>/restore` — move back to global pool
+- `GET /api/skills/search?q=&project_id=&limit=` — ranked keyword search
+- `GET /api/skills/usage?days=30` — invocation stats from transcripts
+
+All endpoints validate name format (kebab-case via `_NAME_RE`), require a
+non-empty description, and refuse project scope when the named project has
+no `project_path` set.
+
+### Backend — built-in install hook
+
+`_install_builtin_skills()` runs from `__main__` on startup. Source-of-truth
+under `data/skills/builtin/`; safe to run on every boot. Logs `installed=`,
+`updated=`, `preserved=` to stdout.
+
+### Built-in skill set (`data/skills/builtin/`)
+
+Five skills ship with Clayrune:
+
+1. **`mc-clayrune-apis`** — teaches agents the localhost:5199 API surface
+   (process registration, backlog, scheduler, hivemind, terminal). This is
+   the wedge that — once skills prove reliable in production — will let us
+   trim the `_build_agent_context()` preamble from ~40 lines to a pointer.
+2. **`document-commit-deploy`** — concrete playbook for the
+   "update docs, commit, push" workflow that SHARED_RULES requires but
+   that today's agents only inconsistently follow.
+3. **`mc-project-status`** — pulls backlog + recent activity + active
+   hiveminds + scheduled jobs + registered processes into a structured
+   project-state summary.
+4. **`mc-changelog-update`** — guided CHANGELOG.md entry that matches the
+   existing project's date-stamp / section style / voice.
+5. **`mc-skill-broker`** — cross-project skill discovery. Calls
+   `/api/skills/search` so a project-A agent can find a useful skill
+   authored in project-B without polluting every session's catalog. The
+   scaling story past ~80 skills.
+
+### Frontend (`static/index.html`)
+
+- New sidebar entry "Skills" with puzzle-piece icon, positioned **above
+  Backlog** (per user preference). `data-nav="skills"` → `sidebarNav('skills')`
+  → `openAllSkills()`.
+- New project modal three-dot menu entry "Skills" (next to Memory & Rules)
+  → `openAllSkillsForProject(projectId)` which pre-filters the global view
+  to that project's scope.
+- **Global Skills modal** (`__all_skills`): search box, scope filter (all
+  / global / project / archive), project dropdown, "Include archived"
+  checkbox, "+ New Skill" button, scrollable list.
+- **Skill row UI** (`_renderSkillRow`): name, scope badge (global / project:
+  X / archived), shadowed badge when global is overridden, 30-day
+  invocation count from `_skillUsageCache`, full path + last-edited
+  timestamp, Edit / Archive (or Delete for non-global) buttons.
+- **Skill editor modal** (`openSkillEditor`): name (kebab-case, locked when
+  editing), scope radio + project picker (only on create), description
+  textarea with **live linter** (`lintSkillDescription` — warns on
+  short descriptions, missing TRIGGER, vague trigger language), body
+  textarea, Save / Cancel.
+- Saves call `POST/PUT /api/skills` and refresh the list on success.
+- Archive / restore / delete confirmations via standard `confirm()` +
+  `showToast` flash.
+
+### State (frontend)
+
+- `_allSkillsCache = {items, loaded, loading}`
+- `_allSkillsFilter = {scope, project, search, includeArchived}`
+- `_skillUsageCache = {stats, loaded}`
+
+### Decisions captured during scoping (memory: `project_skills_for_launch.md`)
+
+- Sidebar position: above Backlog
+- Built-ins ship globally (one install in `~/.claude/skills/`, every project
+  sees them) rather than copying into each project's tree
+- Project skills shadow globals of the same name; surface "shadowed" badge
+- Skills broker is the answer to the scaling concern — keyword search over
+  the full pool, so the broker becomes *more* valuable past ~80 skills
+- Per-project enable/disable of globals is **NOT** in this release; deferred
+  until usage stats prove globals are bloating sessions
+- Built-in update propagation: only when user hasn't edited the file. Hash
+  marker `.mc-builtin-hash` decides.
+
+### Rollback
+
+- Remove sidebar entry (line ~3507 in `static/index.html`), `sidebarNav`
+  dispatch (line ~4995), three-dot menu item (line ~4413).
+- Delete the Skills section in `static/index.html` (search comment
+  `// ── Skills (global + per-project`).
+- Delete the Skills endpoints in `server.py` (search comment
+  `# ── Skills endpoints`).
+- Remove `_install_builtin_skills()` call from `if __name__ == '__main__':`
+  block and the `import skills as _skills` line at the top.
+- Existing `~/.claude/skills/mc-*/` folders can be archived or deleted
+  manually; CC will simply stop seeing them.
+
 ## [2026-05-09] — Proactive update notification + marketing site mockups
 
 **Proactive Clayrune update notification** (`server.py`, `static/index.html`).

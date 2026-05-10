@@ -27,3 +27,23 @@ Two VMs are kept clean for end-to-end install testing:
 
 Both validated `c34cf44` clean. Re-test on a fresh snapshot if you change
 anything in `installer/`.
+
+## Skills (Anthropic-format) — management surface
+
+Clayrune ships a Skills surface (sidebar entry above Backlog, project-modal
+three-dot menu entry) that manages skills CC reads from `~/.claude/skills/`
+and `<project_path>/.claude/skills/`. Five built-ins ship under
+`data/skills/builtin/` and install once on startup with checksum-based
+update preservation (`skills.install_builtins`). User edits to a managed
+built-in are preserved across updates.
+
+To add a new built-in: drop a folder under `data/skills/builtin/<name>/`
+with a `SKILL.md` (and optional `scripts/`, `references/`). On next MC
+startup `_install_builtin_skills()` will install it. Bump the source file
+to push an update — checksum drift triggers re-install for users who
+haven't modified their copy.
+
+Backend: `skills.py` module + `# ── Skills endpoints` section in
+`server.py`. Frontend: `// ── Skills (global + per-project ...)` section
+in `static/index.html`. Architecture and rollback recipe in CHANGELOG
+`[2026-05-10]`.
