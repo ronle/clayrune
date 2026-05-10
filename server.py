@@ -7281,6 +7281,205 @@ def skill_usage_route():
     return jsonify(_skills.skill_usage_stats(days=max(1, min(days, 365))))
 
 
+@app.route('/api/skills/import/paste', methods=['POST'])
+def import_skill_paste_route():
+    """Import a skill from a pasted SKILL.md string.
+
+    Body: {content, scope, project_id?, name?, overwrite?}
+    """
+    data = request.get_json() or {}
+    content = data.get('content') or ''
+    scope = (data.get('scope') or 'global').strip()
+    project_id = data.get('project_id')
+    name_override = (data.get('name') or '').strip() or None
+    overwrite = bool(data.get('overwrite'))
+
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        rec = _skills.import_from_paste(
+            content=content,
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            name_override=name_override,
+            overwrite=overwrite,
+        )
+        return jsonify(rec), 201
+    except FileExistsError as e:
+        return jsonify({'error': str(e)}), 409
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/skills/import/folder', methods=['POST'])
+def import_skill_folder_route():
+    """Import a skill from a local folder containing SKILL.md.
+
+    Body: {path, scope, project_id?, name?, selected_rel_dir?, overwrite?}
+    If multiple SKILL.md found, returns {multiple: true, candidates: [...]} —
+    caller re-invokes with selected_rel_dir.
+    """
+    data = request.get_json() or {}
+    path = (data.get('path') or '').strip()
+    scope = (data.get('scope') or 'global').strip()
+    project_id = data.get('project_id')
+    name_override = (data.get('name') or '').strip() or None
+    selected_rel_dir = data.get('selected_rel_dir')
+    overwrite = bool(data.get('overwrite'))
+
+    if not path:
+        return jsonify({'error': 'path is required'}), 400
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        result = _skills.import_from_folder(
+            src_path=path,
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            name_override=name_override,
+            selected_rel_dir=selected_rel_dir,
+            overwrite=overwrite,
+        )
+        # Multi-skill case: re-prompt the user
+        if isinstance(result, dict) and result.get('multiple'):
+            return jsonify(result), 200
+        return jsonify(result), 201
+    except FileNotFoundError as e:
+        return jsonify({'error': str(e)}), 404
+    except FileExistsError as e:
+        return jsonify({'error': str(e)}), 409
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/skills/import/git', methods=['POST'])
+def import_skill_git_route():
+    """Clone a Git repo into staging and return SKILL.md candidates.
+
+    Body: {url, ref?, scope, project_id?, name?, overwrite?, auto_install?}
+    auto_install (default true): if exactly one SKILL.md found, install it
+    immediately and clean up staging. If multiple, return {staging_id, candidates}
+    and require a follow-up call to /api/skills/import/git/install.
+    """
+    data = request.get_json() or {}
+    url = (data.get('url') or '').strip()
+    ref = (data.get('ref') or '').strip() or None
+    scope = (data.get('scope') or 'global').strip()
+    project_id = data.get('project_id')
+    name_override = (data.get('name') or '').strip() or None
+    overwrite = bool(data.get('overwrite'))
+    auto_install = data.get('auto_install', True)
+
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        clone = _skills.git_clone_to_staging(url=url, ref=ref)
+    except (ValueError, RuntimeError) as e:
+        return jsonify({'error': str(e)}), 400
+
+    candidates = clone['candidates']
+    staging_id = clone['staging_id']
+
+    if auto_install and len(candidates) == 1:
+        try:
+            rec = _skills.install_from_staging(
+                staging_id=staging_id,
+                rel_dir=candidates[0]['rel_dir'],
+                scope=scope,
+                project_path=project_path,
+                project_id=project_id,
+                name_override=name_override or candidates[0]['name'],
+                overwrite=overwrite,
+                cleanup=True,
+            )
+            return jsonify({'installed': rec, 'candidates': candidates}), 201
+        except FileExistsError as e:
+            return jsonify({'error': str(e), 'staging_id': staging_id, 'candidates': candidates}), 409
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+
+    # Multi-skill or auto_install=false: return list for picker
+    return jsonify({'staging_id': staging_id, 'candidates': candidates}), 200
+
+
+@app.route('/api/skills/import/git/install', methods=['POST'])
+def import_skill_git_install_route():
+    """Install one specific skill from a previously-staged Git clone.
+
+    Body: {staging_id, rel_dir, scope, project_id?, name?, overwrite?, cleanup?}
+    """
+    data = request.get_json() or {}
+    staging_id = (data.get('staging_id') or '').strip()
+    rel_dir = data.get('rel_dir', '')
+    scope = (data.get('scope') or 'global').strip()
+    project_id = data.get('project_id')
+    name_override = (data.get('name') or '').strip() or None
+    overwrite = bool(data.get('overwrite'))
+    cleanup = bool(data.get('cleanup', True))
+
+    if not staging_id:
+        return jsonify({'error': 'staging_id required'}), 400
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        rec = _skills.install_from_staging(
+            staging_id=staging_id,
+            rel_dir=rel_dir,
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            name_override=name_override,
+            overwrite=overwrite,
+            cleanup=cleanup,
+        )
+        return jsonify(rec), 201
+    except FileNotFoundError as e:
+        return jsonify({'error': str(e)}), 404
+    except FileExistsError as e:
+        return jsonify({'error': str(e)}), 409
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/skills/import/git/cancel', methods=['POST'])
+def import_skill_git_cancel_route():
+    """Discard a staging dir without installing anything."""
+    data = request.get_json() or {}
+    staging_id = (data.get('staging_id') or '').strip()
+    if not staging_id:
+        return jsonify({'error': 'staging_id required'}), 400
+    target = _skills.STAGING_SKILLS_DIR / staging_id
+    try:
+        if target.exists():
+            import shutil as _sh
+            _sh.rmtree(target, ignore_errors=True)
+    except Exception:
+        pass
+    return jsonify({'ok': True})
+
+
 def _install_builtin_skills():
     """Install/update built-in skills bundled with MC.
 
@@ -9870,6 +10069,13 @@ if __name__ == '__main__':
     # Install built-in skills bundled with MC into ~/.claude/skills/.
     # Checksum-aware: user edits to managed skills are preserved.
     _install_builtin_skills()
+    # Sweep stale Git-import staging dirs (>24h old) so they don't accumulate.
+    try:
+        n = _skills.cleanup_stale_staging(max_age_hours=24)
+        if n:
+            print(f"[skills] cleaned {n} stale staging dir(s)")
+    except Exception as e:
+        print(f"[skills] staging cleanup failed: {e}")
     # Ensure the global incognito pseudo-project exists so it shows up in
     # /api/projects without the FE needing a first-touch bootstrap.
     try:

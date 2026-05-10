@@ -7,7 +7,8 @@ Skills are Anthropic-format SKILL.md folders consumed natively by Claude Code:
   ~/.claude/skills.archive/<name>/SKILL.md    ← archived (hidden from CC, kept around)
 
 MC does NOT teach CC about skills — CC already loads them natively at session
-start. MC's job is purely management: list, read, write, archive, search.
+start. MC's job is purely management: list, read, write, archive, search,
+import (paste / folder / git URL / cross-project copy).
 
 Project skills shadow globals of the same name (CC's own resolution rule).
 The list endpoint surfaces a `shadowed_by` field so the UI can badge it.
@@ -23,6 +24,9 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -36,6 +40,7 @@ def _home() -> Path:
 
 GLOBAL_SKILLS_DIR = _home() / '.claude' / 'skills'
 ARCHIVE_SKILLS_DIR = _home() / '.claude' / 'skills.archive'
+STAGING_SKILLS_DIR = _home() / '.claude' / 'skills.staging'  # transient — git imports wait here for picker selection
 
 
 def project_skills_dir(project_path: str | os.PathLike) -> Path:
@@ -469,6 +474,302 @@ def install_builtins(builtin_root: Path) -> dict[str, Any]:
         'preserved': preserved,
         'skipped': skipped,
     }
+
+
+# ── Import (paste / folder / git URL) ───────────────────────────────────────
+
+_GIT_URL_RE = re.compile(
+    r'^(https?://|git@[^:/\s]+:|ssh://git@|git://)[a-zA-Z0-9._\-:/~]+(\.git)?/?$'
+)
+
+
+def _safe_skill_name_from(meta: dict[str, Any], folder_name: str, fallback: str = '') -> str:
+    """Pick a skill name preferring frontmatter -> folder name -> fallback.
+
+    Returns a kebab-case-normalized string. Caller still has to validate.
+    """
+    candidate = (meta.get('name') or folder_name or fallback or '').strip().lower()
+    candidate = re.sub(r'[^a-z0-9-]+', '-', candidate)
+    candidate = re.sub(r'-+', '-', candidate).strip('-')
+    return candidate or 'imported-skill'
+
+
+def _scan_for_skills(root: Path, max_depth: int = 3) -> list[dict[str, Any]]:
+    """Find all SKILL.md files under root (depth-capped).
+
+    Each result: {rel_dir, abs_dir, name, description, has_subassets}.
+    `rel_dir` is relative to root and uniquely identifies the skill.
+    """
+    results: list[dict[str, Any]] = []
+    if not root.exists() or not root.is_dir():
+        return results
+
+    root_abs = root.resolve()
+    for path in root.rglob('SKILL.md'):
+        try:
+            rel = path.parent.resolve().relative_to(root_abs)
+        except Exception:
+            continue
+        depth = len(rel.parts)
+        if depth > max_depth:
+            continue
+        try:
+            text = path.read_text(encoding='utf-8')
+        except Exception:
+            continue
+        meta, _ = parse_skill_md(text)
+        rel_dir = str(rel) if str(rel) != '.' else ''
+        folder_name = path.parent.name if depth > 0 else root_abs.name
+        name = _safe_skill_name_from(meta, folder_name)
+        # Detect supporting assets (anything else in the skill folder)
+        has_subassets = any(
+            child.name != 'SKILL.md' for child in path.parent.iterdir()
+        )
+        results.append({
+            'name': name,
+            'rel_dir': rel_dir,
+            'abs_dir': str(path.parent),
+            'description': (meta.get('description') or '').strip(),
+            'has_subassets': has_subassets,
+        })
+    # Stable ordering: shallow first, then alphabetical
+    results.sort(key=lambda r: (r['rel_dir'].count('/'), r['name']))
+    return results
+
+
+def import_from_paste(
+    content: str,
+    scope: str,
+    project_path: str | None = None,
+    project_id: str | None = None,
+    name_override: str | None = None,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Import a skill from a pasted SKILL.md string."""
+    if not content or not content.strip():
+        raise ValueError('content is empty')
+    meta, body = parse_skill_md(content)
+    name = (name_override or meta.get('name') or '').strip()
+    if not name:
+        raise ValueError('skill name missing — provide one or include `name:` in frontmatter')
+    err = validate_name(name)
+    if err:
+        raise ValueError(err)
+    description = (meta.get('description') or '').strip()
+    if not description:
+        raise ValueError('description missing — required in frontmatter')
+    return write_skill(
+        name=name,
+        description=description,
+        body=body,
+        scope=scope,
+        project_path=project_path,
+        project_id=project_id,
+        extra_meta={k: v for k, v in meta.items() if k not in ('name', 'description')},
+        overwrite=overwrite,
+    )
+
+
+def import_from_folder(
+    src_path: str | os.PathLike,
+    scope: str,
+    project_path: str | None = None,
+    project_id: str | None = None,
+    name_override: str | None = None,
+    selected_rel_dir: str | None = None,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Import a skill from an on-disk folder.
+
+    Folder shapes accepted:
+      - <src>/SKILL.md              → install <src> as the skill folder
+      - <src>/<name>/SKILL.md       → install the named subfolder
+      - <src>/skills/<name>/SKILL.md (or any nested) → require selected_rel_dir
+    """
+    src = Path(src_path).expanduser()
+    if not src.exists():
+        raise FileNotFoundError(f'path does not exist: {src}')
+    if not src.is_dir():
+        raise ValueError(f'not a directory: {src}')
+
+    candidates = _scan_for_skills(src, max_depth=3)
+    if not candidates:
+        raise ValueError('no SKILL.md found in this folder (searched 3 levels deep)')
+    if len(candidates) > 1 and not selected_rel_dir:
+        # caller should re-invoke with selected_rel_dir
+        return {'multiple': True, 'candidates': candidates}
+
+    target = candidates[0] if len(candidates) == 1 else next(
+        (c for c in candidates if c['rel_dir'] == selected_rel_dir), None
+    )
+    if not target:
+        raise ValueError(f'selected skill folder not found among candidates: {selected_rel_dir}')
+
+    return _install_skill_dir(
+        Path(target['abs_dir']),
+        name_override=name_override or target['name'],
+        scope=scope,
+        project_path=project_path,
+        project_id=project_id,
+        overwrite=overwrite,
+    )
+
+
+def _install_skill_dir(
+    src_dir: Path,
+    name_override: str,
+    scope: str,
+    project_path: str | None,
+    project_id: str | None,
+    overwrite: bool,
+) -> dict[str, Any]:
+    """Copy a skill folder (containing SKILL.md + any extras) into the target scope."""
+    err = validate_name(name_override)
+    if err:
+        raise ValueError(err)
+
+    # Read frontmatter so the caller knows what landed
+    skill_md_src = src_dir / 'SKILL.md'
+    if not skill_md_src.exists():
+        raise ValueError(f'SKILL.md missing in {src_dir}')
+    meta, body = parse_skill_md(skill_md_src.read_text(encoding='utf-8'))
+    description = (meta.get('description') or '').strip()
+    if not description:
+        raise ValueError('description missing in SKILL.md frontmatter')
+
+    target_dir = _skill_dir(scope, name_override, project_path)
+    if target_dir.exists() and not overwrite:
+        raise FileExistsError(f'skill {name_override} already exists in {scope}')
+
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    if target_dir.exists() and overwrite:
+        shutil.rmtree(target_dir)
+    shutil.copytree(src_dir, target_dir)
+
+    # Normalize the SKILL.md so frontmatter `name` matches the install name
+    target_md = target_dir / 'SKILL.md'
+    new_meta = dict(meta)
+    new_meta['name'] = name_override
+    target_md.write_text(dump_skill_md(new_meta, body), encoding='utf-8')
+
+    return _read_one(target_dir, scope, project_id)  # type: ignore[return-value]
+
+
+def is_valid_git_url(url: str) -> bool:
+    return bool(_GIT_URL_RE.match((url or '').strip()))
+
+
+def git_clone_to_staging(url: str, ref: str | None = None, timeout: int = 60) -> dict[str, Any]:
+    """Shallow-clone a repo into a fresh staging directory under STAGING_SKILLS_DIR.
+
+    Returns {staging_id, candidates}. Caller is responsible for invoking
+    `install_from_staging(staging_id, rel_dir, ...)` next.
+    """
+    url = (url or '').strip()
+    if not is_valid_git_url(url):
+        raise ValueError('not a recognizable Git URL')
+
+    STAGING_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    staging_id = uuid.uuid4().hex[:12]
+    staging_path = STAGING_SKILLS_DIR / staging_id
+
+    cmd = ['git', 'clone', '--depth', '1']
+    if ref:
+        cmd += ['--branch', ref]
+    cmd += [url, str(staging_path)]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=timeout,
+            text=True,
+        )
+    except FileNotFoundError:
+        raise RuntimeError('git is not on PATH — install git or import the skill manually')
+    except subprocess.TimeoutExpired:
+        # Clean up partial clone
+        shutil.rmtree(staging_path, ignore_errors=True)
+        raise RuntimeError(f'git clone timed out after {timeout}s')
+
+    if result.returncode != 0:
+        shutil.rmtree(staging_path, ignore_errors=True)
+        stderr = (result.stderr or '').strip()[:500]
+        raise RuntimeError(f'git clone failed: {stderr}')
+
+    # Strip the .git folder so the clone behaves like a plain copy of files
+    git_meta = staging_path / '.git'
+    if git_meta.exists():
+        shutil.rmtree(git_meta, ignore_errors=True)
+
+    candidates = _scan_for_skills(staging_path, max_depth=3)
+    if not candidates:
+        shutil.rmtree(staging_path, ignore_errors=True)
+        raise ValueError('no SKILL.md found in cloned repo (searched 3 levels deep)')
+
+    return {'staging_id': staging_id, 'candidates': candidates}
+
+
+def install_from_staging(
+    staging_id: str,
+    rel_dir: str,
+    scope: str,
+    project_path: str | None = None,
+    project_id: str | None = None,
+    name_override: str | None = None,
+    overwrite: bool = False,
+    cleanup: bool = False,
+) -> dict[str, Any]:
+    """Install a specific skill from a previously-staged git clone."""
+    staging_path = STAGING_SKILLS_DIR / staging_id
+    if not staging_path.exists() or not staging_path.is_dir():
+        raise FileNotFoundError(f'staging dir not found: {staging_id}')
+    # Defensive path check — rel_dir must stay inside staging_path
+    src_dir = (staging_path / rel_dir).resolve() if rel_dir else staging_path.resolve()
+    try:
+        src_dir.relative_to(staging_path.resolve())
+    except ValueError:
+        raise ValueError('selected path escapes staging area')
+    if not src_dir.exists():
+        raise FileNotFoundError(f'selected skill folder not found in staging: {rel_dir}')
+
+    # Derive name if not provided
+    skill_md = src_dir / 'SKILL.md'
+    if skill_md.exists():
+        meta, _ = parse_skill_md(skill_md.read_text(encoding='utf-8'))
+        derived = _safe_skill_name_from(meta, src_dir.name)
+    else:
+        derived = src_dir.name
+    name = (name_override or derived).strip()
+
+    rec = _install_skill_dir(
+        src_dir,
+        name_override=name,
+        scope=scope,
+        project_path=project_path,
+        project_id=project_id,
+        overwrite=overwrite,
+    )
+
+    if cleanup:
+        shutil.rmtree(staging_path, ignore_errors=True)
+    return rec
+
+
+def cleanup_stale_staging(max_age_hours: int = 24) -> int:
+    """Remove staging dirs older than max_age_hours. Returns count cleaned."""
+    if not STAGING_SKILLS_DIR.exists():
+        return 0
+    cutoff = datetime.now().timestamp() - max_age_hours * 3600
+    removed = 0
+    for child in STAGING_SKILLS_DIR.iterdir():
+        try:
+            if child.stat().st_mtime < cutoff:
+                shutil.rmtree(child, ignore_errors=True)
+                removed += 1
+        except Exception:
+            continue
+    return removed
 
 
 # ── Usage stats from CC transcripts ──────────────────────────────────────────

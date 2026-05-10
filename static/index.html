@@ -14284,7 +14284,24 @@ async function openAllSkills() {
           Include archived
         </label>
         <span id="as-count" style="font-size:11px;color:var(--text-faint)"></span>
-        <button class="btn-add" style="margin-left:auto" onclick="openSkillEditor('global', '', null, true)">+ New Skill</button>
+        <div style="margin-left:auto;display:flex;gap:6px;position:relative" id="skills-import-wrapper">
+          <button class="btn-secondary" onclick="_toggleSkillsImportMenu(event)">Import &#x25BE;</button>
+          <button class="btn-add" onclick="openSkillEditor('global', '', null, true)">+ New Skill</button>
+          <div id="skills-import-menu" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 0;z-index:10;min-width:220px;box-shadow:0 8px 24px rgba(0,0,0,.3)">
+            <button class="modal-menu-item" onclick="openSkillImportPaste()" style="width:100%;text-align:left">
+              <span class="menu-icon">&#x1F4CB;</span> Paste SKILL.md
+            </button>
+            <button class="modal-menu-item" onclick="openSkillImportFolder()" style="width:100%;text-align:left">
+              <span class="menu-icon">&#x1F4C1;</span> From a folder
+            </button>
+            <button class="modal-menu-item" onclick="openSkillImportGit()" style="width:100%;text-align:left">
+              <span class="menu-icon">&#x1F310;</span> From a Git URL
+            </button>
+            <button class="modal-menu-item" onclick="openSkillImportBrowse()" style="width:100%;text-align:left">
+              <span class="menu-icon">&#x1F50D;</span> Browse other projects
+            </button>
+          </div>
+        </div>
       </div>
       <div id="as-list" style="max-height:65vh;overflow-y:auto"></div>
     </div>`;
@@ -14677,6 +14694,512 @@ async function restoreSkillAction(name) {
     _allSkillsCache.loaded = false;
     loadAllSkills();
   } catch(e) { showToast('Restore failed: ' + e.message, 4000); }
+}
+
+// ── Skills import (paste / folder / Git URL / cross-project) ─────────────────
+
+let win_gitStaging = {}; // modalId -> staging_id (set when multi-skill picker is shown)
+
+function _toggleSkillsImportMenu(event) {
+  event.stopPropagation();
+  const menu = document.getElementById('skills-import-menu');
+  if (!menu) return;
+  const willOpen = menu.style.display === 'none';
+  menu.style.display = willOpen ? 'block' : 'none';
+  if (willOpen) {
+    setTimeout(() => {
+      const closeOnce = (e) => {
+        if (!document.getElementById('skills-import-wrapper')?.contains(e.target)) {
+          menu.style.display = 'none';
+          document.removeEventListener('click', closeOnce);
+        }
+      };
+      document.addEventListener('click', closeOnce);
+    }, 0);
+  }
+}
+
+function _hideSkillsImportMenu() {
+  const menu = document.getElementById('skills-import-menu');
+  if (menu) menu.style.display = 'none';
+}
+
+function _defaultImportContext() {
+  // If the user is viewing a specific project's skills, default the import there.
+  const pid = (_allSkillsFilter.project && _allSkillsFilter.project !== 'all') ? _allSkillsFilter.project : '';
+  return {
+    scope: pid ? 'project' : 'global',
+    projectId: pid || null,
+  };
+}
+
+function _importContextHTML(modalId, ctx) {
+  const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+  return `
+    <div style="display:flex;gap:12px;align-items:center">
+      <label style="font-size:12px;color:var(--text);display:flex;gap:4px;align-items:center;cursor:pointer">
+        <input type="radio" name="si-scope-${modalId}" value="global" ${ctx.scope==='global'?'checked':''}
+          onchange="_siToggleProject('${modalId}')"> Global
+      </label>
+      <label style="font-size:12px;color:var(--text);display:flex;gap:4px;align-items:center;cursor:pointer">
+        <input type="radio" name="si-scope-${modalId}" value="project" ${ctx.scope==='project'?'checked':''}
+          onchange="_siToggleProject('${modalId}')"> Project
+      </label>
+      <select id="si-project-${modalId}" style="padding:5px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);${ctx.scope==='project'?'':'display:none'}">
+        <option value="">— pick a project —</option>
+        ${realProjects.map(p =>
+          `<option value="${esc(p.id)}"${ctx.projectId===p.id?' selected':''}>${esc(p.name||p.id)}</option>`
+        ).join('')}
+      </select>
+    </div>`;
+}
+
+function _siToggleProject(modalId) {
+  const win = openModals.get(modalId)?.element;
+  if (!win) return;
+  const radio = win.querySelector(`input[name="si-scope-${modalId}"]:checked`);
+  const sel = win.querySelector(`#si-project-${modalId}`);
+  if (sel) sel.style.display = (radio?.value === 'project') ? '' : 'none';
+}
+
+function _siReadContext(modalId) {
+  const win = openModals.get(modalId)?.element;
+  if (!win) return null;
+  const radio = win.querySelector(`input[name="si-scope-${modalId}"]:checked`);
+  const scope = radio?.value || 'global';
+  const projectId = scope === 'project' ? (win.querySelector(`#si-project-${modalId}`)?.value || '') : '';
+  if (scope === 'project' && !projectId) return { error: 'Pick a project for project-scoped import' };
+  return { scope, projectId: projectId || null };
+}
+
+function _siModalShell(modalId, title, bodyHTML, footerHTML) {
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 720);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x1F9E9; ${esc(title)}</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:4px 24px 20px 28px;display:flex;flex-direction:column;gap:12px">
+      ${bodyHTML}
+      <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+        <span id="si-status-${modalId}" style="font-size:11px;color:var(--text-faint);margin-right:auto"></span>
+        ${footerHTML}
+      </div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+  return win;
+}
+
+function _siStatus(modalId, msg, color) {
+  const el = document.querySelector(`#si-status-${modalId}`);
+  if (el) {
+    el.textContent = msg || '';
+    el.style.color = color || 'var(--text-faint)';
+  }
+}
+
+// ── Paste SKILL.md ───────────────────────────────────────────────────────────
+
+function openSkillImportPaste() {
+  _hideSkillsImportMenu();
+  const modalId = '__skill_import_paste';
+  if (openModals.has(modalId)) { focusModal(modalId); return; }
+  const ctx = _defaultImportContext();
+  const body = `
+    <div style="font-size:11px;color:var(--text-faint)">Paste the full SKILL.md content (frontmatter + body). The skill name comes from the <code>name:</code> field, or you can override it below.</div>
+    ${_importContextHTML(modalId, ctx)}
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Override name (optional)</label>
+      <input type="text" id="sip-name" placeholder="leave blank to use frontmatter name"
+        style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">SKILL.md content</label>
+      <textarea id="sip-content" rows="18" placeholder="---&#10;name: my-skill&#10;description: ...&#10;---&#10;&#10;# body markdown"
+        style="width:100%;padding:8px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);resize:vertical;font-family:var(--mono);line-height:1.5"></textarea>
+    </div>`;
+  const footer = `
+    <button class="btn-secondary" onclick="closeModalById('${modalId}')">Cancel</button>
+    <button class="btn-add" onclick="_doSkillImportPaste('${modalId}')">Import</button>`;
+  _siModalShell(modalId, 'Paste SKILL.md', body, footer);
+}
+
+async function _doSkillImportPaste(modalId) {
+  const ctx = _siReadContext(modalId);
+  if (!ctx || ctx.error) { _siStatus(modalId, ctx?.error || 'invalid context', 'var(--red)'); return; }
+  const win = openModals.get(modalId).element;
+  const content = win.querySelector('#sip-content')?.value || '';
+  const name = (win.querySelector('#sip-name')?.value || '').trim();
+  if (!content.trim()) { _siStatus(modalId, 'paste content is empty', 'var(--red)'); return; }
+  _siStatus(modalId, 'Importing...');
+  try {
+    const res = await fetch(API_BASE + '/api/skills/import/paste', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, scope: ctx.scope, project_id: ctx.projectId, name: name || undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) { _siStatus(modalId, data.error || 'HTTP ' + res.status, 'var(--red)'); return; }
+    _siStatus(modalId, 'Imported', 'var(--green)');
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+    setTimeout(() => closeModalById(modalId), 500);
+  } catch(e) {
+    _siStatus(modalId, 'Import failed: ' + e.message, 'var(--red)');
+  }
+}
+
+// ── Import from folder ───────────────────────────────────────────────────────
+
+function openSkillImportFolder() {
+  _hideSkillsImportMenu();
+  const modalId = '__skill_import_folder';
+  if (openModals.has(modalId)) { focusModal(modalId); return; }
+  const ctx = _defaultImportContext();
+  const body = `
+    <div style="font-size:11px;color:var(--text-faint)">Path to a folder containing <code>SKILL.md</code>, or a parent folder with skill subfolders. If multiple skills are found you'll pick one.</div>
+    ${_importContextHTML(modalId, ctx)}
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Folder path</label>
+      <input type="text" id="sif-path" placeholder="/path/to/skill or C:\\path\\to\\skill"
+        style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Override name (optional)</label>
+      <input type="text" id="sif-name" placeholder="leave blank to use folder name / frontmatter"
+        style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+    </div>
+    <div id="sif-candidates" style="display:none"></div>`;
+  const footer = `
+    <button class="btn-secondary" onclick="closeModalById('${modalId}')">Cancel</button>
+    <button class="btn-add" onclick="_doSkillImportFolder('${modalId}')">Import</button>`;
+  _siModalShell(modalId, 'Import from folder', body, footer);
+}
+
+async function _doSkillImportFolder(modalId, selectedRelDir) {
+  const ctx = _siReadContext(modalId);
+  if (!ctx || ctx.error) { _siStatus(modalId, ctx?.error || 'invalid context', 'var(--red)'); return; }
+  const win = openModals.get(modalId).element;
+  const path = (win.querySelector('#sif-path')?.value || '').trim();
+  const name = (win.querySelector('#sif-name')?.value || '').trim();
+  if (!path) { _siStatus(modalId, 'path is required', 'var(--red)'); return; }
+  _siStatus(modalId, 'Importing...');
+  try {
+    const res = await fetch(API_BASE + '/api/skills/import/folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path, scope: ctx.scope, project_id: ctx.projectId,
+        name: name || undefined, selected_rel_dir: selectedRelDir,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) { _siStatus(modalId, data.error || 'HTTP ' + res.status, 'var(--red)'); return; }
+    if (data.multiple) {
+      // Show candidate picker
+      const wrap = win.querySelector('#sif-candidates');
+      wrap.style.display = '';
+      wrap.innerHTML = `
+        <div style="font-size:12px;color:var(--text);margin-bottom:6px">Multiple skills found — pick one to install:</div>
+        ${(data.candidates || []).map(c => `
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:4px">
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600">${esc(c.name)}</div>
+              <div style="font-size:11px;color:var(--text-faint);font-family:var(--mono)">${esc(c.rel_dir || '(root)')}</div>
+              <div style="font-size:11px;color:var(--text-mute);margin-top:2px">${esc(c.description || '')}</div>
+            </div>
+            <button class="btn-tiny" onclick="_doSkillImportFolder('${modalId}', '${esc(c.rel_dir).replace(/'/g, "\\'")}')">Install this</button>
+          </div>
+        `).join('')}`;
+      _siStatus(modalId, 'Pick one of the candidates above', 'var(--text-faint)');
+      return;
+    }
+    _siStatus(modalId, 'Imported', 'var(--green)');
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+    setTimeout(() => closeModalById(modalId), 500);
+  } catch(e) {
+    _siStatus(modalId, 'Import failed: ' + e.message, 'var(--red)');
+  }
+}
+
+// ── Import from Git URL ──────────────────────────────────────────────────────
+
+function openSkillImportGit() {
+  _hideSkillsImportMenu();
+  const modalId = '__skill_import_git';
+  if (openModals.has(modalId)) { focusModal(modalId); return; }
+  const ctx = _defaultImportContext();
+  const body = `
+    <div style="font-size:11px;color:var(--text-faint)">Public Git repo URL. The repo can contain a single skill at root, or multiple skills (you'll pick one). HTTPS recommended; private repos require system-git auth.</div>
+    ${_importContextHTML(modalId, ctx)}
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Git URL</label>
+      <input type="text" id="sig-url" placeholder="https://github.com/owner/repo.git"
+        style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Branch / tag (optional)</label>
+      <input type="text" id="sig-ref" placeholder="main"
+        style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Override name (optional, single-skill repos only)</label>
+      <input type="text" id="sig-name" placeholder="leave blank to use frontmatter name"
+        style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+    </div>
+    <div id="sig-candidates" style="display:none"></div>`;
+  const footer = `
+    <button class="btn-secondary" id="sig-cancel-${modalId}" onclick="_doSkillImportGitCancel('${modalId}')">Cancel</button>
+    <button class="btn-add" id="sig-import-${modalId}" onclick="_doSkillImportGit('${modalId}')">Clone &amp; import</button>`;
+  _siModalShell(modalId, 'Import from Git URL', body, footer);
+  win_gitStaging[modalId] = null;
+}
+
+async function _doSkillImportGit(modalId) {
+  const ctx = _siReadContext(modalId);
+  if (!ctx || ctx.error) { _siStatus(modalId, ctx?.error || 'invalid context', 'var(--red)'); return; }
+  const win = openModals.get(modalId).element;
+  const url = (win.querySelector('#sig-url')?.value || '').trim();
+  const ref = (win.querySelector('#sig-ref')?.value || '').trim();
+  const name = (win.querySelector('#sig-name')?.value || '').trim();
+  if (!url) { _siStatus(modalId, 'URL is required', 'var(--red)'); return; }
+  _siStatus(modalId, 'Cloning...');
+  try {
+    const res = await fetch(API_BASE + '/api/skills/import/git', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url, ref: ref || undefined, scope: ctx.scope, project_id: ctx.projectId,
+        name: name || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok && !data.candidates) {
+      _siStatus(modalId, data.error || 'HTTP ' + res.status, 'var(--red)');
+      return;
+    }
+    if (data.installed) {
+      _siStatus(modalId, 'Imported ' + (data.installed.name || ''), 'var(--green)');
+      _allSkillsCache.loaded = false;
+      loadAllSkills();
+      setTimeout(() => closeModalById(modalId), 600);
+      return;
+    }
+    // Multi-skill repo: show picker
+    win_gitStaging[modalId] = data.staging_id;
+    const wrap = win.querySelector('#sig-candidates');
+    wrap.style.display = '';
+    wrap.innerHTML = `
+      <div style="font-size:12px;color:var(--text);margin-bottom:6px">${(data.candidates || []).length} skills found in the repo — pick one:</div>
+      ${(data.candidates || []).map(c => `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:4px">
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${esc(c.name)}</div>
+            <div style="font-size:11px;color:var(--text-faint);font-family:var(--mono)">${esc(c.rel_dir || '(root)')}</div>
+            <div style="font-size:11px;color:var(--text-mute);margin-top:2px">${esc(c.description || '')}</div>
+          </div>
+          <button class="btn-tiny" onclick="_doSkillImportGitInstallOne('${modalId}', '${esc(c.rel_dir).replace(/'/g, "\\'")}', '${esc(c.name).replace(/'/g, "\\'")}')">Install this</button>
+        </div>
+      `).join('')}`;
+    _siStatus(modalId, 'Repo cloned. Pick a skill to install.', 'var(--text-faint)');
+  } catch(e) {
+    _siStatus(modalId, 'Import failed: ' + e.message, 'var(--red)');
+  }
+}
+
+async function _doSkillImportGitInstallOne(modalId, relDir, defaultName) {
+  const ctx = _siReadContext(modalId);
+  if (!ctx || ctx.error) { _siStatus(modalId, ctx?.error || 'invalid context', 'var(--red)'); return; }
+  const stagingId = win_gitStaging[modalId];
+  if (!stagingId) { _siStatus(modalId, 'staging session expired — re-clone', 'var(--red)'); return; }
+  _siStatus(modalId, 'Installing...');
+  try {
+    const res = await fetch(API_BASE + '/api/skills/import/git/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        staging_id: stagingId,
+        rel_dir: relDir,
+        scope: ctx.scope, project_id: ctx.projectId,
+        cleanup: true,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) { _siStatus(modalId, data.error || 'HTTP ' + res.status, 'var(--red)'); return; }
+    _siStatus(modalId, 'Imported ' + (data.name || defaultName), 'var(--green)');
+    win_gitStaging[modalId] = null;
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+    setTimeout(() => closeModalById(modalId), 500);
+  } catch(e) {
+    _siStatus(modalId, 'Install failed: ' + e.message, 'var(--red)');
+  }
+}
+
+async function _doSkillImportGitCancel(modalId) {
+  const stagingId = win_gitStaging[modalId];
+  if (stagingId) {
+    try {
+      await fetch(API_BASE + '/api/skills/import/git/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staging_id: stagingId }),
+      });
+    } catch(e) {}
+    win_gitStaging[modalId] = null;
+  }
+  closeModalById(modalId);
+}
+
+// ── Browse skills from other projects (cross-project copy) ───────────────────
+
+function openSkillImportBrowse() {
+  _hideSkillsImportMenu();
+  const modalId = '__skill_import_browse';
+  if (openModals.has(modalId)) { focusModal(modalId); return; }
+  const ctx = _defaultImportContext();
+  const body = `
+    <div style="font-size:11px;color:var(--text-faint)">Search across global + every project's skills. Install a result into the destination scope below, or click Read to inspect the body without installing.</div>
+    ${_importContextHTML(modalId, ctx)}
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Search query</label>
+      <input type="text" id="sib-query" placeholder="e.g. release checklist, react testing, deployment..."
+        oninput="clearTimeout(window._sibTimer); window._sibTimer = setTimeout(() => _doSkillImportBrowseSearch('${modalId}'), 250);"
+        style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+    </div>
+    <div id="sib-results" style="max-height:50vh;overflow-y:auto"></div>`;
+  const footer = `
+    <button class="btn-secondary" onclick="closeModalById('${modalId}')">Close</button>`;
+  _siModalShell(modalId, 'Browse skills', body, footer);
+}
+
+async function _doSkillImportBrowseSearch(modalId) {
+  const win = openModals.get(modalId)?.element;
+  if (!win) return;
+  const q = (win.querySelector('#sib-query')?.value || '').trim();
+  const resultsEl = win.querySelector('#sib-results');
+  if (!q) { resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">Type to search</div>'; return; }
+  resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">Searching...</div>';
+
+  // Search across global + every real project (concat results, dedup by scope+name+project_id)
+  const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+  const seen = new Set();
+  let all = [];
+  try {
+    // Global pool
+    const r0 = await fetch(API_BASE + '/api/skills/search?q=' + encodeURIComponent(q) + '&limit=20');
+    const arr0 = await r0.json();
+    for (const s of arr0) {
+      const k = s.scope + ':' + s.name + ':' + (s.project_id || '');
+      if (!seen.has(k)) { seen.add(k); all.push(s); }
+    }
+    // Each project's pool
+    await Promise.all(realProjects.map(async p => {
+      try {
+        const r = await fetch(API_BASE + '/api/skills/search?q=' + encodeURIComponent(q) + '&project_id=' + encodeURIComponent(p.id) + '&limit=10');
+        const arr = await r.json();
+        for (const s of arr) {
+          const k = s.scope + ':' + s.name + ':' + (s.project_id || '');
+          if (!seen.has(k)) { seen.add(k); all.push(s); }
+        }
+      } catch(e) {}
+    }));
+  } catch(e) {
+    resultsEl.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12px">Search failed: ${esc(e.message)}</div>`;
+    return;
+  }
+
+  all.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+  if (!all.length) {
+    resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">No matches.</div>';
+    return;
+  }
+
+  resultsEl.innerHTML = all.map((s, i) => {
+    const projLabel = s.scope === 'project'
+      ? ((allProjects || []).find(p => p.id === s.project_id)?.name || s.project_id || 'project')
+      : 'global';
+    const idAttr = `sib-row-${i}`;
+    return `<div id="${idAttr}" style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600">${esc(s.name)}</span>
+        <span style="font-size:10px;background:var(--surface2);color:var(--text-faint);padding:1px 6px;border-radius:3px">${esc(projLabel)}</span>
+        <span style="font-size:10px;color:var(--text-faint);margin-left:auto">score ${s.score}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-mute);margin-top:4px;line-height:1.4">${esc(s.description || '')}</div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button class="btn-tiny" onclick="_sibReadBody('${esc(s.scope)}', '${esc(s.name)}', ${s.project_id?`'${esc(s.project_id)}'`:'null'}, '${idAttr}')">Read body</button>
+        <button class="btn-tiny" onclick="_sibInstallHere('${modalId}', '${esc(s.scope)}', '${esc(s.name)}', ${s.project_id?`'${esc(s.project_id)}'`:'null'})">Install here</button>
+      </div>
+      <div id="${idAttr}-body" style="display:none;margin-top:8px;padding:8px;background:var(--surface2);border-radius:4px;font-family:var(--mono);font-size:11px;white-space:pre-wrap;max-height:240px;overflow-y:auto"></div>
+    </div>`;
+  }).join('');
+}
+
+async function _sibReadBody(scope, name, projectId, rowId) {
+  const bodyEl = document.getElementById(rowId + '-body');
+  if (!bodyEl) return;
+  if (bodyEl.style.display !== 'none') { bodyEl.style.display = 'none'; return; }
+  bodyEl.style.display = '';
+  bodyEl.textContent = 'Loading...';
+  try {
+    const params = new URLSearchParams({ include_body: 'true' });
+    if (projectId) params.set('project_id', projectId);
+    const r = await fetch(API_BASE + `/api/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}?` + params.toString());
+    const data = await r.json();
+    if (!r.ok || data.error) { bodyEl.textContent = data.error || 'Failed'; return; }
+    bodyEl.textContent = data.body || '(empty body)';
+  } catch(e) { bodyEl.textContent = 'Load failed: ' + e.message; }
+}
+
+async function _sibInstallHere(modalId, srcScope, srcName, srcProjectId) {
+  const ctx = _siReadContext(modalId);
+  if (!ctx || ctx.error) { _siStatus(modalId, ctx?.error || 'invalid context', 'var(--red)'); return; }
+  // Read full source skill
+  _siStatus(modalId, 'Fetching source...');
+  try {
+    const params = new URLSearchParams({ include_body: 'true' });
+    if (srcProjectId) params.set('project_id', srcProjectId);
+    const rGet = await fetch(API_BASE + `/api/skills/${encodeURIComponent(srcScope)}/${encodeURIComponent(srcName)}?` + params.toString());
+    const src = await rGet.json();
+    if (!rGet.ok || src.error) { _siStatus(modalId, src.error || 'fetch failed', 'var(--red)'); return; }
+
+    // POST as new skill in destination
+    _siStatus(modalId, 'Installing...');
+    const rPost = await fetch(API_BASE + '/api/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: src.name,
+        description: src.description,
+        body: src.body || '',
+        scope: ctx.scope,
+        project_id: ctx.projectId,
+      }),
+    });
+    const data = await rPost.json();
+    if (!rPost.ok || data.error) { _siStatus(modalId, data.error || 'install failed', 'var(--red)'); return; }
+    _siStatus(modalId, 'Installed', 'var(--green)');
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+  } catch(e) {
+    _siStatus(modalId, 'Install failed: ' + e.message, 'var(--red)');
+  }
 }
 
 // ── Walkthrough / Tour ────────────────────────────────────────────────────────
