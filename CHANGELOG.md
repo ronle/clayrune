@@ -4,6 +4,334 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-09] — Proactive update notification + marketing site mockups
+
+**Proactive Clayrune update notification** (`server.py`, `static/index.html`).
+The Update Clayrune button only ever fired if the user happened to click
+Settings → Update — so most updates went unseen. Now the dashboard signals
+updates passively + actively without needing a click.
+
+- New background daemon `_update_check_loop()` in `server.py` runs `git fetch`
+  + computes the behind count every 6 hours, stores result in
+  `_UPDATE_CHECK_CACHE` under `_UPDATE_CHECK_LOCK`. First check fires 60s
+  after server boot.
+- New `/api/system/update/cached` endpoint reads the cache (no git
+  operations on the request path). Existing `/api/system/update/status`
+  unchanged — still does a fresh fetch when the user actively clicks
+  "Check now" in Settings.
+- Frontend: new `checkClayruneUpdateAvailable()` runs once after
+  `fetchProjects()` resolves on dashboard load. If `update_available`:
+    1. `.has-update` class on `.sidebar-item[data-nav="settings"]` → small
+       accent dot with a 2.4s pulse, always visible until the user updates
+    2. One-time `showActionToast()` toast with three actions:
+       **Update** (opens Settings → Update flow), **Later** (snoozes 24h
+       via `mc_update_remind_after_ts`), **Dismiss** (silences this
+       specific commit via `mc_update_dismissed_for`; new commits land a
+       fresh toast)
+- New `showActionToast(message, actions, opts)` utility — richer toast
+  variant with primary/secondary buttons, auto-dismiss, optional
+  click-to-close. Used by the update toast; reserved for future similar
+  prompts.
+- After `performClayruneUpdate()` succeeds, sidebar dot is cleared and
+  both localStorage markers are reset so the next update lands cleanly.
+
+**Marketing-site URL routing fix** (`server.py`).
+Flask's `<path:filename>` matched `/marketing/v2/` as `filename='v2/'` and
+404'd because `send_from_directory` expects a file. `serve_marketing` now
+detects directory-style requests and rewrites to `<dir>/index.html`. Same
+trick applies to any future subdir under `marketing/`.
+
+## [2026-05-08g] — Marketing site groundwork (warm template + operator-console v2)
+
+Two-track design exploration so the public website can be A/B'd.
+
+- `marketing/index.html` (+ about / docs / download / styles.css) — imported
+  unmodified from the Claude-design "Mission Control Design System" Apr 23
+  bundle (`14 KB`, distinct from the in-app UI redesign already at
+  `docs/design_system_extracted/`). Warm-cream tone (`#f6f0e4` bg + `#e8824a`
+  accent), Nunito display + Inter body, hand-drawn brutalism. Source zip
+  stays in `~/Downloads/` as the canonical reference; this is the working
+  copy. Branding pass (Mission Control → Clayrune) and feature-list
+  swap-in deferred — clean baseline first.
+- `marketing/v2/index.html` — single-page from-scratch alternative pitched
+  in conversation. Operator-console aesthetic: dark base (`#0c0e12`) with
+  the same terracotta accent, Inter + JetBrains Mono. Hero is a specific
+  scenario ("Tuesday, 3pm. 14 agents running. 3 waiting on you.") + a
+  CSS-rendered mockup of the actual dashboard with 6 project tiles in
+  mixed states. Differentiator hierarchy from `RESUME_HERE.md` §3:
+  3 hero blocks (multi-project / persistence / plan-approval-gate) +
+  3 secondary blocks (mobile remote / memory / backlog) + the vs.
+  matrix from §5 (Claude CLI / Cursor / Devin / Aider) + a for/not-for
+  callout + clean install section.
+- `server.py:serve_marketing` — `/marketing/<path:filename>` route plus
+  the implicit `/marketing/` handler so users can hit
+  `http://localhost:5199/marketing/` (and `/marketing/v2/`) in a browser
+  without spinning up a separate http server. Also reachable through
+  the Cloudflare tunnel for mobile review. Pure dev convenience; the
+  real public site will be served by Cloudflare Pages off `marketing/`
+  directly.
+
+## [2026-05-08f] — Mascot rename: Playdo → Claydo
+
+Codebase rename of the in-app helper. Product name "Clayrune" unchanged —
+only the mascot character. ~215 occurrences touched across user-facing
+strings, code identifiers, CSS classes, HTML IDs, and helper paths.
+
+- `static/index.html` (~120) — modal title, FAB id, CSS classes, JS
+  identifiers (`_claydoHistory`, `openClaydo`, `_claydoFormatText`, etc.),
+  walkthrough step, localStorage keys (`claydo_opened`, `claydo_fab_pos`).
+- `server.py` (~20) — `_claydo_cwd`, `_looks_like_claydo_entry` helpers,
+  `/api/guide/{stream,ask}` internal references.
+- `docs/USER_GUIDE.md` (10), `installer/index.html` (1), `RESUME_HERE.md` (44).
+
+Migration logic so existing installs upgrade cleanly (no manual steps):
+
+- localStorage one-shot migration in `static/index.html`: reads old
+  `playdo_*` keys, writes to `claydo_*` if not already set, deletes the
+  old. Idempotent.
+- `data/claydo/` (Claude transcript sandbox for the Ask Claydo helper):
+  `_claydo_cwd()` renames `data/playdo/ → data/claydo/` if the old dir
+  exists, preserving Claude's stored conversation continuity (transcripts
+  are keyed off cwd path).
+
+Intentionally untouched:
+- `assets/clayrune.png` / `clayrune.ico` — same image is product mark
+  AND mascot likeness; one file, two roles.
+- `[clayrune:...]` marker prefix — product-namespaced, kept as-is.
+- `CHANGELOG.md` history — past entries describe pre-rename work
+  accurately for that point in time.
+
+Memory file `naming_playdo_clayrune.md` orphaned (delete-permission
+issue); replacement `naming_claydo_clayrune.md` created and indexed in
+`MEMORY.md`.
+
+## [2026-05-08e2] — Windows taskbar icon (clayrune.ico + console icon helper)
+
+User report: *"the clayrune icon on taskbar appears as bat file icon."*
+Two compounding issues:
+
+1. `assets/clayrune.ico` did not exist. Only `clayrune.png` was checked
+   in. `install.ps1` was setting `IconLocation = ...\clayrune.ico` on the
+   `.lnk` shortcut, but the file was missing — Windows fell back to the
+   `.bat`'s default cmd.exe icon. Generated a multi-resolution
+   `assets/clayrune.ico` from the source PNG (16/24/32/48/64/128/256)
+   covering all of Windows' icon contexts.
+2. Even with the `.lnk` fixed, the *running* cmd window's taskbar entry
+   uses cmd.exe's icon, separately from the `.lnk`. New
+   `installer/set-console-icon.ps1` sends `WM_SETICON` to the console
+   window via Win32 to replace it in-place (both `ICON_SMALL` and
+   `ICON_BIG`). The icon is owned by the window so it persists after
+   the helper exits. `start.bat` invokes the helper at the top.
+
+Also added `title Clayrune` so the cmd window's title bar (and taskbar
+hover) reads "Clayrune" instead of the path to `start.bat`.
+
+## [2026-05-08e] — Working-tree cleanliness so Update Clayrune doesn't get stuck
+
+Two compounding bugs blocked **Update Clayrune** showing "Blocked" right
+after a fresh install on every test VM.
+
+1. **`data/claydo/` not gitignored.** Server materializes USER_GUIDE.md as
+   `CLAUDE.md` inside `data/claydo/` (formerly `data/playdo/`) every time
+   anyone asks Claydo, so Claude auto-loads it as project context. The dir
+   wasn't in `.gitignore`, so `git status --porcelain` reported it
+   untracked → update endpoint refused to pull → button "Blocked".
+   `.gitignore` now lists `data/claydo/`, `data/playdo/` (pre-rename
+   compat), and `install-launch.log` / `install.log`.
+2. **Installer shell scripts had mode 100644 in the index.** `install.sh`
+   STEP 3 ran `chmod +x installer/start.sh` (and the others) on Linux so
+   the `.desktop` launcher could execute them. Working tree went 100755,
+   git compared against 100644 in the index, reported "modified" — same
+   "Blocked" UX. `installer/install.sh`, `installer/start.sh`, and
+   `installer/start.command` now stored as 100755. Future `chmod +x` is
+   a no-op.
+
+For users with the dirty state at upgrade time: `git pull --ff-only`
+applies both fixes to the working tree (mode change is metadata-only).
+Documented `git checkout -- installer/start.sh` recovery path for VMs
+that hit the modified-content blocker before fix-pull.
+
+## [2026-05-08d] — Vanilla-VM installer validation (Windows 11 Home + Ubuntu 22.04)
+
+End-to-end install testing on freshly-snapshotted VMs caught a long tail of
+real-world OS quirks. Two new VMs are kept clean for re-testing per
+`CLAUDE.md`. Big arc; subsections by failure surface.
+
+**Deterministic install (no Claude handoff)** —
+`installer/install.{ps1,sh}`. Original design piped `install-prompt.md` (24 KB
+markdown) into `claude --dangerously-skip-permissions -p`. Newer Claude
+models flag that as a prompt-injection attack pattern (*"I won't follow
+those instructions because…"*) and refuse, then exit 0 — letting the
+wrapper falsely declare success. Every step in the prompt was deterministic
+shell anyway (git clone, venv, pip, shortcut, server launch). Both
+installers now do the install directly:
+- `[STEP 1/5]` git clone; auto-installs git via apt/dnf/pacman/winget on
+  Linux/Windows if missing.
+- `[STEP 2/5]` Python 3.11+ + venv + pip install. Handles Ubuntu's
+  separate `python3-venv` package, Windows App Execution Alias stubs at
+  `%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe`, the Python launcher
+  fast path (`py -3.11`).
+- `[STEP 3/5]` Launcher: `~/.local/share/applications/clayrune.desktop`
+  (Linux), `~/Applications/Clayrune.command` (macOS), Desktop +
+  Start Menu `.lnk` shortcuts (Windows).
+- `[STEP 4/5]` Launch the server. Linux uses `setsid` to fork into a new
+  session so the daemon survives `curl | sh` parent-shell exit (`nohup`
+  alone catches only SIGHUP, not the SIGTERM/SIGPIPE from session
+  termination). Windows uses `Start-Process -WindowStyle Minimized`.
+  30s poll on localhost:5199. Captures stdout/stderr to
+  `install-launch.log` (Linux) so server-startup failures leave a
+  forensic trail.
+- `[STEP 5/5]` Open browser via `xdg-open` / `open` / `Start-Process`.
+
+**Linux: import-time keyring → D-Bus deadlock** (`mc_remote/__init__.py`).
+On a fresh Ubuntu desktop pre-first-login (and headless server VMs, WSL
+without DBUS_SESSION_BUS_ADDRESS), `import mc_remote` triggered
+`tunnel_supervisor.maybe_start()` → `device_keys.load_identity()` →
+`keyring.get_password()` → secretstorage trying to talk to
+`org.freedesktop.secrets` over D-Bus → blocks indefinitely waiting for
+a reply that never comes. server.py never reached `app.run()`. Now the
+auto-start runs on a daemon thread so the keyring call can hang forever
+without blocking server startup; remote-access stays "not yet started"
+until the user clicks Enable.
+
+**Windows: ASCII-only `.ps1` files + UTF-8 BOM unaware reader**
+(`installer/install.ps1`, `installer/Clayrune-Nuke.ps1`). Two compounding
+bugs caused `iex : Variable reference is not valid. ':' was not followed
+by a valid variable name character`:
+1. `${lnk}` braces missing on `Write-Host "  WARN could not create $lnk: $_"`
+   — `$lnk:` parsed as a drive-qualified variable.
+2. Files were UTF-8 sans BOM. PowerShell on Windows reads BOM-less
+   scripts as Windows-1252; em-dashes (`—`) and box-drawing (`─`) were
+   mangled into byte sequences that sometimes happened to look like
+   brace/quote characters to the parser → spurious `Missing closing }`
+   errors at unrelated lines. All non-ASCII replaced with ASCII
+   equivalents; `Parser.ParseInput` now reports zero errors.
+
+**Windows: `App Execution Alias` Python stubs** (`install.ps1`).
+`%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe` and `python3.exe` are
+Microsoft Store redirect stubs, not real Pythons. `Get-Command` finds
+them, version-check runs them, the stub prints
+`"Python was not found; run without arguments to install from the Microsoft
+Store..."` to stderr, and PowerShell's `$ErrorActionPreference = 'Stop'`
+turns that into a terminating error → script halts before reaching the
+winget Python install fallback. `Find-Python311` now skips paths matching
+`\WindowsApps\` and adds a `py -3.12 / -3.11` fast path. ErrorActionPref
+relaxed to `Continue` for the install phase since each step does its own
+exit-code + Test-Path checks.
+
+**LF/CRLF line endings + cmd.exe parse fragility**
+(`.gitattributes` new, `installer/Clayrune-Setup.bat`). Bat files were
+checked in with LF (no `.gitattributes` so `text=auto` normalized to LF in
+the blob; GitHub raw served LF; Chrome saved LF). cmd.exe silently
+misparses LF-only `.bat` files, particularly multi-line `^` continuation
+in the powershell.exe call — the cmd window flashed and died before any
+`pause` could hold it open. `.gitattributes` now stores `*.bat / *.cmd /
+*.ps1` as `-text` (no normalization) with CRLF bytes in the index, and
+`*.sh / *.command` as `text eol=lf`. The PowerShell call's `^` continuation
+is also collapsed to a single line as belt + suspenders.
+
+**Cache-busting GitHub raw** (`installer/Clayrune-Setup.bat`).
+GitHub raw's CDN holds files for several minutes post-push. We were
+shipping hotfixes faster than the cache expired, so users running
+`Clayrune-Setup.bat` would get stale `install.ps1`. Bat now appends
+`?t=$(Get-Date)` to the URL — origin ignores the param but the CDN keys
+on the full URL.
+
+**`claude /login` flow when CLI install succeeds but auth missing**
+(`installer/Clayrune-Setup.bat`). `[L]` option spawns a separate window
+running `claude /login`. Old version used `cmd /c "claude /login"`, but
+the spawned cmd inherited the parent .bat's pre-install PATH (which
+didn't yet have `%APPDATA%\npm` from the just-completed npm install).
+Now spawns via PowerShell which rebuilds `$env:Path` from the registry
+on each call, so the freshly-installed `claude.cmd` is visible. Also
+adds a final `Read-Host` to keep the window open even on error or
+"command not found", so the user always sees what happened.
+
+**Install verification** (`install.ps1`). After Claude's old prompt-based
+handoff exits, don't trust the exit code — Claude could have refused or
+crashed and exited 0 anyway. Post-Claude check now verifies
+`server.py` + `installer/start.bat` exist on disk; if missing, prints a
+red FAIL block and exits 2 (which the .bat treats as failure → routes to
+the [L]/[R]/[Q] recovery menu instead of showing fake success). Now mostly
+moot since the deterministic install replaced the Claude handoff, but
+kept as belt + suspenders.
+
+## [2026-05-08a] — Walkthrough + Sample Project + Update button reliability + Windows Claude CLI shim resolution + Playdo command-line-too-long
+
+Multi-thread polish + bug-fix arc surfaced by the same fresh-VM testing.
+
+**Walkthrough fixes** (`static/index.html`).
+- Step 10 (Three-Dot Menu) body was a runaway sentence. Now a bulleted
+  list of menu entries.
+- `<strong>` tags in step bodies were `esc()`-d into literal text. Stop
+  escaping — bodies are author-controlled hardcoded HTML.
+- Step 13 (Agent Console) was pointing to top-left of viewport because
+  `#agent-console` is `.hidden` by default. `onEnter` force-shows it,
+  `onLeave` restores; skipped on mobile (covered by bottom tab bar).
+- Step 15 (Command Palette) toggled the wrong class — `open` instead of
+  the CSS-gated `visible`. Highlighted empty space because the palette
+  stayed hidden. Fixed + pre-renders results so the palette has visible
+  content.
+- cmd-overlay z-index 9999 vs wt-card 2001 caused "two step 14s, second
+  blank square" — when the user clicked Next on the wt-card, the click
+  was intercepted by the transparent cmd-overlay backdrop, which fired
+  its `toggleCommandPalette()` handler and closed the palette. The
+  walkthrough didn't know; kept the highlight glowing around an empty
+  space. Fix: `pointer-events:none` on the overlay during the
+  walkthrough step (with `pointer-events:auto` on the palette itself
+  so it stays visible).
+- Skip-aware step numbering: `visiblePos / visibleTotal` computed from
+  `WT_STEPS.filter(s => !(s.skip && s.skip()))`. On desktop the
+  mobile-only bottom-tabs step no longer creates a 13 → 15 gap.
+
+**Sample Project** (`server.py` + `static/index.html`).
+Auto-assigns `project_path` to `<auto_workspace_base>/sample-project` so
+agent dispatch works from the walkthrough's first interaction. Without
+this the user opened the sample, typed a prompt, and got "Set
+project_path to enable agent dispatch". New `/api/browse/folders` +
+`/api/browse/create_folder` endpoints + a "Browse..." button beside the
+Path field opens a folder-picker modal with parent nav,
+Workspace/Home shortcuts, and inline "+ Create" for new folders.
+
+**Windows: subprocess can't find `claude.cmd`** (`server.py`).
+Root cause: `subprocess.Popen(['claude', ...])` only resolves `.exe` by
+default — npm-installed Claude CLI is `claude.cmd` (a batch shim).
+`shutil.which` respects PATHEXT and returns the full `.cmd` path, which
+subprocess CAN execute. New `_resolve_claude()` helper used at all 22
+cmd-list construction sites. Re-resolves per call so a Claude install
+AFTER server startup is picked up without restart. Falls back to common
+Windows install paths (`%APPDATA%\npm`, `~/.claude/bin`) before giving
+up. Fixes both agent dispatch and Ask Playdo on fresh Windows installs.
+
+**Update Clayrune endpoint hangs + races** (`server.py`,
+`static/index.html`).
+- `git fetch` hung on Windows for 30s waiting for Git Credential Manager
+  (GCM) to pop a hidden auth dialog (which never appears because we run
+  git with `STARTF_USESHOWWINDOW=SW_HIDE`). `_git()` now sets
+  `GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=Never` in subprocess env;
+  fetch timeout dropped 30s → 12s.
+- Settings UI hint stuck on "Checking for updates…" because
+  `setTimeout(refreshUpdateStatus, 100)` fired BEFORE
+  `body.innerHTML = ...` was assigned → `getElementById` returned null
+  → helper bailed silently. Moved the call to the end of
+  `_renderSettings()`.
+
+**Playdo "command line is too long" on Windows** (`server.py`).
+24 KB USER_GUIDE.md piped via `--append-system-prompt` blew past
+**cmd.exe's 8191-char limit** (not CreateProcess's 32 KB; cmd.exe wraps
+`claude.cmd` calls and has its own smaller cap). Fix: send the question
+through stdin via `--input-format stream-json` + a JSONL user message.
+Command line drops to ~150 chars regardless of question length. Both
+`/api/guide/stream` and `/api/guide/ask` updated.
+
+**Streaming installer progress** (`installer/install.{ps1,sh}`).
+`claude -p` only prints the FINAL response — the user saw nothing for
+3-5 minutes during the Claude handoff (mostly obsolete now that the
+install is deterministic, but the streaming path was kept for the
+Claude-CLI-install step). Both installers parse `--output-format
+stream-json` and surface assistant text + tool-call indicators in real
+time.
+
 ## [2026-05-08c] — Claydo state animations (thinking) + sheet-slicing pipeline
 
 First state-driven Claydo animation lands: when the user submits a
@@ -38,14 +366,34 @@ _CLAYDO_STATE_SRC map.
 - submitClaydo flips to 'thinking' on entry and back to 'idle' in
   the finally block (covers success, error, and disconnect paths).
 
-Followups:
-- assets/claydo-thinking.webp has a white background because Gemini
-  didn't generate transparency. On the dark FAB background it shows
-  as a white square. Re-prompt for a transparent source, OR use
-  ffmpeg's colorkey filter to chroma-key it out post-hoc.
-- More states to add: error / answering / celebrating. Same pipeline
-  works -- generate sheet in Gemini, run the two scripts, append
-  to _CLAYDO_STATE_SRC.
+Followups (subsequently shipped — see [2026-05-08c2] below):
+- White-background fix landed via Python chroma-key (white → transparent
+  with soft-edge alpha ramp).
+- 4-state set (idle / thinking / working / error) shipped, sourced from
+  a Gemini-generated state-variants video instead of the original
+  still sheet, giving each state real frame-by-frame motion.
+
+## [2026-05-08c2] — Claydo 4-state animation set (sourced from Gemini video)
+
+Replaced the still-sheet-derived `claydo-thinking.webp` with a 4-state
+animation set (`idle`, `thinking`, `working`, `error`) sourced from a
+Gemini-generated animated video where each cell of the state-variants
+sheet bounces / blinks / changes expression in place. Pipeline:
+extract video frames → auto-detect cell layout (4 mascot columns in
+the top row) → crop the same cell out of every frame → chroma-key
+white to transparent → stitch each cell's 16 frames into its own
+animated WebP. Each state file is 126–140 KB, 4-second loop at 250ms
+per frame.
+
+Wiring (`static/index.html`):
+- `_CLAYDO_STATE_SRC` populated with all 4 states.
+- FAB and chat-modal avatar default to `claydo-idle.webp` (instead of
+  the still `clayrune.png`) so the mascot feels alive from page load.
+- `submitClaydo()` finally block: on `errored=true`, holds
+  `claydo-error` for 3s before reverting to idle, so the user notices.
+
+`clayrune.png` preserved for installer / favicon / brand mark; only
+the in-app personality moved to the animated WebPs.
 
 ## [2026-05-08b] — Video frame extraction for Claude Code sessions
 
