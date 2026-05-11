@@ -6,6 +6,11 @@
 <title>Clayrune</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8824a'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='Fraunces,Nunito,Inter,serif' font-weight='800' font-size='24' fill='%23ffffff'%3EC%3C/text%3E%3C/svg%3E">
 <meta name="theme-color" content="#e8824a">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Clayrune">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Nunito:wght@600;700;800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
@@ -396,6 +401,56 @@
   }
   .metric-pill .mp-dot { width: 6px; height: 6px; border-radius: 50%; }
   .metric-pill .mp-value { color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  /* System-status pill — sibling to .metric-pill, click to open detail popover.
+     Color dot reflects rate-limit health: green/amber/red. Label is compact
+     (e.g. "5h", "OK", "—"); full detail lives in the popover. */
+  .sys-status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 5px;
+    font-size: 11px; font-weight: 600; color: var(--text-dim);
+    background: var(--surface2); cursor: pointer;
+    user-select: none; transition: background .15s ease;
+    position: relative;
+  }
+  .sys-status-pill:hover { background: var(--surface3); color: var(--text); }
+  .sys-status-pill.stale { opacity: 0.55; }
+  .sys-status-pill .ssp-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); transition: background .2s ease; }
+  .sys-status-pill.ok .ssp-dot { background: var(--green); }
+  .sys-status-pill.warn .ssp-dot { background: var(--amber, #d39c4a); }
+  .sys-status-pill.bad .ssp-dot { background: var(--red, #e35858); }
+  .sys-status-pill .ssp-label { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.3px; }
+  .sys-status-popover {
+    position: absolute; top: 100%; right: 0; margin-top: 8px;
+    width: 320px; max-width: calc(100vw - 32px);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    z-index: 9000; font-size: 12px; color: var(--text);
+    display: none;
+  }
+  .sys-status-popover.open { display: block; }
+  .sys-status-popover .ssp-row {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 6px 0; border-bottom: 1px dashed var(--border);
+  }
+  .sys-status-popover .ssp-row:last-of-type { border-bottom: none; }
+  .sys-status-popover .ssp-row .ssp-k { color: var(--text-dim); flex-shrink: 0; }
+  .sys-status-popover .ssp-row .ssp-v { color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 11px; text-align: right; word-break: break-all; }
+  .sys-status-popover .ssp-row .ssp-v.green { color: var(--green-text, var(--green)); }
+  .sys-status-popover .ssp-row .ssp-v.amber { color: var(--amber, #d39c4a); }
+  .sys-status-popover .ssp-row .ssp-v.red { color: var(--red, #e35858); }
+  .sys-status-popover .ssp-foot {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+    color: var(--text-faint); font-size: 10.5px;
+  }
+  .sys-status-popover .ssp-refresh {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px; padding: 4px 10px;
+    font-size: 11px; cursor: pointer;
+  }
+  .sys-status-popover .ssp-refresh:hover { background: var(--accent-dim, var(--surface3)); }
+  .sys-status-popover .ssp-refresh:disabled { opacity: 0.5; cursor: wait; }
   .live-badge {
     display: flex; align-items: center; gap: 5px;
     color: var(--green-text); font-size: 10px;
@@ -1421,7 +1476,7 @@
   @media (max-width: 600px) {
     .header { padding: 0 12px; }
     .header-search { display: none; }
-    .metric-pill { display: none; }
+    .metric-pill, .sys-status-pill { display: none; }
     .content-main { padding: 8px 12px; }
     .projects-col { grid-template-columns: 1fr; gap: 8px; }
     .card { aspect-ratio: auto; }
@@ -2527,6 +2582,48 @@
     display: none;
   }
   .sb-panel.open { display: block; }
+
+  /* Tabs strip at top of the dropdown */
+  .sb-tabs {
+    display: flex; align-items: center;
+    gap: 4px; padding: 8px 10px 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 1;
+  }
+  .sb-tab {
+    background: transparent; border: 0; padding: 6px 10px 8px;
+    color: var(--text-faint); font: inherit; font-size: 12px; font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;  /* overlap the strip's bottom border */
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .sb-tab:hover { color: var(--text); }
+  .sb-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .sb-tab-count {
+    background: var(--surface3); color: var(--text-dim);
+    font-size: 10px; font-weight: 700;
+    padding: 1px 6px; border-radius: 999px;
+  }
+  .sb-tab.active .sb-tab-count { background: var(--accent); color: var(--bg); }
+  .sb-tabs-spacer { flex: 1; }
+
+  /* Time-window selector (Recent tab only) */
+  .sb-win-pills { display: inline-flex; gap: 4px; padding-bottom: 6px; }
+  .sb-win-pill {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-faint); font: inherit; font-size: 10px; font-weight: 600;
+    padding: 2px 8px; border-radius: 999px; cursor: pointer;
+    transition: all 0.1s;
+  }
+  .sb-win-pill:hover { color: var(--text); border-color: var(--text-faint); }
+  .sb-win-pill.active {
+    background: var(--accent-dim); color: var(--accent);
+    border-color: var(--accent);
+  }
+
   .sb-row {
     display: grid;
     grid-template-columns: minmax(110px, max-content) 1fr max-content;
@@ -2535,21 +2632,61 @@
     border-bottom: 1px solid var(--border);
     cursor: pointer; transition: background 0.1s;
   }
+  /* Recent rows have an extra status column between task and time */
+  .sb-row.sb-row-recent {
+    grid-template-columns: minmax(110px, max-content) 1fr max-content max-content;
+  }
   .sb-row:last-child { border-bottom: 0; }
   .sb-row:hover { background: var(--surface2); }
-  .sb-row .sb-project { color: var(--accent); font-weight: 600; font-size: 12px; }
+  .sb-row .sb-project { color: var(--accent); font-weight: 600; font-size: 12px;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sb-row .sb-task    { color: var(--text); font-size: 12px;
                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sb-row .sb-time    { color: var(--text-faint); font-family: 'JetBrains Mono', monospace; font-size: 11px;
                         white-space: nowrap; }
+  /* Stacked time for Recent rows: absolute clock time above relative.
+     Surfaces batch events (many entries logged in the same second) clearly. */
+  .sb-row .sb-time-stack {
+    display: inline-flex; flex-direction: column; align-items: flex-end;
+    line-height: 1.2; gap: 1px;
+  }
+  .sb-row .sb-time-abs {
+    color: var(--text-dim); font-size: 11px; font-weight: 600;
+  }
+  .sb-row .sb-time-rel {
+    color: var(--text-faint); font-size: 10px;
+  }
+  .sb-row .sb-status  {
+    font-size: 10px; font-weight: 600;
+    padding: 1px 7px; border-radius: 999px;
+    text-transform: capitalize;
+    background: var(--surface3); color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .sb-row .sb-status-completed { background: rgba(78, 168, 110, 0.18); color: #5fc287; }
+  .sb-row .sb-status-running   { background: var(--accent-dim); color: var(--accent); }
+  .sb-row .sb-status-idle      { background: var(--accent-dim); color: var(--accent); }
+  .sb-row .sb-status-in_progress { background: var(--accent-dim); color: var(--accent); }
+  .sb-row .sb-status-interrupted,
+  .sb-row .sb-status-stopped,
+  .sb-row .sb-status-error     { background: rgba(216, 90, 90, 0.18); color: #e08a8a; }
+
+  .sb-empty {
+    padding: 16px 14px;
+    color: var(--text-faint); font-size: 12px;
+    text-align: center;
+  }
 
   /* Mobile: panel goes full-width minus a small gutter and rows reflow
-     so the task wraps below the project + time. */
+     so the task wraps below the project + time/status. */
   @media (max-width: 720px) {
     .schedule-banner { padding: 6px 14px; }
     .sb-panel { left: 14px; right: 14px; }
     .sb-row { grid-template-columns: 1fr max-content; row-gap: 4px; }
+    .sb-row.sb-row-recent { grid-template-columns: 1fr max-content max-content; }
     .sb-row .sb-task { grid-column: 1 / -1; white-space: normal; }
+    .sb-tabs { flex-wrap: wrap; }
+    .sb-win-pills { width: 100%; padding: 0 0 6px; justify-content: flex-end; }
   }
 
   /* ── SCHEDULER MODAL ─────────────────────────────────────── */
@@ -3628,6 +3765,11 @@
         <div class="mp-dot" style="background:var(--green)"></div>
         <span id="header-agent-count">0</span> agents
       </div>
+      <div class="sys-status-pill" id="sys-status-pill" onclick="toggleSysStatusPopover(event)" title="Claude system status (click for details)">
+        <div class="ssp-dot"></div>
+        <span class="ssp-label" id="sys-status-pill-label">—</span>
+        <div class="sys-status-popover" id="sys-status-popover" onclick="event.stopPropagation()"></div>
+      </div>
       <span class="refresh-timer" id="refresh-timer">refresh in 30s</span>
       <div class="live-badge"><div class="live-dot"></div>Live</div>
       <button class="header-tour-btn" onclick="startWalkthrough()" title="Take Tour">?</button>
@@ -4671,6 +4813,49 @@ function focusModal(modalId) {
   entry.element.style.zIndex = z;
   entry.element.classList.add('focused');
   focusedModalId = modalId;
+}
+
+// ── Deep link: ?project=X&session=Y opens the project modal + session tab ───
+// Called once at boot from fetchProjects().then(...), and again on every
+// 'mc-deeplink' message from the service worker (notification click while
+// the PWA is already open).
+async function _handleDeepLinkFromUrl(rawUrl) {
+  let url;
+  try { url = new URL(rawUrl || window.location.href, window.location.origin); }
+  catch (_) { return; }
+  const params = url.searchParams;
+  const pid = params.get('project');
+  if (!pid) return;
+  const sid = params.get('session') || '';
+  const known = new Set((allProjects || []).map(p => p.id));
+  if (!known.has(pid)) return;
+  try { openProjectModal(pid); } catch (e) { console.warn('openProjectModal', e); }
+  if (sid) {
+    // Wait one paint so the modal DOM exists before we point activeAgentTab at it.
+    await new Promise(r => setTimeout(r, 80));
+    try { switchAgentTab(pid, sid); } catch (e) { console.warn('switchAgentTab', e); }
+  }
+  // Clean the URL so a manual refresh doesn't keep re-firing the deep link.
+  try {
+    const cleaned = new URL(window.location.href);
+    cleaned.searchParams.delete('project');
+    cleaned.searchParams.delete('session');
+    history.replaceState({}, '', cleaned.pathname + (cleaned.search || '') + (cleaned.hash || ''));
+  } catch (_) {}
+}
+
+// Service worker → page channel: when a notification is clicked while the
+// PWA is already open, the SW posts {type:'mc-deeplink', url:'/?project=...'}
+// instead of calling clients.navigate() (which can stomp on in-flight UI).
+if ('serviceWorker' in navigator) {
+  try {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      const d = event.data || {};
+      if (d && d.type === 'mc-deeplink' && d.url) {
+        _handleDeepLinkFromUrl(d.url);
+      }
+    });
+  } catch (_) {}
 }
 
 function openProjectModal(projectId, restoreState) {
@@ -11397,94 +11582,411 @@ async function deleteSchedule(id) {
   } catch(e) {}
 }
 
-// ── Schedule Banner (upcoming jobs dropdown) ──────────────────────────────
+// ── Schedule Banner (upcoming + recent runs dropdown) ─────────────────────
 //
-// Was: inline horizontal row of pills that overflowed on desktop and
-// required side-scrolling on mobile.
-// Now: compact trigger button summarizing the count + the next-soonest
-// item; click expands a vertical dropdown panel listing every upcoming run.
+// Compact trigger button + dropdown panel with two tabs:
+//   • Upcoming: enabled schedules with their next_run time
+//   • Recent:   agent runs across all projects in the last N hours
+//                (selectable: 1h / 2h / 4h / 24h; default 2h)
+//
+// Recent rows click through to the project's Agent Log tab.
+
+const _sbState = {
+  open: false,
+  tab: 'upcoming',
+  windowHours: 2,
+  upcoming: [],
+  recent: [],
+  recentLoading: false,
+  recentLoaded: false,
+};
+
+// ── System status (CC /status equivalent) ───────────────────────────────────
+// Surfaces the same info Claude Code's `/status` slash command shows: model,
+// CLI version, auth source, rate-limit window state, connected MCP servers.
+// Backend: see `_capture_system_init` + `/api/system/status[/refresh]` in
+// server.py. Cache is populated for free by every agent session's init
+// message; the Refresh button triggers an active one-shot claude spawn.
+let systemStatusCache = null;
+let _sysStatusPopoverOpen = false;
+let _sysStatusRefreshing = false;
+
+async function fetchSystemStatus() {
+  try {
+    const res = await fetch(API_BASE + '/api/system/status');
+    if (!res.ok) return;
+    systemStatusCache = await res.json();
+    renderSysStatusPill();
+    _rerenderSysStatusSurfaces();
+  } catch { /* network blip — keep last cache */ }
+}
+
+function _ssRateLimitHealth(rl) {
+  // Map rate_limit_info into {color, label, message}. Color drives the pill
+  // dot. Label is the compact pill text. Message is the popover detail line.
+  if (!rl || !rl.status) return { color: 'idle', label: '—', message: 'No data yet' };
+  const isUsingOverage = !!rl.isUsingOverage;
+  const status = (rl.status || '').toLowerCase();
+  const overage = (rl.overageStatus || '').toLowerCase();
+  if (status === 'blocked' || status === 'denied') {
+    return { color: 'bad', label: 'BLK', message: 'Rate limited' };
+  }
+  if (isUsingOverage || overage === 'using_overage') {
+    return { color: 'warn', label: 'OVR', message: 'Using overage allowance' };
+  }
+  // Within 20% of the window reset → amber as a soft warning. Cheap proxy
+  // for "approaching limit" since we don't have a usage-percentage signal.
+  const resets = Number(rl.resetsAt || 0);
+  if (resets > 0) {
+    const remainingMs = (resets * 1000) - Date.now();
+    const remainingMin = Math.max(0, Math.floor(remainingMs / 60000));
+    // 5-hour window = 300 min. Inside 60 min of reset = amber.
+    const win = (rl.rateLimitType || '').includes('five') ? 300 : 60;
+    const compact = remainingMin >= 60
+      ? `${Math.floor(remainingMin / 60)}h${remainingMin % 60 ? (remainingMin % 60) + 'm' : ''}`
+      : remainingMin + 'm';
+    if (remainingMin < win * 0.2) {
+      return { color: 'warn', label: compact, message: 'Approaching reset' };
+    }
+    return { color: 'ok', label: compact, message: 'OK · ' + compact + ' to reset' };
+  }
+  return { color: 'ok', label: 'OK', message: 'OK' };
+}
+
+function _ssRelTime(iso) {
+  if (!iso) return 'never';
+  try {
+    const dt = new Date(iso);
+    const sec = Math.max(0, Math.floor((Date.now() - dt.getTime()) / 1000));
+    if (sec < 60) return sec + 's ago';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+    if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+    return Math.floor(sec / 86400) + 'd ago';
+  } catch { return ''; }
+}
+
+function renderSysStatusPill() {
+  const pill = document.getElementById('sys-status-pill');
+  const label = document.getElementById('sys-status-pill-label');
+  if (!pill || !label) return;
+  pill.classList.remove('ok', 'warn', 'bad', 'stale');
+  const s = systemStatusCache;
+  if (!s || !s.captured_at) {
+    label.textContent = '—';
+    return;
+  }
+  const h = _ssRateLimitHealth(s.rate_limit_info);
+  if (h.color === 'ok') pill.classList.add('ok');
+  else if (h.color === 'warn') pill.classList.add('warn');
+  else if (h.color === 'bad') pill.classList.add('bad');
+  label.textContent = h.label;
+  // Cache older than 30 min → dim the pill so users know it's not live.
+  if ((s.cache_age_seconds || 0) > 1800) pill.classList.add('stale');
+}
+
+function renderSysStatusPanel() {
+  // Returns the popover inner HTML for the given cache snapshot.
+  const s = systemStatusCache || {};
+  const rl = s.rate_limit_info || {};
+  const h = _ssRateLimitHealth(rl);
+  const colorClass = h.color === 'ok' ? 'green' : (h.color === 'warn' ? 'amber' : (h.color === 'bad' ? 'red' : ''));
+  const mcp = Array.isArray(s.mcp_servers) ? s.mcp_servers : [];
+  const mcpConnected = mcp.filter(m => (m.status || '').toLowerCase() === 'connected').length;
+  const mcpTotal = mcp.length;
+  const mcpLine = mcpTotal === 0 ? '0' : `${mcpConnected}/${mcpTotal} connected`;
+  const resetWhen = rl.resetsAt ? new Date(rl.resetsAt * 1000).toLocaleTimeString() : '';
+  const empty = !s.captured_at;
+  return `
+    <div class="ssp-row"><span class="ssp-k">Rate limit</span><span class="ssp-v ${colorClass}">${empty ? '—' : (h.message + (resetWhen ? ' · resets ' + resetWhen : ''))}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Model</span><span class="ssp-v">${esc(s.model || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">CLI version</span><span class="ssp-v">${esc(s.claude_code_version || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Auth</span><span class="ssp-v">${esc((s.apiKeySource && s.apiKeySource !== 'none') ? s.apiKeySource : 'OAuth / keychain')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">MCP servers</span><span class="ssp-v">${mcpLine}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Tools / Skills / Plugins</span><span class="ssp-v">${s.tools_count || 0} / ${s.skills_count || 0} / ${s.plugins_count || 0}</span></div>
+    <div class="ssp-foot">
+      <span>Captured ${_ssRelTime(s.captured_at)}</span>
+      <button class="ssp-refresh" id="ssp-refresh-btn" onclick="refreshSystemStatus(event)" ${_sysStatusRefreshing ? 'disabled' : ''}>${_sysStatusRefreshing ? 'Refreshing…' : 'Refresh'}</button>
+    </div>
+  `;
+}
+
+function renderSysStatusPopover() {
+  const pop = document.getElementById('sys-status-popover');
+  if (!pop) return;
+  pop.innerHTML = renderSysStatusPanel();
+}
+
+function toggleSysStatusPopover(ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const pop = document.getElementById('sys-status-popover');
+  if (!pop) return;
+  _sysStatusPopoverOpen = !pop.classList.contains('open');
+  if (_sysStatusPopoverOpen) {
+    renderSysStatusPopover();
+    pop.classList.add('open');
+    // Refresh cache when popover opens so the user sees current data.
+    fetchSystemStatus();
+  } else {
+    pop.classList.remove('open');
+  }
+}
+
+async function refreshSystemStatus(ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  if (_sysStatusRefreshing) return;
+  _sysStatusRefreshing = true;
+  _rerenderSysStatusSurfaces();
+  try {
+    const res = await fetch(API_BASE + '/api/system/status/refresh', { method: 'POST' });
+    const data = await res.json().catch(() => null);
+    if (data && data.captured_at !== undefined) {
+      systemStatusCache = data;
+    } else if (data && data.status) {
+      systemStatusCache = data.status;
+    }
+  } catch { /* surface as no-update */ }
+  _sysStatusRefreshing = false;
+  renderSysStatusPill();
+  _rerenderSysStatusSurfaces();
+}
+
+function _rerenderSysStatusSurfaces() {
+  // Rebuild both the header popover (if open) and the Settings inline panel
+  // (if the settings modal is mounted) using the same panel HTML.
+  if (_sysStatusPopoverOpen) renderSysStatusPopover();
+  const inline = document.getElementById('settings-sys-status-panel');
+  if (inline) inline.innerHTML = renderSysStatusPanel();
+}
+
+// Close the popover on any outside click. Bound once at load.
+document.addEventListener('click', (e) => {
+  if (!_sysStatusPopoverOpen) return;
+  const pill = document.getElementById('sys-status-pill');
+  if (pill && pill.contains(e.target)) return;
+  const pop = document.getElementById('sys-status-popover');
+  if (pop) pop.classList.remove('open');
+  _sysStatusPopoverOpen = false;
+});
+
 
 async function refreshScheduleBanner() {
-  const banner = document.getElementById('schedule-banner');
-  if (!banner) return;
   try {
     const res = await fetch(API_BASE + '/api/schedules');
     const schedules = await res.json();
-    const upcoming = schedules
+    _sbState.upcoming = schedules
       .filter(s => s.enabled && s.next_run)
       .sort((a, b) => (a.next_run || '').localeCompare(b.next_run || ''))
-      .slice(0, 10);  // up to 10 in the dropdown; was 5 inline
-    if (!upcoming.length) {
-      banner.classList.add('hidden');
-      return;
-    }
-    banner.classList.remove('hidden');
-
-    const next = upcoming[0];
-    const nextProj = esc(next.project_name || next.project_id);
-    const nextTime = esc(formatScheduleTime(next.next_run));
-
-    const rows = upcoming.map(s => `
-      <div class="sb-row" onclick="openScheduler()" title="${esc(s.task)}">
-        <span class="sb-project">${esc(s.project_name || s.project_id)}</span>
-        <span class="sb-task">${esc(s.task)}</span>
-        <span class="sb-time">${esc(formatScheduleTime(s.next_run))}</span>
-      </div>`).join('');
-
-    banner.innerHTML = `
-      <button class="sb-trigger" id="sb-trigger" type="button" onclick="toggleSchedulePanel(event)" aria-expanded="false">
-        <span class="sb-icon">&#x23F1;</span>
-        <span class="sb-label">Upcoming</span>
-        <span class="sb-count">${upcoming.length}</span>
-        <span class="sb-next">Next: <b>${nextProj}</b> &middot; ${nextTime}</span>
-        <span class="sb-chev">&#9662;</span>
-      </button>
-      <div class="sb-panel" id="sb-panel">${rows}</div>`;
+      .slice(0, 10);
   } catch(e) {
-    banner.classList.add('hidden');
+    _sbState.upcoming = [];
   }
+  _sbRender();
+  // If the dropdown is open on the Recent tab, refresh that data too so
+  // the polled 60s tick keeps recency labels fresh.
+  if (_sbState.open && _sbState.tab === 'recent') {
+    _sbLoadRecent();
+  }
+}
+
+function _sbRender() {
+  const banner = document.getElementById('schedule-banner');
+  if (!banner) return;
+  // Hide the banner only when there's nothing to show AND the user hasn't
+  // explicitly opened it. Keeping it visible while open lets the user finish
+  // browsing Recent runs even if no upcoming schedules exist.
+  if (!_sbState.upcoming.length && !_sbState.open) {
+    banner.classList.add('hidden');
+    return;
+  }
+  banner.classList.remove('hidden');
+
+  const totalUpcoming = _sbState.upcoming.length;
+  const next = _sbState.upcoming[0];
+  const triggerNext = next
+    ? `Next: <b>${esc(next.project_name || next.project_id)}</b> &middot; ${esc(formatScheduleTime(next.next_run))}`
+    : `<span style="color:var(--text-faint)">No upcoming</span>`;
+
+  const upcomingRows = totalUpcoming
+    ? _sbState.upcoming.map(s => `
+        <div class="sb-row" onclick="openScheduler()" title="${esc(s.task)}">
+          <span class="sb-project">${esc(s.project_name || s.project_id)}</span>
+          <span class="sb-task">${esc(s.task)}</span>
+          <span class="sb-time">${esc(formatScheduleTime(s.next_run))}</span>
+        </div>`).join('')
+    : `<div class="sb-empty">No upcoming runs scheduled.</div>`;
+
+  let recentRows;
+  if (_sbState.recentLoading && !_sbState.recentLoaded) {
+    recentRows = `<div class="sb-empty">Loading…</div>`;
+  } else if (!_sbState.recent.length) {
+    recentRows = `<div class="sb-empty">No runs in the last ${_sbState.windowHours}h.</div>`;
+  } else {
+    recentRows = _sbState.recent.map((e, idx) => {
+      const status = e.status || 'unknown';
+      const csid = e.claude_session_id || '';
+      const pid = e.project_id || '';
+      // No csid = transcript can't be located (e.g. crashed before claude
+      // assigned one). Fall back to the project's Agent Log so the user
+      // still has a route in. Index is used to look up the full entry so
+      // we don't have to escape task text into an onclick string.
+      const hasCsid = !!csid;
+      const handler = hasCsid
+        ? `_sbOpenTranscript(${idx})`
+        : `_sbOpenAgentLog('${esc(pid)}')`;
+      const cls = hasCsid ? 'sb-row sb-row-recent' : 'sb-row sb-row-recent sb-row-no-csid';
+      const absTime = _sbFormatAbs(e.ts);
+      return `
+        <div class="${cls}" onclick="${handler}" title="${esc(e.task || '')}">
+          <span class="sb-project">${esc(e.project_name || pid)}</span>
+          <span class="sb-task">${esc(e.task || '(no task)')}</span>
+          <span class="sb-status sb-status-${esc(status)}">${esc(status)}</span>
+          <span class="sb-time sb-time-stack">
+            <span class="sb-time-abs">${esc(absTime)}</span>
+            <span class="sb-time-rel">${esc(e.ts_relative || '')}</span>
+          </span>
+        </div>`;
+    }).join('');
+  }
+
+  const winPills = [1, 2, 4, 24].map(h =>
+    `<button class="sb-win-pill ${_sbState.windowHours===h?'active':''}" type="button" onclick="_sbSetWindow(event, ${h})">${h}h</button>`
+  ).join('');
+
+  const recentCountLabel = _sbState.recentLoaded
+    ? `<span class="sb-tab-count">${_sbState.recent.length}</span>`
+    : '';
+
+  banner.innerHTML = `
+    <button class="sb-trigger ${_sbState.open?'open':''}" id="sb-trigger" type="button"
+            onclick="toggleSchedulePanel(event)" aria-expanded="${_sbState.open?'true':'false'}">
+      <span class="sb-icon">&#x23F1;</span>
+      <span class="sb-label">Schedule</span>
+      <span class="sb-count">${totalUpcoming}</span>
+      <span class="sb-next">${triggerNext}</span>
+      <span class="sb-chev">&#9662;</span>
+    </button>
+    <div class="sb-panel ${_sbState.open?'open':''}" id="sb-panel">
+      <div class="sb-tabs">
+        <button class="sb-tab ${_sbState.tab==='recent'?'active':''}" type="button" onclick="_sbSetTab(event,'recent')">
+          Recent ${recentCountLabel}
+        </button>
+        <button class="sb-tab ${_sbState.tab==='upcoming'?'active':''}" type="button" onclick="_sbSetTab(event,'upcoming')">
+          Upcoming <span class="sb-tab-count">${totalUpcoming}</span>
+        </button>
+        <div class="sb-tabs-spacer"></div>
+        ${_sbState.tab==='recent' ? `<div class="sb-win-pills">${winPills}</div>` : ''}
+      </div>
+      <div class="sb-rows">
+        ${_sbState.tab==='upcoming' ? upcomingRows : recentRows}
+      </div>
+    </div>`;
 }
 
 // Toggle open/closed. Stops propagation so the document-level
 // click-outside handler doesn't immediately close us.
 function toggleSchedulePanel(ev) {
   if (ev) ev.stopPropagation();
-  const trigger = document.getElementById('sb-trigger');
-  const panel = document.getElementById('sb-panel');
-  if (!trigger || !panel) return;
-  const isOpen = panel.classList.toggle('open');
-  trigger.classList.toggle('open', isOpen);
-  trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  _sbState.open = !_sbState.open;
+  _sbRender();
+  // First time opening on Recent, kick off a fetch.
+  if (_sbState.open && _sbState.tab === 'recent' && !_sbState.recentLoaded) {
+    _sbLoadRecent();
+  }
+}
+
+function _sbSetTab(ev, tab) {
+  if (ev) ev.stopPropagation();
+  _sbState.tab = tab;
+  _sbRender();
+  if (tab === 'recent') {
+    // Always re-fetch on tab open so "X ago" labels are current.
+    _sbLoadRecent();
+  }
+}
+
+function _sbSetWindow(ev, hours) {
+  if (ev) ev.stopPropagation();
+  _sbState.windowHours = hours;
+  _sbLoadRecent();
+}
+
+async function _sbLoadRecent() {
+  _sbState.recentLoading = true;
+  _sbRender();
+  try {
+    const res = await fetch(API_BASE + `/api/recent-runs?hours=${_sbState.windowHours}&limit=50`);
+    const data = await res.json();
+    _sbState.recent = Array.isArray(data.runs) ? data.runs : [];
+    _sbState.recentLoaded = true;
+  } catch(e) {
+    _sbState.recent = [];
+  }
+  _sbState.recentLoading = false;
+  _sbRender();
+}
+
+// Format an entry's `ts` (ISO UTC) as a local clock label.
+//   • same day  → "HH:MM"
+//   • otherwise → "MMM D HH:MM"
+// Pairs with `ts_relative` ("12m ago") in the row so batch events that
+// share a single completion timestamp are obvious at a glance.
+function _sbFormatAbs(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const sameDay = d.getFullYear() === now.getFullYear()
+                 && d.getMonth() === now.getMonth()
+                 && d.getDate() === now.getDate();
+    if (sameDay) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+    return d.toLocaleString([], {
+      month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  } catch(e) {
+    return '';
+  }
+}
+
+function _sbOpenTranscript(idx) {
+  const e = _sbState.recent[idx];
+  if (!e) return;
+  const pid = e.project_id || '';
+  const csid = e.claude_session_id || '';
+  if (!pid || !csid) return;
+  // Use the task text as the transcript label so the viewer's subhead
+  // reads as the original prompt instead of just a UUID.
+  openTranscriptViewer(pid, csid, e.task || '');
+  _sbState.open = false;
+  _sbRender();
+}
+
+function _sbOpenAgentLog(pid) {
+  if (!pid) return;
+  modalActiveTab[pid] = 'agent-log';
+  openProjectModal(pid);
+  _sbState.open = false;
+  _sbRender();
 }
 
 // Click anywhere outside the banner closes the panel.
 document.addEventListener('click', (ev) => {
+  if (!_sbState.open) return;
   const banner = document.getElementById('schedule-banner');
-  if (!banner || banner.classList.contains('hidden')) return;
-  if (banner.contains(ev.target)) return;
-  const panel = document.getElementById('sb-panel');
-  const trigger = document.getElementById('sb-trigger');
-  if (panel && panel.classList.contains('open')) {
-    panel.classList.remove('open');
-    if (trigger) {
-      trigger.classList.remove('open');
-      trigger.setAttribute('aria-expanded', 'false');
-    }
-  }
+  if (banner && banner.contains(ev.target)) return;
+  _sbState.open = false;
+  _sbRender();
 });
 
 // Esc closes too.
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
-  const panel = document.getElementById('sb-panel');
-  if (panel && panel.classList.contains('open')) {
-    panel.classList.remove('open');
-    const trigger = document.getElementById('sb-trigger');
-    if (trigger) {
-      trigger.classList.remove('open');
-      trigger.setAttribute('aria-expanded', 'false');
-    }
-  }
+  if (!_sbState.open) return;
+  _sbState.open = false;
+  _sbRender();
 });
 
 
@@ -12164,6 +12666,8 @@ async function _renderSettings() {
   // Refresh remote-access status alongside config so the panel renders with
   // live state (no provider / not enrolled / enrolled).
   fetchRemoteStatus().then(s => { window._remoteState = s; refreshRemoteAccessSection(); });
+  // Hydrate push notifications section (permission, VAPID key, subscriptions).
+  setTimeout(() => { try { refreshPushSection(); } catch (_) {} }, 0);
   let cfg;
   try {
     const res = await fetch(API_BASE + '/api/config');
@@ -12242,7 +12746,10 @@ async function _renderSettings() {
         ${toggle('use_streaming_agent', cfg.use_streaming_agent)}
       </div>
       <div class="settings-row">
-        <div><div class="settings-label">Remote Control</div><div class="settings-hint">Monitor/control agents from claude.ai</div></div>
+        <div>
+          <div class="settings-label">Remote Control <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:var(--accent-dim);color:var(--accent);margin-left:6px;letter-spacing:.3px">EXPERIMENTAL</span></div>
+          <div class="settings-hint">Passes <code>--remote-control</code> to <code>claude</code>. The CLI accepts it but the discovery channel doesn't open for non-TTY sessions, so MC-managed sessions don't appear in claude.ai. Use "Push Notifications" below for now.</div>
+        </div>
         ${toggle('agent_remote_control', cfg.agent_remote_control)}
       </div>
       <div class="settings-row">
@@ -12351,6 +12858,16 @@ async function _renderSettings() {
 
     ${remoteAccessSettingsHTML()}
 
+    ${pushNotificationsSettingsHTML()}
+
+    <div class="settings-section">
+      <div class="settings-section-title">Claude system</div>
+      <div class="settings-hint" style="margin-bottom:8px">Live view of your Claude CLI environment — model, rate limit, MCP servers. Same info as <code>/status</code> inside Claude Code.</div>
+      <div id="settings-sys-status-panel" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px">
+        <div class="ssp-row" style="color:var(--text-faint)">Loading…</div>
+      </div>
+    </div>
+
     <div class="settings-section">
       <div class="settings-section-title">Server</div>
       <div class="settings-row">
@@ -12379,6 +12896,14 @@ async function _renderSettings() {
   // body.innerHTML was set, which raced and left the row stuck on the
   // "Checking for updates..." placeholder.)
   refreshUpdateStatus();
+
+  // Populate the inline "Claude system" panel with the same content as the
+  // header popover. Fetch fresh status first, then render. Re-uses the same
+  // `renderSysStatusPanel()` HTML so any change there flows to both surfaces.
+  fetchSystemStatus().then(() => {
+    const panel = document.getElementById('settings-sys-status-panel');
+    if (panel) panel.innerHTML = renderSysStatusPanel();
+  });
 }
 
 // ── Remote Access ────────────────────────────────────────────────────────────
@@ -12622,6 +13147,427 @@ function remoteAccessSettingsHTML() {
       <button class="btn-dispatch" onclick="disconnectRemoteAccess()" style="font-size:12px;padding:6px 10px;background:transparent;border:1px solid #ef4444;color:#dc2626">Disconnect</button>
     </div>
   </div>`;
+}
+
+// ── Web push notifications ───────────────────────────────────────────────────
+// Subscribes the current browser via the service worker + VAPID public key
+// from the server, then lists all known subscriptions (this device + others
+// signed in via clayrune.io). Per-device toggles for "agent push"
+// (PushNotification tool calls) and "turn complete" (end-of-turn signal).
+
+window._pushState = window._pushState || {
+  supported: null,        // null until detect runs
+  permission: '',         // Notification.permission snapshot
+  publicKey: '',          // VAPID public key (b64url)
+  thisDeviceEndpoint: '', // PushSubscription.endpoint for this browser
+  subs: [],               // /api/push/subscriptions response
+};
+
+// ── PWA install: capture Chrome's beforeinstallprompt event for a manual CTA.
+window._deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  window._deferredInstallPrompt = e;
+  // If the settings panel is open, re-render so the Install row updates.
+  if (document.getElementById('push-section')) {
+    try { refreshPushSection(); } catch (_) {}
+  }
+});
+window.addEventListener('appinstalled', () => {
+  window._deferredInstallPrompt = null;
+  showToast('Clayrune installed. Launch from your home screen.');
+  if (document.getElementById('push-section')) {
+    try { refreshPushSection(); } catch (_) {}
+  }
+});
+function _isPwaInstalled() {
+  // Best-effort: 'standalone' display-mode is set inside an installed PWA window.
+  // iOS Safari exposes navigator.standalone for the legacy A2HS PWA.
+  try {
+    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+  } catch (_) {}
+  if (typeof navigator !== 'undefined' && navigator.standalone === true) return true;
+  return false;
+}
+async function installPwaApp() {
+  const p = window._deferredInstallPrompt;
+  if (!p) {
+    showToast('Install prompt not available yet — Chrome triggers it after a brief visit. Try again in a few seconds.', 6000);
+    return;
+  }
+  try {
+    p.prompt();
+    const choice = await p.userChoice;
+    if (choice && choice.outcome === 'accepted') {
+      // appinstalled listener will fire and show its own toast
+    } else {
+      showToast('Install dismissed');
+    }
+  } catch (e) {
+    showToast(`Install failed: ${e.message || e}`, 5000);
+  } finally {
+    window._deferredInstallPrompt = null;
+    refreshPushSection();
+  }
+}
+
+function _pushSupported() {
+  return ('serviceWorker' in navigator)
+      && ('PushManager' in window)
+      && ('Notification' in window);
+}
+
+function _b64urlToUint8(b64url) {
+  const padding = '='.repeat((4 - b64url.length % 4) % 4);
+  const b64 = (b64url + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function pushNotificationsSettingsHTML() {
+  const supported = _pushSupported();
+  const st = window._pushState;
+  if (!supported) {
+    return `
+    <div class="settings-section" id="push-section">
+      <div class="settings-section-title">Push Notifications</div>
+      <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
+        Get notified on your phone or desktop when an agent finishes a long
+        task or needs your attention. Powered by Web Push.
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Not supported in this browser</div>
+          <div class="settings-hint">This browser doesn't support Web Push (Service Worker + PushManager). Try Chrome, Edge, or Firefox.</div>
+        </div>
+      </div>
+    </div>`;
+  }
+  const perm = (typeof Notification !== 'undefined') ? Notification.permission : 'default';
+  let stateBlock = '';
+  if (perm === 'denied') {
+    stateBlock = `
+      <div class="settings-hint" style="background:#ef444411;border-left:3px solid #ef4444;padding:8px 12px;margin-bottom:10px;color:#b91c1c">
+        Notifications are blocked for this site. Open the site permissions
+        (lock icon in the URL bar) and allow notifications, then click
+        <strong>Enable on this device</strong>.
+      </div>`;
+  }
+  const enableBtn = (perm === 'granted' && st.thisDeviceEndpoint)
+    ? `<button class="btn-dispatch" onclick="testPushNotification()" style="font-size:12px;padding:6px 10px">Send test</button>
+       <button class="btn-dispatch" onclick="unsubscribeThisDevice()" style="font-size:12px;padding:6px 10px;background:transparent;border:1px solid var(--border)">Disable here</button>`
+    : `<button class="btn-dispatch" onclick="enablePushOnThisDevice()" ${perm==='denied'?'disabled':''} style="font-size:12px;padding:6px 10px;${perm==='denied'?'opacity:.5;cursor:not-allowed':''}">Enable on this device</button>`;
+
+  // PWA install row: shows current state (installed / available / not yet
+  // eligible). Chrome's `beforeinstallprompt` only fires once criteria are
+  // met (manifest + SW + HTTPS + ~30s engagement); the deferred prompt is
+  // captured in window._deferredInstallPrompt.
+  const installed = _isPwaInstalled();
+  const installable = !!window._deferredInstallPrompt;
+  let installRow = '';
+  if (installed) {
+    installRow = `
+      <div class="settings-row" style="align-items:flex-start;border-top:1px dashed var(--border-soft,rgba(0,0,0,.08));padding-top:10px;margin-top:8px">
+        <div style="flex:1">
+          <div class="settings-label">Installed as app <span style="margin-left:6px;font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:#10b98122;color:#059669;border:1px solid #10b98155">&#x2713;</span></div>
+          <div class="settings-hint">Notifications are delivered with Clayrune's identity (not flagged as web spam).</div>
+        </div>
+      </div>`;
+  } else if (installable) {
+    installRow = `
+      <div class="settings-row" style="align-items:flex-start;border-top:1px dashed var(--border-soft,rgba(0,0,0,.08));padding-top:10px;margin-top:8px">
+        <div style="flex:1">
+          <div class="settings-label">Install Clayrune to home screen</div>
+          <div class="settings-hint">Removes the "possible spam" warning on notifications, adds a home-screen icon, and runs in a standalone window. Recommended on mobile.</div>
+        </div>
+        <button class="btn-dispatch" onclick="installPwaApp()" style="font-size:12px;padding:6px 10px">Install</button>
+      </div>`;
+  } else {
+    installRow = `
+      <div class="settings-row" style="align-items:flex-start;border-top:1px dashed var(--border-soft,rgba(0,0,0,.08));padding-top:10px;margin-top:8px">
+        <div style="flex:1">
+          <div class="settings-label">Install Clayrune to home screen</div>
+          <div class="settings-hint">Chrome surfaces the install prompt after a short engagement period. Use Chrome menu &rarr; "Install app" / "Add to Home screen" if it doesn't appear here.</div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="settings-section" id="push-section">
+      <div class="settings-section-title">Push Notifications</div>
+      <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
+        Get notified when an agent calls Claude's <code>PushNotification</code>
+        tool, or when a turn completes (opt-in per device). Tap the
+        notification to open the dashboard at the originating session.
+      </div>
+      ${stateBlock}
+      <div class="settings-row" style="align-items:flex-start">
+        <div style="flex:1">
+          <div class="settings-label">This browser</div>
+          <div class="settings-hint">
+            ${(perm === 'granted' && st.thisDeviceEndpoint)
+              ? 'Subscribed. You\'ll receive notifications here.'
+              : (perm === 'denied'
+                  ? 'Permission denied — see banner above.'
+                  : 'Click <strong>Enable on this device</strong> to subscribe.')}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-left:12px">${enableBtn}</div>
+      </div>
+      ${installRow}
+      <div id="push-subscriptions-list" style="border-top:1px dashed var(--border-soft,rgba(0,0,0,.08));padding-top:10px;margin-top:8px">
+        <div class="settings-hint" style="font-size:11px;opacity:.6;padding:4px 0">Loading subscribed devices…</div>
+      </div>
+    </div>`;
+}
+
+async function refreshPushSection() {
+  // Hydrate _pushState then re-render the section.
+  if (!_pushSupported()) {
+    const el = document.getElementById('push-section');
+    if (el) el.outerHTML = pushNotificationsSettingsHTML();
+    return;
+  }
+  window._pushState.permission = (typeof Notification !== 'undefined') ? Notification.permission : 'default';
+  try {
+    const r = await fetch(API_BASE + '/api/push/vapid-public-key');
+    const b = await r.json();
+    window._pushState.publicKey = b.public_key || '';
+  } catch (_) {}
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    if (reg) {
+      const sub = await reg.pushManager.getSubscription();
+      window._pushState.thisDeviceEndpoint = sub ? sub.endpoint : '';
+    } else {
+      window._pushState.thisDeviceEndpoint = '';
+    }
+  } catch (_) {
+    window._pushState.thisDeviceEndpoint = '';
+  }
+  const sectionEl = document.getElementById('push-section');
+  if (sectionEl) sectionEl.outerHTML = pushNotificationsSettingsHTML();
+  refreshPushDeviceList();
+}
+
+async function refreshPushDeviceList() {
+  const el = document.getElementById('push-subscriptions-list');
+  if (!el) return;
+  let body = null;
+  try {
+    const r = await fetch(API_BASE + '/api/push/subscriptions');
+    body = await r.json();
+  } catch (_) {
+    el.innerHTML = `<div class="settings-hint" style="font-size:11px;color:#dc2626">Couldn't load devices.</div>`;
+    return;
+  }
+  const subs = (body && body.subscriptions) || [];
+  window._pushState.subs = subs;
+  if (subs.length === 0) {
+    el.innerHTML = `<div class="settings-hint" style="font-size:11px">No devices subscribed yet.</div>`;
+    return;
+  }
+  const thisEnd = window._pushState.thisDeviceEndpoint;
+  const rows = subs.map(s => {
+    const isThis = s.nonce && thisEnd && (window._pushState._subEndpoints && window._pushState._subEndpoints[s.nonce] === thisEnd);
+    // Server doesn't expose endpoint in list; match by "this device" only when we
+    // happen to know it. Add a fallback: label appended with "(this device)"
+    // when refreshing right after a subscribe.
+    const thisBadge = (s._isThis || isThis) ? `<span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:var(--accent-dim);color:var(--accent);margin-left:6px">This device</span>` : '';
+    const lastSeen = s.last_used_at ? `Last push ${esc(timeAgoShort(s.last_used_at))}` : 'No pushes yet';
+    const created = s.created_at ? esc(timeAgoShort(s.created_at)) : '';
+    return `
+      <div style="padding:8px 0;border-bottom:1px dashed var(--border-soft,rgba(0,0,0,.05))">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">
+              ${esc(s.label || 'Device')}${thisBadge}
+            </div>
+            <div class="settings-hint" style="font-size:11px;margin-top:2px;color:var(--text-faint)">
+              ${esc((s.ua || '').slice(0, 80))}
+            </div>
+            <div class="settings-hint" style="font-size:11px;opacity:.7">${lastSeen}${created ? ` · added ${created}` : ''}</div>
+          </div>
+          <button class="btn-dispatch" onclick="removePushSubscription('${esc(s.nonce)}')" style="font-size:11px;padding:4px 8px;background:transparent;border:1px solid var(--border)">Remove</button>
+        </div>
+        <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:14px;font-size:11px">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+            <input type="checkbox" ${s.notify_agent_push ? 'checked' : ''}
+              onchange="updatePushSubscription('${esc(s.nonce)}', 'notify_agent_push', this.checked)"
+              style="accent-color:var(--accent)">
+            Agent push (PushNotification tool)
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+            <input type="checkbox" ${s.notify_turn_complete ? 'checked' : ''}
+              onchange="updatePushSubscription('${esc(s.nonce)}', 'notify_turn_complete', this.checked)"
+              style="accent-color:var(--accent)">
+            Turn complete
+          </label>
+        </div>
+      </div>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="settings-label" style="font-size:12px">Subscribed devices</div>
+    <div style="margin-top:6px">${rows}</div>`;
+}
+
+async function enablePushOnThisDevice() {
+  if (!_pushSupported()) {
+    showToast('This browser does not support web push', 4000);
+    return;
+  }
+  try {
+    let perm = Notification.permission;
+    if (perm === 'default') {
+      perm = await Notification.requestPermission();
+    }
+    if (perm !== 'granted') {
+      showToast('Notification permission denied', 4000);
+      await refreshPushSection();
+      return;
+    }
+    // Make sure we have the VAPID key
+    if (!window._pushState.publicKey) {
+      const r = await fetch(API_BASE + '/api/push/vapid-public-key');
+      const b = await r.json();
+      window._pushState.publicKey = b.public_key || '';
+    }
+    if (!window._pushState.publicKey) {
+      showToast('Server did not return a VAPID public key', 4000);
+      return;
+    }
+    const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _b64urlToUint8(window._pushState.publicKey),
+      });
+    }
+    // Try to guess a reasonable device label
+    let label = 'Browser';
+    try {
+      const ua = navigator.userAgent || '';
+      const isAndroid = /Android/i.test(ua);
+      const isIOS = /iPhone|iPad/i.test(ua);
+      const browser = /Edg\//.test(ua) ? 'Edge'
+                    : /Chrome\//.test(ua) ? 'Chrome'
+                    : /Firefox\//.test(ua) ? 'Firefox'
+                    : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+      label = `${browser} · ${isAndroid ? 'Android' : isIOS ? 'iOS' : (navigator.platform || 'Desktop')}`;
+    } catch (_) {}
+    const subJson = sub.toJSON();
+    const resp = await fetch(API_BASE + '/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        endpoint: subJson.endpoint,
+        keys: subJson.keys,
+        label: label,
+      }),
+    });
+    const body = await resp.json();
+    if (!body.ok) {
+      showToast(`Subscribe failed: ${body.error || resp.status}`, 5000);
+      return;
+    }
+    showToast('Subscribed for push notifications');
+    window._pushState.thisDeviceEndpoint = subJson.endpoint;
+    await refreshPushSection();
+  } catch (e) {
+    console.error('[push] enable failed', e);
+    showToast(`Push subscribe failed: ${e.message || e}`, 5000);
+  }
+}
+
+async function unsubscribeThisDevice() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    if (reg) {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await fetch(API_BASE + '/api/push/unsubscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: sub.endpoint }),
+        });
+        try { await sub.unsubscribe(); } catch (_) {}
+      }
+    }
+    window._pushState.thisDeviceEndpoint = '';
+    showToast('Unsubscribed');
+    await refreshPushSection();
+  } catch (e) {
+    showToast(`Unsubscribe failed: ${e.message || e}`, 4000);
+  }
+}
+
+async function removePushSubscription(nonce) {
+  if (!nonce) return;
+  // If this is the current device, also tear down the browser subscription.
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    if (reg) {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub && sub.endpoint === window._pushState.thisDeviceEndpoint) {
+        try { await sub.unsubscribe(); } catch (_) {}
+        window._pushState.thisDeviceEndpoint = '';
+      }
+    }
+  } catch (_) {}
+  await fetch(API_BASE + '/api/push/unsubscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nonce: nonce }),
+  });
+  showToast('Device removed');
+  await refreshPushSection();
+}
+
+async function updatePushSubscription(nonce, field, value) {
+  try {
+    const body = {};
+    body[field] = value;
+    const r = await fetch(API_BASE + `/api/push/subscription/${encodeURIComponent(nonce)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const b = await r.json();
+    if (!b.ok) {
+      showToast(`Update failed: ${b.error || r.status}`, 4000);
+    }
+  } catch (e) {
+    showToast(`Update failed: ${e.message || e}`, 4000);
+  }
+}
+
+async function testPushNotification() {
+  try {
+    const r = await fetch(API_BASE + '/api/push/test', { method: 'POST' });
+    const b = await r.json();
+    if (!b.ok) {
+      showToast(`Test failed: ${b.error || 'unknown'}`, 6000);
+      return;
+    }
+    if (b.sent > 0) {
+      let msg = `Sent test push to ${b.sent} device(s)`;
+      if (b.failed > 0) msg += `, ${b.failed} failed`;
+      if (b.removed > 0) msg += `, ${b.removed} pruned`;
+      showToast(msg, 5000);
+    } else if (b.failed > 0) {
+      showToast(`Delivery failed (${b.failed}): ${b.last_error || 'unknown error'}`, 8000);
+    } else if (b.removed > 0) {
+      showToast(`No active subscribers (cleaned ${b.removed} expired)`);
+    } else {
+      showToast(`No active subscribers`);
+    }
+  } catch (e) {
+    showToast(`Test failed: ${e.message || e}`, 6000);
+  }
 }
 
 // ── Devices list (calls /api/remote/devices on CP via MC's proxy) ────────────
@@ -15152,79 +16098,128 @@ function openSkillImportBrowse() {
   const modalId = '__skill_import_browse';
   if (openModals.has(modalId)) { focusModal(modalId); return; }
   const ctx = _defaultImportContext();
+  const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+  // If the active skills filter is on a specific project, default the SOURCE to that project too.
+  const defaultSource = (_allSkillsFilter.project && _allSkillsFilter.project !== 'all')
+    ? `project:${_allSkillsFilter.project}` : 'all';
   const body = `
-    <div style="font-size:11px;color:var(--text-faint)">Search across global + every project's skills. Install a result into the destination scope below, or click Read to inspect the body without installing.</div>
-    ${_importContextHTML(modalId, ctx)}
-    <div>
-      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Search query</label>
-      <input type="text" id="sib-query" placeholder="e.g. release checklist, react testing, deployment..."
-        oninput="clearTimeout(window._sibTimer); window._sibTimer = setTimeout(() => _doSkillImportBrowseSearch('${modalId}'), 250);"
-        style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+    <div style="font-size:11px;color:var(--text-faint)">Pick a source to browse, pick a destination to install into, then click <strong>Install →</strong> on any row.</div>
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:4px">
+      <div style="flex:1;min-width:200px">
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px;font-weight:600">1. Browse from (source)</label>
+        <select id="sib-source" onchange="_doSkillImportBrowseSearch('${modalId}')"
+          style="width:100%;padding:5px 8px;font-size:12px;background:var(--surface1);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+          <option value="all"${defaultSource==='all'?' selected':''}>All sources (search required)</option>
+          <option value="global"${defaultSource==='global'?' selected':''}>Global only</option>
+          ${realProjects.map(p => {
+            const v = `project:${esc(p.id)}`;
+            return `<option value="${v}"${defaultSource===v?' selected':''}>${esc(p.name||p.id)} (project)</option>`;
+          }).join('')}
+        </select>
+      </div>
+      <div style="flex:2;min-width:240px">
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px;font-weight:600">2. Filter / search</label>
+        <input type="text" id="sib-query" placeholder="leave empty to list all skills in source"
+          oninput="clearTimeout(window._sibTimer); window._sibTimer = setTimeout(() => _doSkillImportBrowseSearch('${modalId}'), 250);"
+          style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface1);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+      </div>
     </div>
-    <div id="sib-results" style="max-height:50vh;overflow-y:auto"></div>`;
+
+    <div style="padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:4px">
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:6px;font-weight:600">3. Install into (destination)</label>
+      ${_importContextHTML(modalId, ctx)}
+    </div>
+
+    <div style="font-size:11px;color:var(--text);font-weight:600">4. Click <span style="color:var(--accent)">Install →</span> on the skill you want</div>
+    <div id="sib-results" style="max-height:46vh;overflow-y:auto"></div>`;
   const footer = `
     <button class="btn-secondary" onclick="closeModalById('${modalId}')">Close</button>`;
   _siModalShell(modalId, 'Browse skills', body, footer);
+  // Auto-load if a specific source is preselected (e.g. user was viewing a project filter).
+  if (defaultSource !== 'all') _doSkillImportBrowseSearch(modalId);
 }
 
 async function _doSkillImportBrowseSearch(modalId) {
   const win = openModals.get(modalId)?.element;
   if (!win) return;
   const q = (win.querySelector('#sib-query')?.value || '').trim();
+  const source = win.querySelector('#sib-source')?.value || 'all';
   const resultsEl = win.querySelector('#sib-results');
-  if (!q) { resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">Type to search</div>'; return; }
-  resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">Searching...</div>';
 
-  // Search across global + every real project (concat results, dedup by scope+name+project_id)
-  const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
-  const seen = new Set();
+  // "All sources" still requires a query (otherwise too noisy); specific sources can browse-all.
+  if (source === 'all' && !q) {
+    resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">Type to search, or pick a specific source above to browse it.</div>';
+    return;
+  }
+  resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">Loading...</div>';
+
+  const qLower = q.toLowerCase();
   let all = [];
   try {
-    // Global pool
-    const r0 = await fetch(API_BASE + '/api/skills/search?q=' + encodeURIComponent(q) + '&limit=20');
-    const arr0 = await r0.json();
-    for (const s of arr0) {
-      const k = s.scope + ':' + s.name + ':' + (s.project_id || '');
-      if (!seen.has(k)) { seen.add(k); all.push(s); }
+    if (source === 'global') {
+      const r = await fetch(API_BASE + '/api/skills');
+      const arr = await r.json();
+      all = arr.filter(s => s.scope === 'global');
+      if (q) all = all.filter(s => ((s.name||'') + ' ' + (s.description||'')).toLowerCase().includes(qLower));
+    } else if (source.startsWith('project:')) {
+      const pid = source.slice('project:'.length);
+      const r = await fetch(API_BASE + '/api/skills?project_id=' + encodeURIComponent(pid));
+      const arr = await r.json();
+      // Show this project's own skills first; globals appear underneath so the user knows what's also available here.
+      all = arr.filter(s => s.scope === 'project' || s.scope === 'global');
+      if (q) all = all.filter(s => ((s.name||'') + ' ' + (s.description||'')).toLowerCase().includes(qLower));
+      all.sort((a, b) => (a.scope === 'project' ? 0 : 1) - (b.scope === 'project' ? 0 : 1)
+        || (a.name||'').localeCompare(b.name||''));
+    } else {
+      // "All sources" search: keyword-rank across global + every project pool
+      const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+      const seen = new Set();
+      const r0 = await fetch(API_BASE + '/api/skills/search?q=' + encodeURIComponent(q) + '&limit=20');
+      const arr0 = await r0.json();
+      for (const s of arr0) {
+        const k = s.scope + ':' + s.name + ':' + (s.project_id || '');
+        if (!seen.has(k)) { seen.add(k); all.push(s); }
+      }
+      await Promise.all(realProjects.map(async p => {
+        try {
+          const r = await fetch(API_BASE + '/api/skills/search?q=' + encodeURIComponent(q) + '&project_id=' + encodeURIComponent(p.id) + '&limit=10');
+          const arr = await r.json();
+          for (const s of arr) {
+            const k = s.scope + ':' + s.name + ':' + (s.project_id || '');
+            if (!seen.has(k)) { seen.add(k); all.push(s); }
+          }
+        } catch(e) {}
+      }));
+      all.sort((a, b) => (b.score || 0) - (a.score || 0));
     }
-    // Each project's pool
-    await Promise.all(realProjects.map(async p => {
-      try {
-        const r = await fetch(API_BASE + '/api/skills/search?q=' + encodeURIComponent(q) + '&project_id=' + encodeURIComponent(p.id) + '&limit=10');
-        const arr = await r.json();
-        for (const s of arr) {
-          const k = s.scope + ':' + s.name + ':' + (s.project_id || '');
-          if (!seen.has(k)) { seen.add(k); all.push(s); }
-        }
-      } catch(e) {}
-    }));
   } catch(e) {
     resultsEl.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12px">Search failed: ${esc(e.message)}</div>`;
     return;
   }
 
-  all.sort((a, b) => (b.score || 0) - (a.score || 0));
-
   if (!all.length) {
-    resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">No matches.</div>';
+    resultsEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12px">No skills found.</div>';
     return;
   }
 
   resultsEl.innerHTML = all.map((s, i) => {
     const projLabel = s.scope === 'project'
       ? ((allProjects || []).find(p => p.id === s.project_id)?.name || s.project_id || 'project')
-      : 'global';
+      : (s.scope === 'archive' ? 'archive' : 'global');
+    const pidArg = s.project_id ? `'${esc(s.project_id)}'` : 'null';
     const idAttr = `sib-row-${i}`;
+    const scoreLabel = (typeof s.score === 'number' && s.score > 0) ? `score ${s.score}` : '';
     return `<div id="${idAttr}" style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:6px">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span style="font-size:13px;font-weight:600">${esc(s.name)}</span>
         <span style="font-size:10px;background:var(--surface2);color:var(--text-faint);padding:1px 6px;border-radius:3px">${esc(projLabel)}</span>
-        <span style="font-size:10px;color:var(--text-faint);margin-left:auto">score ${s.score}</span>
+        ${scoreLabel ? `<span style="font-size:10px;color:var(--text-faint);margin-left:auto">${esc(scoreLabel)}</span>` : ''}
       </div>
       <div style="font-size:12px;color:var(--text-mute);margin-top:4px;line-height:1.4">${esc(s.description || '')}</div>
-      <div style="display:flex;gap:6px;margin-top:6px">
-        <button class="btn-tiny" onclick="_sibReadBody('${esc(s.scope)}', '${esc(s.name)}', ${s.project_id?`'${esc(s.project_id)}'`:'null'}, '${idAttr}')">Read body</button>
-        <button class="btn-tiny" onclick="_sibInstallHere('${modalId}', '${esc(s.scope)}', '${esc(s.name)}', ${s.project_id?`'${esc(s.project_id)}'`:'null'})">Install here</button>
+      <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+        <button class="btn-tiny" onclick="_sibReadBody('${esc(s.scope)}', '${esc(s.name)}', ${pidArg}, '${idAttr}')">Read body</button>
+        <button class="btn-add" style="padding:4px 10px;font-size:11px" onclick="_sibInstallHere('${modalId}', '${esc(s.scope)}', '${esc(s.name)}', ${pidArg})">Install &rarr;</button>
       </div>
       <div id="${idAttr}-body" style="display:none;margin-top:8px;padding:8px;background:var(--surface2);border-radius:4px;font-family:var(--mono);font-size:11px;white-space:pre-wrap;max-height:240px;overflow-y:auto"></div>
     </div>`;
@@ -15957,6 +16952,10 @@ fetchProjects().then(async () => {
   for (const p of allProjects) {
     if (p.project_path) await fetchAgentStatus(p.id);
   }
+  // Deep-link from push notifications: ?project=X&session=Y opens the
+  // project modal (or activates it on mobile) + focuses the session tab.
+  // Runs after fetchAgentStatus so session tabs exist before we point at one.
+  try { await _handleDeepLinkFromUrl(); } catch (e) { console.warn('deep link', e); }
   fetchGlobalUsage();
   refreshScheduleBanner();
   renderSidebarProjects();
@@ -15977,6 +16976,11 @@ fetchProjects().then(async () => {
 startRefresh();
 // Refresh schedule banner every 60s
 setInterval(refreshScheduleBanner, 60000);
+// System status pill: initial fetch + periodic re-fetch (60s cadence matches
+// the schedule banner). Cache is also auto-refreshed server-side by any
+// agent activity, so the pill stays current without active polling.
+fetchSystemStatus();
+setInterval(fetchSystemStatus, 60000);
 
 // ── Fallback: poll for missed agent completions every 15s ───────────────────
 setInterval(async () => {

@@ -4,6 +4,270 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-11b] — PWA shell + deep linking + push-sub dedup
+
+Follow-up to `[2026-05-11]` after live testing on Android Chrome. Three
+specific problems came up:
+
+1. Notifications were stamped **"Possible spam from clayrune.io"** by
+   Chrome — its heuristic for low-traffic web-push origins.
+2. Tapping a notification landed the user at the dashboard root, not at
+   the project + session that fired the push.
+3. CF Access re-OTP (new nonce every ~24h) would orphan the push
+   subscription, gradually accumulating duplicates.
+
+All three addressed in this change. The mechanical web-push pipeline
+itself was already correct (see `[2026-05-11]`).
+
+### PWA shell (kills the "Possible spam" warning)
+
+- New `static/manifest.json` — name/short_name "Clayrune", `display:
+  standalone`, theme/background colors, 192 + 512 PNG icons (also one
+  `maskable` variant). `start_url: /`.
+- New PNG icons rendered via Pillow: `static/icon-192.png`,
+  `icon-512.png`, `icon-badge-72.png`. Orange rounded square + white "C"
+  (matches existing inline-SVG favicon). Generated once with the script
+  in CHANGELOG `[2026-05-11]`; living source kept in
+  `static/icon.svg` if the brand evolves.
+- `index.html <head>` now links the manifest + Apple touch icon meta +
+  apple-mobile-web-app-* meta for iOS A2HS parity.
+- Service worker (`static/sw.js`) — uses the new PNGs for `icon` and
+  `badge` instead of the previous 404s. Notifications shown from inside
+  an installed PWA are credited to **Clayrune** (the app), not to the
+  website, so Chrome's spam classifier doesn't trigger.
+- Settings → Push Notifications: new install-state row.
+  - Installed → green checkmark + explanation.
+  - `beforeinstallprompt` captured → "Install" button that triggers
+    Chrome's native install flow. Listener also re-renders the section
+    on `appinstalled` so the row flips to "installed" state.
+  - Neither yet → hint pointing the user at Chrome's menu → Install app.
+
+### Deep linking from notification clicks
+
+- `_handleDeepLinkFromUrl(url)` parses `?project=X&session=Y`, calls
+  `openProjectModal(X)`, waits one paint, then `switchAgentTab(X, Y)`.
+  Cleans the URL with `history.replaceState` so manual refresh doesn't
+  re-fire. Called once at boot from `fetchProjects().then(...)` after
+  agent-session restore, and on every `mc-deeplink` postMessage from the
+  service worker (notification click while the PWA is already open).
+- `sw.js notificationclick`: instead of `client.navigate()` (unreliable
+  for standalone PWA windows, can stomp on in-flight UI), now focuses
+  the existing client and `postMessage({type:'mc-deeplink', url})` to
+  the SPA. Cold start still uses `clients.openWindow(targetUrl)`.
+
+### Push-sub dedup-by-endpoint (survives re-OTP)
+
+- `POST /api/push/subscribe`: before writing the new record, scans
+  existing subs for a matching `endpoint` under a *different* nonce. If
+  found, the old nonce-keyed record is dropped and its prefs
+  (`label`, `notify_*`, `created_at`) carry over. Logged with
+  `[push] migrated subscription X… → Y…`. Browsers reuse the same
+  PushSubscription.endpoint across CF re-OTPs even though MC's nonce
+  changes, so this keeps the device count honest.
+
+### localStorage device-name auto-submit (silences re-OTP UX)
+
+- `/_mc/name-device` page now writes `localStorage.mc_device_name` on
+  successful submit. On reload (e.g. after re-OTP gives the device a
+  fresh nonce), if that key is set, the page auto-submits without UI —
+  the user sees a brief *"Recognized this device as <name>.
+  Reconnecting…"* card instead of being asked to name again. The
+  CF-Access OTP step itself is untouched (it's CF's auth boundary, not
+  ours).
+
+### Files touched
+
+- `static/manifest.json` (new)
+- `static/icon-192.png`, `icon-512.png`, `icon-badge-72.png` (new)
+- `static/sw.js` — PNG icons, postMessage on click
+- `static/index.html` — manifest link, deep-link handler, SW message
+  listener, install button + state, push section render
+- `server.py` — `push_subscribe` dedup-by-endpoint, name-device page
+  auto-submit JS
+
+### Windows PWA: single-instance launch (`launch_handler`)
+
+Observed on Windows after installing the PWA: clicking the Start menu /
+taskbar icon while Clayrune was already open spawned a **second
+standalone window** instead of focusing the existing one. Chrome's
+default for `display: standalone` is `navigate-new` — a new window per
+launch.
+
+Fix: added `launch_handler.client_mode: "focus-existing"` to
+`static/manifest.json`. Now a second click on the Start menu icon
+focuses the open window without navigating or reloading, so session
+state in the SPA is preserved. (Service-worker-driven deep links from
+notification clicks are unaffected — they go through the existing
+`postMessage` path, not the launch URL.)
+
+Rollback: drop the `launch_handler` block from `manifest.json` and
+re-install the PWA. Note that PWAs cache the manifest aggressively;
+uninstall + reinstall is the reliable way to pick up manifest changes.
+
+### Open follow-ups
+
+- iOS PWA install path (requires Safari "Add to Home Screen", different
+  install affordance — no `beforeinstallprompt` on iOS).
+- CF Access "Session Duration" — left at user's CF policy default. Ron
+  can bump it to 7d/30d in the Cloudflare dashboard if re-OTPs become
+  noisy.
+
+## [2026-05-11] — Web push notifications (Android-first)
+
+Wires Claude's `PushNotification` tool to actual phone-side delivery via
+VAPID web push. Solves the "I have no idea when the agent is done" problem
+without building a Telegram bot — taps on the push land in the existing
+clayrune.io chat where `/agent/send` already handles follow-ups.
+
+### Why
+
+Claude's built-in Remote Control (claude.ai "Code" surface) only registers
+*interactive* (TTY) sessions, so MC-managed sessions never show up there
+even though `--remote-control` is accepted by the CLI. We confirmed this in
+testing: a real TTY `claude --remote-control "tty-test"` registered fine,
+but a `claude --print --remote-control ...` from MC did not. The
+`agent_remote_control` toggle is now marked **EXPERIMENTAL** in Settings;
+web push is the supported notification path.
+
+Claude's `PushNotification` tool (deferred tool, see the verbatim
+description in `docs/web-push-handoff.md`) is model-aware: the model knows
+when to call it (long task done, build ready, decision needed) and when
+NOT to (routine progress, just-answered questions). MC intercepts the
+`tool_use` event in stream-json and delivers the push itself, since the
+"push to phone" half of the tool relies on Remote Control discovery that
+MC sessions don't get.
+
+### Backend (`server.py`)
+
+- New module: `# ── Web push notifications` block (just above the per-CF
+  session-labels block). Self-contained: VAPID keypair generation,
+  subscription storage, dispatch helper, stream-reader hook, endpoints.
+- VAPID keypair lazily generated via `py_vapid` on first call to
+  `_load_vapid_keys()`. Public key serialized as base64url-encoded 65-byte
+  uncompressed P-256 point (what `PushManager.subscribe` expects in
+  `applicationServerKey`). Private key persisted as PEM PKCS8 (what
+  `pywebpush.webpush(vapid_private_key=...)` accepts). File:
+  `data/push_vapid.json`. Survives restarts; only generated once.
+- Subscriptions persisted at `data/push_subscriptions.json`, keyed by CF
+  Access session nonce (same key the session-label system uses, so
+  subscriptions get cleaned up alongside revoked CF sessions). Non-CF
+  callers fall back to `local:<sha1(endpoint)[:16]>`.
+- `_notify_push(title, body, *, url, project_id, session_id, kind)`
+  encrypts + signs via `pywebpush.webpush()`, fires to every subscription
+  that opted in for `kind` (`'agent'` or `'turn_complete'`), removes 404/410
+  subscriptions automatically (browser unsubscribed or push service
+  evicted), records `last_used_at` on success.
+- `_handle_push_signal(project_id, session_id, msg)` is called once per
+  parsed stream-json message in **both** stream readers
+  (`_read_agent_stream` Mode A, `_read_agent_stream_b` Mode B):
+  - `type=assistant` with a `tool_use` block where `name=='PushNotification'`
+    → fire `kind='agent'` push with `input.message` as body.
+  - `type=result` → fire `kind='turn_complete'` push iff the project has
+    `notify_turn_complete=True` and `notify_push_enabled` (default `True`).
+- Endpoints (mirror the `# ── Remote access` block style):
+  - `GET  /api/push/vapid-public-key` — returns base64url public key.
+  - `POST /api/push/subscribe`        — body `{endpoint, keys{p256dh,auth}, label?}`.
+  - `POST /api/push/unsubscribe`      — body `{nonce}` or `{endpoint}`.
+  - `GET  /api/push/subscriptions`    — list (no endpoint exposed).
+  - `PATCH /api/push/subscription/<nonce>` — toggle `notify_agent_push` /
+    `notify_turn_complete` / `project_filter` / rename.
+  - `POST /api/push/test`             — fire a test push to every subscriber.
+
+### Service worker (`static/sw.js`)
+
+- Served at `/sw.js` (not `/static/sw.js`) via a new `service_worker()` route
+  in `server.py`, with `Service-Worker-Allowed: /` header so the worker
+  scope covers the whole origin (`/?project=...&session=...` deep links
+  need root scope).
+- `push` event handler reads JSON payload `{title, body, url, project_id,
+  session_id, kind, ts}` and calls `showNotification()`. Tag is
+  `mc-<session_id>` so re-pushes for the same session collapse instead of
+  stacking.
+- `notificationclick` handler tries to focus + navigate an existing tab on
+  this origin to the `url` (typically `/?project=X&session=Y`), falls back
+  to `clients.openWindow()`. (Deep-link routing on the SPA side is not yet
+  wired — clicking lands you on `/` for now; routing into a specific
+  project + session tab is a follow-up.)
+
+### Frontend (`static/index.html`)
+
+- New `pushNotificationsSettingsHTML()` section rendered right under
+  Remote Access in Settings. Detects browser support; shows the right CTA
+  for `Notification.permission` (default / granted / denied). The
+  "Enable on this device" flow runs:
+  - `Notification.requestPermission()`
+  - `navigator.serviceWorker.register('/sw.js', {scope: '/'})`
+  - `pushManager.subscribe({userVisibleOnly: true, applicationServerKey: ...})`
+  - `POST /api/push/subscribe` with the resulting endpoint + keys + a
+    guessed device label (e.g. "Chrome · Android").
+- "Subscribed devices" list shows label, UA, last-used / created times, a
+  Remove button (calls `/api/push/unsubscribe` AND `subscription.unsubscribe()`
+  if it's this device), and per-device toggles for "Agent push" and
+  "Turn complete" (PATCH `/api/push/subscription/<nonce>`).
+- "Send test" button calls `/api/push/test`.
+- Existing "Remote Control" toggle in Claude Code Integration is now
+  badged `EXPERIMENTAL` with a hint explaining the non-TTY caveat.
+- `_renderSettings()` now also calls `refreshPushSection()` after the
+  settings panel renders.
+
+### Storage shapes
+
+```jsonc
+// data/push_vapid.json
+{ "public": "BO…(87 chars b64url)", "private": "-----BEGIN PRIVATE KEY-----\n…", "created_at": 1715432400 }
+
+// data/push_subscriptions.json — keyed by CF Access nonce (or local:<hash>)
+{
+  "<nonce>": {
+    "label": "Chrome · Android",
+    "ua": "Mozilla/5.0 …",
+    "endpoint": "https://fcm.googleapis.com/fcm/send/xyz",
+    "keys": { "p256dh": "…", "auth": "…" },
+    "project_filter": null,
+    "notify_agent_push": true,
+    "notify_turn_complete": false,
+    "created_at": 1715432400,
+    "last_used_at": 0
+  }
+}
+```
+
+### Per-project flags (optional, default behavior is correct)
+
+- `notify_push_enabled` (default `True`) — project-level kill-switch.
+- `notify_turn_complete` (default `False`) — opt-in for end-of-turn pushes
+  (spammy by default).
+
+Not yet exposed in the per-project menu — defer until users ask. The
+server reads them straight from the project JSON via `load_project(...).
+get(key, default)`.
+
+### Dependencies
+
+- `pywebpush>=2.0.0` added to `requirements.txt` (pulls `py-vapid`,
+  `http-ece` transitively). Tested with `pywebpush==2.3.0`.
+- `cryptography>=43.0` was already in `requirements.txt` for mc_remote;
+  pywebpush uses it for VAPID + ECE encryption.
+
+### Rollback
+
+- Revert this commit, remove `data/push_vapid.json` and
+  `data/push_subscriptions.json`. The `pywebpush` import is lazy inside
+  `_notify_push` / `_load_vapid_keys`, so leaving the package installed
+  while the code is reverted is harmless.
+
+### Follow-ups (not blocking)
+
+- SPA deep-link routing for `/?project=X&session=Y` from notification clicks.
+- Per-project notify toggles in the three-dot menu (server already
+  supports them).
+- iOS PWA install path (requires "Add to Home Screen" first; spec'd in
+  `docs/web-push-handoff.md`).
+- Test on Android Chrome end-to-end (Ron, this needs a server restart and
+  a phone). After restart: open Settings → Push Notifications → Enable on
+  this device on the phone via clayrune.io → tap "Send test" from the
+  desktop dashboard → notification should ring on the phone.
+
 ## [2026-05-10c] — Skills import: GitHub tree-URL parsing + Anthropic plugin detection
 
 Two related improvements to skills import. First, **GitHub web URLs that point

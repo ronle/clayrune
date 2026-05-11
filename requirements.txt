@@ -9,3 +9,6 @@ cryptography>=43.0
 keyring>=25.0
 requests>=2.31.0
 rfc8785>=0.1.4
+
+# ── Web push notifications ───────────────────────────────────────────────────
+pywebpush>=2.0.0
