@@ -7396,8 +7396,11 @@ def import_skill_git_route():
 
     candidates = clone['candidates']
     staging_id = clone['staging_id']
+    plugin_info = clone.get('plugin')
 
-    if auto_install and len(candidates) == 1:
+    # When a plugin is detected, skip auto-install — let the user choose
+    # between "Install skill(s) only" and "Install full plugin" in the UI.
+    if auto_install and len(candidates) == 1 and not plugin_info:
         try:
             rec = _skills.install_from_staging(
                 staging_id=staging_id,
@@ -7415,8 +7418,56 @@ def import_skill_git_route():
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
 
-    # Multi-skill or auto_install=false: return list for picker
-    return jsonify({'staging_id': staging_id, 'candidates': candidates}), 200
+    # Multi-skill, plugin, or auto_install=false: return list for picker
+    response = {'staging_id': staging_id, 'candidates': candidates}
+    if plugin_info:
+        response['plugin'] = plugin_info
+    return jsonify(response), 200
+
+
+@app.route('/api/skills/import/plugin', methods=['POST'])
+def import_full_plugin_route():
+    """Install all skill + command + agent components of a plugin.
+
+    Body: {staging_id?, path?, overwrite?}
+
+    Either staging_id (from a prior /api/skills/import/git call) or path (a
+    local folder) is required. Hooks are deliberately not installed — see
+    skills.install_full_plugin for the trust-model rationale.
+
+    All components install to GLOBAL scope. Project-scoped full-plugin
+    install is not supported in v1.
+    """
+    data = request.get_json() or {}
+    staging_id = (data.get('staging_id') or '').strip()
+    path = (data.get('path') or '').strip()
+    overwrite = bool(data.get('overwrite'))
+
+    if not staging_id and not path:
+        return jsonify({'error': 'staging_id or path required'}), 400
+
+    if staging_id:
+        plugin_root = _skills.STAGING_SKILLS_DIR / staging_id
+        if not plugin_root.exists():
+            return jsonify({'error': 'staging dir not found'}), 404
+    else:
+        plugin_root = Path(path).expanduser()
+        if not plugin_root.exists():
+            return jsonify({'error': 'path does not exist'}), 404
+
+    try:
+        result = _skills.install_full_plugin(plugin_root, overwrite=overwrite)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    # Clean up staging if we came from a git import
+    if staging_id:
+        try:
+            shutil.rmtree(_skills.STAGING_SKILLS_DIR / staging_id, ignore_errors=True)
+        except Exception:
+            pass
+
+    return jsonify(result), 201
 
 
 @app.route('/api/skills/import/git/install', methods=['POST'])

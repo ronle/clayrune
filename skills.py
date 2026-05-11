@@ -42,6 +42,13 @@ GLOBAL_SKILLS_DIR = _home() / '.claude' / 'skills'
 ARCHIVE_SKILLS_DIR = _home() / '.claude' / 'skills.archive'
 STAGING_SKILLS_DIR = _home() / '.claude' / 'skills.staging'  # transient — git imports wait here for picker selection
 
+# Sibling CC component directories — used by full-plugin install to drop
+# plugin components alongside skills. We do NOT manage them in MC's UI; CC
+# reads them natively.
+GLOBAL_COMMANDS_DIR = _home() / '.claude' / 'commands'
+GLOBAL_AGENTS_DIR = _home() / '.claude' / 'agents'
+PLUGIN_MANIFEST_DIRNAME = '.claude-plugin'
+
 
 def project_skills_dir(project_path: str | os.PathLike) -> Path:
     return Path(project_path) / '.claude' / 'skills'
@@ -482,6 +489,17 @@ _GIT_URL_RE = re.compile(
     r'^(https?://|git@[^:/\s]+:|ssh://git@|git://)[a-zA-Z0-9._\-:/~]+(\.git)?/?$'
 )
 
+# Matches GitHub web-UI tree/blob URLs we can auto-translate to clone URLs.
+#   https://github.com/<owner>/<repo>/tree/<ref>/<subpath>
+#   https://github.com/<owner>/<repo>/blob/<ref>/<path-to-file>
+_GH_TREE_RE = re.compile(
+    r'^(?P<base>https?://github\.com/[^/]+/[^/?#]+?)'
+    r'(?:\.git)?'
+    r'/(?P<kind>tree|blob)/(?P<ref>[^/]+)'
+    r'(?:/(?P<subpath>.*?))?'
+    r'/?$'
+)
+
 
 def _safe_skill_name_from(meta: dict[str, Any], folder_name: str, fallback: str = '') -> str:
     """Pick a skill name preferring frontmatter -> folder name -> fallback.
@@ -593,11 +611,30 @@ def import_from_folder(
         raise ValueError(f'not a directory: {src}')
 
     candidates = _scan_for_skills(src, max_depth=3)
+    plugin_info = detect_plugin_at(src)
+
     if not candidates:
+        if plugin_info:
+            kinds = []
+            if plugin_info['command_files']: kinds.append(f"{len(plugin_info['command_files'])} command(s)")
+            if plugin_info['agent_files']: kinds.append(f"{len(plugin_info['agent_files'])} sub-agent(s)")
+            if plugin_info['hook_files']: kinds.append(f"{len(plugin_info['hook_files'])} hook(s)")
+            kinds_str = ', '.join(kinds) if kinds else 'no managed components'
+            raise ValueError(
+                f"This is the Anthropic plugin \"{plugin_info['name']}\" but it contains no skills "
+                f"(only {kinds_str}). Clayrune manages skills; for the rest, install via CC's "
+                f"/plugin command instead."
+            )
         raise ValueError('no SKILL.md found in this folder (searched 3 levels deep)')
-    if len(candidates) > 1 and not selected_rel_dir:
-        # caller should re-invoke with selected_rel_dir
-        return {'multiple': True, 'candidates': candidates}
+
+    # When a plugin is detected, always return the picker (skill-only vs full-plugin
+    # decision belongs to the user, not the importer).
+    if plugin_info or (len(candidates) > 1 and not selected_rel_dir):
+        return {
+            'multiple': True,
+            'candidates': candidates,
+            **({'plugin': _plugin_summary_for_response(plugin_info)} if plugin_info else {}),
+        }
 
     target = candidates[0] if len(candidates) == 1 else next(
         (c for c in candidates if c['rel_dir'] == selected_rel_dir), None
@@ -656,11 +693,47 @@ def _install_skill_dir(
 
 
 def is_valid_git_url(url: str) -> bool:
-    return bool(_GIT_URL_RE.match((url or '').strip()))
+    url = (url or '').strip()
+    return bool(_GIT_URL_RE.match(url) or _GH_TREE_RE.match(url))
+
+
+def normalize_git_url(url: str) -> dict[str, Any]:
+    """Translate a Git URL (or a GitHub web tree/blob URL) into the parts we need.
+
+    Returns {clone_url, ref, subpath}. `ref` and `subpath` are None for bare
+    repo URLs. For tree/blob URLs, subpath is the directory inside the repo
+    that should be scanned for SKILL.md (blob URLs pointing at SKILL.md have
+    the file portion stripped to its containing dir).
+    """
+    raw = (url or '').strip()
+    if not raw:
+        return {'clone_url': '', 'ref': None, 'subpath': None}
+
+    m = _GH_TREE_RE.match(raw)
+    if m:
+        base = m.group('base').rstrip('/')
+        ref = m.group('ref')
+        kind = m.group('kind')
+        sub = (m.group('subpath') or '').strip('/')
+        if kind == 'blob' and sub:
+            # blob URLs point at a specific file; scope the scan to its parent dir
+            parts = sub.split('/')
+            if parts[-1].lower().endswith('.md'):
+                sub = '/'.join(parts[:-1])
+        clone_url = base if base.endswith('.git') else base + '.git'
+        return {'clone_url': clone_url, 'ref': ref, 'subpath': sub or None}
+
+    # Bare repo URL — pass through unchanged
+    return {'clone_url': raw.rstrip('/'), 'ref': None, 'subpath': None}
 
 
 def git_clone_to_staging(url: str, ref: str | None = None, timeout: int = 60) -> dict[str, Any]:
     """Shallow-clone a repo into a fresh staging directory under STAGING_SKILLS_DIR.
+
+    Accepts bare repo URLs AND GitHub web-UI tree/blob URLs (we translate to
+    the underlying clone URL + extract the ref / subpath). When a subpath is
+    detected, the cloned tree is trimmed so only that subpath remains in the
+    staging dir — install_from_staging stays unchanged.
 
     Returns {staging_id, candidates}. Caller is responsible for invoking
     `install_from_staging(staging_id, rel_dir, ...)` next.
@@ -669,14 +742,20 @@ def git_clone_to_staging(url: str, ref: str | None = None, timeout: int = 60) ->
     if not is_valid_git_url(url):
         raise ValueError('not a recognizable Git URL')
 
+    parsed = normalize_git_url(url)
+    clone_url = parsed['clone_url']
+    parsed_ref = parsed['ref']
+    subpath = parsed['subpath']
+    effective_ref = ref or parsed_ref  # explicit ref param overrides URL-embedded ref
+
     STAGING_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     staging_id = uuid.uuid4().hex[:12]
     staging_path = STAGING_SKILLS_DIR / staging_id
 
     cmd = ['git', 'clone', '--depth', '1']
-    if ref:
-        cmd += ['--branch', ref]
-    cmd += [url, str(staging_path)]
+    if effective_ref:
+        cmd += ['--branch', effective_ref]
+    cmd += [clone_url, str(staging_path)]
 
     try:
         result = subprocess.run(
@@ -702,12 +781,74 @@ def git_clone_to_staging(url: str, ref: str | None = None, timeout: int = 60) ->
     if git_meta.exists():
         shutil.rmtree(git_meta, ignore_errors=True)
 
-    candidates = _scan_for_skills(staging_path, max_depth=3)
-    if not candidates:
+    # If the URL specified a subdirectory inside the repo, trim the staging
+    # tree down to just that subdirectory's contents so the rest of the
+    # pipeline stays unchanged.
+    if subpath:
+        sub = (staging_path / subpath).resolve()
+        try:
+            sub.relative_to(staging_path.resolve())
+        except ValueError:
+            shutil.rmtree(staging_path, ignore_errors=True)
+            raise ValueError(f'invalid subpath: {subpath}')
+        if not sub.exists() or not sub.is_dir():
+            shutil.rmtree(staging_path, ignore_errors=True)
+            raise ValueError(
+                f'subpath "{subpath}" not found in repo. The URL points at a '
+                f'directory inside the repo; verify the path and ref are correct.'
+            )
+        # Move subpath contents to a sibling, then swap so staging_path now
+        # holds only the requested subdirectory.
+        tmp_holder = staging_path.parent / (staging_id + '-sub')
+        shutil.move(str(sub), str(tmp_holder))
         shutil.rmtree(staging_path, ignore_errors=True)
-        raise ValueError('no SKILL.md found in cloned repo (searched 3 levels deep)')
+        shutil.move(str(tmp_holder), str(staging_path))
 
-    return {'staging_id': staging_id, 'candidates': candidates}
+    candidates = _scan_for_skills(staging_path, max_depth=3)
+    plugin_info = detect_plugin_at(staging_path)
+
+    if not candidates:
+        if plugin_info:
+            # Plugin folder with no skills (commands/hooks/agents only)
+            shutil.rmtree(staging_path, ignore_errors=True)
+            kinds = []
+            if plugin_info['command_files']: kinds.append(f"{len(plugin_info['command_files'])} command(s)")
+            if plugin_info['agent_files']: kinds.append(f"{len(plugin_info['agent_files'])} sub-agent(s)")
+            if plugin_info['hook_files']: kinds.append(f"{len(plugin_info['hook_files'])} hook(s)")
+            kinds_str = ', '.join(kinds) if kinds else 'no managed components'
+            raise ValueError(
+                f"This is the Anthropic plugin \"{plugin_info['name']}\" but it contains no skills "
+                f"(only {kinds_str}). Clayrune manages skills; for the rest, install via CC's "
+                f"/plugin command instead."
+            )
+        shutil.rmtree(staging_path, ignore_errors=True)
+        msg = 'no SKILL.md found in cloned repo (searched 3 levels deep)'
+        if subpath:
+            msg = f'no SKILL.md found under "{subpath}" (searched 3 levels deep). The folder you pointed at doesn\'t look like a skill.'
+        raise ValueError(msg)
+
+    out = {
+        'staging_id': staging_id,
+        'candidates': candidates,
+        'normalized': {'clone_url': clone_url, 'ref': effective_ref, 'subpath': subpath},
+    }
+    if plugin_info:
+        out['plugin'] = _plugin_summary_for_response(plugin_info)
+    return out
+
+
+def _plugin_summary_for_response(info: dict[str, Any]) -> dict[str, Any]:
+    """Trim a plugin-info dict down to what the frontend needs."""
+    return {
+        'name': info['name'],
+        'skill_count': len(info['skill_dirs']),
+        'command_count': len(info['command_files']),
+        'agent_count': len(info['agent_files']),
+        'hook_count': len(info['hook_files']),
+        'has_hooks': info['has_hooks'],
+        'readme_excerpt': info['readme_excerpt'],
+        'root_path': info['root_path'],
+    }
 
 
 def install_from_staging(
@@ -754,6 +895,199 @@ def install_from_staging(
     if cleanup:
         shutil.rmtree(staging_path, ignore_errors=True)
     return rec
+
+
+# ── Anthropic-plugin detection + full-plugin install ────────────────────────
+#
+# A plugin folder is identified by `.claude-plugin/` (Anthropic's manifest
+# directory). It may contain:
+#   skills/<name>/SKILL.md     — managed by MC (this module)
+#   commands/<name>.md         — slash commands (CC reads from ~/.claude/commands)
+#   agents/<name>.md           — sub-agent definitions (CC reads from ~/.claude/agents)
+#   hooks/*                    — lifecycle scripts; CC registers them via
+#                                ~/.claude/settings.json — NOT auto-installed by
+#                                MC because hooks run arbitrary shell code on
+#                                lifecycle events and registration is a stronger
+#                                trust statement than copying data files.
+#
+# When MC detects a plugin in a cloned/folder import, the UI offers "Install
+# skill(s) only" vs "Install full plugin". The latter copies skills + commands
+# + agents and tells the user how to enable hooks via CC's own /plugin command.
+
+def _read_manifest(plugin_root: Path) -> dict[str, Any]:
+    """Read .claude-plugin/plugin.json if present, return {} on absence/parse error."""
+    manifest_path = plugin_root / PLUGIN_MANIFEST_DIRNAME / 'plugin.json'
+    if not manifest_path.exists():
+        return {}
+    try:
+        return json.loads(manifest_path.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
+def _list_md_files(dirpath: Path) -> list[str]:
+    """Return relative file names of *.md files directly under dirpath."""
+    if not dirpath.exists() or not dirpath.is_dir():
+        return []
+    return sorted(
+        p.name for p in dirpath.iterdir()
+        if p.is_file() and p.suffix.lower() == '.md'
+    )
+
+
+def _list_any_files(dirpath: Path) -> list[str]:
+    """Return relative file names of any files directly under dirpath."""
+    if not dirpath.exists() or not dirpath.is_dir():
+        return []
+    return sorted(p.name for p in dirpath.iterdir() if p.is_file())
+
+
+def detect_plugin_at(root: Path | str) -> dict[str, Any] | None:
+    """If `root` looks like an Anthropic plugin folder, return its info.
+
+    A plugin folder has a `.claude-plugin/` sibling. We also accept the
+    parent-of-skills shape: if root has skills/, commands/, or agents/ as
+    direct children AND a sibling .claude-plugin/, treat it as a plugin.
+
+    Returns: {name, manifest, readme_excerpt, skill_dirs, command_files,
+              agent_files, hook_files, has_hooks, root_path}
+    Or None when the directory isn't a plugin.
+    """
+    root = Path(root)
+    if not root.exists() or not root.is_dir():
+        return None
+    if not (root / PLUGIN_MANIFEST_DIRNAME).exists():
+        return None
+
+    manifest = _read_manifest(root)
+    name = (manifest.get('name') or root.name).strip()
+
+    skill_dirs: list[str] = []
+    if (root / 'skills').exists():
+        for child in (root / 'skills').iterdir():
+            if child.is_dir() and (child / 'SKILL.md').exists():
+                skill_dirs.append(child.name)
+    skill_dirs.sort()
+
+    command_files = _list_md_files(root / 'commands')
+    agent_files = _list_md_files(root / 'agents')
+    hook_files = _list_any_files(root / 'hooks')
+
+    readme_path = root / 'README.md'
+    readme_excerpt = ''
+    if readme_path.exists():
+        try:
+            readme_excerpt = readme_path.read_text(encoding='utf-8')[:600]
+        except Exception:
+            pass
+
+    return {
+        'name': name,
+        'manifest': manifest,
+        'readme_excerpt': readme_excerpt,
+        'skill_dirs': skill_dirs,
+        'command_files': command_files,
+        'agent_files': agent_files,
+        'hook_files': hook_files,
+        'has_hooks': bool(hook_files),
+        'root_path': str(root),
+    }
+
+
+def install_full_plugin(
+    plugin_root: Path | str,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Install all skill + command + agent components of a plugin folder.
+
+    Hooks are NOT installed: registration requires modifying
+    ~/.claude/settings.json with author-supplied event/script bindings, which
+    is arbitrary code execution and a stronger trust statement than copying
+    data. The caller surfaces a note pointing at CC's `/plugin install`.
+
+    All components install to GLOBAL scope (~/.claude/{skills,commands,agents}).
+    Project-scope full-plugin install is not supported in v1.
+
+    Returns: {
+      plugin_name,
+      installed: {skills: [names], commands: [names], agents: [names]},
+      skipped:   {hooks: [names], collisions: [{type, name, reason}]},
+      message: human-readable summary,
+    }
+    """
+    root = Path(plugin_root)
+    info = detect_plugin_at(root)
+    if not info:
+        raise ValueError(f'not a plugin folder (no {PLUGIN_MANIFEST_DIRNAME}/): {root}')
+
+    GLOBAL_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    GLOBAL_COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
+    GLOBAL_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    installed = {'skills': [], 'commands': [], 'agents': []}
+    collisions: list[dict[str, str]] = []
+
+    # 1. Skills
+    for sname in info['skill_dirs']:
+        src = root / 'skills' / sname
+        dest = GLOBAL_SKILLS_DIR / sname
+        if dest.exists() and not overwrite:
+            collisions.append({'type': 'skill', 'name': sname, 'reason': 'already exists'})
+            continue
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest)
+        # Normalize frontmatter name to match the install name
+        md = dest / 'SKILL.md'
+        if md.exists():
+            meta, body = parse_skill_md(md.read_text(encoding='utf-8'))
+            meta['name'] = sname
+            md.write_text(dump_skill_md(meta, body), encoding='utf-8')
+        installed['skills'].append(sname)
+
+    # 2. Commands (flat .md files)
+    for cname in info['command_files']:
+        src = root / 'commands' / cname
+        dest = GLOBAL_COMMANDS_DIR / cname
+        if dest.exists() and not overwrite:
+            collisions.append({'type': 'command', 'name': cname, 'reason': 'already exists'})
+            continue
+        shutil.copy2(src, dest)
+        installed['commands'].append(cname)
+
+    # 3. Agents (flat .md files)
+    for aname in info['agent_files']:
+        src = root / 'agents' / aname
+        dest = GLOBAL_AGENTS_DIR / aname
+        if dest.exists() and not overwrite:
+            collisions.append({'type': 'agent', 'name': aname, 'reason': 'already exists'})
+            continue
+        shutil.copy2(src, dest)
+        installed['agents'].append(aname)
+
+    # 4. Hooks intentionally NOT installed
+    skipped_hooks = list(info['hook_files'])
+
+    # Build a one-line summary
+    parts = []
+    if installed['skills']:
+        parts.append(f"{len(installed['skills'])} skill" + ('' if len(installed['skills']) == 1 else 's'))
+    if installed['commands']:
+        parts.append(f"{len(installed['commands'])} command" + ('' if len(installed['commands']) == 1 else 's'))
+    if installed['agents']:
+        parts.append(f"{len(installed['agents'])} sub-agent" + ('' if len(installed['agents']) == 1 else 's'))
+    summary = 'Installed ' + (', '.join(parts) if parts else 'nothing new')
+    if skipped_hooks:
+        summary += f". {len(skipped_hooks)} hook(s) NOT installed — use CC's /plugin command to register hooks."
+    if collisions:
+        summary += f" Skipped {len(collisions)} component(s) that already exist."
+
+    return {
+        'plugin_name': info['name'],
+        'installed': installed,
+        'skipped': {'hooks': skipped_hooks, 'collisions': collisions},
+        'message': summary,
+    }
 
 
 def cleanup_stale_staging(max_age_hours: int = 24) -> int:
