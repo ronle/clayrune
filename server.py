@@ -954,6 +954,74 @@ def _claydo_cwd():
     return str(d)
 
 
+# Hard-disable tools + MCP servers for Claydo's claude subprocess. Without
+# these, the model — having all the user's built-in tools (Grep, LSP, Read,
+# Bash…) and MCP servers (Gmail/Calendar/Drive/Uber) loaded — would reach
+# for tools on feature-lookup questions ("how do I use remote control?")
+# and trigger Grep/LSP. Those calls get denied by --print's dontAsk mode,
+# the model has no turns left to recover, and the subprocess exits 1 with
+# no usable text answer. Claydo answers strictly from CLAUDE.md anyway.
+_CLAYDO_NO_TOOLS_FLAGS = [
+    '--tools', '',
+    '--strict-mcp-config',
+    '--mcp-config', '{"mcpServers":{}}',
+]
+
+
+def _claydo_recent_changelog(max_entries=15):
+    """Extract the last N entries from CHANGELOG.md so Claydo can answer
+    about features shipped after USER_GUIDE.md was last updated.
+
+    Entries are demarcated by `## [YYYY-MM-DD...]` headers. Returns the
+    concatenated tail with a section header, or empty string on failure.
+    """
+    try:
+        import re as _re
+        cl_path = Path(__file__).parent / 'CHANGELOG.md'
+        if not cl_path.exists():
+            return ''
+        text = cl_path.read_text(encoding='utf-8')
+        # Split on `## [` boundaries while preserving the marker.
+        parts = _re.split(r'(?m)^## \[', text)
+        # parts[0] is preamble (title + intro); rest are entries with the
+        # leading `## [` stripped.
+        entries = parts[1:]
+        if not entries:
+            return ''
+        recent = entries[:max_entries]
+        rebuilt = '\n'.join('## [' + e.rstrip() for e in recent)
+        return '\n\n---\n\n## Recent changes (from CHANGELOG)\n\n' + rebuilt
+    except Exception:
+        return ''
+
+
+def _claydo_prepare_context():
+    """Read USER_GUIDE.md, append a recent-CHANGELOG tail, and materialize
+    the result as `data/claydo/CLAUDE.md` (idempotent — only rewrites when
+    content drifts). Centralizes context setup for both `/api/guide/ask`
+    and `/api/guide/stream`.
+
+    Returns (cwd, None) on success; (cwd, (error_message, http_code)) on
+    failure so the caller can `return jsonify({'error': ...}), code`.
+    """
+    cwd = _claydo_cwd()
+    guide_path = Path(__file__).parent / 'docs' / 'USER_GUIDE.md'
+    if not guide_path.exists():
+        return cwd, ('guide not available — docs/USER_GUIDE.md missing', 500)
+    try:
+        guide_text = guide_path.read_text(encoding='utf-8')
+    except Exception as e:
+        return cwd, (f'guide read failed: {e}', 500)
+    combined = guide_text + _claydo_recent_changelog()
+    try:
+        guide_md = Path(cwd) / 'CLAUDE.md'
+        if not guide_md.exists() or guide_md.read_text(encoding='utf-8') != combined:
+            guide_md.write_text(combined, encoding='utf-8')
+    except Exception:
+        pass  # Non-fatal — fall through; Claude will just see less context.
+    return cwd, None
+
+
 @app.route('/api/guide/stream', methods=['POST'])
 def guide_stream():
     """Streaming variant of /api/guide/ask. Spawns claude with stream-json output
@@ -980,26 +1048,13 @@ def guide_stream():
         history = []
     history = history[-6:]
 
-    guide_path = Path(__file__).parent / 'docs' / 'USER_GUIDE.md'
-    if not guide_path.exists():
-        return jsonify({'error': 'guide not available — docs/USER_GUIDE.md missing'}), 500
-    try:
-        system_prompt = guide_path.read_text(encoding='utf-8')
-    except Exception as e:
-        return jsonify({'error': f'guide read failed: {e}'}), 500
-
-    # Materialize the guide as CLAUDE.md in Claydo's working directory so the
-    # Claude CLI auto-loads it as project context. Avoids the Windows 32 KB
-    # CreateProcess command-line limit which the 24 KB guide hit when passed
-    # via `--append-system-prompt`. Only re-write when the on-disk content
-    # has drifted from the source (cheap idempotent check).
-    cwd = _claydo_cwd()
-    try:
-        guide_md = Path(cwd) / 'CLAUDE.md'
-        if not guide_md.exists() or guide_md.read_text(encoding='utf-8') != system_prompt:
-            guide_md.write_text(system_prompt, encoding='utf-8')
-    except Exception:
-        pass  # Non-fatal — fall through with question only.
+    # Materialize USER_GUIDE.md + recent CHANGELOG tail as CLAUDE.md in
+    # Claydo's working directory so the Claude CLI auto-loads it as project
+    # context. Avoids the Windows 32 KB CreateProcess command-line limit
+    # which the 24 KB guide hit when passed via `--append-system-prompt`.
+    cwd, err = _claydo_prepare_context()
+    if err is not None:
+        return jsonify({'error': err[0]}), err[1]
 
     if history:
         lines = ['Previous exchange in this conversation:']
@@ -1023,11 +1078,17 @@ def guide_stream():
     # blows past that — surfacing as "The command line is too long". stdin
     # has no such limit. Command line stays well under 200 chars regardless
     # of question length.
+    # --max-turns 2 (not 1): on questions that nudge the model toward a tool
+    # call, the tool-use attempt would count as turn 1 and `--max-turns 1`
+    # would exit before the model could fall back to a text answer. Tools
+    # are disabled below, so the model can't actually call anything; turn 2
+    # is purely a safety margin.
     cmd = [_resolve_claude(),
-           '--max-turns', '1',
+           '--max-turns', '2',
            '--print', '--verbose',
            '--input-format', 'stream-json',
-           '--output-format', 'stream-json']
+           '--output-format', 'stream-json',
+           *_CLAYDO_NO_TOOLS_FLAGS]
     stdin_msg = json.dumps({
         'type': 'user',
         'message': {'role': 'user', 'content': full_question},
@@ -1148,24 +1209,12 @@ def guide_ask():
         history = []
     history = history[-6:]
 
-    guide_path = Path(__file__).parent / 'docs' / 'USER_GUIDE.md'
-    if not guide_path.exists():
-        return jsonify({'error': 'guide not available — docs/USER_GUIDE.md missing'}), 500
-    try:
-        system_prompt = guide_path.read_text(encoding='utf-8')
-    except Exception as e:
-        return jsonify({'error': f'guide read failed: {e}'}), 500
-
-    # See /api/guide/stream for the rationale: passing the 24 KB guide via
-    # `--append-system-prompt` blows past Windows' 32 KB CreateProcess limit.
-    # Drop it as CLAUDE.md so Claude auto-loads it as project context instead.
-    cwd = _claydo_cwd()
-    try:
-        guide_md = Path(cwd) / 'CLAUDE.md'
-        if not guide_md.exists() or guide_md.read_text(encoding='utf-8') != system_prompt:
-            guide_md.write_text(system_prompt, encoding='utf-8')
-    except Exception:
-        pass
+    # See `_claydo_prepare_context`: USER_GUIDE.md + recent CHANGELOG tail
+    # is materialized as CLAUDE.md in Claydo's cwd (avoids the Windows 32 KB
+    # CreateProcess limit that --append-system-prompt would hit).
+    cwd, err = _claydo_prepare_context()
+    if err is not None:
+        return jsonify({'error': err[0]}), err[1]
 
     # Build the user prompt: prior turns (if any) + current question.
     if history:
@@ -1187,11 +1236,13 @@ def guide_ask():
     # See /api/guide/stream — Windows' cmd.exe wrapper around claude.cmd is
     # capped at 8191 chars, so an 8 KB question pushed via -p triggers
     # "command line too long". Send it through stdin (stream-json) instead.
+    # --max-turns 2 + no-tools flags: see the matching block in guide_stream.
     cmd = [_resolve_claude(),
-           '--max-turns', '1',
+           '--max-turns', '2',
            '--print', '--verbose',
            '--input-format', 'stream-json',
-           '--output-format', 'stream-json']
+           '--output-format', 'stream-json',
+           *_CLAYDO_NO_TOOLS_FLAGS]
     stdin_msg = json.dumps({
         'type': 'user',
         'message': {'role': 'user', 'content': full_question},
@@ -2366,6 +2417,10 @@ def _read_agent_stream(proc, session):
                 # Capture Claude CLI session UUID from init or result messages
                 if 'session_id' in msg:
                     session['claude_session_id'] = msg['session_id']
+                # Refresh the account-global system status cache from
+                # `system/init` and `rate_limit_event` messages (every claude
+                # session emits these). No-op for any other message type.
+                _capture_system_init(msg)
                 if msg_type == 'assistant' and 'message' in msg:
                     for block in msg['message'].get('content', []):
                         if block.get('type') == 'text':
@@ -2426,6 +2481,12 @@ def _read_agent_stream(proc, session):
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
                     _auto_snapshot_notes_on_turn(session)
+                # Web push hook: intercept PushNotification tool_use + turn results.
+                _handle_push_signal(
+                    session.get('project_id', ''),
+                    session.get('session_id', ''),
+                    msg,
+                )
             except json.JSONDecodeError:
                 session['log_lines'].append(line)
                 session['last_output_time'] = _time.time()
@@ -2501,6 +2562,8 @@ def _read_agent_stream_b(proc, session):
                 msg_type = msg.get('type', '')
                 if 'session_id' in msg:
                     session['claude_session_id'] = msg['session_id']
+                # See Mode A reader: refresh the system-status cache.
+                _capture_system_init(msg)
                 if msg_type == 'assistant' and 'message' in msg:
                     for block in msg['message'].get('content', []):
                         if block.get('type') == 'text':
@@ -2561,6 +2624,12 @@ def _read_agent_stream_b(proc, session):
                     # Turn boundary — process stays alive
                     session['status'] = 'idle'
                     session['last_status_change_time'] = _time.time()
+                # Web push hook: intercept PushNotification tool_use + turn results.
+                _handle_push_signal(
+                    session.get('project_id', ''),
+                    session.get('session_id', ''),
+                    msg,
+                )
             except json.JSONDecodeError:
                 session['log_lines'].append(line)
                 session['last_output_time'] = _time.time()
@@ -6757,6 +6826,75 @@ def hivemind_runs(hivemind_id):
     })
 
 
+@app.route('/api/recent-runs')
+def api_recent_runs():
+    """Aggregate agent_log entries across all projects within a time window.
+
+    Powers the "Recent" tab in the schedule banner dropdown — answers
+    "what just ran across all my projects in the last N hours?"
+
+    Query params:
+      hours  window size in hours (default 2, max 168 = 1 week)
+      limit  max rows to return (default 50, max 200)
+    """
+    try:
+        hours = float(request.args.get('hours', 2))
+    except Exception:
+        hours = 2
+    if hours <= 0:
+        hours = 2
+    if hours > 168:
+        hours = 168
+    try:
+        limit = int(request.args.get('limit', 50))
+    except Exception:
+        limit = 50
+    if limit < 1:
+        limit = 50
+    if limit > 200:
+        limit = 200
+
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    # Build project_id -> display name lookup once.
+    proj_names = {}
+    for p in load_projects():
+        pid = p.get('id') or ''
+        if pid:
+            proj_names[pid] = p.get('name') or pid
+
+    runs = []
+    suffix = '_agent_log.json'
+    for f in DATA_DIR.glob('*' + suffix):
+        pid = f.name[:-len(suffix)]
+        try:
+            log = json.loads(f.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        for entry in log:
+            ts = entry.get('ts') or entry.get('started_at') or ''
+            if not ts:
+                continue
+            try:
+                entry_dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            except Exception:
+                continue
+            if entry_dt < cutoff_dt:
+                continue
+            e = dict(entry)
+            e['project_id'] = pid
+            e['project_name'] = proj_names.get(pid, pid)
+            runs.append(e)
+
+    runs.sort(key=lambda e: e.get('ts', ''), reverse=True)
+    runs = runs[:limit]
+    return jsonify({
+        'runs': _enrich_run_entries(runs),
+        'hours': hours,
+        'count': len(runs),
+    })
+
+
 @app.route('/api/project/<project_id>/conversations')
 def get_project_conversations(project_id):
     """Return recent Claude Code conversations for a project, read from .jsonl transcripts.
@@ -8179,6 +8317,17 @@ def delete_schedule(schedule_id):
 
 # ── Static ───────────────────────────────────────────────────────────────────
 
+@app.route('/sw.js')
+def service_worker():
+    # Served at root so the SW scope covers the whole origin (`/?session=...`
+    # deep links delivered via push need to be routable from this worker).
+    resp = send_from_directory(STATIC_DIR, 'sw.js')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['Service-Worker-Allowed'] = '/'
+    resp.headers['Content-Type'] = 'application/javascript'
+    return resp
+
+
 @app.route('/')
 def index():
     index_path = Path(STATIC_DIR) / 'index.html'
@@ -8822,6 +8971,361 @@ def _provider_status_dict(p):
     }
 
 
+# ── Web push notifications ──────────────────────────────────────────────────
+# Browser / PWA push delivery via VAPID. When Claude calls the
+# `PushNotification` tool inside an MC-managed session (intercepted from
+# stream-json in `_read_agent_stream*`), or when a turn completes for a
+# project with `notify_turn_complete=True`, we encrypt + sign a notification
+# and deliver it through the browser's push service (FCM / Mozilla / APNs).
+# Tapping the notification opens clayrune.io routed to the originating
+# session so the user can reply via the existing `/agent/send` endpoint.
+#
+# Subscriptions are keyed by the CF Access session nonce so they get cleaned
+# up alongside revoked CF sessions; non-CF (local) subscribers fall back to
+# an endpoint-hash key.
+
+PUSH_VAPID_PATH = _DATA_ROOT / 'data' / 'push_vapid.json'
+PUSH_SUBS_PATH = _DATA_ROOT / 'data' / 'push_subscriptions.json'
+
+_push_state_lock = threading.Lock()
+
+
+def _load_vapid_keys() -> dict:
+    """Return the VAPID keypair, generating + persisting one if missing.
+
+    Private key is stored as the raw 32-byte EC scalar, base64url-encoded.
+    `pywebpush.webpush(vapid_private_key=…)` routes through
+    `py_vapid.Vapid01.from_string`, which auto-detects RAW (32 bytes after
+    decode) vs DER (longer) — but does NOT strip PEM `BEGIN/END` lines, so
+    storing the full PEM here would fail signature generation at delivery
+    time. Raw is the simplest format that works.
+    """
+    needs_persist = False
+    d = None
+    try:
+        with open(PUSH_VAPID_PATH, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        d = None
+
+    # Migration: an earlier build stored the private key as full PEM, which
+    # py_vapid can't parse via from_string. Detect and convert to raw on load
+    # so the SAME keypair (and therefore the same public key already shared
+    # with subscribed browsers) keeps working — no resubscribe required.
+    if isinstance(d, dict) and d.get('public') and d.get('private'):
+        priv = d['private']
+        if isinstance(priv, str) and priv.startswith('-----BEGIN'):
+            try:
+                import base64
+                from cryptography.hazmat.primitives import serialization
+                key = serialization.load_pem_private_key(
+                    priv.encode(), password=None,
+                )
+                priv_int = key.private_numbers().private_value
+                priv_raw = priv_int.to_bytes(32, 'big')
+                d['private'] = base64.urlsafe_b64encode(priv_raw).decode().rstrip('=')
+                needs_persist = True
+                print('[push] migrated VAPID private key from PEM to raw format', flush=True)
+            except Exception as e:
+                print(f"[push] VAPID PEM migration failed: {e}; regenerating", flush=True)
+                d = None  # fall through to regen
+        if d is not None:
+            if not needs_persist:
+                return d
+
+    if d is None:
+        try:
+            import base64
+            from py_vapid import Vapid01
+            from cryptography.hazmat.primitives import serialization
+            v = Vapid01()
+            v.generate_keys()
+            pub_bytes = v.public_key.public_bytes(
+                encoding=serialization.Encoding.X962,
+                format=serialization.PublicFormat.UncompressedPoint,
+            )
+            public_b64 = base64.urlsafe_b64encode(pub_bytes).decode().rstrip('=')
+            priv_int = v.private_key.private_numbers().private_value
+            priv_raw = priv_int.to_bytes(32, 'big')
+            private_b64 = base64.urlsafe_b64encode(priv_raw).decode().rstrip('=')
+            d = {'public': public_b64, 'private': private_b64, 'created_at': int(_time.time())}
+            needs_persist = True
+        except Exception as e:
+            print(f"[push] VAPID generation failed: {e}", flush=True)
+            return {}
+
+    if needs_persist:
+        PUSH_VAPID_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PUSH_VAPID_PATH.with_suffix('.json.tmp')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(d, f, indent=2)
+        os.replace(tmp, PUSH_VAPID_PATH)
+    return d
+
+
+def _load_push_subscriptions() -> dict:
+    try:
+        with open(PUSH_SUBS_PATH, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_push_subscriptions(d: dict) -> None:
+    PUSH_SUBS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = PUSH_SUBS_PATH.with_suffix('.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, PUSH_SUBS_PATH)
+
+
+def _push_subject() -> str:
+    """VAPID `sub` claim. Must be mailto: or https: URL."""
+    email = (CONFIG.get('user_email') or '').strip()
+    if email:
+        return f'mailto:{email}'
+    return 'mailto:push@clayrune.io'
+
+
+def _notify_push(title: str, body: str, *, url: str = '',
+                 project_id: str = '', session_id: str = '',
+                 kind: str = 'agent') -> dict:
+    """Deliver a push notification to every subscribed device that opted in
+    for this `kind` (`'agent'` for PushNotification tool, `'turn_complete'`
+    for end-of-turn). Removes 404/410 subscriptions automatically.
+    """
+    try:
+        from pywebpush import webpush, WebPushException
+    except Exception as e:
+        return {'ok': False, 'error': f'pywebpush_missing: {e}'}
+    keys = _load_vapid_keys()
+    if not keys.get('private'):
+        return {'ok': False, 'error': 'no_vapid_key'}
+    subs = _load_push_subscriptions()
+    if not subs:
+        return {'ok': False, 'error': 'no_subscribers'}
+    payload = json.dumps({
+        'title': (title or '')[:120],
+        'body': (body or '')[:280],
+        'url': url or '/',
+        'project_id': project_id,
+        'session_id': session_id,
+        'kind': kind,
+        'ts': int(_time.time()),
+    })
+    sent, failed, removed = 0, 0, []
+    last_error = None
+    for nonce, sub in list(subs.items()):
+        if not isinstance(sub, dict):
+            continue
+        if kind == 'agent' and not sub.get('notify_agent_push', True):
+            continue
+        if kind == 'turn_complete' and not sub.get('notify_turn_complete', False):
+            continue
+        pf = sub.get('project_filter')
+        if pf and project_id and pf != project_id:
+            continue
+        sub_info = {
+            'endpoint': sub.get('endpoint'),
+            'keys': sub.get('keys', {}),
+        }
+        if not sub_info['endpoint']:
+            continue
+        try:
+            webpush(
+                subscription_info=sub_info,
+                data=payload,
+                vapid_private_key=keys['private'],
+                vapid_claims={'sub': _push_subject()},
+                ttl=300,
+            )
+            sub['last_used_at'] = int(_time.time())
+            sent += 1
+        except WebPushException as e:
+            resp = getattr(e, 'response', None)
+            code = resp.status_code if resp is not None else 0
+            if code in (404, 410):
+                removed.append(nonce)
+            else:
+                failed += 1
+                detail = (resp.text[:200] if resp is not None and resp.text else str(e))
+                last_error = f'code={code} {detail}'
+                print(f"[push] delivery failed for {nonce[:12]}…: code={code} {e} body={detail}", flush=True)
+        except Exception as e:
+            failed += 1
+            last_error = f'{type(e).__name__}: {e}'
+            print(f"[push] unexpected error for {nonce[:12]}…: {e}", flush=True)
+    if removed:
+        for n in removed:
+            subs.pop(n, None)
+        print(f"[push] removed {len(removed)} stale subscription(s)", flush=True)
+    _save_push_subscriptions(subs)
+    return {
+        'ok': True, 'sent': sent, 'failed': failed, 'removed': len(removed),
+        'last_error': last_error,
+    }
+
+
+def _handle_push_signal(project_id: str, session_id: str, msg: dict) -> None:
+    """Fired from stream readers on each parsed stream-json message.
+
+    - assistant + tool_use(PushNotification) → fire `kind='agent'` push.
+    - result                                  → fire `kind='turn_complete'`
+      push iff the project opted in.
+
+    Wrapped in a broad try so a delivery problem never breaks the reader.
+    """
+    try:
+        msg_type = msg.get('type', '')
+        if msg_type == 'assistant' and 'message' in msg:
+            for block in msg['message'].get('content', []):
+                if (block.get('type') == 'tool_use'
+                        and block.get('name') == 'PushNotification'):
+                    text = (block.get('input') or {}).get('message') or ''
+                    if not text:
+                        continue
+                    p = load_project(project_id) or {}
+                    if not p.get('notify_push_enabled', True):
+                        continue
+                    title = (p.get('name') or 'Clayrune')[:60]
+                    target = f'/?project={project_id}&session={session_id}'
+                    _notify_push(title, text, url=target,
+                                 project_id=project_id, session_id=session_id,
+                                 kind='agent')
+        elif msg_type == 'result':
+            p = load_project(project_id) or {}
+            if not p.get('notify_turn_complete', False):
+                return
+            if not p.get('notify_push_enabled', True):
+                return
+            title = (p.get('name') or 'Clayrune')[:60]
+            target = f'/?project={project_id}&session={session_id}'
+            _notify_push(title, 'Turn complete', url=target,
+                         project_id=project_id, session_id=session_id,
+                         kind='turn_complete')
+    except Exception as e:
+        print(f"[push] _handle_push_signal error: {e}", flush=True)
+
+
+# Endpoints ──────────────────────────────────────────────────────────────────
+@app.route('/api/push/vapid-public-key')
+def push_vapid_public_key():
+    keys = _load_vapid_keys()
+    return jsonify({'ok': True, 'public_key': keys.get('public', '')})
+
+
+@app.route('/api/push/subscribe', methods=['POST'])
+def push_subscribe():
+    body = request.get_json(silent=True) or {}
+    endpoint = body.get('endpoint') or ''
+    keys = body.get('keys') or {}
+    if not endpoint or not isinstance(keys, dict) or not keys.get('p256dh') or not keys.get('auth'):
+        return jsonify({'ok': False, 'error': 'invalid_subscription'}), 400
+    nonce = _cf_session_nonce_from_request()
+    if not nonce:
+        import hashlib
+        nonce = 'local:' + hashlib.sha1(endpoint.encode()).hexdigest()[:16]
+    label = (body.get('label') or '').strip() or 'Device'
+    ua = request.headers.get('User-Agent', '')
+    with _push_state_lock:
+        subs = _load_push_subscriptions()
+        # Dedup-by-endpoint: the browser's PushSubscription.endpoint is stable
+        # across CF Access re-OTPs (which change the nonce). If we already have
+        # a record with this same endpoint under a different nonce, migrate it
+        # (preserve user prefs, drop the stale nonce key). This prevents
+        # orphaned subs accumulating every time the CF session expires.
+        existing = subs.get(nonce) if isinstance(subs.get(nonce), dict) else {}
+        if not existing:
+            for k, v in list(subs.items()):
+                if k != nonce and isinstance(v, dict) and v.get('endpoint') == endpoint:
+                    existing = v
+                    subs.pop(k, None)
+                    print(f"[push] migrated subscription {k[:12]}… → {nonce[:12]}… (same endpoint, re-OTP)", flush=True)
+                    break
+        subs[nonce] = {
+            'label': label[:80] if label != 'Device' else (existing.get('label') or label)[:80],
+            'ua': (ua or '')[:300],
+            'endpoint': endpoint,
+            'keys': {'p256dh': keys.get('p256dh'), 'auth': keys.get('auth')},
+            'project_filter': body.get('project_filter') or existing.get('project_filter'),
+            'notify_agent_push': bool(body.get('notify_agent_push', existing.get('notify_agent_push', True))),
+            'notify_turn_complete': bool(body.get('notify_turn_complete', existing.get('notify_turn_complete', False))),
+            'created_at': existing.get('created_at') or int(_time.time()),
+            'last_used_at': existing.get('last_used_at') or 0,
+        }
+        _save_push_subscriptions(subs)
+    return jsonify({'ok': True, 'nonce': nonce, 'label': label})
+
+
+@app.route('/api/push/unsubscribe', methods=['POST'])
+def push_unsubscribe():
+    body = request.get_json(silent=True) or {}
+    nonce = body.get('nonce') or ''
+    endpoint = body.get('endpoint') or ''
+    with _push_state_lock:
+        subs = _load_push_subscriptions()
+        if nonce and nonce in subs:
+            subs.pop(nonce, None)
+        elif endpoint:
+            for k, v in list(subs.items()):
+                if isinstance(v, dict) and v.get('endpoint') == endpoint:
+                    subs.pop(k, None)
+                    break
+        _save_push_subscriptions(subs)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/push/subscriptions')
+def push_subscriptions_list():
+    subs = _load_push_subscriptions()
+    out = []
+    for nonce, s in subs.items():
+        if not isinstance(s, dict):
+            continue
+        out.append({
+            'nonce': nonce,
+            'label': s.get('label', ''),
+            'ua': s.get('ua', ''),
+            'created_at': s.get('created_at', 0),
+            'last_used_at': s.get('last_used_at', 0),
+            'project_filter': s.get('project_filter'),
+            'notify_agent_push': bool(s.get('notify_agent_push', True)),
+            'notify_turn_complete': bool(s.get('notify_turn_complete', False)),
+        })
+    out.sort(key=lambda x: x.get('last_used_at', 0), reverse=True)
+    return jsonify({'ok': True, 'subscriptions': out})
+
+
+@app.route('/api/push/subscription/<nonce>', methods=['PATCH'])
+def push_subscription_update(nonce):
+    body = request.get_json(silent=True) or {}
+    with _push_state_lock:
+        subs = _load_push_subscriptions()
+        if nonce not in subs or not isinstance(subs[nonce], dict):
+            return jsonify({'ok': False, 'error': 'not_found'}), 404
+        s = subs[nonce]
+        if 'label' in body:
+            s['label'] = str(body['label'])[:80]
+        if 'project_filter' in body:
+            s['project_filter'] = body['project_filter'] or None
+        if 'notify_agent_push' in body:
+            s['notify_agent_push'] = bool(body['notify_agent_push'])
+        if 'notify_turn_complete' in body:
+            s['notify_turn_complete'] = bool(body['notify_turn_complete'])
+        _save_push_subscriptions(subs)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/push/test', methods=['POST'])
+def push_test():
+    body = request.get_json(silent=True) or {}
+    title = (body.get('title') or 'Clayrune test').strip()
+    msg = (body.get('message') or 'Push notifications are working.').strip()
+    result = _notify_push(title, msg, url='/', kind='agent')
+    return jsonify(result)
+
+
 # ── Per-CF-session "name this device" labels ────────────────────────────────
 # When a browser/phone signs in via CF Access OTP, the first request through
 # the tunnel is intercepted (see `_redirect_unlabeled_cf_session` below) and
@@ -9037,6 +9541,9 @@ async function submit() {
     });
     const j = await r.json();
     if (r.ok && j.ok) {
+      // Remember the chosen name so re-OTPs (new nonce, same device) can
+      // auto-submit without showing this page again.
+      try { localStorage.setItem('mc_device_name', label); } catch (_) {}
       window.location.href = '/';
     } else {
       err.textContent = j.message || ('Could not save (' + r.status + ')');
@@ -9047,6 +9554,23 @@ async function submit() {
     btn.disabled = false;
   }
 }
+
+// Auto-submit on re-OTP: if this device has labeled itself before in a
+// previous CF session (different nonce, same browser+device → same
+// localStorage), silently re-label the new nonce and continue.
+(function autoSubmitIfRemembered() {
+  try {
+    const remembered = localStorage.getItem('mc_device_name');
+    if (!remembered || !remembered.trim()) return;
+    if (!NONCE) return;
+    inp.value = remembered;
+    // Hide the form so the user doesn't see a flash; show a tiny "Reconnecting…"
+    document.querySelector('.card').innerHTML =
+      '<div style="font-size:14px;color:#6b6b6b;padding:24px;text-align:center">'
+      + 'Recognized this device as <b>' + remembered.replace(/[<>&]/g,'') + '</b>.<br>Reconnecting…</div>';
+    submit();
+  } catch (_) {}
+})();
 </script>
 </body>
 </html>
@@ -9656,6 +10180,97 @@ _RESTART_RATE_LIMIT_SECONDS = 30
 _SERVER_STARTED_AT = datetime.now(timezone.utc).isoformat()
 _SERVER_STARTED_MONOTONIC = _time.time()
 
+# ── System status passive cache ─────────────────────────────────────────────
+# Every `claude` session emits a `system/init` message and a `rate_limit_event`
+# message at startup. Both contain account-global info: model, CLI version,
+# auth source, rate-limit window state, connected MCP servers, etc. — exactly
+# the same info CC's own `/status` slash command surfaces. We tap the two
+# main stream readers (Mode A + Mode B) so every dispatched agent session
+# refreshes this cache for free. Frontend reads it via /api/system/status.
+SYSTEM_STATUS_PATH = _DATA_ROOT / 'data' / 'system_status.json'
+_LAST_SYSTEM_STATUS = {}
+
+
+def _load_system_status_from_disk():
+    """Populate `_LAST_SYSTEM_STATUS` on startup so the panel shows something
+    immediately even if no agent has run since the restart."""
+    global _LAST_SYSTEM_STATUS
+    try:
+        if SYSTEM_STATUS_PATH.exists():
+            _LAST_SYSTEM_STATUS = json.loads(SYSTEM_STATUS_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        _LAST_SYSTEM_STATUS = {}
+
+
+def _save_system_status_to_disk():
+    try:
+        SYSTEM_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SYSTEM_STATUS_PATH.write_text(
+            json.dumps(_LAST_SYSTEM_STATUS, indent=2), encoding='utf-8'
+        )
+    except Exception:
+        pass  # Non-fatal — cache stays in memory.
+
+
+def _capture_system_init(msg):
+    """Extract account-global fields from a claude stream-json message and
+    refresh the in-memory + on-disk system-status cache.
+
+    Hooked into both `_read_agent_stream` (Mode A) and `_read_agent_stream_b`
+    (Mode B) right after `msg = json.loads(line)`. Returns silently for any
+    message type we don't care about.
+
+    Handles two message types:
+      - `system/init` — model, version, auth, MCP servers, tool/skill/plugin counts.
+      - `rate_limit_event` — 5-hour or 1-hour rate-limit window state.
+    """
+    global _LAST_SYSTEM_STATUS
+    try:
+        mtype = msg.get('type', '')
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if mtype == 'system' and msg.get('subtype') == 'init':
+            mcp = msg.get('mcp_servers') or []
+            init_data = {
+                'model': msg.get('model') or '',
+                'claude_code_version': msg.get('claude_code_version') or '',
+                'apiKeySource': msg.get('apiKeySource') or '',
+                'permissionMode': msg.get('permissionMode') or '',
+                'mcp_servers': [
+                    {'name': m.get('name', ''), 'status': m.get('status', 'unknown')}
+                    for m in mcp if isinstance(m, dict)
+                ],
+                'tools_count': len(msg.get('tools') or []),
+                'skills_count': len(msg.get('skills') or []),
+                'agents_count': len(msg.get('agents') or []),
+                'plugins_count': len(msg.get('plugins') or []),
+                'output_style': msg.get('output_style') or '',
+                'fast_mode_state': msg.get('fast_mode_state') or '',
+                'analytics_disabled': bool(msg.get('analytics_disabled')),
+            }
+            _LAST_SYSTEM_STATUS.update(init_data)
+            _LAST_SYSTEM_STATUS['init_captured_at'] = now_iso
+            _LAST_SYSTEM_STATUS['captured_at'] = now_iso
+            _save_system_status_to_disk()
+        elif mtype == 'rate_limit_event':
+            info = msg.get('rate_limit_info') or {}
+            if isinstance(info, dict):
+                _LAST_SYSTEM_STATUS['rate_limit_info'] = {
+                    'status': info.get('status', ''),
+                    'resetsAt': info.get('resetsAt'),
+                    'rateLimitType': info.get('rateLimitType', ''),
+                    'overageStatus': info.get('overageStatus', ''),
+                    'overageResetsAt': info.get('overageResetsAt'),
+                    'isUsingOverage': bool(info.get('isUsingOverage')),
+                }
+                _LAST_SYSTEM_STATUS['rate_limit_captured_at'] = now_iso
+                _LAST_SYSTEM_STATUS['captured_at'] = now_iso
+                _save_system_status_to_disk()
+    except Exception:
+        pass  # Capture is best-effort; never break the reader on a parse error.
+
+
+_load_system_status_from_disk()
+
 
 @app.route('/api/system/heartbeat')
 def system_heartbeat():
@@ -9672,6 +10287,90 @@ def system_heartbeat():
         'pid': os.getpid(),
         'uptime_seconds': int(_time.time() - _SERVER_STARTED_MONOTONIC),
     })
+
+
+def _build_system_status_payload():
+    """Shape the cached system-status dict for /api/system/status responses.
+
+    Returns the cache as-is plus a `cache_age_seconds` field computed from
+    `captured_at`, so the frontend can render "stale" without re-parsing the
+    timestamp. Returns an empty `{captured_at: null}` shape if the cache is
+    still empty (no agent has run since first install / cache file deletion).
+    """
+    payload = dict(_LAST_SYSTEM_STATUS)
+    cap = payload.get('captured_at')
+    age = None
+    if cap:
+        try:
+            dt = datetime.fromisoformat(cap.replace('Z', '+00:00'))
+            age = int((datetime.now(timezone.utc) - dt).total_seconds())
+        except Exception:
+            age = None
+    payload['cache_age_seconds'] = age
+    return payload
+
+
+@app.route('/api/system/status', methods=['GET'])
+def system_status_get():
+    """Return the cached system status (model, version, rate limit, MCP, etc.).
+
+    Read-only and cheap — just serializes the in-memory dict. Cache is
+    populated by both stream readers as agents run; falls back to disk after
+    a restart via `_load_system_status_from_disk()` at module load.
+    """
+    return jsonify(_build_system_status_payload())
+
+
+@app.route('/api/system/status/refresh', methods=['POST'])
+def system_status_refresh():
+    """Active refresh: spawn a minimal claude session purely to read its init
+    message + rate-limit event, then return the freshly-updated cache.
+
+    Costs roughly $0.001 (one tiny prompt, one tiny reply). Use sparingly:
+    the cache auto-refreshes from any real agent activity, so this is only
+    needed when the user wants live data after a long idle period.
+    """
+    try:
+        # `--max-turns 1` with a one-word prompt is the cheapest valid call
+        # that still emits the system/init + rate_limit_event we care about.
+        # `--tools "" --strict-mcp-config --mcp-config {"mcpServers":{}}` is
+        # NOT applied here — we WANT the full tool/MCP roster in the init so
+        # the panel reflects the user's real environment, not a sandboxed
+        # subset (which is why we don't reuse Claydo's flags).
+        cmd = [_resolve_claude(),
+               '--max-turns', '1',
+               '--print', '--verbose',
+               '--input-format', 'stream-json',
+               '--output-format', 'stream-json']
+        stdin_msg = json.dumps({
+            'type': 'user',
+            'message': {'role': 'user', 'content': 'ok'},
+        }) + '\n'
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            input=stdin_msg,
+            timeout=30, encoding='utf-8', errors='replace',
+            creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+        )
+        for line in (proc.stdout or '').splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            _capture_system_init(obj)
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'refresh timed out (>30s)',
+                        'status': _build_system_status_payload()}), 504
+    except FileNotFoundError:
+        return jsonify({'error': 'Claude CLI not found on this server',
+                        'status': _build_system_status_payload()}), 500
+    except Exception as e:
+        return jsonify({'error': str(e),
+                        'status': _build_system_status_payload()}), 500
+    return jsonify(_build_system_status_payload())
 
 
 def _get_active_restart_blockers():

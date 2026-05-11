@@ -77,6 +77,13 @@ test_upload.txt
 # Runtime remote-access state — names are scoped to user's CF Access nonces
 data/session_labels.json
 
+# Runtime web-push state — push_vapid.json contains the PRIVATE VAPID key,
+# push_subscriptions.json contains per-device endpoints + auth secrets,
+# system_status.json is restart/heartbeat state. All regenerated at runtime.
+data/push_vapid.json
+data/push_subscriptions.json
+data/system_status.json
+
 # Bundled third-party binaries (cloudflared, future Rust mc-tunnel artifacts)
 # These are fetched at build time, not committed. README + LICENSE stay.
 mc_tunnel/bin/cloudflared
