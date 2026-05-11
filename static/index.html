@@ -14699,6 +14699,66 @@ async function restoreSkillAction(name) {
 // ── Skills import (paste / folder / Git URL / cross-project) ─────────────────
 
 let win_gitStaging = {}; // modalId -> staging_id (set when multi-skill picker is shown)
+let win_importPluginSource = {}; // modalId -> { source: 'git'|'folder', staging_id?, path? }
+
+function _renderPluginBanner(plugin) {
+  if (!plugin) return '';
+  const stats = [];
+  if (plugin.skill_count) stats.push(`${plugin.skill_count} skill${plugin.skill_count===1?'':'s'}`);
+  if (plugin.command_count) stats.push(`${plugin.command_count} command${plugin.command_count===1?'':'s'}`);
+  if (plugin.agent_count) stats.push(`${plugin.agent_count} sub-agent${plugin.agent_count===1?'':'s'}`);
+  if (plugin.hook_count) stats.push(`${plugin.hook_count} hook${plugin.hook_count===1?'':'s'}`);
+  const statsLine = stats.length ? stats.join(' · ') : 'no managed components';
+  const readme = (plugin.readme_excerpt || '').trim();
+  const readmeHTML = readme
+    ? `<div style="font-size:11px;color:var(--text-mute);margin-top:6px;line-height:1.5;max-height:80px;overflow-y:auto;white-space:pre-wrap;font-family:inherit">${esc(readme.slice(0, 360))}${readme.length>360?'…':''}</div>`
+    : '';
+  const hookNote = plugin.has_hooks
+    ? `<div style="font-size:11px;color:var(--amber);margin-top:6px">&#x26A0; Hooks won't be installed by Clayrune (they run arbitrary shell code). To enable them, install the whole plugin via CC's <code>/plugin</code> command.</div>`
+    : '';
+  return `<div style="padding:10px 12px;border:1px solid var(--accent-dim);background:var(--accent-dim);border-radius:6px;margin-bottom:10px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-size:11px;background:var(--accent);color:#fff;padding:2px 8px;border-radius:3px;font-weight:600">PLUGIN</span>
+      <span style="font-size:13px;font-weight:600;color:var(--text)">${esc(plugin.name)}</span>
+      <span style="font-size:11px;color:var(--text-faint)">${esc(statsLine)}</span>
+    </div>
+    ${readmeHTML}
+    ${hookNote}
+  </div>`;
+}
+
+function _renderFullPluginButton(modalId) {
+  return `<button class="btn-add" style="margin-bottom:10px;width:100%" onclick="_doSkillImportFullPlugin('${modalId}')">
+    Install full plugin (skills + commands + sub-agents)
+  </button>`;
+}
+
+async function _doSkillImportFullPlugin(modalId) {
+  const src = win_importPluginSource[modalId];
+  if (!src) { _siStatus(modalId, 'no plugin source for this modal', 'var(--red)'); return; }
+  _siStatus(modalId, 'Installing full plugin...');
+  try {
+    const body = src.source === 'git'
+      ? { staging_id: src.staging_id }
+      : { path: src.path };
+    const res = await fetch(API_BASE + '/api/skills/import/plugin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) { _siStatus(modalId, data.error || 'HTTP ' + res.status, 'var(--red)'); return; }
+    _siStatus(modalId, data.message || 'Installed', 'var(--green)');
+    showToast(data.message || ('Installed ' + (data.plugin_name || 'plugin')), 6000);
+    win_importPluginSource[modalId] = null;
+    win_gitStaging[modalId] = null;
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+    setTimeout(() => closeModalById(modalId), 800);
+  } catch(e) {
+    _siStatus(modalId, 'Install failed: ' + e.message, 'var(--red)');
+  }
+}
 
 function _toggleSkillsImportMenu(event) {
   event.stopPropagation();
@@ -14909,11 +14969,21 @@ async function _doSkillImportFolder(modalId, selectedRelDir) {
     const data = await res.json();
     if (!res.ok || data.error) { _siStatus(modalId, data.error || 'HTTP ' + res.status, 'var(--red)'); return; }
     if (data.multiple) {
-      // Show candidate picker
+      // Show candidate picker (+ optional plugin banner)
+      win_importPluginSource[modalId] = data.plugin
+        ? { source: 'folder', path: path }
+        : null;
       const wrap = win.querySelector('#sif-candidates');
       wrap.style.display = '';
+      const pluginBanner = _renderPluginBanner(data.plugin);
+      const fullPluginBtn = data.plugin ? _renderFullPluginButton(modalId) : '';
+      const skillLabel = data.plugin
+        ? `Or install just one of the ${data.candidates.length} skill${data.candidates.length===1?'':'s'} the plugin contains:`
+        : 'Multiple skills found — pick one to install:';
       wrap.innerHTML = `
-        <div style="font-size:12px;color:var(--text);margin-bottom:6px">Multiple skills found — pick one to install:</div>
+        ${pluginBanner}
+        ${fullPluginBtn}
+        <div style="font-size:12px;color:var(--text);margin-bottom:6px">${skillLabel}</div>
         ${(data.candidates || []).map(c => `
           <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:4px">
             <div style="flex:1">
@@ -14924,7 +14994,7 @@ async function _doSkillImportFolder(modalId, selectedRelDir) {
             <button class="btn-tiny" onclick="_doSkillImportFolder('${modalId}', '${esc(c.rel_dir).replace(/'/g, "\\'")}')">Install this</button>
           </div>
         `).join('')}`;
-      _siStatus(modalId, 'Pick one of the candidates above', 'var(--text-faint)');
+      _siStatus(modalId, data.plugin ? 'Plugin detected. Choose what to install.' : 'Pick one of the candidates above', 'var(--text-faint)');
       return;
     }
     _siStatus(modalId, 'Imported', 'var(--green)');
@@ -14944,7 +15014,7 @@ function openSkillImportGit() {
   if (openModals.has(modalId)) { focusModal(modalId); return; }
   const ctx = _defaultImportContext();
   const body = `
-    <div style="font-size:11px;color:var(--text-faint)">Public Git repo URL. The repo can contain a single skill at root, or multiple skills (you'll pick one). HTTPS recommended; private repos require system-git auth.</div>
+    <div style="font-size:11px;color:var(--text-faint)">Public Git URL. Accepts bare repo URLs <em>and</em> GitHub web URLs pointing at a subfolder (<code>github.com/owner/repo/tree/main/path/to/skill</code>) — Clayrune extracts the repo + ref + path. HTTPS recommended; private repos require system-git auth.</div>
     ${_importContextHTML(modalId, ctx)}
     <div>
       <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Git URL</label>
@@ -14999,12 +15069,22 @@ async function _doSkillImportGit(modalId) {
       setTimeout(() => closeModalById(modalId), 600);
       return;
     }
-    // Multi-skill repo: show picker
+    // Multi-skill repo OR plugin detected: show picker (+ optional plugin banner)
     win_gitStaging[modalId] = data.staging_id;
+    win_importPluginSource[modalId] = data.plugin
+      ? { source: 'git', staging_id: data.staging_id }
+      : null;
     const wrap = win.querySelector('#sig-candidates');
     wrap.style.display = '';
+    const pluginBanner = _renderPluginBanner(data.plugin);
+    const fullPluginBtn = data.plugin ? _renderFullPluginButton(modalId) : '';
+    const skillLabel = data.plugin
+      ? `Or install just one of the ${data.candidates.length} skill${data.candidates.length===1?'':'s'} the plugin contains:`
+      : `${(data.candidates || []).length} skills found in the repo — pick one:`;
     wrap.innerHTML = `
-      <div style="font-size:12px;color:var(--text);margin-bottom:6px">${(data.candidates || []).length} skills found in the repo — pick one:</div>
+      ${pluginBanner}
+      ${fullPluginBtn}
+      <div style="font-size:12px;color:var(--text);margin-bottom:6px">${skillLabel}</div>
       ${(data.candidates || []).map(c => `
         <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:4px">
           <div style="flex:1">
@@ -15015,7 +15095,7 @@ async function _doSkillImportGit(modalId) {
           <button class="btn-tiny" onclick="_doSkillImportGitInstallOne('${modalId}', '${esc(c.rel_dir).replace(/'/g, "\\'")}', '${esc(c.name).replace(/'/g, "\\'")}')">Install this</button>
         </div>
       `).join('')}`;
-    _siStatus(modalId, 'Repo cloned. Pick a skill to install.', 'var(--text-faint)');
+    _siStatus(modalId, data.plugin ? 'Plugin cloned. Choose what to install.' : 'Repo cloned. Pick a skill to install.', 'var(--text-faint)');
   } catch(e) {
     _siStatus(modalId, 'Import failed: ' + e.message, 'var(--red)');
   }

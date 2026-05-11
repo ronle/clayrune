@@ -4,6 +4,98 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-10c] — Skills import: GitHub tree-URL parsing + Anthropic plugin detection
+
+Two related improvements to skills import. First, **GitHub web URLs that point
+at a subfolder of a repo now work** — earlier the importer rejected them with
+the raw `git clone` error (`repository '...not found'`). Second, **Anthropic
+plugins are detected as a distinct shape**: the importer now offers "Install
+full plugin" alongside "Install this skill" when a `.claude-plugin/` folder
+is present.
+
+### URL parsing (`skills.py`)
+
+- `_GH_TREE_RE` matches `github.com/<owner>/<repo>/(tree|blob)/<ref>/<subpath>`.
+- `normalize_git_url(url)` returns `{clone_url, ref, subpath}` — tree/blob URLs
+  get split into bare clone URL + branch + subdirectory; bare repo URLs pass
+  through.
+- `git_clone_to_staging` now uses the normalized parts: clones the bare URL,
+  applies the parsed branch via `--branch`, and after clone trims the staging
+  tree to just the requested subpath so the rest of the pipeline (scan,
+  candidate selection, install) stays unchanged.
+- Error messages updated: when no SKILL.md is found under a subpath, the
+  message says so plainly instead of leaving the user to guess.
+
+### Plugin detection (`skills.py`)
+
+- `detect_plugin_at(root)` returns `{name, manifest, readme_excerpt,
+  skill_dirs, command_files, agent_files, hook_files, has_hooks, root_path}`
+  when `.claude-plugin/` exists; `None` otherwise.
+- `install_full_plugin(plugin_root)` copies `skills/`, `commands/`, and
+  `agents/` to their respective `~/.claude/` directories. **Hooks are not
+  installed**: registration requires modifying `~/.claude/settings.json`
+  with author-supplied event bindings, which is arbitrary shell-code
+  execution and a stronger trust statement than copying data files. The
+  result includes a `skipped.hooks` list and the summary message points
+  the user at CC's `/plugin` command for hook installation.
+- Both `git_clone_to_staging` and `import_from_folder` now attach a
+  `plugin: {...}` field to their response when a plugin is detected. The
+  git endpoint also skips auto-install of single-skill clones when a
+  plugin is present, so the user always sees the picker and can choose
+  between "skill-only" and "full plugin" modes.
+- New error path: when a plugin is detected but contains no SKILL.md, the
+  message is now: *"This is the Anthropic plugin "<name>" but contains no
+  skills (only N command(s), M sub-agent(s)). Clayrune manages skills;
+  for the rest, install via CC's /plugin command instead."*
+
+### Endpoint (`server.py`)
+
+- `POST /api/skills/import/plugin` — body `{staging_id?, path?, overwrite?}`.
+  Either `staging_id` (from a prior `/api/skills/import/git` call) or `path`
+  (a local folder) is accepted. Full-plugin install goes to GLOBAL scope
+  only; project-scope full-plugin install is not supported in v1.
+- The existing `/api/skills/import/git` endpoint no longer auto-installs a
+  single skill when a plugin is detected — the response includes the
+  plugin info so the frontend can prompt the user.
+
+### Frontend (`static/index.html`)
+
+- `_renderPluginBanner(plugin)` — small accent-bordered banner with a
+  PLUGIN badge, plugin name, component counts (skills · commands ·
+  sub-agents · hooks), an optional README excerpt (first 360 chars), and
+  an amber warning line when hooks are present.
+- `_renderFullPluginButton(modalId)` — full-width "Install full plugin
+  (skills + commands + sub-agents)" button rendered above the per-skill
+  candidate rows.
+- `_doSkillImportFullPlugin(modalId)` — POSTs to `/api/skills/import/plugin`
+  using `win_importPluginSource[modalId]` (set by the multi-skill picker
+  when `plugin` is in the response). Shows the summary message in the
+  status line and as a toast.
+- Both the Git import picker and the Folder import picker now show the
+  banner + full-plugin button when applicable. The per-skill candidates
+  remain below.
+
+### Trust model
+
+The deliberate carve-out for hooks isn't about JSON merge fragility — it's
+about the trust statement. Skills, commands, and sub-agents are data the
+model reads; their execution path is mediated by the model + user
+permission system. Hooks are shell scripts that run automatically on
+lifecycle events, with no model and no permission prompt between author
+intent and execution. We auto-install the first three; we defer hooks to
+CC's `/plugin` command, which (presumably) has its own confirmation step
+for that stronger trust statement.
+
+### Rollback
+
+Remove the plugin detection block in `skills.py` (`# ── Anthropic-plugin
+detection + full-plugin install ──`), the `import_full_plugin_route` and
+plugin-info attachment in `server.py`, the `_renderPluginBanner` /
+`_renderFullPluginButton` / `_doSkillImportFullPlugin` helpers in
+`static/index.html`, and the banner-render code inside the two candidate
+pickers. URL parsing changes are independent and can stay or be removed
+separately.
+
 ## [2026-05-10b] — Skills import (paste / folder / Git URL / cross-project)
 
 Follow-up to the morning's Skills surface. Adds 4 import paths so users can
