@@ -11,6 +11,92 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Clayrune">
+<script>
+// Single-instance guard. Backstop for the browser-tab case: a Windows Start
+// menu / taskbar shortcut to clayrune.io is just a Chrome bookmark, so each
+// click spawns a fresh tab — manifest.json's launch_handler only kicks in
+// once the user installs the PWA proper. Until then, this script makes a
+// duplicate tab announce itself; the primary tab focuses its window and
+// acks; the duplicate replaces its UI with a "Clayrune already open" panel
+// and attempts to close itself. Same-origin only (BroadcastChannel scope).
+(function() {
+  if (typeof BroadcastChannel === 'undefined') return; // very old browser, skip
+  // Skip when running as an installed PWA — launch_handler handles that case
+  // and we don't want to interfere with deep-link navigation.
+  try {
+    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return;
+    if (window.navigator && window.navigator.standalone) return; // iOS A2HS
+  } catch (_) {}
+
+  var ch = new BroadcastChannel('clayrune-single-instance');
+  var myId = Date.now() + '-' + Math.random().toString(36).slice(2);
+  var amDuplicate = false;
+
+  // Tiebreaker: older tab (lower Date.now() prefix) wins. Handles the
+  // case where the user double-clicks the Start menu icon and two tabs
+  // race to claim primary at the same time.
+  function isOlderThan(otherId) {
+    var mine = parseInt(myId.split('-')[0], 10);
+    var theirs = parseInt(otherId.split('-')[0], 10);
+    if (mine !== theirs) return mine < theirs;
+    return myId < otherId; // lexicographic fallback for exact-ms ties
+  }
+
+  ch.onmessage = function(e) {
+    var d = e && e.data || {};
+    if (d.type === 'hello' && d.from !== myId && !amDuplicate) {
+      // Only ack if we're the older tab. The newer one will see no ack
+      // from itself and instead become duplicate when we hello-back-implicitly.
+      if (isOlderThan(d.from)) {
+        ch.postMessage({ type: 'here', to: d.from, from: myId });
+        try { window.focus(); } catch (_) {}
+      }
+    } else if (d.type === 'here' && d.to === myId && !amDuplicate) {
+      amDuplicate = true;
+      showDuplicate();
+    }
+  };
+
+  // Announce ourselves. If another tab is already running, it answers
+  // within a few ms (BroadcastChannel is intra-browser, very fast).
+  ch.postMessage({ type: 'hello', from: myId });
+
+  function showDuplicate() {
+    document.title = 'Clayrune (already open)';
+    // Stop any scripts that haven't loaded yet — we'll replace body content
+    // once it parses. If body is already parsed, replace immediately.
+    var paint = function() {
+      try {
+        document.body.innerHTML = ''
+          + '<div style="position:fixed;inset:0;display:flex;flex-direction:column;'
+          + 'align-items:center;justify-content:center;background:#fdfaf6;'
+          + 'font-family:Inter,system-ui,sans-serif;text-align:center;padding:24px;'
+          + 'color:#5c3a25;">'
+          + '<div style="font-size:56px;line-height:1;margin-bottom:14px;">🪟</div>'
+          + '<div style="font-size:22px;font-weight:700;margin-bottom:6px;">Clayrune is already open</div>'
+          + '<div style="font-size:14px;color:#8a7560;max-width:360px;margin-bottom:22px;">'
+          + 'Switch to the other Clayrune tab to continue. This tab will close in a moment.</div>'
+          + '<button id="_si_close" style="padding:10px 22px;background:#e8824a;color:#fff;'
+          + 'border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">'
+          + 'Close this tab</button></div>';
+        var btn = document.getElementById('_si_close');
+        if (btn) btn.onclick = function() { try { window.close(); } catch (_) {} };
+      } catch (_) {}
+      // Auto-close attempt. Modern Chrome allows close() on tabs the browser
+      // opened iff the document has no history entries (i.e. this is the
+      // first navigation in the tab) — true for a fresh Start menu click.
+      setTimeout(function() { try { window.close(); } catch (_) {} }, 1500);
+    };
+    if (document.body) paint(); else document.addEventListener('DOMContentLoaded', paint);
+    // Belt-and-suspenders: stop the main SPA from booting if we get here
+    // before it runs. We can't unload already-loaded scripts, but we can
+    // set a global flag the SPA can check, and we replace body on DCL.
+    window._clayruneDuplicateTab = true;
+  }
+
+  window._clayruneSingleInstance = { id: myId, channel: ch };
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Nunito:wght@600;700;800&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">

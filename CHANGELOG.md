@@ -4,6 +4,47 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-11c] — Single-instance guard for browser tabs
+
+Follow-up to the launch_handler fix in `[2026-05-11b]`. On a fresh
+Windows install where the user pinned `localhost:5199` (or
+`clayrune.io`) to the Start menu **as a browser shortcut** — i.e. they
+hadn't actually installed the PWA — each click of the icon spawned a
+new browser tab. `launch_handler` in `manifest.json` doesn't help here
+because the PWA isn't installed; the click is just Chrome opening a
+URL bookmark.
+
+Added a `BroadcastChannel`-based single-instance guard at the top of
+`static/index.html <head>`:
+
+- New tab announces itself with a timestamped instance ID.
+- The existing primary tab acks and calls `window.focus()` to pull
+  itself forward.
+- The newcomer tab, on receiving the ack, replaces its UI with a
+  "Clayrune is already open" panel + "Close this tab" button, then
+  attempts `window.close()` after 1.5s (works for fresh tabs that
+  have no history entry).
+- Tiebreaker by ID timestamp handles the case where the user double-
+  clicks the Start menu icon and two tabs race to claim primary.
+- Skipped when `display-mode: standalone` matches — installed PWAs use
+  `launch_handler` instead, and we don't want to interfere with their
+  deep-link navigation.
+
+`index.html` is already served with `Cache-Control: no-cache` + mtime
+ETag (`server.py:8331`), so a normal browser refresh on the other
+install will revalidate and pick up the new script — no hard refresh
+needed.
+
+Known gap: if a user *wants* multiple Clayrune tabs open intentionally
+(e.g. side-by-side comparison), this guard fights them. Acceptable for
+now since the dashboard isn't designed for split-view workflows; if it
+ever becomes painful, expose a `localStorage.clayrune_allow_multitab`
+flag.
+
+Rollback: remove the `<script>` block in `static/index.html` between
+"Single-instance guard" and the closing `</script>` just below the
+apple-mobile-web-app-title meta.
+
 ## [2026-05-11b] — PWA shell + deep linking + push-sub dedup
 
 Follow-up to `[2026-05-11]` after live testing on Android Chrome. Three
