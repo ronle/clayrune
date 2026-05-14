@@ -1,11 +1,11 @@
 ---
 name: mc-project-status
-description: Summarize the current state of a Mission Control project — open backlog items, recent agent runs, active hiveminds, scheduled jobs, registered processes. TRIGGER when the user asks "what's the status of X", "give me a project overview", "what's open", "what's been happening here", "where are we", or any request for a project-state recap.
+description: Summarize the current state of a Clayrune project — open backlog items, recent agent runs, active hiveminds, scheduled jobs, registered processes. TRIGGER when the user asks "what's the status of X", "give me a project overview", "what's open", "what's been happening here", "where are we", or any request for a project-state recap.
 ---
 
-# Mission Control — Project Status Summary
+# Clayrune — Project Status Summary
 
-When the user asks for a project overview, query Mission Control's APIs and present a structured snapshot.
+When the user asks for a project overview, query Clayrune's APIs and present a structured snapshot.
 
 ## Steps
 

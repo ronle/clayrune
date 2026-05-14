@@ -1,7 +1,7 @@
 # Hivemind — Persistent Multi-Agent Collaborative Intelligence
 
 ## Feature Specification v1.2
-**Project:** Mission Control
+**Project:** Clayrune
 **Author:** Ron + Claude
 **Date:** 2026-03-23
 **Revised:** 2026-03-23 (v1.2 — typed artifact contracts, two-phase protocol, structured handoffs, enhanced watchdog, debate engine, complexity scoring)
@@ -22,7 +22,7 @@ Unlike ephemeral multi-agent systems (including Claude Code's built-in Agent Tea
 3. **User sovereignty** — The user sees everything, controls everything, can intervene at any point
 4. **Cross-pollination** — Agents share discoveries; insights from one workstream inform all others
 5. **Resumability** — Any hivemind can be paused and continued later with full context preservation
-6. **CLI-native** — All Claude intelligence is invoked through the same `claude` CLI subprocess infrastructure used everywhere in Mission Control; no direct API calls
+6. **CLI-native** — All Claude intelligence is invoked through the same `claude` CLI subprocess infrastructure used everywhere in Clayrune; no direct API calls
 
 ---
 

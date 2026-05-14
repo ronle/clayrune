@@ -12271,7 +12271,7 @@ function _renderMcActivitySection() {
     <button class="ssp-range-btn ${tokenCounterMode === m.id ? 'active' : ''}" onclick="setTokenMode('${esc(m.id)}')">${esc(m.label)}</button>
   `).join('');
   return `
-    <div class="ssp-section-head">Mission Control activity</div>
+    <div class="ssp-section-head">Clayrune activity</div>
     <div class="ssp-range-row">${rangeBtns}</div>
     <div class="ssp-bignum">${tokens} tok<span class="ssp-bignum-cost">${costStr ? esc(costStr) : ''}</span></div>
     <div class="ssp-bignum-sub">${sessions.toLocaleString()} agent ${sessions === 1 ? 'session' : 'sessions'} in this range</div>
@@ -13340,13 +13340,13 @@ async function openRestartConfirmation() {
   content.style.height = 'auto';
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
-      <span style="font-size:16px;font-weight:700;color:var(--text)">Restart Mission Control</span>
+      <span style="font-size:16px;font-weight:700;color:var(--text)">Restart Clayrune</span>
       <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
         <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
       </div>
     </div>
     <div style="padding:8px 28px 20px;color:var(--text);font-size:13px;line-height:1.55">
-      <p style="margin:6px 0 4px">This restarts the Mission Control server process so it picks up new code or config.</p>
+      <p style="margin:6px 0 4px">This restarts the Clayrune server process so it picks up new code or config.</p>
       <p style="margin:4px 0 8px;color:var(--text-dim);font-size:12px">Your open conversation modals will be restored automatically once the server is back.</p>
       ${listHTML}
       ${hasActive
@@ -13428,7 +13428,7 @@ function showRestartingOverlay() {
   overlay.innerHTML =
     '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;' +
     'padding:24px 32px;max-width:380px;text-align:center;color:var(--text);font-size:13px;line-height:1.55">' +
-    '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Restarting Mission Control...</div>' +
+    '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Restarting Clayrune...</div>' +
     '<div id="mc-restart-overlay-status" style="color:var(--text-dim);font-size:12px">Waiting for the server to come back online.</div>' +
     '<div style="margin-top:14px;display:flex;justify-content:center"><div class="mc-spinner" style="width:24px;height:24px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:mc-spin 0.8s linear infinite"></div></div>' +
     '<style>@keyframes mc-spin{to{transform:rotate(360deg)}}</style>' +
@@ -13717,7 +13717,7 @@ async function _renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">Server</div>
       <div class="settings-row">
-        <div><div class="settings-label">Restart Mission Control</div><div class="settings-hint">Picks up new code or config without needing local access. Open conversations are restored after reconnect.</div></div>
+        <div><div class="settings-label">Restart Clayrune</div><div class="settings-hint">Picks up new code or config without needing local access. Open conversations are restored after reconnect.</div></div>
         <button class="btn-dispatch" style="background:var(--red-dim,#5a2828);border-color:var(--red,#e35858);color:var(--red-text,#ffd2d2)" onclick="openRestartConfirmation()">Restart server</button>
       </div>
       <div class="settings-row" style="margin-top:8px">

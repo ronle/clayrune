@@ -5,7 +5,7 @@ description: Run the end-of-work documentation, commit, and deploy playbook. TRI
 
 # Document, Commit & Deploy
 
-Mission Control's SHARED_RULES requires that every major change be documented, committed, and (if git-synced) pushed. This skill is the concrete playbook so it actually happens.
+Clayrune's SHARED_RULES requires that every major change be documented, committed, and (if git-synced) pushed. This skill is the concrete playbook so it actually happens.
 
 ## Sequence
 
@@ -30,7 +30,7 @@ For each changed area, update the corresponding doc:
 - **README.md** — update if user-facing behavior, install, or quickstart changed.
 - **MEMORY.md** — update if the change introduces a load-bearing fact about the project that future sessions need to know (architecture, gotchas, decisions). Skip if the change is routine.
 - **AGENT_RULES.md / SHARED_RULES.md** — update only if a new must-do or must-not-do rule emerged.
-- **`docs/USER_GUIDE.md`** (Mission Control / Clayrune only) — update if **anything user-facing** changed: a new UI element, button, menu entry, sidebar item, settings toggle, keyboard shortcut, or any feature an end user can discover. This file is the source of truth for the in-app "Ask Claydo" helper — if the feature isn't documented here, Claydo can't tell users about it. **Gate**: before committing a UI / user-facing change to Mission Control, explicitly answer "did I update USER_GUIDE.md?" and either show the diff or state out loud why it's not needed (e.g. "internal refactor, no user-visible change").
+- **`docs/USER_GUIDE.md`** (Clayrune only) — update if **anything user-facing** changed: a new UI element, button, menu entry, sidebar item, settings toggle, keyboard shortcut, or any feature an end user can discover. This file is the source of truth for the in-app "Ask Claydo" helper — if the feature isn't documented here, Claydo can't tell users about it. **Gate**: before committing a UI / user-facing change to Clayrune, explicitly answer "did I update USER_GUIDE.md?" and either show the diff or state out loud why it's not needed (e.g. "internal refactor, no user-visible change").
 
 If a doc doesn't need updating, say so explicitly: *"CLAUDE.md doesn't need changes for this — purely a UI tweak."*
 

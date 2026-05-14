@@ -1,6 +1,6 @@
-# Mission Control - Windows Build Instructions
+# Clayrune - Windows Build Instructions
 
-This document provides step-by-step instructions for building the Mission Control Windows executable bundle.
+This document provides step-by-step instructions for building the Clayrune Windows executable bundle.
 
 ## Prerequisites
 

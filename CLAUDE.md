@@ -1,4 +1,4 @@
-# Mission Control — Claude Code project notes
+# Clayrune — Claude Code project notes
 
 ## Video attachments — use the frame extractor
 

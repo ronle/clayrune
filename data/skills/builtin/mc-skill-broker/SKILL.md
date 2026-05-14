@@ -1,11 +1,11 @@
 ---
 name: mc-skill-broker
-description: Search Mission Control for skills that might help the current task — including skills authored in OTHER projects that your session doesn't normally see. TRIGGER when you suspect there's a procedure, playbook, or template that could help but you haven't been shown one in your active skill set. Also TRIGGER when the user mentions they "wrote something like this before" or asks "do we have a skill for X?".
+description: Search Clayrune for skills that might help the current task — including skills authored in OTHER projects that your session doesn't normally see. TRIGGER when you suspect there's a procedure, playbook, or template that could help but you haven't been shown one in your active skill set. Also TRIGGER when the user mentions they "wrote something like this before" or asks "do we have a skill for X?".
 ---
 
 # Skill broker — cross-project skill discovery
 
-Mission Control merges global skills + the current project's skills into your active set at session start. **It does NOT show you skills authored inside OTHER projects.** This skill bridges that gap.
+Clayrune merges global skills + the current project's skills into your active set at session start. **It does NOT show you skills authored inside OTHER projects.** This skill bridges that gap.
 
 ## When to call this
 

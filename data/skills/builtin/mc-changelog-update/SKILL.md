@@ -5,7 +5,7 @@ description: Add a properly-formatted entry to a project's CHANGELOG.md followin
 
 # CHANGELOG.md update — guided
 
-Most Mission-Control-managed projects keep a CHANGELOG.md in the project root. This skill walks through adding an entry that matches the project's existing format.
+Most Clayrune-managed projects keep a CHANGELOG.md in the project root. This skill walks through adding an entry that matches the project's existing format.
 
 ## Steps
 
@@ -72,7 +72,7 @@ After editing, show the user the diff so they can sanity-check:
 git diff CHANGELOG.md
 ```
 
-### 5. Companion gate — `docs/USER_GUIDE.md` (Mission Control / Clayrune only)
+### 5. Companion gate — `docs/USER_GUIDE.md` (Clayrune only)
 
 If the CHANGELOG entry describes a **user-facing feature** — a new UI
 element, button, menu entry, sidebar item, settings toggle, keyboard
@@ -92,7 +92,7 @@ a user-facing feature?"*
   state explicitly: *"USER_GUIDE.md doesn't need an update — this is
   internal-only."*
 
-This gate exists because Mission Control has historically shipped UI
+This gate exists because Clayrune has historically shipped UI
 features that Claydo wasn't taught about, leaving the in-app helper
 unable to answer "how do I use X?" questions.
 

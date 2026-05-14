@@ -1619,8 +1619,8 @@ def _clayrune_agent_rules(mc_root: Path) -> str:
     docs = mc_root / 'docs' / 'USER_GUIDE.md'
     changelog = mc_root / 'CHANGELOG.md'
     return (
-        "You are the in-app help desk for Clayrune (Mission Control), the "
-        "platform this user is running. Help them use it: explain features, "
+        "You are the in-app help desk for Clayrune, the platform this user "
+        "is running. Help them use it: explain features, "
         "walk through workflows, fix confusion. Be concise.\n"
         "\n"
         f"User guide: {docs}\n"
@@ -2208,7 +2208,7 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         f"Scheduler — TWO options, pick by lifespan:\n"
         f"  • Clayrune LOCAL scheduler — for LONG-TERM, REPEATABLE jobs scoped "
         f"to a project that must outlive any single session and re-run an agent "
-        f"inside THIS Mission Control environment (daily standups, weekly "
+        f"inside THIS Clayrune environment (daily standups, weekly "
         f"reports, recurring cleanups, one-shots scheduled hours/days out). "
         f"List: GET http://localhost:{port}/api/schedules  "
         f"Create: POST http://localhost:{port}/api/schedules with "
@@ -2218,7 +2218,7 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         f"  • Anthropic /schedule skill — for SHORT-INTERVAL polling/follow-ups "
         f"that live inside the CURRENT session lifespan (e.g. \"check the build "
         f"every 5 min\", \"poll this PR until merged\"). Cloud-side; cannot reach "
-        f"local Mission Control state, but perfect for in-session tick work.\n"
+        f"local Clayrune state, but perfect for in-session tick work.\n"
         f"Rule of thumb: if it should still fire after this conversation ends, "
         f"use the Clayrune local scheduler; if it's a tight loop tied to the "
         f"work you're doing right now, use /schedule.",
@@ -2263,12 +2263,12 @@ def _build_agent_context(project, incognito=False):
             "--- INCOGNITO MODE ---\n"
             "This is an incognito session. You can read everything about the project "
             "(rules, memory, recent activity, files) so you have full context to answer. "
-            "However, Mission Control will NOT log this session to the agent log and will "
+            "However, Clayrune will NOT log this session to the agent log and will "
             "NOT append a summary to MEMORY.md on completion. Treat this as an off-the-record "
             "side conversation: do not modify MEMORY.md, AGENT_RULES.md, or SHARED_RULES.md "
             "and do not push commits unless the user explicitly asks. "
             "Note: Claude still writes a transcript to ~/.claude/projects/, so incognito "
-            "hides this session from Mission Control surfaces, not from disk."
+            "hides this session from Clayrune surfaces, not from disk."
         )
 
     # Load rules
@@ -2291,7 +2291,7 @@ def _build_agent_context(project, incognito=False):
     archive_path = _get_archive_path(project)
     archive_file = str(archive_path)
     awareness = [
-        "You are managed by Mission Control.",
+        "You are managed by Clayrune.",
         f"Memory: {mem_file} (auto-loaded). Update it when you learn important project info.",
         f"Archive: {archive_file} — older session logs, read if needed.",
     ]
@@ -2314,7 +2314,7 @@ def _build_agent_context(project, incognito=False):
         # Universal Clayrune awareness — see _clayrune_universal_capabilities().
         # Add new universal entries THERE, not here.
         *_clayrune_universal_capabilities(port=port),
-        f"Backlog: This project has a Mission Control backlog (prioritized task list with notes, "
+        f"Backlog: This project has a Clayrune backlog (prioritized task list with notes, "
         f"attachments, and status). When the user says \"backlog\", \"backlog items\", \"the list\", "
         f"or similar, they mean THIS list — do NOT grep the filesystem. "
         f"Read it: curl -s http://localhost:{port}/api/project/{pid}/backlog "

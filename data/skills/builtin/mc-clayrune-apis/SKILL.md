@@ -1,11 +1,11 @@
 ---
 name: mc-clayrune-apis
-description: Use whenever you need to interact with Mission Control / Clayrune local APIs — backlog management, scheduler routines, hivemind orchestration, process registration, terminal pop-out, or any localhost:5199 endpoint. TRIGGER when the user mentions "backlog", "schedule", "hivemind", "register this process", "open a terminal", or refers to Mission Control / Clayrune by name.
+description: Use whenever you need to interact with Clayrune local APIs — backlog management, scheduler routines, hivemind orchestration, process registration, terminal pop-out, or any localhost:5199 endpoint. TRIGGER when the user mentions "backlog", "schedule", "hivemind", "register this process", "open a terminal", or refers to Clayrune by name.
 ---
 
-# Mission Control / Clayrune API surface
+# Clayrune API surface
 
-Mission Control runs locally at **http://localhost:5199**. Every Mission-Control-aware operation is a curl call to this base URL.
+Clayrune runs locally at **http://localhost:5199**. Every Clayrune-aware operation is a curl call to this base URL.
 
 ## Process Registration — MANDATORY for any spawned process
 
@@ -35,7 +35,7 @@ When the user says "backlog", "backlog items", "the list" — they mean THIS, no
 
 ## Scheduler (Clayrune LOCAL — for jobs that outlive a session)
 
-For long-term, repeatable jobs that should re-run an agent inside Mission Control after the current conversation ends.
+For long-term, repeatable jobs that should re-run an agent inside Clayrune after the current conversation ends.
 
 - List: `GET /api/schedules`
 - Create: `POST /api/schedules` with:
@@ -71,7 +71,7 @@ curl -s -X POST http://localhost:5199/api/terminal/launch \
   -d '{"project_id":"<pid>","command":"<CMD>"}'
 ```
 
-Output appears in Mission Control's terminal pop-out with full ANSI color.
+Output appears in Clayrune's terminal pop-out with full ANSI color.
 
 ## API discovery
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mission Control — Desktop entry point.
+"""Clayrune — Desktop entry point.
 
 Starts the Flask server in a daemon thread and opens a native pywebview window.
 Works in both dev mode (python app.py) and frozen mode (PyInstaller exe).
@@ -183,7 +183,7 @@ def _install_claude_cli(status_callback=None):
             if r.returncode != 0:
                 return False, (
                     'Could not install Node.js automatically.\n\n'
-                    'Please install Node.js from https://nodejs.org and restart Mission Control.'
+                    'Please install Node.js from https://nodejs.org and restart Clayrune.'
                 )
         except FileNotFoundError:
             return False, (
@@ -197,7 +197,7 @@ def _install_claude_cli(status_callback=None):
         if not _check_npm():
             return False, (
                 'Node.js was installed but npm is not yet on PATH.\n'
-                'Please restart your computer, then relaunch Mission Control.'
+                'Please restart your computer, then relaunch Clayrune.'
             )
 
     _status('Installing Claude CLI via npm...')
@@ -218,7 +218,7 @@ def _install_claude_cli(status_callback=None):
     else:
         return False, (
             'Claude CLI was installed but is not on PATH.\n'
-            'Please restart your computer, then relaunch Mission Control.'
+            'Please restart your computer, then relaunch Clayrune.'
         )
 
 
@@ -226,7 +226,7 @@ def _install_claude_cli(status_callback=None):
 # .NET Desktop Runtime detection + guided install
 # ---------------------------------------------------------------------------
 
-def _msgbox(text, title='Mission Control', style=0x40):
+def _msgbox(text, title='Clayrune', style=0x40):
     """Show a Windows MessageBox. Returns button ID."""
     try:
         import ctypes
@@ -293,12 +293,12 @@ def _ensure_dotnet_runtime():
         return False
 
     result = _msgbox(
-        'Mission Control requires the .NET Desktop Runtime to display its native window.\n\n'
+        'Clayrune requires the .NET Desktop Runtime to display its native window.\n\n'
         'Would you like to install it now?\n\n'
         '  Yes  = Auto-install via winget (recommended)\n'
         '  No   = Open download page in browser\n'
         '  Cancel = Skip and use browser mode instead\n',
-        'Mission Control - Setup Required',
+        'Clayrune - Setup Required',
         0x33,  # MB_YESNOCANCEL | MB_ICONWARNING
     )
 
@@ -306,15 +306,15 @@ def _ensure_dotnet_runtime():
         _msgbox(
             'Installing .NET Desktop Runtime...\n\n'
             'This may take a minute. Click OK to begin.',
-            'Mission Control - Installing',
+            'Clayrune - Installing',
             0x40,
         )
         success, message = _install_dotnet_desktop_runtime()
         if success:
             _msgbox(
                 '.NET Desktop Runtime installed successfully!\n\n'
-                'Mission Control will now open.',
-                'Mission Control - Setup Complete',
+                'Clayrune will now open.',
+                'Clayrune - Setup Complete',
                 0x40,
             )
             return True
@@ -325,9 +325,9 @@ def _ensure_dotnet_runtime():
                 '1. Open https://dotnet.microsoft.com/download/dotnet/8.0\n'
                 '2. Download ".NET Desktop Runtime" (not just Runtime)\n'
                 '3. Run the installer\n'
-                '4. Restart Mission Control\n\n'
+                '4. Restart Clayrune\n\n'
                 'For now, opening in browser mode.',
-                'Mission Control - Install Failed',
+                'Clayrune - Install Failed',
                 0x30,
             )
             return False
@@ -337,9 +337,9 @@ def _ensure_dotnet_runtime():
         _msgbox(
             'Download page opened in your browser.\n\n'
             'Please install the ".NET Desktop Runtime" (not just Runtime).\n'
-            'Then restart Mission Control.\n\n'
+            'Then restart Clayrune.\n\n'
             'For now, opening in browser mode.',
-            'Mission Control - Manual Install',
+            'Clayrune - Manual Install',
             0x40,
         )
         return False
@@ -458,14 +458,14 @@ if __name__ == '__main__':
             f'{_err}\n\nThe app will open in your browser instead.\n\n'
             'To fix: install .NET Desktop Runtime 6.0+ from\n'
             'https://dotnet.microsoft.com/download/dotnet/8.0',
-            'Mission Control - Native Window Unavailable',
+            'Clayrune - Native Window Unavailable',
             0x30,  # MB_ICONWARNING
         )
 
     if _webview_ok:
         try:
             _window = webview.create_window(
-                'Mission Control',
+                'Clayrune',
                 url=f'http://127.0.0.1:{_port}',
                 width=1400,
                 height=900,
@@ -492,7 +492,7 @@ if __name__ == '__main__':
             print(f'[MissionControl] {_err}')
             _msgbox(
                 f'{_err}\n\nThe app will open in your browser instead.',
-                'Mission Control - Native Window Failed',
+                'Clayrune - Native Window Failed',
                 0x30,
             )
             _open_browser_and_wait(_port)
