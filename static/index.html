@@ -8913,8 +8913,17 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
 
   if (answers.length === 0) return;
 
-  // Format answer as a clear response to the agent's AskUserQuestion
-  let message = '[Answers to your questions above]\n\n' + answers.map(a =>
+  // Format answer as a clear response to the agent's AskUserQuestion.
+  // Phrasing is directive because the previous turn was killed mid-tool_use:
+  // claude resumes with an unresolved AskUserQuestion in its transcript and,
+  // without explicit framing, can interpret the user's reply as a fresh
+  // unrelated turn and re-ask the same questions in plain text. We tell it
+  // up front: this IS the answer, do not re-ask.
+  let message = (
+    'I answered your AskUserQuestion through the Clayrune UI. The values '
+    + 'below are my chosen responses — proceed with the task using them. '
+    + 'Do NOT re-ask these questions.\n\n'
+  ) + answers.map(a =>
     a.question ? `Q: ${a.question}\nA: ${a.answer}` : a.answer
   ).join('\n\n');
 
