@@ -12,3 +12,10 @@ rfc8785>=0.1.4
 
 # ── Web push notifications ───────────────────────────────────────────────────
 pywebpush>=2.0.0
+
+# ── Native push (FCM, used by the Android APK shell) ─────────────────────────
+# Used by _push_send_fcm() to deliver notifications via Firebase Cloud
+# Messaging to the io.clayrune.app native shell. Credentials live in
+# data/firebase_admin.json (gitignored). Optional — if the SDK or
+# credentials are missing, server skips FCM and falls back to web push.
+firebase-admin>=6.5.0

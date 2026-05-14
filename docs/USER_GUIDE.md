@@ -108,12 +108,29 @@ The **3-dot menu** (top-right of the modal) holds:
   with the hivemind setup prompt
 - **Change Status** — Active / Waiting / Blocked / Parked
 - **Change Color** — accent color for the modal border
-- **Change Domain** — Frontend / Backend / DevOps / etc. (organizing tag)
+- 🙂 **Set Emoji / Change Emoji** — attach an emoji to the project that
+  shows on its tile and in lists for quick visual identification.
+- **Change Domain** — Frontend / Backend / DevOps / etc. (organizing tag
+  used for grouping and filtering on the dashboard).
 - **Change Model** — Sonnet / Opus / Haiku per project
+- ✨ **Auto-Generate Profile** — asks Claude to read the workspace and
+  produce a one-paragraph summary of what this project is about. Stored
+  on the project and shown in tile previews. The same entry becomes
+  "Regenerate Profile" once a summary exists.
 - **Memory & Rules** — edit `MEMORY.md` and per-project agent rules
 - **Edit Description**
 - **GitHub Sync** — link a repo, sync backlog ↔ Issues
-- **Toggle agent flags** — remote control, streaming-mode, etc.
+- 📱 **Remote Control** — toggle ON/OFF. When ON, this project's agent
+  accepts remote control from the **claude.ai app** (web or mobile):
+  you can push instructions into the running agent's session from your
+  phone via claude.ai. Sets `agent_remote_control=true` and appends
+  `--remote-control` to `claude` spawns for this project. Not the same
+  as Settings → Remote Access (see "Mobile remote access" below).
+  Next step after toggling ON: open claude.ai (or the Claude mobile
+  app), find this agent's session, and send instructions remotely.
+- ⚡ **Agent: Mode A / Mode B** — toggle the agent execution mode for
+  this project. Mode A spawns a fresh `claude` per turn. Mode B keeps a
+  streaming process alive across turns (faster follow-ups, but heavier).
 - **Delete Project**
 
 On mobile, the same menu also contains the per-project **tab navigation**
@@ -141,6 +158,25 @@ in the background, output streams live into the modal AND into the bottom
 - **Image upload**: paste or drop images into the input to attach them.
 - **Pop out**: the `Pop out ↗` button opens the active session in its own
   resizable window for focus mode.
+
+---
+
+## Incognito mode
+
+Sidebar → **Incognito**. An ephemeral scratch agent for one-off questions
+or quick experiments that you don't want polluting any project.
+
+- **Skips memory and rules**: Incognito sessions don't load
+  `MEMORY.md` or `SHARED_RULES.md` — the agent starts clean.
+- **Not attached to a project**: it lives in a global pseudo-project
+  that's hidden from the dashboard grid; you only reach it via the
+  sidebar entry.
+- **Use it when**: you want to ask Claude a quick question without
+  context bleed, throw together a sketch, or test a prompt before
+  committing it to a real project's agent.
+
+Dispatch and follow-up behavior is otherwise identical to a normal
+project agent. Close the modal when you're done — nothing persists.
 
 ---
 
@@ -256,6 +292,46 @@ project's workspace folder.
 
 ---
 
+## Skills
+
+Skills are Anthropic-format reusable instructions (a `SKILL.md` plus
+optional `scripts/` and `references/`) that Claude can invoke by name
+during an agent session. Clayrune ships a Skills management surface
+so you don't have to hand-edit `~/.claude/skills/`.
+
+**Where to find it**:
+- Sidebar → **Skills** entry (above Backlog) — global view of all
+  installed skills (yours + Clayrune's built-ins).
+- Project modal → 3-dot menu → **Skills** — per-project skills under
+  `<project_path>/.claude/skills/`.
+
+**What you can do**:
+- **Browse / search** installed skills, see invocation stats.
+- **Edit** any skill's SKILL.md inline.
+- **Archive** skills you don't want active.
+- **Import** new skills via four paths in the Import dropdown:
+  1. **Paste SKILL.md** — paste markdown directly, Clayrune installs it.
+  2. **From folder** — pick a local folder containing a SKILL.md.
+  3. **From Git URL** — paste any GitHub URL, including
+     `github.com/<owner>/<repo>/tree/<branch>/<subpath>` tree URLs that
+     point at a subfolder inside a repo. The clone is trimmed to that
+     subpath automatically.
+  4. **Browse other projects** — copy a skill from another project on
+     this machine.
+- **Anthropic plugin detection**: when an import contains a
+  `.claude-plugin/` folder, you get an "Install full plugin" option
+  alongside "Install this skill" — installs all the plugin's skills,
+  commands, and sub-agents together. Hooks aren't installed (they
+  require manual settings.json edits — use CC's `/plugin` for those).
+
+**Built-ins**: Clayrune ships ~5 built-in skills (e.g. `mc-clayrune-apis`,
+`mc-project-status`) under `data/skills/builtin/`. They install
+automatically on first run and update on each Clayrune upgrade. Your
+edits to a built-in are preserved across updates (checksum-based
+diff detection).
+
+---
+
 ## Plans
 
 When an agent calls `ExitPlanMode`, its plan output is captured to a
@@ -301,12 +377,35 @@ Clayrune can be reached from your phone via the **clayrune.io tunnel**
 Remote Access → enable. Once enabled, opening clayrune.io on your phone
 authenticates via email OTP and you see the same dashboard.
 
+> **Don't confuse with the per-project Remote Control toggle** (project
+> 3-dot menu → 📱 Remote Control). They're different features:
+> - **Settings → Remote Access (clayrune.io tunnel)** = *you* reach the
+>   *MC dashboard* from your phone.
+> - **Project menu → Remote Control** = the *claude.ai app* reaches
+>   *one specific agent's session* and can push instructions to it.
+
 The mobile UI:
 - Bottom tab bar replaces the sidebar.
 - Project modals open full-screen.
 - Per-project tab strip moves into the 3-dot menu.
 - The 🐝 Hivemind tab is in the bottom bar.
 - Settings is reachable via the avatar circle in the top app bar.
+
+---
+
+## Command palette
+
+Press **Ctrl+K** anywhere to open the command palette (also reachable via
+the header search box). It's a single fuzzy-search input over:
+
+- **Every project** — jump straight into its modal.
+- **Sidebar views** — Dashboard, Backlog, Hivemind, Scheduler, Settings,
+  Shared Rules, Processes, Skills, Incognito.
+- **Toggle actions** — Toggle Compact density, Toggle Feed, etc.
+
+Keyboard nav: arrow keys to move, **Enter** to activate, **Esc** to
+dismiss. The palette is the fastest way to move around when you have
+many projects open.
 
 ---
 
@@ -318,6 +417,16 @@ Major sections:
   warning modal if active sessions / hiveminds are running.
 - **Paths** — workspace base directory, claude binary location, MEMORY
   thresholds.
+- **Appearance** — visual customization:
+  - **Theme** — Dark (default), Warm (cream, rounded brutalist), or
+    Editorial (cream with serif headers). Affects every surface.
+  - **Accent color** — Default, Sunset, Rose, Lilac, Lagoon, or Ink.
+    Drives buttons, focus rings, and the active-agent pill.
+  - **Density** — Cozy (default) or Compact. Compact shrinks tile
+    height and tightens grid spacing for showing more projects at
+    once on small screens.
+  - **Writing style** — Casual or Professional. Tunes the voice of
+    in-app copy (greetings, empty-state hints, toasts).
 - **Advanced features** — show/hide the token counter, `[tool: …]` lines,
   GitHub badges, Agent Log tab, Memory & Rules menu entries. All off by
   default — turn on the ones that fit your level.
@@ -593,6 +702,8 @@ Pulled from the live UI. Use exactly as written.
 | Sidebar — Settings | `[data-nav="settings"]` |
 | Sidebar — Shared Rules | `[data-nav="shared-rules"]` |
 | Sidebar — Processes | `[data-nav="processes"]` |
+| Sidebar — Skills | `[data-nav="skills"]` |
+| Sidebar — Incognito | `[data-nav="incognito"]` |
 | Header — search (Ctrl+K trigger) | `.header-search` |
 | Header — walkthrough (?) button | `.header-tour-btn` |
 | Toolbar — `+ New Project` | `.btn-new` |

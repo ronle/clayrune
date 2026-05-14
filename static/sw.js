@@ -16,6 +16,18 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Chrome 93+ requires a `fetch` handler that actually intercepts something
+// for the site to qualify as PWA-installable. An empty handler is rejected
+// as a no-op and `beforeinstallprompt` will never fire. We don't cache
+// anything (the SPA is online-first), so we intercept navigation requests
+// only and pass them straight to the network. Other requests fall through
+// to the browser's default handling.
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode === 'navigate') {
+    event.respondWith(fetch(event.request));
+  }
+});
+
 self.addEventListener('push', (event) => {
   let data = {};
   try {

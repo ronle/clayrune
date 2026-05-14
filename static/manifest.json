@@ -1,8 +1,9 @@
 {
+  "id": "/?source=pwa",
   "name": "Clayrune",
   "short_name": "Clayrune",
   "description": "Mission Control for Claude agents — dispatch, monitor, and reply to long-running sessions.",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",

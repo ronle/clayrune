@@ -4,6 +4,382 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-14b] — Modal snap layouts, tile-all button, pin/unpin, AskUserQuestion + mobile SSE fixes, Clayrune onboarding project
+
+A single-session bundle of three usability issues + two larger features.
+
+**AskUserQuestion render reliability (`server.py`, `static/index.html`)**
+The question form was getting dropped on first ask if the SSE wasn't open, the
+DOM wasn't ready, or the modal hadn't been built yet. Server now stamps each
+`AskUserQuestion` with a `question_id` (uuid) and **keeps `pending_questions`
+populated until the user actually answers** (cleared in `/agent/followup` +
+`/agent/interrupt`). The SSE generator dedupes per-stream by `question_id` so
+the 0.3 s poll doesn't spam. `/agent/status` now exposes `waiting_for_question`.
+Client tracks rendered question_ids in `_renderedQuestionIds[sessionId]` and
+skips re-rendering an already-shown form. Cleared on submit. `fetchAgentStatus`
+also reconnects SSE for idle sessions that are either waiting on a question
+or are the active tab in an open modal (still skips background idle sessions
+to preserve Chromium's 6-slot per-origin cap).
+
+**Mobile modal status stuck on IDLE (`static/index.html`)**
+After a send on mobile, the modal would sit on IDLE because: (a) SSE wasn't
+auto-reconnected for idle sessions on cold modal open, and (b) the post-POST
+reconnect could miss `turn_start` if the server flipped through `running` →
+`idle` before the new SSE opened. Fix: `sendFollowup` now eagerly opens SSE
+**before** the POST, plus a `_sendInFlight[sessionId]` gate so the eager-open
+SSE's stale `turn_complete` (reflecting the *prior* idle state) doesn't close
+the connection on the client. Gate clears on `turn_start` or after 8 s timeout.
+The `status` handler honors the gate too (except for user-initiated `stopped`).
+
+**Android IME backspace requiring many taps (`static/index.html`)**
+`refreshModalById`'s `innerHTML` wipe was destroying the focused chat
+textarea's IME compose buffer, causing the next backspace to need several
+presses (the IME thought the word was still in compose; the rebuilt DOM had
+no such buffer). `refreshModalById` now detaches the focused
+`agent-followup-${sid}` textarea before the wipe and reattaches it after —
+same pattern already used for `agent-output`. The value/focus restoration
+loop skips the preserved input so we don't overwrite its `.value` (which
+would reset cursor + re-trigger the desync).
+
+**Aero-Snap for modal windows (`static/index.html`)**
+Drag a `.modal-window` toward a viewport edge → translucent accent preview
+shows the target zone → release commits the snap. Dragging a snapped modal
+more than 24 px tears it off back to its pre-snap geometry. Zones: full
+(top edge), left-half, right-half, four corner quarters. Detection uses
+viewport edges (cursor must reach the screen edge, not the workspace edge —
+the natural crossing into the sidebar / header strip would otherwise kill
+detection). Snap target uses the workspace rect with the sidebar pinned to
+its collapsed width so hover-expand doesn't shift zones mid-drag. State
+persists in `mc_modal_prefs.snap` + `mc_modal_prefs.preSnap` and per-instance
+in the `mc_open_modals` snapshot, so reload restores the layout. Window
+resize re-applies all current snaps debounced 100 ms. Mobile is full-screen
+by CSS; the snap engine no-ops there.
+
+**Header "Tile open modals" button (`static/index.html`)**
+Small grid icon in the header (next to the system-status pill) opens a
+popover with layout templates filtered to the current visible-modal count:
+1 → maximize · 2 → side-by-side or top/bottom · 3 → three columns or
+large-left+stack or stack+large-right · 4 → 2×2 quadrants · 5+ → "no
+layout available." Thumbnails are numbered cells (1, 2, 3…) showing which
+slot each modal will take — assignment is by zIndex descending (focused
+modal → cell 1). Each cell calls the existing `applySnap`, so persistence,
+the `is-snapped` class, and the resize-grip lockout all carry over. New
+zone types added to `_zoneRect`: `top-half`, `bottom-half`,
+`left-third`, `center-third`, `right-third`.
+
+**Per-modal pin / unpin (`static/index.html`)**
+New pin button in `.modal-window-controls` (between menu and minimize).
+Unpinned collapses the middle data-sheet section: status pill row, path
+row, summary, description, and the Current task / Next up grid. The
+project name row at top, the window controls, **the tab bar, and the
+active tab's content** all stay — handy when tiled modals only need a
+title bar + the conversation visible. State persists in
+`mc_modal_prefs.unpinned` + the `mc_open_modals` snapshot.
+
+**Clayrune onboarding project replaces "Sample Project" (`server.py`)**
+First-run walkthrough now seeds a real `clayrune` project at
+`~/MissionControl/clayrune/`. Endpoint URL stays
+`/api/walkthrough/sample-project` for compatibility; project ID is now
+`clayrune`. Seeded files (only if absent — won't trample edits): a friendly
+`README.md` and an `AGENT_RULES.md` that primes the dispatched agent as the
+in-app help desk, with absolute paths to *this install's*
+`docs/USER_GUIDE.md`, `CHANGELOG.md`, and source root (resolved via
+`Path(__file__).parent`). `_build_agent_context` already reads
+`AGENT_RULES.md`, so every session dispatched from Clayrune behaves as a
+platform expert with no schema or dispatch-flow change. 11 backlog items
+cover drag-snap, tile button, pin button, scheduler, hivemind, skills,
+MCP, GitHub sync, compact mode, first-real-project, and the
+tour-the-agent prompt.
+
+**Deferred**: stale "running" status detection — the server's guardian
+only fires after 600 s of stdout silence *and* CPU idle, so a wedged agent
+shows "running" for up to 10 minutes. Will be its own session.
+
+**Rollback**: revert this commit. The pre-existing `sample-project.json`
+in older installs is untouched (the new endpoint creates `clayrune.json`
+alongside if the user re-runs the walkthrough).
+
+## [2026-05-14] — Native FCM push for the Clayrune Android APK shell
+
+Web push hit a wall on Android Chrome: every notification carried a
+"possible spam from clayrune.io" warning and click-through landed on the
+generic dashboard, not the specific agent. With the native APK shell now
+shipping (CF service-token bypass landed yesterday), the right path is
+Firebase Cloud Messaging through Capacitor's `push-notifications` plugin —
+no spam toast, proper deep-link routing, and the server can deliver to a
+killed app via the OS push channel.
+
+**Server (`server.py`):**
+- `_push_send_fcm(sub, payload)` — lazy-inits `firebase_admin` from
+  `data/firebase_admin.json` (gitignored), sends via
+  `messaging.send(messaging.Message(token=…, notification=…, data=…))`.
+  Hybrid `notification`+`data` payload: Android auto-renders in the tray
+  when the app is backgrounded; the `data` block carries `project_id` /
+  `session_id` / `url` so taps route deep. `AndroidConfig` adds
+  `priority=high` + `ttl=300` + a per-project notification `tag` so a
+  chatty agent doesn't carpet-bomb the tray.
+- `_notify_push()` now dispatches per-subscription. `sub.type == 'fcm'`
+  → FCM path (handles `NotFoundError` / `InvalidArgumentError` as
+  "drop this token"); everything else stays on the existing pywebpush
+  path. Lock + persistence + the auto-removal-of-stale-subs accounting
+  is shared, so a mixed fleet of browser PWAs and native APKs all
+  funnel through one delivery loop.
+- New endpoint **`POST /api/push/register-fcm`** — accepts
+  `{token, label?, project_filter?, notify_agent_push?,
+  notify_turn_complete?}`. Storage key prefers the CF Access nonce; if
+  absent, falls back to `fcm:<sha1(token)[:16]>` so the row survives a
+  CF re-OTP. Dedups by token across keys (same logic as web
+  endpoint-based dedup).
+- **`POST /api/push/unsubscribe`** extended with a `token` field — same
+  pattern as the existing `endpoint` field but matches FCM rows.
+- **`GET /api/push/subscriptions`** now surfaces `type` (`'web'` or
+  `'fcm'`) per row so the Settings UI can label them distinctly.
+- `requirements.txt` adds `firebase-admin>=6.5.0`. Import is lazy
+  inside `_fcm_initialize()` — if the SDK isn't installed or the
+  service-account JSON is missing, FCM delivery silently no-ops and
+  the web push path still works.
+
+**Mobile (`E:\clayrune-mobile`, separate repo):**
+- `android/app/google-services.json` (gitignored) drops in to wire
+  the existing `apply plugin: com.google.gms.google-services` line
+  that Capacitor's template already had.
+- `AndroidManifest.xml` adds `POST_NOTIFICATIONS` (Android 13+
+  runtime grant — Capacitor's plugin prompts on first `register()`)
+  and `WAKE_LOCK` (brief wake to render incoming pushes when screen
+  is off).
+- No Java changes needed — Capacitor's `@capacitor/push-notifications`
+  plugin ships its own `FirebaseMessagingService` subclass; FCM
+  payloads route through that and into the JS bridge.
+
+**Dashboard JS (`static/index.html`):**
+- New top-level `_initNativePush()` block right after the service
+  worker registration. Runs only when `Capacitor.isNativePlatform()`
+  reports true — web/PWA browsers never see this code path.
+- Requests `POST_NOTIFICATIONS` via the plugin's `requestPermissions()`,
+  registers, listens for `registration` → POSTs the FCM token to
+  `/api/push/register-fcm`.
+- Wires the plugin's three events:
+  - `pushNotificationReceived` (foreground delivery — FCM suppresses
+    the system tray when the app is open) → `showToast(title: body)`
+    so the user notices without a duplicate-looking system bubble.
+  - `pushNotificationActionPerformed` (tap from tray) → reads
+    `notification.data.url` (or rebuilds it from
+    `project_id`/`session_id`) and hands off to the existing
+    `_handleDeepLinkFromUrl()` helper — same one the service-worker
+    `mc-deeplink` postMessage already calls, so behavior is
+    identical to web push tap-through.
+  - `registrationError` → logs to `_pushState.native.error` for
+    Settings-panel diagnostics.
+
+**Verified end-to-end 2026-05-14:**
+1. APK installed → CF pre-auth Toast → Android 13 permission prompt → grant.
+2. JS posts token → `data/push_subscriptions.json` gets a row with
+   `type:'fcm'`, label `'Android'`.
+3. `POST /api/push/test` → `{sent:1, failed:0}`.
+4. App foreground: in-app toast renders via `pushNotificationReceived`.
+5. App backgrounded: system tray notification renders; tap opens the app.
+6. (Deep-link routing with real `project_id`/`session_id` deferred to
+   the first agent-emitted `PushNotification` tool call in the wild.)
+
+**Rollback recipe:**
+- Server: revert the four hunks in `server.py` (`_push_send_fcm`,
+  `_notify_push` dispatch, `/api/push/register-fcm`, `/api/push/unsubscribe`
+  token branch, `/api/push/subscriptions` type field). `requirements.txt`
+  can keep `firebase-admin` (harmless if unused) or drop it.
+- Mobile: revert AndroidManifest permissions + delete
+  `android/app/google-services.json` to short-circuit the
+  `com.google.gms.google-services` plugin apply (it's wrapped in a try
+  block that no-ops on missing JSON).
+- Dashboard: delete the `_initNativePush()` IIFE from `static/index.html`.
+- `data/firebase_admin.json` stays gitignored; can be deleted from disk
+  without breaking anything (web push keeps working).
+
+**Open follow-ups:**
+- Settings UI: add a "Send test" row that targets a specific subscription
+  by nonce (currently `/api/push/test` fans out to everyone matching).
+- Optional `@capacitor/device` install to get a real model label
+  ("Galaxy Z Fold7") instead of the `'Android'` fallback.
+- iOS APK shell (Capacitor supports it; needs Apple developer cert).
+- Cleanup of the now-redundant `pywebpush` path on Android once the APK
+  is everyone's primary surface — keep it for desktop browsers and iOS PWA.
+
+## [2026-05-13b] — MCP servers management surface
+
+Users asked to add MCP (Model Context Protocol) servers from the dashboard
+instead of hand-editing `~/.claude.json` / `.mcp.json`. Built on the same
+pattern as the Skills surface — MC manages the files, Claude Code reads them
+natively at next session start (no preamble injection, no restart of CC
+required for newly-added servers).
+
+- **`mcp.py`** new module. `list_servers` / `read_server` / `write_server` /
+  `delete_server`. Three transport types validated:
+  - `stdio` → `{command, args?, env?}` (defaults; no `type` key, since stdio
+    is CC's default)
+  - `http`  → `{type: "http", url, headers?}` (streamable HTTP — most
+    modern hosted MCP servers)
+  - `sse`   → `{type: "sse",  url, headers?}` (legacy HTTP+SSE — still
+    common in the wild)
+- **Atomic writes** via `tempfile.mkstemp` + `os.replace`. `~/.claude.json`
+  is owned by Claude Code and holds lots of unrelated state — we
+  read-modify-write under a single `_global_write_lock` and never truncate
+  other top-level keys. Project `.mcp.json` files use the same lock for
+  simplicity.
+- **Server endpoints** in `server.py` between the Skills block and the
+  Global config block (`# ── MCP server endpoints`):
+  - `GET    /api/mcp?project_id=…`       — list (with `shadowed_by_project`
+    flag if a project entry overrides a global of the same name)
+  - `GET    /api/mcp/<scope>/<name>`     — read one
+  - `POST   /api/mcp`                    — create (409 on duplicate)
+  - `PUT    /api/mcp/<scope>/<name>`     — update (always overwrite)
+  - `DELETE /api/mcp/<scope>/<name>`     — remove
+- **Frontend** (`static/index.html`, section comment
+  `// ── MCP servers (global + per-project Model Context Protocol manager)`):
+  - Sidebar entry "MCP" (🔌) directly below Skills, wired through
+    `sidebarNav('mcp') → openAllMCP()`.
+  - Per-project menu entry "MCP servers" in the three-dot dropdown, calls
+    `openAllMCPForProject(pid)`.
+  - List modal mirrors the Skills shell — scope filter, project filter,
+    free-text search, scope/transport badges, shadow badge.
+  - Editor modal with a transport `<select>` that swaps the field set
+    between stdio (command/args/env) and http/sse (url/headers). Env vars
+    and headers entered as one-per-line key=value / Key: value text.
+- **Name rule**: `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — looser than Skills
+  (which is strict kebab) because real-world MCP names use dots and
+  underscores (e.g. `mcp.local.dev`, `github_actions`).
+- **What v1 does NOT do**: connection test (spawn the stdio server / hit
+  the URL to verify), OAuth helper flow, marketplace browser, mass-import
+  from a paste. All deferred until users hit real friction.
+- **Restart needed**: changes only take effect after restarting the Flask
+  process (new module import + new routes).
+- **Rollback**: delete `mcp.py`; remove `import mcp as _mcp` from
+  `server.py` line 18; revert the `# ── MCP server endpoints` block in
+  `server.py`; in `static/index.html` remove the sidebar `data-nav="mcp"`
+  entry, the `else if (target === 'mcp')` line in `sidebarNav`, the
+  `openAllMCPForProject` menu item in the project three-dot menu, and the
+  whole `// ── MCP servers …` JS block.
+
+## [2026-05-13b] — MCP "Add from URL" with security pre-flight
+
+New install path for non-technical users: paste a GitHub repo URL (or npm
+package name, or raw JSON config URL), MC does the rest. Bolted onto the
+existing MCP editor as a mode toggle, no new modal.
+
+- **Backend module** `mcp_installer.py` (new, ~520 lines):
+  - `classify_url()` — accepts `github.com/x/y[/tree/<ref>]`, `npmjs.com/...`,
+    bare `@scope/name`, raw `.json` URLs. Unknown is a valid kind.
+  - `fetch_github_signals()` — stars, age, last-commit recency, license,
+    archived flag, default branch. Uses `GITHUB_TOKEN` / `GH_TOKEN` if present.
+  - `stage_clone()` — shallow `git clone --depth 1` into
+    `~/.clayrune/mcp_installs/<owner>-<repo>/`, pins to the resolved SHA,
+    drops a `.meta.json` with `{url, sha, staged_at}`.
+  - `extract_config()` — three-tier fallback: (1) committed example files
+    (`claude_desktop_config.json`, `mcp.json`, `examples/*.json`), (2) regex
+    the README for the first ```json fence containing `mcpServers`, (3) one
+    Claude call with the README as input + structured extraction prompt.
+    Tier 3 only fires when 1 and 2 miss.
+  - `_absolutize_paths()` — replaces `/path/to/<repo>`-style placeholders in
+    the extracted config's `args` / `command` with the real install dir so
+    the resulting `~/.claude.json` entry Just Works.
+  - `detect_secrets()` — placeholder regex (`your-api-key`, `paste-here`,
+    etc.) + heuristic on env var names ending in `api_key` / `token` /
+    `secret` / `password` to surface required user input.
+  - `dependency_audit()` — `npm audit --json` (generates a lockfile via
+    `--package-lock-only --ignore-scripts` if missing) or `pip-audit -f
+    json`, returns critical/high/moderate/low counts + top 20 findings.
+  - `security_scan()` — gathers up to 20 KB of source from the repo
+    (excludes `node_modules`, `.git`, `dist`, build dirs), sends to Claude
+    with a structured prompt asking for a 4-row table:
+    Network / Filesystem / Shell / Secrets + a free-form `flags` list of
+    anything that doesn't match the README's claimed purpose. Cached on
+    `<install_dir>@<sha>` so re-previewing the same commit is free.
+  - `install_commands()` / `stream_install()` — runs `npm install
+    --no-audit --no-fund` or `uv sync` / `pip install -e .` /
+    `pip install -r requirements.txt`, streamed via a callback.
+- **Backend endpoints** (`server.py`, between the existing MCP DELETE and
+  Global config sections):
+  - `POST /api/mcp/url/preview` — runs the whole preview pipeline (classify
+    → clone → extract → audit → scan), returns one JSON blob the frontend
+    renders. Does NOT install.
+  - `POST /api/mcp/url/install` — SSE stream that runs the install commands
+    line-by-line then writes the final config via the existing
+    `mcp.write_server()`.
+  - `DELETE /api/mcp/url/staged` — cleans up the staged clone if the user
+    cancels after preview. Defense in depth: rejects paths outside
+    `~/.clayrune/mcp_installs/`.
+- **Frontend** (`static/index.html`):
+  - `openMCPEditor` gets a **Manual / From URL** mode toggle at the top of
+    the modal (only shown for new servers; editing always uses manual).
+  - URL mode state machine: **input** (URL field + Preview button) →
+    **preview** (GitHub trust row + audit banner + security-scan table +
+    secrets form + commands to run + final config preview + name/scope/
+    project pickers) → **installing** (live SSE log streamed into a `<pre>`)
+    → **done** (success card + collapsible install log).
+  - Required-secret check before Install button fires.
+  - Back button cleans up the staged clone server-side.
+
+**Smoke test:** paste `https://github.com/tradesdontlie/tradingview-mcp` →
+Preview → MC clones (~3s) + extracts the README JSON block (tier 2) +
+runs `npm audit` + Claude scans the source (~5s) + shows you what's about
+to run. Click Install → live `npm install` output → "Done." card.
+
+**Restart needed:** the new module + endpoints only load after a Flask
+restart.
+
+**Rollback:** delete `mcp_installer.py`, remove the `import mcp_installer
+as _mcpinst` line and the three `/api/mcp/url/*` route handlers, delete
+the `_mcpEditorSetMode` / `_mcpUrl*` block in `index.html`, revert the
+`openMCPEditor` mode-toggle change.
+
+## [2026-05-13] — In-dashboard Claude auth surface
+
+Ron hit a 401 from the dashboard this morning — the `claude` CLI had no
+valid credentials and there was no UI hint, just silent failure. Added
+detect-and-launch auth recovery:
+
+- **Server-side sentinel scan** (`server.py`, just above the agent-endpoints
+  section): every line read by `_read_agent_stream` (Mode A) and
+  `_read_agent_stream_b` (Mode B) is run through `_scan_for_auth_error()`,
+  which matches "Please run /login", "not logged in", "Invalid (api) key",
+  and `authentication_error`. A hit calls `_mark_claude_auth_error(reason,
+  line)` which flips a global `_claude_auth_state` dict (lock-guarded).
+  (The "credit balance is too low" sentinel was removed — Clayrune users sign
+  in via subscription, not API billing, so that warning was always a false
+  positive coming from stray API-style errors.)
+- **`GET /api/claude/auth-status`** — returns the dict. Cheap, no subprocess.
+- **`POST /api/claude/auth-probe`** — actively runs
+  `claude -p ok --max-turns 1` (20s timeout) and updates the dict from the
+  combined stdout+stderr. Costs a few tokens when authed; only invoked when
+  the user clicks "Re-check".
+- **`POST /api/claude/login-launch`** — opens `claude` in a NEW OS-level
+  terminal window. Why not the existing in-app terminal pop-out? That pop-out
+  uses `subprocess.Popen` with `stdin=PIPE` (not a PTY), and claude's `/login`
+  slash command refuses without a real TTY ("/login isn't available in this
+  environment"). Windows: `start "" cmd /k claude`. macOS: AppleScript to
+  Terminal.app. Linux: tries `x-terminal-emulator` / `gnome-terminal` /
+  `konsole` / `xfce4-terminal` / `xterm` in that order.
+- **Frontend banner** (`static/index.html`, sibling of `schedule-banner`):
+  warm-orange bar above the project grid. Two buttons:
+  - **Authenticate Claude** → `POST /api/claude/login-launch`, then a toast
+    instructing the user to type `/login` in the new window and click Re-check
+    when done.
+  - **Re-check** → `POST /api/claude/auth-probe`, banner hides on success.
+  - **No credit** variant swaps the primary button to "Open Billing"
+    (`console.anthropic.com/settings/billing`).
+- **Settings → Claude Code Integration → "Sign in to Claude"**: explicit
+  Sign in + Check status buttons. Always visible regardless of whether the
+  auto-banner detection fires — this is the dependable escape hatch when the
+  agent-stream sentinel scan misses the actual error format claude printed.
+- Polls `/api/claude/auth-status` on dashboard load, every 90s, and after
+  every agent SSE `error` event so a fresh 401 surfaces within seconds.
+
+Restart needed: changes only take effect after restarting the Flask process.
+
+Rollback recipe: revert the `# ── Claude CLI auth-status tracking` block in
+`server.py`, the two new routes, the two `_scan_for_auth_error` calls in the
+stream readers; drop the `auth-banner` HTML + CSS + JS block in
+`index.html`; remove the `refreshAuthStatus()` calls (initial-load chain,
+`setInterval`, and SSE-error branch).
+
 ## [2026-05-11c] — Single-instance guard for browser tabs
 
 Follow-up to the launch_handler fix in `[2026-05-11b]`. On a fresh

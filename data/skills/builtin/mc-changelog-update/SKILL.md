@@ -72,9 +72,35 @@ After editing, show the user the diff so they can sanity-check:
 git diff CHANGELOG.md
 ```
 
-### 5. Do not commit yet
+### 5. Companion gate — `docs/USER_GUIDE.md` (Mission Control / Clayrune only)
 
-This skill only edits CHANGELOG.md. Commit happens separately — usually as part of the `document-commit-deploy` flow.
+If the CHANGELOG entry describes a **user-facing feature** — a new UI
+element, button, menu entry, sidebar item, settings toggle, keyboard
+shortcut, or any feature an end user can discover — then `USER_GUIDE.md`
+needs a matching update **in the same change set**. That file is the
+source of truth for the in-app "Ask Claydo" helper; if the feature isn't
+in it, Claydo can't tell users about it.
+
+After step 4, ask yourself: *"Is the thing I just added to CHANGELOG.md
+a user-facing feature?"*
+
+- **Yes** → grep `docs/USER_GUIDE.md` for the feature name. If it's not
+  there (or only barely mentioned), draft the matching guide section
+  before this skill considers itself done. Surface the diff to the user
+  alongside the CHANGELOG diff.
+- **No** (refactor, internal-only change, bug fix with no UX delta) →
+  state explicitly: *"USER_GUIDE.md doesn't need an update — this is
+  internal-only."*
+
+This gate exists because Mission Control has historically shipped UI
+features that Claydo wasn't taught about, leaving the in-app helper
+unable to answer "how do I use X?" questions.
+
+### 6. Do not commit yet
+
+This skill only edits CHANGELOG.md (and, when warranted, `USER_GUIDE.md`).
+Commit happens separately — usually as part of the `document-commit-deploy`
+flow.
 
 ## Important
 

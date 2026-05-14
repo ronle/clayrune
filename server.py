@@ -15,6 +15,8 @@ from flask import Flask, jsonify, send_from_directory, request, send_file, abort
 import secrets
 
 import skills as _skills
+import mcp as _mcp
+import mcp_installer as _mcpinst
 
 
 def _resolve_dirs():
@@ -1604,45 +1606,159 @@ def delete_backlog_item(project_id, item_id):
     return jsonify({'ok': True})
 
 
-# ── Walkthrough sample project ────────────────────────────────────────────────
+# ── Walkthrough onboarding project ────────────────────────────────────────────
+
+# Help-desk persona seeded as AGENT_RULES.md in the Clayrune project workspace.
+# `_build_agent_context()` reads AGENT_RULES.md and prepends it to the agent's
+# system prompt automatically, so any session dispatched inside Clayrune
+# behaves as a platform expert with the right pointers to the install's docs.
+def _clayrune_agent_rules(mc_root: Path) -> str:
+    docs = mc_root / 'docs' / 'USER_GUIDE.md'
+    changelog = mc_root / 'CHANGELOG.md'
+    return (
+        "You are the in-app help desk for **Clayrune** (a.k.a. Mission Control), "
+        "the platform this user is currently running. Your job is to help them "
+        "use the app — explain features, walk through workflows, fix confusion, "
+        "and answer platform questions clearly and briefly.\n"
+        "\n"
+        "## Your knowledge sources (read on demand)\n"
+        f"- User guide: `{docs}`\n"
+        f"- Recent changes / feature log: `{changelog}`\n"
+        f"- App source code (for deeper questions): `{mc_root}`\n"
+        "Prefer the user guide for how-to questions. Fall back to CHANGELOG.md "
+        "for \"is X supported yet?\" questions. Read the source only when the "
+        "user asks something deeply technical.\n"
+        "\n"
+        "## What Clayrune does\n"
+        "Mission-control dashboard for AI-agent-assisted project management. "
+        "Surfaces include: project tiles + modals, per-project backlog, agent "
+        "dispatch (Mode A one-shot / Mode B streaming), Agent Log, Plans, "
+        "Activity log, Scheduler (cron), Hivemind (multi-agent), Skills "
+        "(Anthropic skill format), MCP server management, GitHub sync.\n"
+        "\n"
+        "## How to behave\n"
+        "- Be concise. Answer the question, point to the surface, stop.\n"
+        "- When the user says \"show me X\" — describe the path: sidebar entry, "
+        "  modal tab, or button location. Use the existing UI vocabulary "
+        "  (\"sidebar → Hivemind → New\", \"three-dot menu → Configure GitHub\").\n"
+        "- When a backlog item in this project asks the user to try a feature, "
+        "  give them the click path *and* explain what they'll see.\n"
+        "- This Clayrune project's path is THIS workspace (the README.md here "
+        "  is friendly orientation; AGENT_RULES.md is you). The user's actual "
+        "  Clayrune install is at the path above.\n"
+        "- You are NOT modifying the Clayrune codebase from here — you're a "
+        "  help desk. Don't edit files in the install path unless the user "
+        "  explicitly asks. Read freely.\n"
+    )
+
+
+def _clayrune_readme() -> str:
+    return (
+        "# Clayrune — your onboarding project\n"
+        "\n"
+        "This project is your guided tour of Clayrune. Everything here is real:\n"
+        "the backlog items are things to try, and the agent attached to this\n"
+        "project is set up as the in-app help desk — ask it anything about\n"
+        "how the platform works.\n"
+        "\n"
+        "## Try this first\n"
+        "Open the Agent tab and type:\n"
+        "\n"
+        "    show me what this app can do\n"
+        "\n"
+        "The agent has been briefed (see `AGENT_RULES.md`) and can read the\n"
+        "full user guide + changelog of your local install.\n"
+        "\n"
+        "## What's in the backlog\n"
+        "A short list of platform features to explore — drag-snap, tile button,\n"
+        "scheduler, hivemind, skills, MCP, GitHub sync. Tick them off as you go.\n"
+        "\n"
+        "## You can also use this project for real work\n"
+        "Nothing about this workspace is special — once you're done with the\n"
+        "tour, you can repurpose it, archive it, or just delete the project\n"
+        "and start fresh.\n"
+    )
+
 
 @app.route('/api/walkthrough/sample-project', methods=['POST'])
 def create_sample_project():
-    """Create a sample project for the first-run walkthrough (idempotent)."""
-    pid = 'sample-project'
+    """Create the Clayrune onboarding project on first-run walkthrough.
+    Idempotent. The URL keeps the legacy `sample-project` slug so older
+    walkthrough JS keeps working; the actual project ID is `clayrune`."""
+    pid = 'clayrune'
     filepath = DATA_DIR / f'{pid}.json'
     if filepath.exists():
         return jsonify({'ok': True, 'id': pid, 'existed': True})
 
     # Auto-assign a workspace folder so the agent can dispatch immediately.
-    # Without this the user opens the sample project, types a prompt, and
-    # gets blocked on "Set project_path to enable agent dispatch" — defeats
-    # the point of a tour-time walkthrough.
     base = Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
-    workspace = base / 'sample-project'
+    workspace = base / 'clayrune'
     try:
         workspace.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
 
+    # Seed README + AGENT_RULES so the dispatched agent acts as the help desk
+    # with concrete pointers to the install's docs. We only write these files
+    # if they don't already exist — the user may have edited them and we
+    # shouldn't trample.
+    try:
+        mc_root = Path(__file__).parent
+        readme_path = workspace / 'README.md'
+        if not readme_path.exists():
+            readme_path.write_text(_clayrune_readme(), encoding='utf-8')
+        rules_path = workspace / 'AGENT_RULES.md'
+        if not rules_path.exists():
+            rules_path.write_text(_clayrune_agent_rules(mc_root), encoding='utf-8')
+    except Exception:
+        # Seeding files is best-effort — the project still works without them,
+        # the agent will just be generic instead of help-desk-themed.
+        pass
+
     ts = now_iso()
     project = {
         'id': pid,
-        'name': 'Sample Project',
+        'name': 'Clayrune',
         'domain': 'general',
         'status': 'active',
         'project_path': str(workspace),
-        'description': 'A sample project created during the walkthrough. Feel free to explore, modify, or delete it!',
-        'current_task': 'Learn how to use Clayrune',
-        'next_action': 'Try adding tasks to the backlog',
+        'summary': 'Onboarding & help desk for the Clayrune platform — ask the agent anything.',
+        'description': (
+            "Your guided tour of Clayrune. Ask the agent in this project "
+            "anything about how to use the platform — backlog, scheduler, "
+            "hivemind, skills, MCP, agent modes, snap layouts, GitHub sync. "
+            "Everything here is real; you can also use this project to "
+            "actually run agents."
+        ),
+        'current_task': 'Tour Clayrune — ask the agent "show me what this app can do"',
+        'next_action': 'Set up your first real project (click + on Home)',
         'last_updated': ts,
         'backlog': [
-            {'id': 'sample01', 'text': 'Explore the project tabs', 'status': 'open', 'priority': 'normal', 'created_at': ts},
-            {'id': 'sample02', 'text': 'Try dispatching an AI agent', 'status': 'open', 'priority': 'high', 'created_at': ts},
-            {'id': 'sample03', 'text': 'Connect a GitHub repo for issue sync', 'status': 'open', 'priority': 'low', 'created_at': ts},
+            {'id': 'cr-01', 'text': 'Tour Clayrune — ask the agent: "show me what this app can do"',
+             'status': 'open', 'priority': 'high', 'created_at': ts},
+            {'id': 'cr-02', 'text': 'Set up your first real project — click + on Home',
+             'status': 'open', 'priority': 'normal', 'created_at': ts},
+            {'id': 'cr-03', 'text': 'Drag this modal\'s title bar near the right edge — it snaps to the right half',
+             'status': 'open', 'priority': 'normal', 'created_at': ts},
+            {'id': 'cr-04', 'text': 'Click the grid icon in the header to tile all open modals',
+             'status': 'open', 'priority': 'normal', 'created_at': ts},
+            {'id': 'cr-05', 'text': 'Use the pin icon (top-right of this modal) to collapse the data sheet',
+             'status': 'open', 'priority': 'normal', 'created_at': ts},
+            {'id': 'cr-06', 'text': 'Connect GitHub: open a project → 3-dot menu → Configure GitHub sync',
+             'status': 'open', 'priority': 'normal', 'created_at': ts},
+            {'id': 'cr-07', 'text': 'Set up a recurring agent run: Scheduler in the sidebar',
+             'status': 'open', 'priority': 'low', 'created_at': ts},
+            {'id': 'cr-08', 'text': 'Try a Hivemind: sidebar → Hivemind → New',
+             'status': 'open', 'priority': 'low', 'created_at': ts},
+            {'id': 'cr-09', 'text': 'Install a skill: sidebar → Skills → Browse built-ins',
+             'status': 'open', 'priority': 'normal', 'created_at': ts},
+            {'id': 'cr-10', 'text': 'Configure an MCP server: sidebar → MCP',
+             'status': 'open', 'priority': 'low', 'created_at': ts},
+            {'id': 'cr-11', 'text': 'Toggle compact mode: Settings → Advanced features',
+             'status': 'open', 'priority': 'low', 'created_at': ts},
         ],
         'activity_log': [
-            {'ts': ts, 'msg': 'Project created during Clayrune walkthrough'}
+            {'ts': ts, 'msg': 'Clayrune onboarding project created'}
         ],
     }
     save_project(pid, project)
@@ -1926,6 +2042,141 @@ def agent_upload_image():
     f.save(str(dest))
     return jsonify({'ok': True, 'path': str(dest.resolve())})
 
+
+
+# ── Claude CLI auth-status tracking ───────────────────────────────────────────
+# Sentinels emitted by `claude` when the user isn't logged in or the stored
+# OAuth/api credentials are stale. Detected on every agent-stream line; a hit
+# flips a global flag the dashboard polls so we can surface a "sign in" banner
+# instead of letting the user stare at a silent 401.
+import re as _re_auth
+_AUTH_ERROR_PATTERNS = [
+    (_re_auth.compile(r'please\s+run\s*/login', _re_auth.I), 'not_logged_in'),
+    (_re_auth.compile(r'not\s+logged\s+in', _re_auth.I), 'not_logged_in'),
+    (_re_auth.compile(r'invalid\s+(?:api\s+)?key', _re_auth.I), 'invalid_api_key'),
+    (_re_auth.compile(r'authentication_error', _re_auth.I), 'unknown'),
+]
+_claude_auth_state = {
+    'ok': True,
+    'reason': None,
+    'last_error_text': None,
+    'detected_at': None,
+    'last_probe_at': None,
+}
+_claude_auth_lock = threading.Lock()
+
+
+def _scan_for_auth_error(text):
+    """Return the reason code for the first matching sentinel, or None."""
+    if not text:
+        return None
+    for pat, reason in _AUTH_ERROR_PATTERNS:
+        if pat.search(text):
+            return reason
+    return None
+
+
+def _mark_claude_auth_error(reason, snippet):
+    with _claude_auth_lock:
+        _claude_auth_state['ok'] = False
+        _claude_auth_state['reason'] = reason
+        _claude_auth_state['last_error_text'] = (snippet or '')[:300]
+        _claude_auth_state['detected_at'] = _time.time()
+
+
+def _mark_claude_auth_ok():
+    with _claude_auth_lock:
+        _claude_auth_state['ok'] = True
+        _claude_auth_state['reason'] = None
+        _claude_auth_state['last_error_text'] = None
+        _claude_auth_state['last_probe_at'] = _time.time()
+
+
+@app.route('/api/claude/auth-status')
+def claude_auth_status():
+    """Return the latest known Claude CLI auth state. Cheap — no subprocess."""
+    with _claude_auth_lock:
+        return jsonify(dict(_claude_auth_state))
+
+
+@app.route('/api/claude/login-launch', methods=['POST'])
+def claude_login_launch():
+    """Open the `claude` CLI in a NEW OS terminal window so the user can sign
+    in. Has to be a real TTY — MC's in-app terminal pop-out is a piped
+    subprocess, and claude's `/login` slash command refuses to run without an
+    interactive console ("/login isn't available in this environment")."""
+    claude_bin = _resolve_claude()
+    try:
+        if sys.platform == 'win32':
+            # CREATE_NEW_CONSOLE gives `claude` its own conhost window with a
+            # real input handle, which is what its OAuth flow needs. `cmd /k`
+            # keeps the window open after claude exits so the user sees any
+            # final messages and can copy the auth-code prompt.
+            subprocess.Popen(
+                f'start "" cmd /k "\"{claude_bin}\""',
+                shell=True,
+                creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0),
+            )
+        elif sys.platform == 'darwin':
+            # Tell Terminal.app to open a new window running claude. Quoting
+            # the path so it survives spaces.
+            script = f'tell application "Terminal" to do script "{claude_bin}"'
+            subprocess.Popen(['osascript', '-e', script])
+        else:
+            # Linux: try a chain of common emulators.
+            for emu in ('x-terminal-emulator', 'gnome-terminal', 'konsole',
+                        'xfce4-terminal', 'xterm'):
+                if shutil.which(emu):
+                    subprocess.Popen([emu, '-e', claude_bin])
+                    break
+            else:
+                return jsonify({
+                    'error': 'No terminal emulator found. Run `claude` '
+                             'manually in a terminal to sign in.',
+                }), 500
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/claude/auth-probe', methods=['POST'])
+def claude_auth_probe():
+    """Actively probe Claude CLI auth by running `claude -p ok --max-turns 1`.
+    Costs a few tokens when authenticated; prints the not-logged-in sentinel
+    locally when not. Only invoked when the user clicks 'Re-check' in the
+    banner — not on an interval."""
+    try:
+        cmd = [_resolve_claude(), '-p', 'ok', '--max-turns', '1']
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=20,
+            creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+        )
+        combined = (result.stdout or '') + (result.stderr or '')
+        reason = _scan_for_auth_error(combined)
+        if reason:
+            _mark_claude_auth_error(reason, combined)
+        elif result.returncode == 0:
+            _mark_claude_auth_ok()
+        else:
+            # Non-zero exit without a known sentinel — leave state alone so a
+            # transient API hiccup doesn't clobber a previously-known-good
+            # auth status. Just record the probe attempt.
+            with _claude_auth_lock:
+                _claude_auth_state['last_probe_at'] = _time.time()
+    except subprocess.TimeoutExpired:
+        with _claude_auth_lock:
+            _claude_auth_state['last_probe_at'] = _time.time()
+    except FileNotFoundError:
+        _mark_claude_auth_error('cli_not_found', 'claude CLI not on PATH')
+    except Exception as e:
+        with _claude_auth_lock:
+            _claude_auth_state['last_probe_at'] = _time.time()
+            snapshot = dict(_claude_auth_state)
+        snapshot['probe_error'] = str(e)
+        return jsonify(snapshot), 500
+    with _claude_auth_lock:
+        return jsonify(dict(_claude_auth_state))
 
 
 # ── Agent endpoints ──────────────────────────────────────────────────────────
@@ -2456,7 +2707,12 @@ def _read_agent_stream(proc, session):
                                 except Exception as e:
                                     session['log_lines'].append(f'[backlog-sync error: {e}]')
                             elif tool_name == 'AskUserQuestion':
-                                session.setdefault('pending_questions', []).append(tool_input)
+                                # Stable question_id so the SSE can re-emit the question
+                                # to a late-connecting / reconnecting client and the
+                                # client can dedupe by id (instead of dropping it).
+                                _q = dict(tool_input)
+                                _q['question_id'] = uuid.uuid4().hex
+                                session.setdefault('pending_questions', []).append(_q)
                                 session['waiting_for_question'] = True
                                 # Transition to 'idle' BEFORE killing so the guardian
                                 # doesn't race in and mark us 'error' when it sees a
@@ -2488,6 +2744,14 @@ def _read_agent_stream(proc, session):
                     msg,
                 )
             except json.JSONDecodeError:
+                # Non-JSON lines are claude's raw stderr — that's where real
+                # auth-error sentinels appear ("Please run /login", "Invalid
+                # API key"). Scanning stream-json lines was a false-positive
+                # magnet: an agent's own assistant text discussing auth flows
+                # ("the user might not be logged in") triggered the banner.
+                _auth_reason = _scan_for_auth_error(line)
+                if _auth_reason:
+                    _mark_claude_auth_error(_auth_reason, line)
                 session['log_lines'].append(line)
                 session['last_output_time'] = _time.time()
     except Exception as e:
@@ -2598,7 +2862,9 @@ def _read_agent_stream_b(proc, session):
                                 except Exception as e:
                                     session['log_lines'].append(f'[backlog-sync error: {e}]')
                             elif tool_name == 'AskUserQuestion':
-                                session.setdefault('pending_questions', []).append(tool_input)
+                                _q = dict(tool_input)
+                                _q['question_id'] = uuid.uuid4().hex
+                                session.setdefault('pending_questions', []).append(_q)
                                 session['waiting_for_question'] = True
                                 # Transition to 'idle' BEFORE killing so the guardian
                                 # doesn't race in and mark us 'error' when it sees a
@@ -2631,6 +2897,11 @@ def _read_agent_stream_b(proc, session):
                     msg,
                 )
             except json.JSONDecodeError:
+                # Auth-sentinel scan only on non-JSON lines (claude's raw
+                # stderr). See Mode A reader for the false-positive history.
+                _auth_reason = _scan_for_auth_error(line)
+                if _auth_reason:
+                    _mark_claude_auth_error(_auth_reason, line)
                 session['log_lines'].append(line)
                 session['last_output_time'] = _time.time()
             # Cap log_lines to prevent unbounded memory growth
@@ -3820,6 +4091,7 @@ def agent_stream(project_id):
         # `turn_start` so the existing `status` handler (which closes on
         # terminal states) is unaffected.
         last_emitted_status = None
+        emitted_qids = set()  # per-stream: don't re-emit same question_id
         while True:
             session['_last_sse_poll_time'] = _time.time()
             lines = session['log_lines']
@@ -3828,12 +4100,26 @@ def agent_stream(project_id):
                     yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"
                 sent = len(lines)
 
-            # Send pending AskUserQuestion data
-            pqs = session.get('pending_questions')
-            if pqs:
-                for pq in pqs:
-                    yield f"data: {json.dumps({'type': 'question', 'questions': pq.get('questions', [])})}\n\n"
-                session['pending_questions'] = []
+            # Send pending AskUserQuestion data. We keep `pending_questions`
+            # populated until the user answers (cleared in /agent/followup) so
+            # a client that wasn't connected at emit time (mobile cold reopen,
+            # SSE dropped mid-emit, modal not yet built) can still see the
+            # question on reconnect. Within one stream we dedupe by question_id
+            # so the 0.3s poll doesn't spam the same form. Client also dedupes.
+            for pq in (session.get('pending_questions') or []):
+                qid = pq.get('question_id', '')
+                if qid and qid in emitted_qids:
+                    continue
+                if qid:
+                    emitted_qids.add(qid)
+                yield (
+                    "data: " +
+                    json.dumps({
+                        'type': 'question',
+                        'question_id': qid,
+                        'questions': pq.get('questions', []),
+                    }) + "\n\n"
+                )
 
             status = session['status']
 
@@ -3930,6 +4216,10 @@ def agent_followup(project_id):
         # Clear plan approval / question flags — user has responded
         existing['waiting_for_plan_approval'] = False
         existing['waiting_for_question'] = False
+        # Drop any persisted questions; the user's reply consumes them. (We
+        # keep `pending_questions` populated until this point so a late /
+        # reconnecting SSE client still sees the form — see the SSE generator.)
+        existing.pop('pending_questions', None)
 
         if existing.get('mode') == 'B':
             # Mode B: verify process is actually alive before trusting the flag
@@ -4277,6 +4567,7 @@ def agent_interrupt(project_id):
         session.pop('_dispatching_followup', None)
         session['waiting_for_plan_approval'] = False
         session['waiting_for_question'] = False
+        session.pop('pending_questions', None)
         if session.get('mode') == 'B':
             try:
                 old_proc.stdin.close()
@@ -4556,6 +4847,7 @@ def agent_status(project_id):
                 'trigger_type': s.get('trigger_type', 'manual'),
                 'trigger_id': s.get('trigger_id', ''),
                 'waiting_for_plan_approval': s.get('waiting_for_plan_approval', False),
+                'waiting_for_question': s.get('waiting_for_question', False),
                 'guardian_state': s.get('guardian_state'),
                 'circuit_breaker_tripped': s.get('circuit_breaker_tripped', False),
                 'incognito': s.get('incognito', False),
@@ -7691,6 +7983,327 @@ def _install_builtin_skills():
         print(f"[skills] builtin install failed: {e}")
 
 
+# ── MCP server endpoints ────────────────────────────────────────────────────
+#
+# MCP (Model Context Protocol) servers extend Claude Code with extra tool
+# providers. Two native config locations:
+#
+#   ~/.claude.json                       ← global; `mcpServers` top-level key
+#   <project_path>/.mcp.json             ← project-committed (team-shared)
+#
+# MC manages the files; CC reads them natively at session start. Three
+# transports supported: stdio (local subprocess), http (streamable HTTP),
+# sse (legacy HTTP+SSE). See mcp.py for the schema details.
+
+@app.route('/api/mcp')
+def list_mcp_route():
+    """List MCP servers across global pool + (optionally) one project's pool."""
+    project_id = request.args.get('project_id')
+
+    project_path = None
+    if project_id:
+        p = load_project(project_id)
+        if p:
+            project_path = p.get('project_path') or None
+
+    items = _mcp.list_servers(project_path=project_path, project_id=project_id)
+    return jsonify(items)
+
+
+@app.route('/api/mcp/<scope>/<name>')
+def read_mcp_route(scope, name):
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+    project_id = request.args.get('project_id')
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        rec = _mcp.read_server(scope, name, project_path=project_path, project_id=project_id)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    if not rec:
+        return jsonify({'error': 'MCP server not found'}), 404
+    return jsonify(rec)
+
+
+@app.route('/api/mcp', methods=['POST'])
+def create_mcp_route():
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    transport = (data.get('transport') or '').strip()
+    config = data.get('config') or {}
+    scope = (data.get('scope') or 'global').strip()
+    project_id = data.get('project_id')
+
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        rec = _mcp.write_server(
+            name=name,
+            transport=transport,
+            config=config,
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            overwrite=False,
+        )
+        return jsonify(rec), 201
+    except FileExistsError as e:
+        return jsonify({'error': str(e)}), 409
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/mcp/<scope>/<name>', methods=['PUT'])
+def update_mcp_route(scope, name):
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+    data = request.get_json() or {}
+    transport = (data.get('transport') or '').strip()
+    config = data.get('config') or {}
+    project_id = data.get('project_id') or request.args.get('project_id')
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        rec = _mcp.write_server(
+            name=name,
+            transport=transport,
+            config=config,
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            overwrite=True,
+        )
+        return jsonify(rec)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/mcp/<scope>/<name>', methods=['DELETE'])
+def delete_mcp_route(scope, name):
+    if scope not in ('global', 'project'):
+        return jsonify({'error': 'scope must be global or project'}), 400
+    project_id = request.args.get('project_id')
+
+    project_path, err = _resolve_project_path_or_400(scope, project_id)
+    if err:
+        return err
+
+    try:
+        result = _mcp.delete_server(scope=scope, name=name, project_path=project_path)
+        return jsonify(result)
+    except FileNotFoundError as e:
+        return jsonify({'error': str(e)}), 404
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+# ── MCP "Add from URL" — preview / install / cleanup ────────────────────────
+#
+# Frontend hits these in sequence:
+#   1. POST /api/mcp/url/preview   → clone + extract + audit + scan (no install)
+#   2. POST /api/mcp/url/install   → run package-manager + write config (SSE)
+#   3. DELETE /api/mcp/url/staged  → cleanup if user cancels after preview
+#
+# Why split: the preview is heavy (clone + Claude scan ~5-10s + token cost)
+# but lets the user see what's about to happen before committing. The install
+# stream is SSE so the UI can show live `npm install` output.
+
+@app.route('/api/mcp/url/preview', methods=['POST'])
+def mcp_url_preview():
+    data = request.get_json() or {}
+    raw_url = (data.get('url') or '').strip()
+    ref = (data.get('ref') or '').strip() or None
+    if not raw_url:
+        return jsonify({'error': 'url required'}), 400
+
+    classified = _mcpinst.classify_url(raw_url)
+    kind = classified.get('kind')
+
+    # NPM packages don't need cloning — the install command is npx, the
+    # config is templated, the security signal set is much thinner.
+    if kind == 'npm':
+        pkg = classified.get('package')
+        servers = {pkg: {'command': 'npx', 'args': ['-y', pkg]}}
+        return jsonify({
+            'kind': 'npm', 'classified': classified,
+            'servers': servers, 'name_hint': pkg, 'source_tier': 0,
+            'secrets': [],
+            'install_commands': [['npx', '-y', pkg, '--help']],
+            'github': {'available': False},
+            'audit': {'available': False, 'reason': 'npm package — runs via npx'},
+            'scan': {'available': False, 'reason': 'no source to scan (npx runs the published package)'},
+            'install_dir': None, 'sha': None,
+        })
+
+    # Raw JSON URL → fetch, parse, return as if the user pasted it manually.
+    if kind == 'json':
+        try:
+            import urllib.request as _ur
+            with _ur.urlopen(classified['url'], timeout=15) as resp:
+                blob = json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            return jsonify({'error': f'fetch failed: {e}'}), 400
+        servers = _mcpinst._find_mcp_servers_in_obj(blob)
+        if not servers:
+            return jsonify({'error': 'no mcpServers object found in JSON'}), 400
+        return jsonify({
+            'kind': 'json', 'classified': classified,
+            'servers': servers, 'name_hint': next(iter(servers.keys()), None),
+            'source_tier': 1, 'secrets': _mcpinst.detect_secrets(servers),
+            'install_commands': [],
+            'github': {'available': False},
+            'audit': {'available': False, 'reason': 'pure-config import — nothing to install'},
+            'scan': {'available': False, 'reason': 'no source to scan'},
+            'install_dir': None, 'sha': None,
+        })
+
+    if kind != 'git':
+        return jsonify({'error': classified.get('reason') or f'unsupported url kind: {kind}'}), 400
+
+    owner = classified.get('owner') or ''
+    repo = classified.get('repo') or ''
+    url = classified['url']
+    git_ref = ref or classified.get('ref')
+
+    github = _mcpinst.fetch_github_signals(owner, repo) if owner and repo else {'available': False}
+
+    try:
+        clone = _mcpinst.stage_clone(url, owner=owner, repo=repo, ref=git_ref)
+    except Exception as e:
+        return jsonify({'error': str(e), 'github': github}), 500
+
+    install_dir = clone['install_dir']
+    sha = clone['sha']
+
+    extracted = _mcpinst.extract_config(install_dir, allow_claude_fallback=True)
+    secrets = _mcpinst.detect_secrets(extracted.get('servers') or {})
+    audit = _mcpinst.dependency_audit(install_dir)
+    scan = _mcpinst.security_scan(install_dir, sha)
+    install_cmds = _mcpinst.install_commands(install_dir)
+
+    return jsonify({
+        'kind': 'git', 'classified': classified,
+        'install_dir': install_dir, 'sha': sha,
+        'default_branch': clone.get('default_branch'),
+        'servers': extracted.get('servers') or {},
+        'name_hint': extracted.get('name_hint'),
+        'source_tier': extracted.get('source_tier'),
+        'secrets': secrets,
+        'install_commands': install_cmds,
+        'github': github,
+        'audit': audit,
+        'scan': scan,
+    })
+
+
+@app.route('/api/mcp/url/staged', methods=['DELETE'])
+def mcp_url_staged_cleanup():
+    data = request.get_json() or {}
+    install_dir = (data.get('install_dir') or '').strip()
+    if not install_dir:
+        return jsonify({'error': 'install_dir required'}), 400
+    try:
+        removed = _mcpinst.cleanup_staged(install_dir)
+        return jsonify({'ok': True, 'removed': removed})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/mcp/url/install', methods=['POST'])
+def mcp_url_install():
+    """SSE stream: runs the install commands, writes the MCP config on success."""
+    data = request.get_json(silent=True) or {}
+    install_dir = (data.get('install_dir') or '').strip()
+    name = (data.get('name') or '').strip()
+    scope = (data.get('scope') or 'global').strip()
+    project_id = (data.get('project_id') or '').strip() or None
+    config = data.get('config') or {}
+    secrets = data.get('secrets') or {}
+    # For npm/json kinds with no install_dir, we skip the install stream and
+    # just write the config — but we still emit a stream so the UI flow is
+    # uniform.
+    skip_install = not install_dir
+
+    name_err = _mcp.validate_name(name)
+    if name_err:
+        return jsonify({'error': name_err}), 400
+
+    project_path = None
+    if scope == 'project':
+        if not project_id:
+            return jsonify({'error': 'project_id required for project scope'}), 400
+        p = load_project(project_id)
+        if not p:
+            return jsonify({'error': 'project not found'}), 404
+        project_path = p.get('project_path') or None
+        if not project_path:
+            return jsonify({'error': 'project has no project_path'}), 400
+    elif scope != 'global':
+        return jsonify({'error': 'scope must be global or project'}), 400
+
+    # Apply secrets to the env block before writing.
+    servers_with_secrets = _mcpinst.apply_secrets_to_config(
+        {name: config}, secrets,
+    )
+    final_cfg = servers_with_secrets.get(name) or config
+    transport = _mcp._infer_transport(final_cfg)
+
+    def _stream():
+        yield 'data: ' + json.dumps({'type': 'start'}) + '\n\n'
+
+        if not skip_install:
+            buf: list[str] = []
+
+            def emit(text: str):
+                buf.append(text)
+
+            rc = _mcpinst.stream_install(install_dir, emit)
+            # Flush buffered text to SSE in chunks (the stream_install
+            # callback is sync; we batch-emit here to avoid one SSE frame per
+            # character).
+            chunk = ''.join(buf)
+            if chunk:
+                yield 'data: ' + json.dumps({'type': 'log', 'text': chunk}) + '\n\n'
+            if rc != 0:
+                yield 'data: ' + json.dumps({
+                    'type': 'error', 'message': f'install exited with code {rc}',
+                }) + '\n\n'
+                return
+
+        try:
+            record = _mcp.write_server(
+                name=name, transport=transport, config=final_cfg,
+                scope=scope, project_path=project_path,
+                project_id=project_id, overwrite=True,
+            )
+        except Exception as e:
+            yield 'data: ' + json.dumps({
+                'type': 'error', 'message': f'write_server failed: {e}',
+            }) + '\n\n'
+            return
+
+        yield 'data: ' + json.dumps({
+            'type': 'done', 'record': record,
+        }) + '\n\n'
+
+    return Response(_stream(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
 # ── Global config endpoints ────────────────────────────────────────────────
 
 _CONFIG_EDITABLE_KEYS = {
@@ -8325,6 +8938,21 @@ def service_worker():
     resp.headers['Cache-Control'] = 'no-cache'
     resp.headers['Service-Worker-Allowed'] = '/'
     resp.headers['Content-Type'] = 'application/javascript'
+    return resp
+
+
+@app.route('/manifest.json')
+def web_app_manifest():
+    """PWA manifest, served from root with the correct
+    `application/manifest+json` Content-Type and no-cache so manifest edits
+    take effect on next page load instead of being stuck behind Flask's
+    default 12-hour static-file cache. Chrome's installability check is
+    sensitive to manifest changes; without no-cache the install offer can
+    silently stall on the old cached copy.
+    """
+    resp = send_from_directory(STATIC_DIR, 'manifest.json')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['Content-Type'] = 'application/manifest+json'
     return resp
 
 
@@ -9088,12 +9716,109 @@ def _push_subject() -> str:
     return 'mailto:push@clayrune.io'
 
 
+# ── FCM (native Android shell) ───────────────────────────────────────────────
+# Web push delivers to browsers via VAPID; native push to the io.clayrune.app
+# APK shell goes through Firebase Cloud Messaging. Both subscription types
+# live in the same push_subscriptions.json store and are routed in
+# _notify_push() based on sub['type'] (default '' / 'web' for web push,
+# 'fcm' for native).
+
+PUSH_FCM_KEY_PATH = _DATA_ROOT / 'data' / 'firebase_admin.json'
+_fcm_app = None  # lazy-init firebase_admin.App
+_fcm_init_error = None
+
+
+def _fcm_initialize():
+    """Lazy-init the firebase_admin SDK using data/firebase_admin.json.
+    Returns the App on success, None on failure. Caches both outcomes so
+    repeated calls don't re-attempt initialization on a broken setup.
+    """
+    global _fcm_app, _fcm_init_error
+    if _fcm_app is not None:
+        return _fcm_app
+    if _fcm_init_error is not None:
+        return None
+    try:
+        if not PUSH_FCM_KEY_PATH.exists():
+            _fcm_init_error = 'firebase_admin.json missing'
+            return None
+        import firebase_admin
+        from firebase_admin import credentials
+        cred = credentials.Certificate(str(PUSH_FCM_KEY_PATH))
+        _fcm_app = firebase_admin.initialize_app(cred, name='clayrune-fcm')
+        print('[push/fcm] firebase_admin initialized', flush=True)
+        return _fcm_app
+    except Exception as e:
+        _fcm_init_error = f'{type(e).__name__}: {e}'
+        print(f'[push/fcm] init failed: {_fcm_init_error}', flush=True)
+        return None
+
+
+def _push_send_fcm(sub: dict, payload: dict) -> tuple[bool, str, bool]:
+    """Deliver one FCM push. Returns (ok, error_str, drop_subscription).
+
+    Uses a data-only message so the app's FirebaseMessagingService renders
+    the notification itself with deep-link routing extras. drop_subscription
+    is True iff FCM reports the token is invalid/unregistered.
+    """
+    app_ = _fcm_initialize()
+    if app_ is None:
+        return False, f'fcm_init: {_fcm_init_error}', False
+    token = sub.get('token') or ''
+    if not token:
+        return False, 'no_token', True
+    try:
+        from firebase_admin import messaging, exceptions as fa_exc
+    except Exception as e:
+        return False, f'fcm_import: {e}', False
+    try:
+        # Hybrid payload:
+        #   notification block — auto-displays in system tray when app is
+        #     killed or backgrounded (Android handles rendering).
+        #   data block — survives tap-through with deep-link extras; also
+        #     used by Capacitor plugin's pushNotificationReceived event
+        #     when the app is in foreground (system tray suppressed).
+        # All `data` values must be strings.
+        data = {k: str(v) for k, v in payload.items() if v is not None}
+        msg = messaging.Message(
+            token=token,
+            notification=messaging.Notification(
+                title=payload.get('title') or 'Clayrune',
+                body=payload.get('body') or '',
+            ),
+            data=data,
+            android=messaging.AndroidConfig(
+                priority='high',
+                ttl=300,
+                notification=messaging.AndroidNotification(
+                    # Tag groups successive notifications for the same
+                    # project so a chatty agent doesn't carpet-bomb the tray.
+                    tag=f"clayrune-{payload.get('project_id', '')}",
+                ),
+            ),
+        )
+        messaging.send(msg, app=app_)
+        return True, '', False
+    except fa_exc.NotFoundError:
+        # UNREGISTERED — token is permanently invalid; drop the sub.
+        return False, 'unregistered', True
+    except fa_exc.InvalidArgumentError as e:
+        # Malformed token / payload — also unrecoverable.
+        return False, f'invalid: {e}', True
+    except Exception as e:
+        return False, f'{type(e).__name__}: {e}', False
+
+
 def _notify_push(title: str, body: str, *, url: str = '',
                  project_id: str = '', session_id: str = '',
                  kind: str = 'agent') -> dict:
     """Deliver a push notification to every subscribed device that opted in
     for this `kind` (`'agent'` for PushNotification tool, `'turn_complete'`
     for end-of-turn). Removes 404/410 subscriptions automatically.
+
+    Dispatches per-subscription based on `sub['type']`:
+      'fcm' → Firebase Cloud Messaging (native Android shell)
+      else  → Web push via VAPID (browsers, PWA)
     """
     try:
         from pywebpush import webpush, WebPushException
@@ -9105,7 +9830,7 @@ def _notify_push(title: str, body: str, *, url: str = '',
     subs = _load_push_subscriptions()
     if not subs:
         return {'ok': False, 'error': 'no_subscribers'}
-    payload = json.dumps({
+    payload_dict = {
         'title': (title or '')[:120],
         'body': (body or '')[:280],
         'url': url or '/',
@@ -9113,7 +9838,8 @@ def _notify_push(title: str, body: str, *, url: str = '',
         'session_id': session_id,
         'kind': kind,
         'ts': int(_time.time()),
-    })
+    }
+    payload = json.dumps(payload_dict)
     sent, failed, removed = 0, 0, []
     last_error = None
     for nonce, sub in list(subs.items()):
@@ -9126,6 +9852,23 @@ def _notify_push(title: str, body: str, *, url: str = '',
         pf = sub.get('project_filter')
         if pf and project_id and pf != project_id:
             continue
+        sub_type = sub.get('type', '') or ''
+
+        if sub_type == 'fcm':
+            ok, err, drop = _push_send_fcm(sub, payload_dict)
+            if ok:
+                sub['last_used_at'] = int(_time.time())
+                sent += 1
+            else:
+                if drop:
+                    removed.append(nonce)
+                else:
+                    failed += 1
+                    last_error = err
+                    print(f"[push/fcm] delivery failed for {nonce[:12]}…: {err}", flush=True)
+            continue
+
+        # Web push (default)
         sub_info = {
             'endpoint': sub.get('endpoint'),
             'keys': sub.get('keys', {}),
@@ -9258,11 +10001,60 @@ def push_subscribe():
     return jsonify({'ok': True, 'nonce': nonce, 'label': label})
 
 
+@app.route('/api/push/register-fcm', methods=['POST'])
+def push_register_fcm():
+    """Register or refresh a Firebase Cloud Messaging token from the native
+    Android shell. Body: { token, label?, project_filter?, notify_agent_push?,
+    notify_turn_complete? }. Token rotation is handled by storing keyed on
+    a hash of the token (stable per device) — re-registers under the same
+    key migrate the row.
+    """
+    body = request.get_json(silent=True) or {}
+    token = (body.get('token') or '').strip()
+    if not token or len(token) > 4096:
+        return jsonify({'ok': False, 'error': 'invalid_token'}), 400
+    # Storage key: prefer the CF nonce when present (lets us share lifecycle
+    # with web push subs); fall back to a stable token hash otherwise.
+    nonce = _cf_session_nonce_from_request()
+    if not nonce:
+        import hashlib
+        nonce = 'fcm:' + hashlib.sha1(token.encode()).hexdigest()[:16]
+    label = (body.get('label') or '').strip() or 'Android'
+    ua = request.headers.get('User-Agent', '')
+    with _push_state_lock:
+        subs = _load_push_subscriptions()
+        # Dedup by token: if the same FCM token already exists under a
+        # different key (token-hash key vs. CF-nonce key, or older nonce),
+        # migrate the row.
+        existing = subs.get(nonce) if isinstance(subs.get(nonce), dict) else {}
+        if not existing:
+            for k, v in list(subs.items()):
+                if k != nonce and isinstance(v, dict) and v.get('token') == token:
+                    existing = v
+                    subs.pop(k, None)
+                    print(f"[push/fcm] migrated subscription {k[:12]}… → {nonce[:12]}…", flush=True)
+                    break
+        subs[nonce] = {
+            'type': 'fcm',
+            'token': token,
+            'label': label[:80] if label != 'Android' else (existing.get('label') or label)[:80],
+            'ua': (ua or '')[:300],
+            'project_filter': body.get('project_filter') or existing.get('project_filter'),
+            'notify_agent_push': bool(body.get('notify_agent_push', existing.get('notify_agent_push', True))),
+            'notify_turn_complete': bool(body.get('notify_turn_complete', existing.get('notify_turn_complete', False))),
+            'created_at': existing.get('created_at') or int(_time.time()),
+            'last_used_at': existing.get('last_used_at') or 0,
+        }
+        _save_push_subscriptions(subs)
+    return jsonify({'ok': True, 'nonce': nonce, 'label': label, 'type': 'fcm'})
+
+
 @app.route('/api/push/unsubscribe', methods=['POST'])
 def push_unsubscribe():
     body = request.get_json(silent=True) or {}
     nonce = body.get('nonce') or ''
     endpoint = body.get('endpoint') or ''
+    token = body.get('token') or ''
     with _push_state_lock:
         subs = _load_push_subscriptions()
         if nonce and nonce in subs:
@@ -9270,6 +10062,11 @@ def push_unsubscribe():
         elif endpoint:
             for k, v in list(subs.items()):
                 if isinstance(v, dict) and v.get('endpoint') == endpoint:
+                    subs.pop(k, None)
+                    break
+        elif token:
+            for k, v in list(subs.items()):
+                if isinstance(v, dict) and v.get('token') == token:
                     subs.pop(k, None)
                     break
         _save_push_subscriptions(subs)
@@ -9287,6 +10084,7 @@ def push_subscriptions_list():
             'nonce': nonce,
             'label': s.get('label', ''),
             'ua': s.get('ua', ''),
+            'type': s.get('type', '') or 'web',
             'created_at': s.get('created_at', 0),
             'last_used_at': s.get('last_used_at', 0),
             'project_filter': s.get('project_filter'),
@@ -9411,10 +10209,15 @@ def _redirect_unlabeled_cf_session():
         return None
     path = request.path or '/'
     # Don't redirect API, static, or the name-device page itself (and its POST endpoint).
+    # `/sw.js` is the PWA service worker — must always be fetchable without
+    # 302-redirect; otherwise SW registration silently fails and the page
+    # never qualifies as installable.
     if (path.startswith('/api/')
             or path.startswith('/static/')
             or path.startswith('/_mc/')
-            or path == '/favicon.ico'):
+            or path == '/favicon.ico'
+            or path == '/sw.js'
+            or path == '/manifest.json'):
         return None
     nonce = _cf_session_nonce_from_request()
     if not nonce:
@@ -10230,6 +11033,15 @@ def _capture_system_init(msg):
         now_iso = datetime.now(timezone.utc).isoformat()
         if mtype == 'system' and msg.get('subtype') == 'init':
             mcp = msg.get('mcp_servers') or []
+            # `memory_paths` is a dict (`{"auto": "..."}`) — collapse to a list
+            # of paths for display so the panel doesn't need to know the shape.
+            mp_raw = msg.get('memory_paths') or {}
+            if isinstance(mp_raw, dict):
+                mp_list = [p for p in mp_raw.values() if isinstance(p, str) and p]
+            elif isinstance(mp_raw, list):
+                mp_list = [p for p in mp_raw if isinstance(p, str) and p]
+            else:
+                mp_list = []
             init_data = {
                 'model': msg.get('model') or '',
                 'claude_code_version': msg.get('claude_code_version') or '',
@@ -10243,9 +11055,12 @@ def _capture_system_init(msg):
                 'skills_count': len(msg.get('skills') or []),
                 'agents_count': len(msg.get('agents') or []),
                 'plugins_count': len(msg.get('plugins') or []),
+                'slash_commands_count': len(msg.get('slash_commands') or []),
                 'output_style': msg.get('output_style') or '',
                 'fast_mode_state': msg.get('fast_mode_state') or '',
                 'analytics_disabled': bool(msg.get('analytics_disabled')),
+                'cwd': msg.get('cwd') or '',
+                'memory_paths': mp_list,
             }
             _LAST_SYSTEM_STATUS.update(init_data)
             _LAST_SYSTEM_STATUS['init_captured_at'] = now_iso
@@ -10319,6 +11134,86 @@ def system_status_get():
     a restart via `_load_system_status_from_disk()` at module load.
     """
     return jsonify(_build_system_status_payload())
+
+
+@app.route('/api/system/usage', methods=['GET'])
+def system_usage_get():
+    """Return local token-usage aggregates derived from ~/.claude/stats-cache.json.
+
+    This is the file Claude Code maintains itself: a per-day breakdown of
+    tokens by model + cumulative per-model totals. The CLI's interactive
+    `/status` Usage tab shows server-side rate-limit *percentages* (5h
+    window, weekly all-model, weekly Sonnet-only) that are NOT exposed via
+    any client-readable file or `--print` invocation — those come from
+    Anthropic's billing service. We surface what we CAN see locally:
+
+      - today's tokens by model
+      - last 7-day tokens by model
+      - all-time top models
+      - totalSessions / totalMessages
+      - lastComputedDate (so the user knows when the cache last ticked)
+
+    Plus the rate-limit reset time from the existing system-status cache.
+    Frontend ties this off with a "see canonical usage" link to
+    https://claude.ai/settings/usage.
+    """
+    try:
+        path = Path.home() / '.claude' / 'stats-cache.json'
+        if not path.exists():
+            return jsonify({'available': False, 'reason': 'stats-cache.json not found'})
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except Exception as e:
+        return jsonify({'available': False, 'reason': str(e)})
+
+    daily = data.get('dailyModelTokens') or []
+    if not isinstance(daily, list):
+        daily = []
+    # `dailyModelTokens` entries look like:
+    #   {"date": "2026-05-12", "tokensByModel": {"claude-opus-4-7": 1231209, ...}}
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    today_tokens = {}
+    week_tokens = {}
+    try:
+        cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    except Exception:
+        cutoff = today_str
+    for entry in daily:
+        if not isinstance(entry, dict):
+            continue
+        d = entry.get('date', '')
+        tbm = entry.get('tokensByModel') or {}
+        if not isinstance(tbm, dict):
+            continue
+        if d == today_str:
+            for m, t in tbm.items():
+                today_tokens[m] = int(today_tokens.get(m, 0)) + int(t or 0)
+        if d >= cutoff:
+            for m, t in tbm.items():
+                week_tokens[m] = int(week_tokens.get(m, 0)) + int(t or 0)
+
+    model_usage = data.get('modelUsage') or {}
+    top_models = []
+    if isinstance(model_usage, dict):
+        ranked = []
+        for m, mu in model_usage.items():
+            if not isinstance(mu, dict):
+                continue
+            total = int(mu.get('inputTokens') or 0) + int(mu.get('outputTokens') or 0)
+            ranked.append((m, total, int(mu.get('cacheReadInputTokens') or 0)))
+        ranked.sort(key=lambda x: x[1], reverse=True)
+        for m, total, cache in ranked[:5]:
+            top_models.append({'model': m, 'tokens': total, 'cache_read': cache})
+
+    return jsonify({
+        'available': True,
+        'today': today_tokens,
+        'week': week_tokens,
+        'top_models': top_models,
+        'total_sessions': int(data.get('totalSessions') or 0),
+        'total_messages': int(data.get('totalMessages') or 0),
+        'last_computed_date': data.get('lastComputedDate') or '',
+        'rate_limit_info': _LAST_SYSTEM_STATUS.get('rate_limit_info') or {},
+    })
 
 
 @app.route('/api/system/status/refresh', methods=['POST'])
