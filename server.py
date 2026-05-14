@@ -6992,8 +6992,11 @@ def schedule_run_now(schedule_id):
     task = sched.get('task', '')
     if not pid or not task:
         return jsonify({'error': 'schedule missing project or task'}), 400
+    resume_id = ''
+    if sched.get('continue_session', True):
+        resume_id = _latest_claude_sid_for_schedule(pid, schedule_id)
     try:
-        sid = _dispatch_agent_internal(pid, task,
+        sid = _dispatch_agent_internal(pid, task, resume_id=resume_id,
                                        trigger_type='schedule',
                                        trigger_id=schedule_id)
     except ValueError as e:
@@ -7005,7 +7008,7 @@ def schedule_run_now(schedule_id):
         return jsonify({'error': f'dispatch failed: {e}'}), 500
     sched['last_run'] = now_iso()
     _save_schedules(schedules)
-    return jsonify({'ok': True, 'session_id': sid})
+    return jsonify({'ok': True, 'session_id': sid, 'resumed': bool(resume_id)})
 
 
 @app.route('/api/schedule/<schedule_id>/runs')
@@ -8742,11 +8745,16 @@ def _scheduler_loop():
                     pid = sched.get('project_id', '')
                     task = sched.get('task', '')
                     if pid and task:
+                        resume_id = ''
+                        if sched.get('continue_session', True):
+                            resume_id = _latest_claude_sid_for_schedule(pid, sched.get('id', ''))
                         try:
                             sid = _dispatch_agent_internal(pid, task,
+                                                          resume_id=resume_id,
                                                           trigger_type='schedule',
                                                           trigger_id=sched.get('id', ''))
-                            print(f"[scheduler] Dispatched for {pid}: {task[:60]} -> session {sid}")
+                            tag = ' (resumed)' if resume_id else ''
+                            print(f"[scheduler] Dispatched{tag} for {pid}: {task[:60]} -> session {sid}")
                         except Exception as e:
                             print(f"[scheduler] Failed to dispatch for {pid}: {e}")
                     sched['last_run'] = now_iso()
@@ -8840,6 +8848,20 @@ def _start_scheduler():
     return t
 
 
+def _latest_claude_sid_for_schedule(project_id, schedule_id):
+    """Return the most recent claude_session_id from a previous run of this schedule,
+    or '' if none. Agent log is stored newest-first."""
+    if not project_id or not schedule_id:
+        return ''
+    log = _load_agent_log(project_id)
+    for e in log:
+        if (e.get('trigger_type') == 'schedule'
+                and e.get('trigger_id') == schedule_id
+                and e.get('claude_session_id')):
+            return e.get('claude_session_id', '')
+    return ''
+
+
 @app.route('/api/schedules')
 def get_schedules():
     schedules = _load_schedules()
@@ -8864,6 +8886,8 @@ def create_schedule():
         'enabled': True,
         'project_id': pid,
         'task': task,
+        'description': (data.get('description') or '').strip(),
+        'continue_session': bool(data.get('continue_session', True)),
         'schedule_type': stype,
         'time': data.get('time', '09:00'),
         'days': data.get('days', []),
@@ -8890,7 +8914,8 @@ def update_schedule(schedule_id):
     if not sched:
         return jsonify({'error': 'not found'}), 404
 
-    for key in ('project_id', 'task', 'schedule_type', 'time', 'days',
+    for key in ('project_id', 'task', 'description', 'continue_session',
+                'schedule_type', 'time', 'days',
                 'interval_minutes', 'enabled', 'run_at', 'cron_expr'):
         if key in data:
             sched[key] = data[key]

@@ -11787,15 +11787,23 @@ async function refreshScheduleList() {
       const desc = scheduleDescription(s);
       const lastRun = s.last_run ? timeAgoShort(s.last_run) : 'never';
       const nextRun = s.next_run ? formatScheduleTime(s.next_run) : (s.enabled ? 'calculating...' : 'disabled');
+      const descLine = s.description
+        ? `<div class="schedule-card-desc" title="${esc(s.description)}" style="font-size:11px;color:var(--text-muted);margin:2px 0 4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(s.description)}</div>`
+        : '';
+      const continueBadge = (s.continue_session === false)
+        ? `<span title="Each run starts a fresh session" style="color:var(--text-muted)">Fresh each run</span>`
+        : `<span title="Resumes from previous run so the agent remembers prior work" style="color:var(--accent)">Continues prior session</span>`;
       return `<div class="schedule-card-wrap">
         <div class="schedule-card${cardClass}">
           <div class="schedule-card-body">
             <div class="schedule-card-project">${esc(s.project_name || s.project_id)}</div>
+            ${descLine}
             <div class="schedule-card-task" title="${esc(s.task)}">${esc(s.task)}</div>
             <div class="schedule-card-meta">
               <span>${desc}</span>
               <span>Last: ${lastRun}</span>
               <span>Next: ${nextRun}</span>
+              ${continueBadge}
             </div>
           </div>
           <div class="schedule-card-actions">
@@ -11928,6 +11936,8 @@ function showScheduleForm(existing) {
   const selDays = existing ? (existing.days || []) : [1,2,3,4,5];
   const selInterval = existing ? (existing.interval_minutes || 60) : 60;
   const selTask = existing ? existing.task : '';
+  const selDescription = existing ? (existing.description || '') : '';
+  const selContinue = existing ? (existing.continue_session !== false) : true;
   const selRunAt = existing ? (existing.run_at || '').slice(0, 16) : '';
   const selCron = existing ? (existing.cron_expr || '') : '';
 
@@ -11936,8 +11946,15 @@ function showScheduleForm(existing) {
     <select id="sched-project">${projects.map(p =>
       `<option value="${esc(p.id)}"${p.id === selPid ? ' selected' : ''}>${esc(p.name)}</option>`
     ).join('')}</select>
-    <label>Task</label>
+    <label>Description <span class="memory-hint" style="margin:0;font-weight:normal">(for you &mdash; not sent to the agent)</span></label>
+    <textarea id="sched-description" rows="2" placeholder="Why this schedule exists, what &ldquo;done&rdquo; looks like, etc.">${esc(selDescription)}</textarea>
+    <label>Task <span class="memory-hint" style="margin:0;font-weight:normal">(the prompt sent on every run)</span></label>
     <textarea id="sched-task" rows="2" placeholder="What should the agent do?">${esc(selTask)}</textarea>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal">
+      <input type="checkbox" id="sched-continue" ${selContinue ? 'checked' : ''} style="margin:0;width:auto">
+      <span style="font-weight:600">Continue previous session</span>
+      <span class="memory-hint" style="margin:0;font-weight:normal">(resume so the agent remembers prior runs)</span>
+    </label>
     <label>Schedule Type</label>
     <div class="sched-type-row">
       <button class="sched-type-btn${selType==='daily'?' active':''}" onclick="setSchedType('daily')">Daily</button>
@@ -12019,7 +12036,15 @@ async function saveSchedule() {
   if (!pid || !task) { alert('Project and task are required'); return; }
 
   const activeType = document.querySelector('.sched-type-btn.active')?.textContent?.toLowerCase() || 'daily';
-  const body = { project_id: pid, task, schedule_type: activeType };
+  const description = (document.getElementById('sched-description')?.value || '').trim();
+  const continueSession = !!document.getElementById('sched-continue')?.checked;
+  const body = {
+    project_id: pid,
+    task,
+    description,
+    continue_session: continueSession,
+    schedule_type: activeType,
+  };
 
   if (activeType === 'daily') {
     body.time = document.getElementById('sched-time')?.value || '09:00';
