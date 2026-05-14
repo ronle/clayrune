@@ -10126,10 +10126,26 @@ def push_subscription_update(nonce):
 
 @app.route('/api/push/test', methods=['POST'])
 def push_test():
+    """Send a test push to every subscribed device.
+
+    Optional body fields:
+      title / message — payload text
+      url             — deep-link the tap should resolve to (defaults to '/')
+      project_id      — alternative to `url`: builds /?project=<>&session=<>
+      session_id      — paired with project_id
+    """
     body = request.get_json(silent=True) or {}
     title = (body.get('title') or 'Clayrune test').strip()
     msg = (body.get('message') or 'Push notifications are working.').strip()
-    result = _notify_push(title, msg, url='/', kind='agent')
+    pid = (body.get('project_id') or '').strip()
+    sid = (body.get('session_id') or '').strip()
+    url = (body.get('url') or '').strip()
+    if not url and pid:
+        url = f'/?project={pid}' + (f'&session={sid}' if sid else '')
+    if not url:
+        url = '/'
+    result = _notify_push(title, msg, url=url, project_id=pid,
+                          session_id=sid, kind='agent')
     return jsonify(result)
 
 

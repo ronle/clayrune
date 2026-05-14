@@ -5188,9 +5188,13 @@ function focusModal(modalId) {
 }
 
 // ── Deep link: ?project=X&session=Y opens the project modal + session tab ───
-// Called once at boot from fetchProjects().then(...), and again on every
-// 'mc-deeplink' message from the service worker (notification click while
-// the PWA is already open).
+// Called from three places:
+//   1) Boot, after fetchProjects() resolves (URL-based, PWA cold-start).
+//   2) Service worker `mc-deeplink` postMessage (PWA warm-tap).
+//   3) Capacitor `pushNotificationActionPerformed` (native APK tap).
+// On native, the tap can fire before allProjects is populated — in that case
+// we cache the URL on window._mcPendingDeepLink and replay it from
+// fetchProjects().then(...) below.
 async function _handleDeepLinkFromUrl(rawUrl) {
   let url;
   try { url = new URL(rawUrl || window.location.href, window.location.origin); }
@@ -5199,7 +5203,12 @@ async function _handleDeepLinkFromUrl(rawUrl) {
   const pid = params.get('project');
   if (!pid) return;
   const sid = params.get('session') || '';
-  const known = new Set((allProjects || []).map(p => p.id));
+  if (!Array.isArray(allProjects) || allProjects.length === 0) {
+    // Projects haven't loaded yet — stash and let the boot path retry.
+    window._mcPendingDeepLink = rawUrl || url.toString();
+    return;
+  }
+  const known = new Set(allProjects.map(p => p.id));
   if (!known.has(pid)) return;
   try { openProjectModal(pid); } catch (e) { console.warn('openProjectModal', e); }
   if (sid) {
@@ -18935,12 +18944,31 @@ if ('serviceWorker' in navigator) {
           ? `/?project=${encodeURIComponent(data.project_id)}${data.session_id ? `&session=${encodeURIComponent(data.session_id)}` : ''}`
           : '');
         if (url) _handleDeepLinkFromUrl(url);
+        else console.warn('[fcm] tap event had no url/project_id', data);
       } catch (e) { console.warn('[fcm] tap routing failed', e); }
     });
 
     // 5. Kick off registration. Triggers 'registration' or 'registrationError'.
     await PN.register();
     window._pushState.native.state = 'registering';
+
+    // 6. Cold-start sweep — if the app was launched FROM a tap and the
+    //    'pushNotificationActionPerformed' event was missed (some Android
+    //    OEMs / Capacitor versions drop it on cold-start), the original
+    //    notification still sits in the tray. Read it and stash the
+    //    deep-link so the post-fetchProjects replay picks it up.
+    try {
+      const delivered = await PN.getDeliveredNotifications();
+      const list = (delivered && delivered.notifications) || [];
+      if (list.length) {
+        const latest = list[list.length - 1];
+        const data = (latest && latest.data) || {};
+        const url = data.url || (data.project_id
+          ? `/?project=${encodeURIComponent(data.project_id)}${data.session_id ? `&session=${encodeURIComponent(data.session_id)}` : ''}`
+          : '');
+        if (url) window._mcPendingDeepLink = url;
+      }
+    } catch (e) { console.warn('[fcm] cold-start sweep failed', e); }
   } catch (e) {
     console.warn('[fcm] init failed', e);
   }
@@ -18964,7 +18992,17 @@ fetchProjects().then(async () => {
   // Deep-link from push notifications: ?project=X&session=Y opens the
   // project modal (or activates it on mobile) + focuses the session tab.
   // Runs after fetchAgentStatus so session tabs exist before we point at one.
-  try { await _handleDeepLinkFromUrl(); } catch (e) { console.warn('deep link', e); }
+  // Replays any URL the Capacitor tap listener stashed before allProjects
+  // was ready — this is the cold-start path on the native APK.
+  try {
+    const pending = window._mcPendingDeepLink;
+    if (pending) {
+      window._mcPendingDeepLink = null;
+      await _handleDeepLinkFromUrl(pending);
+    } else {
+      await _handleDeepLinkFromUrl();
+    }
+  } catch (e) { console.warn('deep link', e); }
   fetchGlobalUsage();
   refreshScheduleBanner();
   refreshAuthStatus();
