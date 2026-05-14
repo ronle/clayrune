@@ -84,6 +84,15 @@ data/push_vapid.json
 data/push_subscriptions.json
 data/system_status.json
 
+# Firebase Admin SDK service-account key — used by server to send FCM pushes
+# to the native Android app. Contains a private RSA key; never commit.
+data/firebase_admin.json
+
+# Build artifacts served from /downloads (Android APK, etc.) — produced by
+# the mobile build pipeline, not source.
+static/downloads/*.apk
+static/downloads/*.aab
+
 # Bundled third-party binaries (cloudflared, future Rust mc-tunnel artifacts)
 # These are fetched at build time, not committed. README + LICENSE stay.
 mc_tunnel/bin/cloudflared

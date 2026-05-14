@@ -6,7 +6,7 @@
 <title>Clayrune</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8824a'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='Fraunces,Nunito,Inter,serif' font-weight='800' font-size='24' fill='%23ffffff'%3EC%3C/text%3E%3C/svg%3E">
 <meta name="theme-color" content="#e8824a">
-<link rel="manifest" href="/static/manifest.json">
+<link rel="manifest" href="/static/manifest.json?v=2">
 <link rel="apple-touch-icon" href="/static/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -507,7 +507,8 @@
   .sys-status-pill .ssp-label { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.3px; }
   .sys-status-popover {
     position: absolute; top: 100%; right: 0; margin-top: 8px;
-    width: 320px; max-width: calc(100vw - 32px);
+    width: 360px; max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 80px); overflow-y: auto;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 8px; padding: 14px 16px;
     box-shadow: 0 12px 32px rgba(0,0,0,0.45);
@@ -525,6 +526,91 @@
   .sys-status-popover .ssp-row .ssp-v.green { color: var(--green-text, var(--green)); }
   .sys-status-popover .ssp-row .ssp-v.amber { color: var(--amber, #d39c4a); }
   .sys-status-popover .ssp-row .ssp-v.red { color: var(--red, #e35858); }
+  .sys-status-popover .ssp-tabs {
+    display: flex; gap: 2px; margin: -4px -4px 10px -4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sys-status-popover .ssp-tab {
+    flex: 1; padding: 7px 6px; text-align: center;
+    background: transparent; border: none; color: var(--text-dim);
+    font-size: 11px; font-weight: 600; cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color .15s ease, border-color .15s ease;
+    font-family: inherit; letter-spacing: 0.3px;
+  }
+  .sys-status-popover .ssp-tab:hover { color: var(--text); }
+  .sys-status-popover .ssp-tab.active {
+    color: var(--accent, var(--text)); border-bottom-color: var(--accent, var(--text));
+  }
+  .sys-status-popover .ssp-tab-panel { display: block; }
+  .sys-status-popover .ssp-section-head {
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+    color: var(--text-faint); font-size: 10px; letter-spacing: 0.6px;
+    text-transform: uppercase;
+  }
+  .sys-status-popover .ssp-section-head:first-child {
+    margin-top: 0; padding-top: 0; border-top: none;
+  }
+  .sys-status-popover .ssp-bar {
+    margin: 6px 0 4px; height: 6px; background: var(--surface3);
+    border-radius: 3px; overflow: hidden; position: relative;
+  }
+  .sys-status-popover .ssp-bar-fill {
+    height: 100%; background: var(--accent, var(--green));
+    border-radius: 3px; transition: width .2s ease;
+  }
+  .sys-status-popover .ssp-bar-fill.amber { background: var(--amber, #d39c4a); }
+  .sys-status-popover .ssp-bar-fill.red { background: var(--red, #e35858); }
+  .sys-status-popover .ssp-token-row {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 0; font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  }
+  .sys-status-popover .ssp-token-row .ssp-token-name { color: var(--text); word-break: break-all; }
+  .sys-status-popover .ssp-token-row .ssp-token-val { color: var(--text-dim); flex-shrink: 0; }
+  .sys-status-popover .ssp-empty {
+    color: var(--text-faint); font-style: italic; font-size: 11px;
+    padding: 8px 0;
+  }
+  .sys-status-popover .ssp-link {
+    color: var(--accent, var(--text)); text-decoration: none;
+    font-size: 11px; display: inline-block; margin-top: 8px;
+  }
+  .sys-status-popover .ssp-link:hover { text-decoration: underline; }
+  .sys-status-popover .ssp-range-row {
+    display: flex; gap: 4px; margin: 4px 0 8px;
+  }
+  .sys-status-popover .ssp-range-btn {
+    flex: 1; padding: 4px 6px; font-size: 10px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text-dim); border-radius: 4px; cursor: pointer;
+    font-family: inherit; letter-spacing: 0.3px;
+  }
+  .sys-status-popover .ssp-range-btn:hover { color: var(--text); background: var(--surface3); }
+  .sys-status-popover .ssp-range-btn.active {
+    background: var(--accent-dim, var(--surface3));
+    border-color: var(--accent, var(--border));
+    color: var(--text);
+  }
+  .sys-status-popover .ssp-bignum {
+    font-family: 'JetBrains Mono', monospace; font-size: 18px;
+    font-weight: 600; color: var(--text);
+  }
+  .sys-status-popover .ssp-bignum-cost { font-size: 13px; color: var(--text-dim); margin-left: 8px; }
+  .sys-status-popover .ssp-bignum-sub { font-size: 10px; color: var(--text-faint); margin-top: 2px; }
+  .sys-status-popover .ssp-mcp-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+  .sys-status-popover .ssp-mcp-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  }
+  .sys-status-popover .ssp-mcp-name { color: var(--text); word-break: break-all; }
+  .sys-status-popover .ssp-mcp-status { font-size: 10px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.4px; }
+  .sys-status-popover .ssp-mcp-status.connected { color: var(--green-text, var(--green)); }
+  .sys-status-popover .ssp-mcp-status.failed,
+  .sys-status-popover .ssp-mcp-status.error,
+  .sys-status-popover .ssp-mcp-status.disconnected { color: var(--red, #e35858); }
+  .sys-status-popover .ssp-mcp-status.pending,
+  .sys-status-popover .ssp-mcp-status.connecting { color: var(--amber, #d39c4a); }
+  .sys-status-popover .ssp-mcp-empty { color: var(--text-faint); font-style: italic; font-size: 11px; }
   .sys-status-popover .ssp-foot {
     display: flex; justify-content: space-between; align-items: center;
     margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
@@ -891,6 +977,125 @@
     border-color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent-dim);
   }
+  /* Snap (Aero-Snap): while dragging near a viewport edge, a preview overlay
+     shows the target zone; on release the modal is sized to fit that zone.
+     The .is-snapped class on .modal-window disables the corner resize grip. */
+  .modal-window.is-snapped .modal-content {
+    resize: none;
+    max-width: none; max-height: none;
+  }
+  .modal-window.is-snapped .modal-content::after { display: none; }
+  .mc-snap-preview {
+    position: fixed;
+    z-index: 9998;
+    pointer-events: none;
+    background: var(--accent-dim);
+    border: 2px solid var(--accent);
+    border-radius: 12px;
+    opacity: 0;
+    transition: left 0.12s ease, top 0.12s ease,
+                width 0.12s ease, height 0.12s ease,
+                opacity 0.12s ease;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+  }
+  .mc-snap-preview.visible { opacity: 0.55; }
+
+  /* ── Header "Tile open modals" button + popover ─────────────────────────── */
+  .tile-modals-btn {
+    position: relative;
+    width: 30px; height: 26px;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    padding: 0;
+  }
+  .tile-modals-btn:hover {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .tile-modals-btn.disabled {
+    opacity: 0.45; cursor: default;
+  }
+  .tile-modals-btn.disabled:hover {
+    background: var(--surface3); color: var(--text-dim); border-color: var(--border);
+  }
+  .tile-modals-popover {
+    position: absolute;
+    top: calc(100% + 6px); right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    z-index: 9999;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+    min-width: 240px;
+    display: none;
+  }
+  .tile-modals-popover.open {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .tile-modals-popover .tmp-title {
+    grid-column: 1 / -1;
+    font-size: 11px; font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+  .tile-tpl-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 6px;
+    cursor: pointer;
+    display: flex; flex-direction: column; gap: 6px;
+    align-items: center;
+    color: var(--text);
+    font-size: 11px;
+    transition: all 0.12s;
+  }
+  .tile-tpl-btn:hover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+  .tile-thumb {
+    position: relative;
+    width: 84px; height: 52px;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .ttb-cell {
+    position: absolute;
+    background: var(--accent);
+    opacity: 0.75;
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    color: var(--surface);
+    font-size: 9px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-sizing: border-box;
+  }
+  .tmp-empty {
+    grid-column: 1 / -1;
+    padding: 14px;
+    color: var(--text-faint);
+    font-size: 12px;
+    text-align: center;
+  }
+  /* Hide the button on mobile — modals are full-screen there. */
+  @media (max-width: 960px) {
+    .tile-modals-btn { display: none; }
+  }
   .modal-content {
     background: var(--surface);
     width: 700px;
@@ -926,15 +1131,30 @@
     position: absolute; top: 8px; right: 8px; z-index: 11;
     display: flex; gap: 4px;
   }
-  .modal-minimize, .modal-close {
+  .modal-minimize, .modal-close, .modal-pin {
     width: 32px; height: 32px; border-radius: 6px;
     background: var(--surface3); border: 1px solid var(--border);
     color: var(--text-dim); font-size: 18px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     transition: all 0.15s;
+    padding: 0;
   }
   .modal-minimize:hover { background: var(--amber-dim); color: var(--amber-text); border-color: var(--amber); }
   .modal-close:hover { background: var(--red-dim); color: var(--red-text); border-color: var(--red); }
+  .modal-pin:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+  .modal-pin svg { display: block; }
+  /* When the modal is "unpinned", hide ONLY the data-sheet middle section
+     (path, summary, description, current task / next up). The name row, tab
+     bar, and tab content all stay — you get more vertical room for the
+     conversation / backlog / etc. State persists per-project. */
+  .modal-window.is-unpinned .modal-status-row,
+  .modal-window.is-unpinned .path-row,
+  .modal-window.is-unpinned .project-summary,
+  .modal-window.is-unpinned .description,
+  .modal-window.is-unpinned .card-summary { display: none !important; }
+  /* Tighten the header padding so the collapsed title row isn't lonely */
+  .modal-window.is-unpinned .modal-header { padding-bottom: 4px; }
+  .modal-window.is-unpinned .modal-pin { color: var(--accent); }
 
   /* ── THREE-DOT MENU ────────────────────────────────────────── */
   .modal-menu-btn {
@@ -2623,6 +2843,44 @@
   }
   .schedule-banner.hidden { display: none; }
 
+  /* Auth banner — sits in the same row family as schedule-banner but uses a
+     warning palette since it blocks the user from talking to any agent. */
+  .auth-banner {
+    position: relative;
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(220, 100, 60, 0.4);
+    background: linear-gradient(180deg, rgba(220, 100, 60, 0.18), rgba(220, 100, 60, 0.10));
+    color: var(--text);
+    font-size: 13px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .auth-banner.hidden { display: none; }
+  .auth-banner .ab-icon { font-size: 16px; flex-shrink: 0; }
+  .auth-banner .ab-text { flex: 1; min-width: 0; }
+  .auth-banner .ab-btn {
+    background: var(--surface3); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 12px; font: inherit; cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .auth-banner .ab-btn:hover { border-color: var(--accent); }
+  .auth-banner .ab-btn-primary {
+    background: var(--accent); color: var(--bg);
+    border-color: var(--accent); font-weight: 600;
+  }
+  .auth-banner .ab-btn-primary:hover { filter: brightness(1.1); }
+  .auth-banner .ab-btn:disabled { opacity: 0.55; cursor: default; }
+  .auth-banner .ab-dismiss {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 20px; line-height: 1; cursor: pointer;
+    padding: 0 2px; margin-left: 2px;
+  }
+  .auth-banner .ab-dismiss:hover { color: var(--text); }
+  @media (max-width: 960px) {
+    .auth-banner { padding: 6px 12px; flex-wrap: wrap; font-size: 12px; }
+    .auth-banner .ab-btn { padding: 3px 10px; font-size: 12px; }
+  }
+
   .sb-trigger {
     display: inline-flex; align-items: center; gap: 10px;
     padding: 4px 12px;
@@ -3792,6 +4050,10 @@
       <span class="si-icon">&#x1F9E9;</span>
       <span class="si-label">Skills</span>
     </div>
+    <div class="sidebar-item" data-nav="mcp" onclick="sidebarNav('mcp')">
+      <span class="si-icon">&#x1F50C;</span>
+      <span class="si-label">MCP</span>
+    </div>
     <div class="sidebar-item" data-nav="backlog" onclick="sidebarNav('backlog')">
       <span class="si-icon">&#x1F4CB;</span>
       <span class="si-label">Backlog</span>
@@ -3840,13 +4102,9 @@
         <span>Search or command...</span>
         <kbd>Ctrl+K</kbd>
       </div>
-      <span class="token-counter-global" id="global-token-counter" title="Click to change time range" onclick="openTokenContextMenu(event)">
-        <span class="tc-icon">&#x26A1;</span>
-        <span id="global-tc-tokens">—</span>
-        <span class="tc-cost" id="global-tc-cost"></span>
-        <span class="tc-mode" id="global-tc-mode"></span>
-      </span>
-      <div class="tc-context-menu" id="tc-context-menu"></div>
+      <!-- Token counter moved into the system-status popover's Usage tab.
+           Header stays clean; the running total now lives next to the
+           Anthropic-side rate-limit data where it belongs. -->
       <div class="metric-pill">
         <div class="mp-dot" style="background:var(--green)"></div>
         <span id="header-agent-count">0</span> agents
@@ -3856,6 +4114,15 @@
         <span class="ssp-label" id="sys-status-pill-label">—</span>
         <div class="sys-status-popover" id="sys-status-popover" onclick="event.stopPropagation()"></div>
       </div>
+      <button class="tile-modals-btn" id="tile-modals-btn" onclick="toggleTileModalsPopover(event)" title="Tile open modals">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <rect x="0.5" y="0.5" width="5.5" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/>
+          <rect x="8" y="0.5" width="5.5" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/>
+          <rect x="0.5" y="8" width="5.5" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/>
+          <rect x="8" y="8" width="5.5" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+        <div class="tile-modals-popover" id="tile-modals-popover" onclick="event.stopPropagation()"></div>
+      </button>
       <span class="refresh-timer" id="refresh-timer">refresh in 30s</span>
       <div class="live-badge"><div class="live-dot"></div>Live</div>
       <button class="header-tour-btn" onclick="startWalkthrough()" title="Take Tour">?</button>
@@ -3863,6 +4130,13 @@
   </div>
 
   <div class="schedule-banner hidden" id="schedule-banner"></div>
+  <div class="auth-banner hidden" id="auth-banner">
+    <span class="ab-icon">&#x1F510;</span>
+    <span class="ab-text" id="auth-banner-text">Claude isn't signed in.</span>
+    <button class="ab-btn ab-btn-primary" id="auth-banner-signin" onclick="claudeAuthenticate()">Authenticate Claude</button>
+    <button class="ab-btn" id="auth-banner-recheck" onclick="claudeAuthRecheck()">Re-check</button>
+    <button class="ab-dismiss" onclick="dismissAuthBanner()" title="Hide for this session">&times;</button>
+  </div>
 
   <!-- Content Area -->
   <div class="content-area">
@@ -4558,6 +4832,12 @@ function modalContentHTML(p) {
   return `
     <div class="modal-header" ${accentStyle}>
       <div class="modal-window-controls">
+        <button class="modal-pin" onclick="toggleModalPin('${esc(p.id)}')" title="Collapse / expand data sheet">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M9 1.2L12.8 5L10 7.8L9.3 7.1L6.7 9.7L4.3 7.3L6.9 4.7L6.2 4L9 1.2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            <line x1="6.7" y1="9.7" x2="1.5" y2="12.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+        </button>
         <button class="modal-menu-btn" onclick="toggleModalMenu(event,'${esc(p.id)}')" title="Menu">&#x22EE;</button>
         <button class="modal-minimize" onclick="minimizeModal('${esc(p.id)}')" title="Minimize">&#x2015;</button>
         <button class="modal-close" onclick="closeModalById('${esc(p.id)}')" title="Close">&#10005;</button>
@@ -4706,6 +4986,9 @@ function modalContentHTML(p) {
           </button>
           <button class="modal-menu-item" onclick="openAllSkillsForProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F9E9;</span> Skills
+          </button>
+          <button class="modal-menu-item" onclick="openAllMCPForProject('${esc(p.id)}')">
+            <span class="menu-icon">&#x1F50C;</span> MCP servers
           </button>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item danger" onclick="deleteProject('${esc(p.id)}')">
@@ -4862,6 +5145,9 @@ function _saveOpenModalsSnapshot() {
       left: Math.round(r.left),
       top: Math.round(r.top),
       minimized: !!entry.minimized,
+      snap: entry.snap || null,
+      preSnap: entry.preSnap || null,
+      unpinned: !!entry.unpinned,
     });
   }
   try { localStorage.setItem('mc_open_modals', JSON.stringify(list)); } catch {}
@@ -4981,9 +5267,37 @@ function openProjectModal(projectId, restoreState) {
     modalZoomLevels[projectId] = pref.zoom;
     applyModalZoom(win, pref.zoom);
   }
+  // Restore pin state (snapshot wins over saved pref for per-instance memory)
+  const unpinnedToRestore = (restoreState && typeof restoreState.unpinned === 'boolean')
+    ? restoreState.unpinned
+    : !!(pref && pref.unpinned);
+  if (unpinnedToRestore) {
+    win.classList.add('is-unpinned');
+    const e = openModals.get(projectId);
+    if (e) e.unpinned = true;
+  }
 
-  // Position: restoreState (refresh/restore-on-load) wins; else center
-  if (restoreState && typeof restoreState.left === 'number' && !_isMobileDevice && window.innerWidth > 960) {
+  // Restore snap state. Snap geometry from `_zoneRect` wins over both the
+  // saved width/height (used as "free" size) and any restoreState left/top.
+  // The snapshot (mc_open_modals) carries the per-instance snap; the pref
+  // (mc_modal_prefs) carries the cross-reload default. Snapshot wins so
+  // closing-then-reopening keeps your last snap.
+  const snapToRestore = (restoreState && restoreState.snap) || (pref && pref.snap) || null;
+  const preSnapToRestore = (restoreState && restoreState.preSnap) || (pref && pref.preSnap) || null;
+  if (snapToRestore && _snapEnabled() && _zoneRect(snapToRestore)) {
+    const entry = openModals.get(projectId);
+    if (entry) {
+      entry.snap = snapToRestore;
+      entry.preSnap = preSnapToRestore;
+    }
+    win.classList.add('is-snapped');
+    const r = _zoneRect(snapToRestore);
+    win.style.left = r.left + 'px';
+    win.style.top = r.top + 'px';
+    content.style.width = r.width + 'px';
+    content.style.height = r.height + 'px';
+  } else if (restoreState && typeof restoreState.left === 'number' && !_isMobileDevice && window.innerWidth > 960) {
+    // Position: restoreState (refresh/restore-on-load) wins; else center
     const w = win.offsetWidth, h = win.offsetHeight;
     win.style.left = Math.max(0, Math.min(window.innerWidth  - 100, restoreState.left)) + 'px';
     win.style.top  = Math.max(0, Math.min(window.innerHeight - 50,  restoreState.top))  + 'px';
@@ -5000,7 +5314,9 @@ function openProjectModal(projectId, restoreState) {
   Promise.all([fetchAgentStatus(projectId), fetchTerminalStatus(projectId)])
     .then(() => refreshModalById(projectId));
 
-  // Re-size agent chat when modal is resized + persist size pref
+  // Re-size agent chat when modal is resized + persist size pref. Skip the
+  // size-persist while snapped — snap-driven resizes shouldn't clobber the
+  // user's saved "free" size (which we want back when they unsnap).
   new ResizeObserver(() => {
     const entry = openModals.get(projectId);
     if (!entry || entry.minimized) return;
@@ -5008,7 +5324,9 @@ function openProjectModal(projectId, restoreState) {
     if (sid && (modalActiveTab[projectId] || 'agent') === 'agent') {
       sizeAgentChat(entry.element, sid);
     }
-    _setModalPref(projectId, { width: content.offsetWidth, height: content.offsetHeight });
+    if (!entry.snap) {
+      _setModalPref(projectId, { width: content.offsetWidth, height: content.offsetHeight });
+    }
   }).observe(content);
 }
 
@@ -5333,6 +5651,7 @@ function sidebarNav(target) {
   else if (target === 'backlog') openAllBacklog();
   else if (target === 'hivemind') openAllHiveminds();
   else if (target === 'skills') openAllSkills();
+  else if (target === 'mcp') openAllMCP();
   // Update active state in sidebar
   document.querySelectorAll('.sidebar-item').forEach(i =>
     i.classList.toggle('active', i.dataset.nav === target)
@@ -5806,6 +6125,20 @@ function refreshModalById(modalId) {
     }
   }
 
+  // Preserve the focused chat textarea DOM node. Rebuilding it via innerHTML
+  // wipes the Android IME composition buffer, causing the next backspace to
+  // need several presses (the IME thinks the word is still in its compose
+  // buffer; the new DOM textarea has no such buffer). Detach + reattach
+  // keeps the same element + selection + IME state across refreshes.
+  let savedChatInput = null;
+  if (sid && curTab === 'agent') {
+    const existingInput = document.getElementById(`agent-followup-${sid}`);
+    if (existingInput && existingInput === document.activeElement) {
+      existingInput.remove();
+      savedChatInput = existingInput;
+    }
+  }
+
   _skipAgentOutput = !!savedOutput;
   content.innerHTML = modalContentHTML(p);
   _skipAgentOutput = false;
@@ -5822,13 +6155,26 @@ function refreshModalById(modalId) {
       }
     }
   }
+  // Re-attach preserved chat input textarea
+  if (savedChatInput) {
+    const newInput = document.getElementById(`agent-followup-${sid}`);
+    if (newInput) {
+      newInput.replaceWith(savedChatInput);
+    }
+  }
 
+  // Skip the preserved chat input — its value (and IME compose state) are
+  // already correct on the reattached node; re-assigning .value would reset
+  // the cursor and re-trigger the Android IME desync we're avoiding.
+  const _preservedInputId = savedChatInput ? savedChatInput.id : null;
   for (const [id, val] of Object.entries(saved)) {
+    if (id === _preservedInputId) continue;
     const el = document.getElementById(id);
     if (el) el.value = val;
   }
   // Also restore from global textarea cache (survives tab switches)
   for (const [id, val] of Object.entries(textareaValues)) {
+    if (id === _preservedInputId) continue;
     const el = document.getElementById(id);
     if (el && !saved[id] && val) el.value = val;
   }
@@ -5836,7 +6182,7 @@ function refreshModalById(modalId) {
     const el = document.getElementById(id);
     if (el) el.style.height = h;
   }
-  if (focusedId) {
+  if (focusedId && focusedId !== _preservedInputId) {
     const el = document.getElementById(focusedId);
     if (el) { el.focus(); el.selectionStart = selStart; el.selectionEnd = selEnd; }
   }
@@ -6711,56 +7057,28 @@ function getTokenSince(mode) {
   return ''; // 'all' — no filter
 }
 
+// MC-scoped token counter — was a header pill, now folded into the system-
+// status popover's Usage tab. `mcUsageCache` holds the last fetched totals
+// for the active range; `fetchGlobalUsage` populates it and re-renders
+// any popover surface that's open.
+let mcUsageCache = null;
+
 async function fetchGlobalUsage() {
   try {
     const since = getTokenSince(tokenCounterMode);
     const url = API_BASE + '/api/usage' + (since ? `?since=${encodeURIComponent(since)}` : '');
     const r = await fetch(url);
-    const d = await r.json();
-    const tokensEl = document.getElementById('global-tc-tokens');
-    const costEl = document.getElementById('global-tc-cost');
-    const modeEl = document.getElementById('global-tc-mode');
-    if (tokensEl) tokensEl.textContent = formatTokens(d.total_tokens) + ' tokens';
-    if (costEl) {
-      const cost = formatCost(d.cost_usd);
-      costEl.textContent = cost ? cost : '';
-    }
-    if (modeEl) {
-      const m = TOKEN_MODES.find(m => m.id === tokenCounterMode);
-      modeEl.textContent = (tokenCounterMode === 'all') ? '' : m ? m.label : '';
-    }
-  } catch(e) {}
-}
-
-function openTokenContextMenu(e) {
-  e.preventDefault();
-  e.stopPropagation();
-  const menu = document.getElementById('tc-context-menu');
-  if (!menu) return;
-
-  menu.innerHTML = TOKEN_MODES.map(m =>
-    `<button class="tc-ctx-item${tokenCounterMode === m.id ? ' active' : ''}" onclick="setTokenMode('${m.id}')">
-      <span class="ctx-check">${tokenCounterMode === m.id ? '&#x2713;' : ''}</span> ${m.label}
-    </button>`
-  ).join('');
-
-  menu.classList.add('open');
-  menu.style.left = Math.min(e.clientX, window.innerWidth - 190) + 'px';
-  menu.style.top = Math.min(e.clientY, window.innerHeight - 200) + 'px';
-
-  const close = (ev) => {
-    if (!menu.contains(ev.target)) {
-      menu.classList.remove('open');
-      document.removeEventListener('mousedown', close);
-    }
-  };
-  setTimeout(() => document.addEventListener('mousedown', close), 0);
+    mcUsageCache = await r.json();
+  } catch(e) {
+    mcUsageCache = null;
+  }
+  // Repaint any open Usage-tab surfaces. Safe no-op if popover is closed.
+  if (typeof _rerenderSysStatusSurfaces === 'function') _rerenderSysStatusSurfaces();
 }
 
 function setTokenMode(mode) {
   tokenCounterMode = mode;
   localStorage.setItem('tc_mode', mode);
-  document.getElementById('tc-context-menu')?.classList.remove('open');
   fetchGlobalUsage();
 }
 
@@ -7653,6 +7971,14 @@ async function dispatchAgent(projectId) {
 
 let agentSSEWatchdogs = {};  // sessionId → timer ID
 let followupTimeouts = {};  // sessionId → { timerId, projectId }
+// sessionId → timestamp ms. Set in sendFollowup, cleared after we've seen the
+// first `turn_start` from the new turn (or after 8s timeout). While truthy,
+// SSE handlers must NOT act on a `turn_complete` / `status` event — that
+// event is from the PRIOR (idle) state we opened SSE on, not the new turn.
+// Without this gate, the eager-opened SSE in sendFollowup sees current
+// status=idle, emits turn_complete, closes SSE on the client → and the
+// post-POST status=running transition is never seen → UI stays IDLE.
+let _sendInFlight = {};
 
 function connectAgentStream(projectId, sessionId) {
   if (agentEventSources[sessionId]) {
@@ -7750,10 +8076,13 @@ function connectAgentStream(projectId, sessionId) {
           refreshProjectBacklog(projectId);
         }
       } else if (msg.type === 'question' && msg.questions) {
-        renderAgentQuestion(sessionId, projectId, msg.questions);
+        renderAgentQuestion(sessionId, projectId, msg.questions, msg.question_id || '');
       } else if (msg.type === 'turn_start') {
         // Phase 2 (2026-04-27): server tells us a new turn started so we can
         // flip the status UI without optimistic cache writes in sendFollowup.
+        // turn_start is what we're waiting for in _sendInFlight — clear it
+        // here so subsequent terminal events can flow normally.
+        delete _sendInFlight[sessionId];
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = 'running';
           agentStatusCache[sessionId].waitingForPlanApproval = false;
@@ -7763,6 +8092,12 @@ function connectAgentStream(projectId, sessionId) {
         refreshModal();
         renderAgentConsole();
       } else if (msg.type === 'turn_complete') {
+        if (_sendInFlight[sessionId]) {
+          // Stale turn_complete from the prior idle state — the new turn has
+          // not yet started server-side. Ignore so we don't close SSE early
+          // (which would prevent us from seeing the imminent turn_start).
+          return;
+        }
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Mode B: turn finished, process still alive. We close the SSE here to free
         // a browser per-origin connection slot (Chromium caps at 6 over HTTP/1.1).
@@ -7783,6 +8118,12 @@ function connectAgentStream(projectId, sessionId) {
         refreshModal();
         renderAgentConsole();
       } else if (msg.type === 'status') {
+        // 'stopped' is user-initiated and always authoritative even mid-send.
+        // For other statuses, suppress while a send is in flight (same
+        // staleness reasoning as turn_complete above).
+        if (_sendInFlight[sessionId] && msg.status !== 'stopped') {
+          return;
+        }
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Terminal status — close SSE
         if (agentStatusCache[sessionId]) {
@@ -7793,6 +8134,12 @@ function connectAgentStream(projectId, sessionId) {
           if (msg.num_turns !== undefined) agentStatusCache[sessionId].num_turns = msg.num_turns;
         }
         updateHistoryStatus(sessionId, msg.status);
+        // Surface a fresh auth banner if the session ended in error (claude's
+        // not-logged-in path exits with rc!=0, which the server emits here as
+        // status='error' — NOT as msg.type='error').
+        if (msg.status === 'error') {
+          refreshAuthStatus();
+        }
         es.close();
         delete agentEventSources[sessionId];
         delete sseRetryCount[sessionId];
@@ -7818,6 +8165,8 @@ function connectAgentStream(projectId, sessionId) {
         loadConversations(projectId);
         refreshModal();
         renderAgentConsole();
+        // Surface a fresh auth banner if the failure was caused by a 401.
+        refreshAuthStatus();
       } else if (msg.type === 'guardian') {
         const cached = agentStatusCache[sessionId];
         if (cached) {
@@ -8471,9 +8820,18 @@ function approvePlan(projectId, sessionId) {
 }
 
 let _aqCounter = 0;
-function renderAgentQuestion(sessionId, projectId, questions) {
+// Per-session set of question_ids we've already rendered. Server re-emits the
+// question on SSE reconnect (so late-joiners see it); the set prevents double
+// rendering. Cleared in submitQuestionAnswer when the user answers.
+const _renderedQuestionIds = {};
+function renderAgentQuestion(sessionId, projectId, questions, questionId) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el || !questions || !questions.length) return;
+  const seen = _renderedQuestionIds[sessionId] || (_renderedQuestionIds[sessionId] = new Set());
+  if (questionId) {
+    if (seen.has(questionId)) return;
+    seen.add(questionId);
+  }
   const wasPinned = _isAgentOutputPinned(el);
   const formId = `aq-${sessionId}-${_aqCounter++}`;
 
@@ -8566,6 +8924,10 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
   if (actionsEl) actionsEl.innerHTML = `<div class="agent-question-answer">Answered: ${esc(answers.map(a => a.answer).join(', '))}</div>`;
   // Disable inputs
   container.querySelectorAll('input').forEach(i => i.disabled = true);
+  // Clear the rendered-question dedup set — server clears pending_questions on
+  // followup, but if SSE has a transient retry between here and there we don't
+  // want a fresh question for a new turn to be suppressed.
+  delete _renderedQuestionIds[sessionId];
 
   // Send as follow-up
   const input = document.getElementById(`agent-followup-${sessionId}`);
@@ -8638,14 +9000,31 @@ async function sendFollowup(projectId, sessionId) {
   // followup / revive / dispatch. UI status flips only when SSE delivers a
   // status event — no optimistic cache writes here.
 
-  // Close existing SSE so a fresh connection picks up the new server-side
-  // process (interrupt-resume kills+respawns; followup may also respawn for
-  // a purged session). The server will produce the new event stream.
+  // Mark this send as in-flight before opening SSE. Until `turn_start` arrives
+  // (or 8s passes) we ignore turn_complete/status events from the eager-opened
+  // SSE — those reflect the PRIOR idle state, not the new turn we're about to
+  // dispatch. See _sendInFlight comment for the full race.
+  _sendInFlight[sessionId] = Date.now();
+  setTimeout(() => {
+    // Safety net: if turn_start never arrives, lift the gate so terminal
+    // status events can flow again.
+    if (_sendInFlight[sessionId] && (Date.now() - _sendInFlight[sessionId]) >= 8000) {
+      delete _sendInFlight[sessionId];
+    }
+  }, 8500);
+
+  // Eagerly (re)open SSE BEFORE the POST so we don't miss `turn_start` on a
+  // slow mobile request. If we waited until the fetch resolved, the server
+  // could already have transitioned running → idle (fast turn) and our new
+  // SSE would never see status='running' — leaving the UI stuck on IDLE.
+  // The server's stream reader is session-scoped (not process-scoped), so a
+  // pre-opened SSE survives the respawn that interrupt-resume performs.
   if (agentEventSources[sessionId]) {
     agentEventSources[sessionId].close();
     delete agentEventSources[sessionId];
     if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
   }
+  connectAgentStream(projectId, sessionId);
 
   // Fire the API call. Server decides the route. SSE delivers the result.
   // For follow-ups: the existing session already carries its incognito flag,
@@ -8678,7 +9057,17 @@ async function sendFollowup(projectId, sessionId) {
     // session_id was provided, or the prior one was purged), point the UI
     // at the new session so SSE connects there.
     const targetSessionId = data.session_id || sessionId;
-    if (!agentEventSources[targetSessionId]) {
+    if (targetSessionId !== sessionId) {
+      if (agentEventSources[sessionId]) {
+        agentEventSources[sessionId].close();
+        delete agentEventSources[sessionId];
+      }
+      if (!agentEventSources[targetSessionId]) {
+        connectAgentStream(projectId, targetSessionId);
+      }
+    } else if (!agentEventSources[targetSessionId]) {
+      // Eager connect above may have failed (e.g. session momentarily
+      // missing); retry now that we know the server route resolved.
       connectAgentStream(projectId, targetSessionId);
     }
   }).catch(e => console.error('Send error:', e));
@@ -8784,11 +9173,21 @@ async function fetchAgentStatus(projectId) {
         if (s.trigger_type && !existingHist.triggerType) existingHist.triggerType = s.trigger_type;
         if (s.trigger_id && !existingHist.triggerId) existingHist.triggerId = s.trigger_id;
       }
-      // Only auto-connect SSE for actively-running sessions. Idle sessions don't
-      // produce output until a follow-up arrives, so holding a live socket just
-      // burns one of Chromium's 6 per-origin connection slots. sendFollowup()
-      // reopens the stream when the user sends a new message.
-      if (s.status === 'running') {
+      // Auto-connect SSE for:
+      //  - actively-running sessions (need live output)
+      //  - sessions waiting on AskUserQuestion (need re-delivery of the form
+      //    after mobile cold-reopen / modal-rebuild)
+      //  - the active tab of an open modal that's idle (so the user sees
+      //    status flip when they send a follow-up; otherwise sendFollowup
+      //    has to open the stream, which can miss a fast turn_start → idle)
+      // We still skip idle background sessions to preserve Chromium's 6-slot
+      // per-origin cap; only the currently-visible idle one is subscribed.
+      const isActiveTab = activeAgentTab[projectId] === sid && openModals.has(projectId);
+      const wantsLiveStream = (
+        s.status === 'running' ||
+        (s.status === 'idle' && (s.waiting_for_question || isActiveTab))
+      );
+      if (wantsLiveStream && !agentEventSources[sid]) {
         connectAgentStream(projectId, sid);
       }
     }
@@ -11693,9 +12092,22 @@ const _sbState = {
 // Backend: see `_capture_system_init` + `/api/system/status[/refresh]` in
 // server.py. Cache is populated for free by every agent session's init
 // message; the Refresh button triggers an active one-shot claude spawn.
+//
+// Popover layout mirrors the CLI `/status` tabs:
+//   Status  — live health: rate limit, model, CLI version, auth
+//   Config  — permission mode, output style, fast mode, cwd, memory, counts
+//   MCP     — per-server connection list
+//   Usage   — local token aggregates (today / week / top models) from
+//             ~/.claude/stats-cache.json via /api/system/usage. The CLI's
+//             Usage tab shows server-side rate-limit percentages those are
+//             NOT exposed to local clients; we link out to claude.ai for
+//             the canonical numbers.
 let systemStatusCache = null;
+let systemUsageCache = null;
 let _sysStatusPopoverOpen = false;
 let _sysStatusRefreshing = false;
+let _sysStatusActiveTab = 'status';  // status | config | mcp | usage
+let _sysUsageFetching = false;
 
 async function fetchSystemStatus() {
   try {
@@ -11770,30 +12182,214 @@ function renderSysStatusPill() {
   if ((s.cache_age_seconds || 0) > 1800) pill.classList.add('stale');
 }
 
-function renderSysStatusPanel() {
-  // Returns the popover inner HTML for the given cache snapshot.
-  const s = systemStatusCache || {};
-  const rl = s.rate_limit_info || {};
-  const h = _ssRateLimitHealth(rl);
+function _ssFormatTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+
+function _ssShortenModel(m) {
+  if (!m) return '—';
+  return String(m).replace(/^claude-/, '').replace(/-\d{8}$/, '');
+}
+
+function _renderStatusTab(s, rl, h) {
   const colorClass = h.color === 'ok' ? 'green' : (h.color === 'warn' ? 'amber' : (h.color === 'bad' ? 'red' : ''));
+  const resetWhen = rl.resetsAt ? new Date(rl.resetsAt * 1000).toLocaleTimeString() : '';
+  const empty = !s.captured_at;
+  const authDisplay = (s.apiKeySource && s.apiKeySource !== 'none')
+    ? s.apiKeySource
+    : 'OAuth / keychain';
+  return `
+    <div class="ssp-row"><span class="ssp-k">Rate limit</span><span class="ssp-v ${colorClass}">${empty ? '—' : (h.message + (resetWhen ? ' · resets ' + resetWhen : ''))}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Window</span><span class="ssp-v">${esc((rl.rateLimitType || '').replace('_', '-') || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Overage</span><span class="ssp-v">${rl.isUsingOverage ? 'using overage' : esc(rl.overageStatus || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Model</span><span class="ssp-v">${esc(s.model || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">CLI version</span><span class="ssp-v">${esc(s.claude_code_version || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Auth</span><span class="ssp-v">${esc(authDisplay)}</span></div>
+  `;
+}
+
+function _renderConfigTab(s) {
+  const memPaths = Array.isArray(s.memory_paths) ? s.memory_paths : [];
+  const memDisplay = memPaths.length === 0
+    ? '—'
+    : (memPaths.length === 1 ? memPaths[0] : memPaths.length + ' paths');
+  const fastDisplay = (s.fast_mode_state && s.fast_mode_state !== 'off') ? s.fast_mode_state : 'off';
+  return `
+    <div class="ssp-row"><span class="ssp-k">Permission mode</span><span class="ssp-v">${esc(s.permissionMode || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Output style</span><span class="ssp-v">${esc(s.output_style || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Fast mode</span><span class="ssp-v">${esc(fastDisplay)}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Analytics</span><span class="ssp-v">${s.analytics_disabled ? 'disabled' : 'enabled'}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Working dir</span><span class="ssp-v" title="${esc(s.cwd || '')}">${esc(s.cwd || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Memory</span><span class="ssp-v" title="${esc(memPaths.join('\n'))}">${esc(memDisplay)}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Tools</span><span class="ssp-v">${s.tools_count || 0}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Skills</span><span class="ssp-v">${s.skills_count || 0}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Agents</span><span class="ssp-v">${s.agents_count || 0}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Plugins</span><span class="ssp-v">${s.plugins_count || 0}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Slash commands</span><span class="ssp-v">${s.slash_commands_count || 0}</span></div>
+  `;
+}
+
+function _renderMcpTab(s) {
   const mcp = Array.isArray(s.mcp_servers) ? s.mcp_servers : [];
   const mcpConnected = mcp.filter(m => (m.status || '').toLowerCase() === 'connected').length;
   const mcpTotal = mcp.length;
-  const mcpLine = mcpTotal === 0 ? '0' : `${mcpConnected}/${mcpTotal} connected`;
-  const resetWhen = rl.resetsAt ? new Date(rl.resetsAt * 1000).toLocaleTimeString() : '';
-  const empty = !s.captured_at;
+  if (mcpTotal === 0) {
+    return '<div class="ssp-empty">No MCP servers configured for this Claude Code install.</div>';
+  }
+  const summary = `${mcpConnected}/${mcpTotal} connected`;
   return `
-    <div class="ssp-row"><span class="ssp-k">Rate limit</span><span class="ssp-v ${colorClass}">${empty ? '—' : (h.message + (resetWhen ? ' · resets ' + resetWhen : ''))}</span></div>
-    <div class="ssp-row"><span class="ssp-k">Model</span><span class="ssp-v">${esc(s.model || '—')}</span></div>
-    <div class="ssp-row"><span class="ssp-k">CLI version</span><span class="ssp-v">${esc(s.claude_code_version || '—')}</span></div>
-    <div class="ssp-row"><span class="ssp-k">Auth</span><span class="ssp-v">${esc((s.apiKeySource && s.apiKeySource !== 'none') ? s.apiKeySource : 'OAuth / keychain')}</span></div>
-    <div class="ssp-row"><span class="ssp-k">MCP servers</span><span class="ssp-v">${mcpLine}</span></div>
-    <div class="ssp-row"><span class="ssp-k">Tools / Skills / Plugins</span><span class="ssp-v">${s.tools_count || 0} / ${s.skills_count || 0} / ${s.plugins_count || 0}</span></div>
+    <div class="ssp-section-head">MCP servers · ${esc(summary)}</div>
+    <div class="ssp-mcp-list">${mcp.map(m => {
+      const st = (m.status || 'unknown').toLowerCase();
+      return `<div class="ssp-mcp-row"><span class="ssp-mcp-name">${esc(m.name || '—')}</span><span class="ssp-mcp-status ${esc(st)}">${esc(st)}</span></div>`;
+    }).join('')}</div>
+  `;
+}
+
+function _renderMcActivitySection() {
+  // MC-scoped totals (was the standalone header pill). Reads `mcUsageCache`
+  // which `fetchGlobalUsage()` populates against /api/usage with the current
+  // `tokenCounterMode` filter. Range selector buttons re-trigger that fetch.
+  const u = mcUsageCache;
+  const tokens = u ? formatTokens(u.total_tokens || 0) : '—';
+  const costStr = u ? formatCost(u.cost_usd || 0) : '';
+  const sessions = u ? (u.total_sessions || 0) : 0;
+  const rangeBtns = TOKEN_MODES.map(m => `
+    <button class="ssp-range-btn ${tokenCounterMode === m.id ? 'active' : ''}" onclick="setTokenMode('${esc(m.id)}')">${esc(m.label)}</button>
+  `).join('');
+  return `
+    <div class="ssp-section-head">Mission Control activity</div>
+    <div class="ssp-range-row">${rangeBtns}</div>
+    <div class="ssp-bignum">${tokens} tok<span class="ssp-bignum-cost">${costStr ? esc(costStr) : ''}</span></div>
+    <div class="ssp-bignum-sub">${sessions.toLocaleString()} agent ${sessions === 1 ? 'session' : 'sessions'} in this range</div>
+  `;
+}
+
+function _renderUsageTab() {
+  // Two layers stacked top-to-bottom:
+  //   1. MC activity — tokens/cost/sessions launched THROUGH Mission Control,
+  //      filterable by today/week/month/all. Source: /api/usage.
+  //   2. Claude Code activity — tokens by model from ~/.claude/stats-cache.json
+  //      (covers ALL claude usage on this machine, not just MC-launched).
+  // Anthropic-side rate-limit percentages (the CLI Usage bars) aren't
+  // exposed to local clients — we show window reset time + link out for
+  // canonical numbers.
+  const mcSection = _renderMcActivitySection();
+  const u = systemUsageCache;
+  if (_sysUsageFetching && !u) return mcSection + '<div class="ssp-empty">Loading Claude Code usage…</div>';
+  if (!u) return mcSection + '<div class="ssp-empty">Claude Code usage not loaded yet.</div>';
+  if (u.available === false) {
+    return mcSection + `
+      <div class="ssp-empty">Claude Code stats-cache not found (${esc(u.reason || 'unknown')}).</div>
+      <a class="ssp-link" href="https://claude.ai/settings/usage" target="_blank" rel="noopener">Open canonical usage page →</a>
+    `;
+  }
+  const rl = u.rate_limit_info || {};
+  const resetWhen = rl.resetsAt ? new Date(rl.resetsAt * 1000).toLocaleString() : '';
+  const today = u.today || {};
+  const week = u.week || {};
+  const top = Array.isArray(u.top_models) ? u.top_models : [];
+
+  const renderModelRows = (obj) => {
+    const entries = Object.entries(obj).sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    if (entries.length === 0) return '<div class="ssp-empty">No activity recorded.</div>';
+    return entries.map(([m, t]) => `
+      <div class="ssp-token-row">
+        <span class="ssp-token-name">${esc(_ssShortenModel(m))}</span>
+        <span class="ssp-token-val">${_ssFormatTokens(t)} tok</span>
+      </div>
+    `).join('');
+  };
+
+  const topHTML = top.length === 0
+    ? '<div class="ssp-empty">No model usage recorded.</div>'
+    : top.map(t => `
+        <div class="ssp-token-row">
+          <span class="ssp-token-name">${esc(_ssShortenModel(t.model))}</span>
+          <span class="ssp-token-val">${_ssFormatTokens(t.tokens)} in/out · ${_ssFormatTokens(t.cache_read)} cache</span>
+        </div>
+      `).join('');
+
+  return mcSection + `
+    <div class="ssp-section-head">Current rate-limit window</div>
+    <div class="ssp-row"><span class="ssp-k">Type</span><span class="ssp-v">${esc((rl.rateLimitType || '').replace('_', '-') || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Resets</span><span class="ssp-v">${esc(resetWhen || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Status</span><span class="ssp-v">${esc(rl.status || '—')}</span></div>
+
+    <div class="ssp-section-head">Today · tokens by model · all Claude Code</div>
+    ${renderModelRows(today)}
+
+    <div class="ssp-section-head">Last 7 days · tokens by model · all Claude Code</div>
+    ${renderModelRows(week)}
+
+    <div class="ssp-section-head">All-time top models · all Claude Code</div>
+    ${topHTML}
+
+    <div class="ssp-section-head">Totals · all Claude Code</div>
+    <div class="ssp-row"><span class="ssp-k">Sessions</span><span class="ssp-v">${(u.total_sessions || 0).toLocaleString()}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Messages</span><span class="ssp-v">${(u.total_messages || 0).toLocaleString()}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Cache last computed</span><span class="ssp-v">${esc(u.last_computed_date || '—')}</span></div>
+
+    <a class="ssp-link" href="https://claude.ai/settings/usage" target="_blank" rel="noopener">Open canonical usage page →</a>
+  `;
+}
+
+function renderSysStatusPanel() {
+  // Tabbed view mirroring the CLI `/status` layout. Data sources:
+  //   systemStatusCache  — populated by `_capture_system_init` on every
+  //                        agent run; Refresh shells out to claude.
+  //   systemUsageCache   — read from ~/.claude/stats-cache.json via
+  //                        /api/system/usage; lazy-fetched on Usage-tab.
+  const s = systemStatusCache || {};
+  const rl = s.rate_limit_info || {};
+  const h = _ssRateLimitHealth(rl);
+  const tab = _sysStatusActiveTab;
+  let body = '';
+  if (tab === 'config') body = _renderConfigTab(s);
+  else if (tab === 'mcp') body = _renderMcpTab(s);
+  else if (tab === 'usage') body = _renderUsageTab();
+  else body = _renderStatusTab(s, rl, h);
+
+  const tabBtn = (id, label) =>
+    `<button class="ssp-tab ${tab === id ? 'active' : ''}" onclick="_sysStatusSwitchTab('${id}', event)">${label}</button>`;
+
+  return `
+    <div class="ssp-tabs">
+      ${tabBtn('status', 'Status')}
+      ${tabBtn('config', 'Config')}
+      ${tabBtn('mcp', 'MCP')}
+      ${tabBtn('usage', 'Usage')}
+    </div>
+    <div class="ssp-tab-panel">${body}</div>
     <div class="ssp-foot">
       <span>Captured ${_ssRelTime(s.captured_at)}</span>
       <button class="ssp-refresh" id="ssp-refresh-btn" onclick="refreshSystemStatus(event)" ${_sysStatusRefreshing ? 'disabled' : ''}>${_sysStatusRefreshing ? 'Refreshing…' : 'Refresh'}</button>
     </div>
   `;
+}
+
+function _sysStatusSwitchTab(tab, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  _sysStatusActiveTab = tab;
+  if (tab === 'usage' && !systemUsageCache && !_sysUsageFetching) {
+    fetchSystemUsage();
+  }
+  _rerenderSysStatusSurfaces();
+}
+
+async function fetchSystemUsage() {
+  if (_sysUsageFetching) return;
+  _sysUsageFetching = true;
+  try {
+    const res = await fetch(API_BASE + '/api/system/usage');
+    if (res.ok) systemUsageCache = await res.json();
+  } catch { /* leave cache as-is */ }
+  _sysUsageFetching = false;
+  _rerenderSysStatusSurfaces();
 }
 
 function renderSysStatusPopover() {
@@ -11812,6 +12408,10 @@ function toggleSysStatusPopover(ev) {
     pop.classList.add('open');
     // Refresh cache when popover opens so the user sees current data.
     fetchSystemStatus();
+    // Lazy-fetch usage if the Usage tab is the persisted active one.
+    if (_sysStatusActiveTab === 'usage' && !systemUsageCache && !_sysUsageFetching) {
+      fetchSystemUsage();
+    }
   } else {
     pop.classList.remove('open');
   }
@@ -11833,15 +12433,15 @@ async function refreshSystemStatus(ev) {
   } catch { /* surface as no-update */ }
   _sysStatusRefreshing = false;
   renderSysStatusPill();
+  // Drop the usage cache too so the next render re-fetches stats-cache.json.
+  systemUsageCache = null;
+  if (_sysStatusActiveTab === 'usage') fetchSystemUsage();
   _rerenderSysStatusSurfaces();
 }
 
 function _rerenderSysStatusSurfaces() {
-  // Rebuild both the header popover (if open) and the Settings inline panel
-  // (if the settings modal is mounted) using the same panel HTML.
+  // Header popover is now the sole surface for system status.
   if (_sysStatusPopoverOpen) renderSysStatusPopover();
-  const inline = document.getElementById('settings-sys-status-panel');
-  if (inline) inline.innerHTML = renderSysStatusPanel();
 }
 
 // Close the popover on any outside click. Bound once at load.
@@ -11853,6 +12453,147 @@ document.addEventListener('click', (e) => {
   if (pop) pop.classList.remove('open');
   _sysStatusPopoverOpen = false;
 });
+
+
+// ── Claude auth banner ─────────────────────────────────────────────────────
+// Detection is server-side (stream-line sentinel scan + on-demand probe).
+// The dashboard polls /api/claude/auth-status and surfaces a banner with
+// "Authenticate" (launches `claude /login` in the existing terminal pop-out)
+// and "Re-check" (forces a probe) when auth is broken.
+let _authBannerDismissed = false;
+let _authBannerLastReason = null;
+
+async function refreshAuthStatus() {
+  try {
+    const res = await fetch(API_BASE + '/api/claude/auth-status');
+    if (!res.ok) return;
+    const state = await res.json();
+    _renderAuthBanner(state);
+  } catch (e) {
+    // Network blip — leave whatever banner state we have.
+  }
+}
+
+function _renderAuthBanner(state) {
+  const banner = document.getElementById('auth-banner');
+  if (!banner) return;
+  const ok = !state || state.ok !== false;
+  if (ok) {
+    banner.classList.add('hidden');
+    _authBannerLastReason = null;
+    return;
+  }
+  // If we already dismissed this exact reason, stay hidden until reason changes.
+  if (_authBannerDismissed && state.reason === _authBannerLastReason) {
+    banner.classList.add('hidden');
+    return;
+  }
+  _authBannerLastReason = state.reason;
+  _authBannerDismissed = false;
+  const textEl = document.getElementById('auth-banner-text');
+  if (textEl) textEl.textContent = _authBannerMessage(state);
+  const signin = document.getElementById('auth-banner-signin');
+  if (signin) {
+    signin.textContent = 'Authenticate Claude';
+    signin.onclick = () => claudeAuthenticate();
+  }
+  banner.classList.remove('hidden');
+}
+
+function _authBannerMessage(state) {
+  switch (state && state.reason) {
+    case 'not_logged_in':
+      return "Claude isn't signed in. Agents will fail until you authenticate.";
+    case 'invalid_api_key':
+      return 'Claude credentials are invalid — sign in again to refresh them.';
+    case 'cli_not_found':
+      return "The `claude` CLI isn't on this machine's PATH.";
+    default:
+      return 'Claude authentication is failing. Sign in to retry.';
+  }
+}
+
+function dismissAuthBanner() {
+  _authBannerDismissed = true;
+  const banner = document.getElementById('auth-banner');
+  if (banner) banner.classList.add('hidden');
+}
+
+async function claudeAuthenticate() {
+  // Launches `claude` in a NEW OS-level terminal window (not MC's piped
+  // pop-out — claude's OAuth flow needs a real TTY). User completes browser
+  // sign-in there, then clicks "Re-check" here.
+  try {
+    const res = await fetch(API_BASE + '/api/claude/login-launch', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      alert('Failed to launch claude: ' + (data.error || res.status));
+      return;
+    }
+    showToast('A terminal window opened. Type /login in it to sign in, then click Re-check here.', 12000);
+  } catch (e) {
+    alert('Failed to launch claude: ' + e);
+  }
+}
+
+async function claudeAuthRecheck() {
+  const btn = document.getElementById('auth-banner-recheck');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+  try {
+    const res = await fetch(API_BASE + '/api/claude/auth-probe', { method: 'POST' });
+    const state = await res.json();
+    _renderAuthBanner(state);
+    _renderClaudeAuthStatusLine(state);
+  } catch (e) {
+    // ignore
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Re-check'; }
+  }
+}
+
+// Settings panel: explicit Sign-in + Check-status buttons (banner is best-effort,
+// these are the user's escape hatch when the banner doesn't surface).
+async function settingsClaudeLogin() {
+  try {
+    const res = await fetch(API_BASE + '/api/claude/login-launch', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      alert('Failed to launch claude: ' + (data.error || res.status));
+      return;
+    }
+    showToast('A terminal window opened. Type /login in it to sign in, then click Check status.', 12000);
+  } catch (e) {
+    alert('Failed to launch claude: ' + e);
+  }
+}
+
+async function settingsClaudeAuthCheck() {
+  const line = document.getElementById('claude-auth-status-line');
+  if (line) line.innerHTML = '<span style="color:var(--text-faint)">Checking...</span>';
+  try {
+    const res = await fetch(API_BASE + '/api/claude/auth-probe', { method: 'POST' });
+    const state = await res.json();
+    _renderAuthBanner(state);
+    _renderClaudeAuthStatusLine(state);
+  } catch (e) {
+    if (line) line.innerHTML = '<span style="color:#ef4444">Check failed</span>';
+  }
+}
+
+function _renderClaudeAuthStatusLine(state) {
+  const line = document.getElementById('claude-auth-status-line');
+  if (!line) return;
+  if (!state || state.ok === undefined) { line.innerHTML = ''; return; }
+  if (state.ok) {
+    line.innerHTML = '<span style="color:#22c55e">&#x2713; Signed in</span>';
+  } else {
+    const reason = state.reason === 'not_logged_in' ? 'Not signed in'
+                 : state.reason === 'invalid_api_key' ? 'Invalid credentials'
+                 : state.reason === 'cli_not_found' ? 'claude CLI not found'
+                 : 'Auth issue';
+    line.innerHTML = `<span style="color:#ef4444">&#x2717; ${esc(reason)}</span>`;
+  }
+}
 
 
 async function refreshScheduleBanner() {
@@ -12798,6 +13539,24 @@ async function _renderSettings() {
 
   body.innerHTML = `
     <div class="settings-section">
+      <div class="settings-section-title">Claude Sign-in</div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Sign in to Claude</div>
+          <div class="settings-hint">
+            Opens a terminal window running <code>claude</code>. Type <code>/login</code> in
+            that window to complete browser sign-in.
+            <span id="claude-auth-status-line" style="display:inline-block;margin-left:8px"></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          <button class="btn-add" onclick="settingsClaudeLogin()">Sign in</button>
+          <button class="btn-add" style="background:var(--surface3);color:var(--text)" onclick="settingsClaudeAuthCheck()">Check status</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <div class="settings-section-title">Identity</div>
       <div class="settings-row">
         <div><div class="settings-label">User Name</div><div class="settings-hint">Shown in agent context</div></div>
@@ -12947,14 +13706,6 @@ async function _renderSettings() {
     ${pushNotificationsSettingsHTML()}
 
     <div class="settings-section">
-      <div class="settings-section-title">Claude system</div>
-      <div class="settings-hint" style="margin-bottom:8px">Live view of your Claude CLI environment — model, rate limit, MCP servers. Same info as <code>/status</code> inside Claude Code.</div>
-      <div id="settings-sys-status-panel" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px">
-        <div class="ssp-row" style="color:var(--text-faint)">Loading…</div>
-      </div>
-    </div>
-
-    <div class="settings-section">
       <div class="settings-section-title">Server</div>
       <div class="settings-row">
         <div><div class="settings-label">Restart Mission Control</div><div class="settings-hint">Picks up new code or config without needing local access. Open conversations are restored after reconnect.</div></div>
@@ -12983,13 +13734,6 @@ async function _renderSettings() {
   // "Checking for updates..." placeholder.)
   refreshUpdateStatus();
 
-  // Populate the inline "Claude system" panel with the same content as the
-  // header popover. Fetch fresh status first, then render. Re-uses the same
-  // `renderSysStatusPanel()` HTML so any change there flows to both surfaces.
-  fetchSystemStatus().then(() => {
-    const panel = document.getElementById('settings-sys-status-panel');
-    if (panel) panel.innerHTML = renderSysStatusPanel();
-  });
 }
 
 // ── Remote Access ────────────────────────────────────────────────────────────
@@ -13247,6 +13991,9 @@ window._pushState = window._pushState || {
   publicKey: '',          // VAPID public key (b64url)
   thisDeviceEndpoint: '', // PushSubscription.endpoint for this browser
   subs: [],               // /api/push/subscriptions response
+  swState: 'unknown',     // service worker state for /sw.js
+  swError: '',            // last register error message
+  swScript: '',           // active worker scriptURL
 };
 
 // ── PWA install: capture Chrome's beforeinstallprompt event for a manual CTA.
@@ -13380,6 +14127,30 @@ function pushNotificationsSettingsHTML() {
       </div>`;
   }
 
+  // Diagnostic row: service-worker status. Lets us see install-readiness
+  // from the phone without remote-debug. Green = activated (PWA installable).
+  const swState = (window._pushState && window._pushState.swState) || 'unknown';
+  const swError = (window._pushState && window._pushState.swError) || '';
+  const swGood = (swState === 'activated' || swState === 'activating');
+  const swColor = swGood ? '#10b981' : (swState === 'failed' ? '#ef4444' : '#f59e0b');
+  const swBg    = swGood ? '#10b98122' : (swState === 'failed' ? '#ef444422' : '#f59e0b22');
+  const swDiagRow = `
+    <div id="sw-status-line" class="settings-row" style="align-items:flex-start;font-size:11px">
+      <div style="flex:1">
+        <div class="settings-label" style="font-size:11px">Service worker</div>
+        <div class="settings-hint" style="font-size:11px">
+          ${swGood
+            ? 'Active and controlling this page.'
+            : swState === 'failed'
+              ? `Failed to register: <code>${esc(swError || 'unknown')}</code>`
+              : swState === 'registering' || swState === 'installing'
+                ? 'Registering…'
+                : 'Not registered yet — Install button won\'t appear until this is green.'}
+        </div>
+      </div>
+      <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:${swBg};color:${swColor};letter-spacing:.3px;text-transform:uppercase">${esc(swState)}</span>
+    </div>`;
+
   return `
     <div class="settings-section" id="push-section">
       <div class="settings-section-title">Push Notifications</div>
@@ -13388,6 +14159,7 @@ function pushNotificationsSettingsHTML() {
         tool, or when a turn completes (opt-in per device). Tap the
         notification to open the dashboard at the originating session.
       </div>
+      ${swDiagRow}
       ${stateBlock}
       <div class="settings-row" style="align-items:flex-start">
         <div style="flex:1">
@@ -16363,6 +17135,994 @@ async function _sibInstallHere(modalId, srcScope, srcName, srcProjectId) {
   }
 }
 
+// ── MCP servers (global + per-project Model Context Protocol manager) ───────
+//
+// MCP servers live in ~/.claude.json (global mcpServers key) and
+// <project_path>/.mcp.json (project-committed). Three transports: stdio,
+// http, sse. MC manages the files; Claude Code reads them natively at session
+// start.
+
+let _allMCPCache = { items: [], loaded: false, loading: false };
+let _allMCPFilter = { scope: 'all', project: 'all', search: '' };
+
+function openAllMCPForProject(projectId) {
+  _allMCPFilter.project = projectId || 'all';
+  _allMCPFilter.scope = 'all';
+  openAllMCP();
+}
+
+async function openAllMCP() {
+  const modalId = '__all_mcp';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    renderAllMCP();
+    loadAllMCP();
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 1000);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x1F50C; MCP servers</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:4px 24px 20px 28px">
+      <div style="font-size:11px;color:var(--text-faint);margin-bottom:10px;line-height:1.5">
+        Model Context Protocol servers extend Claude Code with extra tools (filesystems, databases, hosted APIs).
+        Global servers live in <code>~/.claude.json</code>; project servers live in <code>.mcp.json</code> at the project root.
+        Claude Code picks them up on next session start &mdash; no restart needed here.
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <input type="text" id="am-search" placeholder="Search name / command / URL..." value="${esc(_allMCPFilter.search)}"
+          style="flex:1;min-width:180px;padding:6px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+          oninput="_allMCPFilter.search=this.value;renderAllMCP()">
+        <select id="am-scope" style="padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+          onchange="_allMCPFilter.scope=this.value;renderAllMCP()">
+          <option value="all"${_allMCPFilter.scope==='all'?' selected':''}>All scopes</option>
+          <option value="global"${_allMCPFilter.scope==='global'?' selected':''}>Global only</option>
+          <option value="project"${_allMCPFilter.scope==='project'?' selected':''}>Project only</option>
+        </select>
+        <select id="am-project" style="padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);max-width:200px"
+          onchange="_allMCPFilter.project=this.value;loadAllMCP()">
+          <option value="all">All projects</option>
+        </select>
+        <span id="am-count" style="font-size:11px;color:var(--text-faint)"></span>
+        <div style="margin-left:auto;display:flex;gap:6px">
+          <button class="btn-add" onclick="openMCPEditor('global', '', null, true)">+ New MCP server</button>
+        </div>
+      </div>
+      <div id="am-list" style="max-height:65vh;overflow-y:auto"></div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  renderAllMCP();
+  loadAllMCP();
+}
+
+async function loadAllMCP() {
+  if (_allMCPCache.loading) return;
+  _allMCPCache.loading = true;
+  try {
+    const pid = _allMCPFilter.project !== 'all' ? _allMCPFilter.project : '';
+    const params = new URLSearchParams();
+    if (pid) params.set('project_id', pid);
+    const url = API_BASE + '/api/mcp' + (params.toString() ? '?' + params.toString() : '');
+    const res = await fetch(url);
+    const items = await res.json();
+
+    // For "all projects" view, also fetch each project's local servers so they appear.
+    let extra = [];
+    if ((_allMCPFilter.project === 'all') && (_allMCPFilter.scope === 'all' || _allMCPFilter.scope === 'project')) {
+      const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+      await Promise.all(realProjects.map(async p => {
+        try {
+          const r = await fetch(API_BASE + '/api/mcp?project_id=' + encodeURIComponent(p.id));
+          const arr = await r.json();
+          for (const s of arr) if (s.scope === 'project') extra.push(s);
+        } catch(e) {}
+      }));
+    }
+
+    _allMCPCache = { items: items.concat(extra), loaded: true, loading: false };
+    renderAllMCP();
+  } catch(e) {
+    _allMCPCache = { items: [], loaded: true, loading: false };
+    renderAllMCP();
+  }
+}
+
+function renderAllMCP() {
+  const container = document.getElementById('am-list');
+  const countEl = document.getElementById('am-count');
+  const projectSel = document.getElementById('am-project');
+  if (!container) return;
+
+  if (projectSel) {
+    const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p));
+    const cur = _allMCPFilter.project;
+    const opts = ['<option value="all">All projects</option>',
+      ...realProjects.map(p =>
+        `<option value="${esc(p.id)}"${cur===p.id?' selected':''}>${esc(p.name||p.id)}</option>`
+      )];
+    if (projectSel.innerHTML !== opts.join('')) {
+      projectSel.innerHTML = opts.join('');
+      projectSel.value = cur;
+    }
+  }
+
+  if (!_allMCPCache.loaded) {
+    container.innerHTML = '<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">Loading MCP servers...</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+
+  const f = _allMCPFilter;
+  const q = (f.search || '').trim().toLowerCase();
+  let rows = _allMCPCache.items.filter(s => {
+    if (f.scope !== 'all' && s.scope !== f.scope) return false;
+    if (f.project !== 'all') {
+      if (s.scope === 'project' && s.project_id !== f.project) return false;
+    }
+    if (q) {
+      const hay = ((s.name || '') + ' ' + (s.preview || '') + ' ' + (s.transport || '')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  // De-dup
+  const seen = new Set();
+  rows = rows.filter(s => {
+    const key = s.scope + ':' + s.name + ':' + (s.project_id || '');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Sort: scope (project first, then global), name asc
+  const scopeOrder = { project: 0, global: 1 };
+  rows.sort((a, b) => {
+    const oa = scopeOrder[a.scope] ?? 9;
+    const ob = scopeOrder[b.scope] ?? 9;
+    if (oa !== ob) return oa - ob;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  if (countEl) countEl.textContent = `${rows.length} server${rows.length===1?'':'s'}`;
+
+  if (!rows.length) {
+    container.innerHTML = `<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">No MCP servers match the current filters.<br><span style="font-size:11px">Click "+ New MCP server" to add one.</span></div>`;
+    return;
+  }
+
+  container.innerHTML = rows.map(s => _renderMCPRow(s)).join('');
+}
+
+function _renderMCPRow(s) {
+  const scopeBadge = (() => {
+    if (s.scope === 'global') return '<span style="font-size:10px;background:var(--surface2);color:var(--text-faint);padding:1px 6px;border-radius:3px">global</span>';
+    if (s.scope === 'project') {
+      const pname = (allProjects || []).find(p => p.id === s.project_id);
+      const label = pname ? (pname.name || pname.id) : (s.project_id || 'project');
+      return `<span style="font-size:10px;background:var(--accent-dim);color:var(--accent);padding:1px 6px;border-radius:3px" title="Project-scoped">project: ${esc(label)}</span>`;
+    }
+    return '';
+  })();
+  const transportBadge = s.transport
+    ? `<span style="font-size:10px;background:var(--surface2);color:var(--text-faint);padding:1px 6px;border-radius:3px;font-family:var(--mono)">${esc(s.transport)}</span>`
+    : '';
+  const shadowBadge = s.shadowed_by_project
+    ? '<span style="font-size:10px;background:transparent;color:var(--amber);padding:1px 6px;border:1px solid var(--amber);border-radius:3px;margin-left:4px" title="A project entry of the same name shadows this global">shadowed</span>'
+    : '';
+  const editArgs = `'${esc(s.scope)}', '${esc(s.name)}', ${s.project_id ? `'${esc(s.project_id)}'` : 'null'}, false`;
+  const delArgs = `'${esc(s.scope)}', '${esc(s.name)}', ${s.project_id ? `'${esc(s.project_id)}'` : 'null'}`;
+  const mtime = s.mtime_iso ? new Date(s.mtime_iso).toLocaleString() : '';
+
+  return `<div class="mcp-row" style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:4px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-weight:600;color:var(--text);font-size:13px">${esc(s.name)}</span>
+      ${scopeBadge}
+      ${transportBadge}
+      ${shadowBadge}
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn-tiny" onclick="openMCPEditor(${editArgs})">Edit</button>
+        <button class="btn-tiny danger" onclick="deleteMCPAction(${delArgs})">Delete</button>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--text-mute);line-height:1.4;font-family:var(--mono);word-break:break-all">${esc(s.preview || '(no command/url)')}</div>
+    <div style="font-size:10px;color:var(--text-faint);font-family:var(--mono)">${esc(s.path || '')} &middot; ${esc(mtime)}</div>
+  </div>`;
+}
+
+async function openMCPEditor(scope, name, projectId, isNew) {
+  const modalId = isNew ? '__mcp_new' : `__mcp_${scope}_${name}`;
+  if (openModals.has(modalId)) { focusModal(modalId); return; }
+
+  // Pre-fetch existing record if editing
+  let existing = null;
+  if (!isNew) {
+    try {
+      const params = new URLSearchParams();
+      if (projectId) params.set('project_id', projectId);
+      const res = await fetch(API_BASE + `/api/mcp/${encodeURIComponent(scope)}/${encodeURIComponent(name)}` + (params.toString() ? '?' + params.toString() : ''));
+      if (res.ok) existing = await res.json();
+    } catch(e) {}
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 760);
+
+  const title = isNew ? 'New MCP server' : `Edit: ${name}`;
+  const initTransport = (existing && existing.transport) || 'stdio';
+  const initCfg = (existing && existing.config) || {};
+
+  // Project picker — only for new servers with project scope
+  const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+  const initialProjectId = projectId || (_allMCPFilter.project !== 'all' ? _allMCPFilter.project : (realProjects[0] && realProjects[0].id) || '');
+  const projOptions = realProjects.map(p =>
+    `<option value="${esc(p.id)}"${p.id===initialProjectId?' selected':''}>${esc(p.name||p.id)}</option>`
+  ).join('');
+
+  // Mode toggle is only meaningful when adding new servers; editing always
+  // uses the manual form so we don't lose the user's existing config.
+  const modeToggle = isNew ? `
+    <div style="display:flex;gap:0;margin-bottom:8px;border:1px solid var(--border);border-radius:6px;overflow:hidden;width:fit-content">
+      <button id="me-mode-manual" class="me-mode-btn active" onclick="_mcpEditorSetMode('${modalId}','manual')"
+        style="padding:6px 14px;font-size:12px;background:var(--accent);color:var(--bg);border:none;cursor:pointer;font-weight:600">
+        Manual
+      </button>
+      <button id="me-mode-url" class="me-mode-btn" onclick="_mcpEditorSetMode('${modalId}','url')"
+        style="padding:6px 14px;font-size:12px;background:var(--surface2);color:var(--text);border:none;border-left:1px solid var(--border);cursor:pointer">
+        From URL
+      </button>
+    </div>` : '';
+
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x1F50C; ${esc(title)}</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:4px 24px 20px 28px;display:flex;flex-direction:column;gap:12px">
+      ${modeToggle}
+      <div id="me-manual-mode" style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Name</label>
+          <input type="text" id="me-name" value="${esc(name || '')}" ${isNew?'':'readonly'}
+            placeholder="filesystem"
+            style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);${isNew?'':'opacity:0.6'}">
+          <div style="font-size:10px;color:var(--text-faint);margin-top:3px">Letters, digits, dots, dashes, underscores. Must be unique within its scope.</div>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Scope</label>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:${isNew?'pointer':'not-allowed'}">
+              <input type="radio" name="me-scope" value="global" ${scope==='global'?'checked':''} ${isNew?'':'disabled'}>
+              Global (all projects)
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:${isNew?'pointer':'not-allowed'}">
+              <input type="radio" name="me-scope" value="project" ${scope==='project'?'checked':''} ${isNew?'':'disabled'} ${realProjects.length?'':'disabled'}>
+              Project (committed to .mcp.json)
+            </label>
+            <select id="me-project" style="padding:4px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);max-width:220px;${scope==='project'?'':'display:none'}">
+              ${projOptions || '<option value="">No projects with a path</option>'}
+            </select>
+          </div>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Transport</label>
+          <select id="me-transport" onchange="_mcpEditorRenderTransport()"
+            style="padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);min-width:240px">
+            <option value="stdio"${initTransport==='stdio'?' selected':''}>stdio (local subprocess)</option>
+            <option value="http"${initTransport==='http'?' selected':''}>http (streamable HTTP)</option>
+            <option value="sse"${initTransport==='sse'?' selected':''}>sse (legacy HTTP+SSE)</option>
+          </select>
+        </div>
+        <div id="me-fields"></div>
+        <div id="me-status" style="font-size:11px;color:var(--text-faint);min-height:14px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn-secondary" onclick="closeModalById('${modalId}')">Cancel</button>
+          <button class="btn-add" id="me-save" onclick="saveMCPServer('${modalId}', ${isNew})">${isNew?'Create':'Save changes'}</button>
+        </div>
+      </div>
+      <div id="me-url-mode" style="display:none;flex-direction:column;gap:12px"></div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: projectId || null, element: win, minimized: false, zIndex: z, _mcpEditing: { scope, name, isNew, initCfg, initTransport } });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  // Wire scope radio → project picker visibility
+  win.querySelectorAll('input[name="me-scope"]').forEach(r => {
+    r.addEventListener('change', () => {
+      const proj = win.querySelector('#me-project');
+      if (proj) proj.style.display = r.checked && r.value === 'project' ? '' : 'none';
+    });
+  });
+
+  _mcpEditorRenderTransport();
+}
+
+function _mcpEditorRenderTransport() {
+  const sel = document.getElementById('me-transport');
+  const target = document.getElementById('me-fields');
+  if (!sel || !target) return;
+  const transport = sel.value;
+
+  // Resolve current editor state (so we can pre-fill on first render)
+  let initCfg = {};
+  for (const [id, entry] of openModals.entries()) {
+    if (entry && entry._mcpEditing && (id === '__mcp_new' || id.startsWith('__mcp_'))) {
+      if (entry.element && entry.element.contains(sel)) {
+        initCfg = entry._mcpEditing.initCfg || {};
+        // Only pre-fill once; subsequent transport changes start blank for the new transport's fields.
+        if (entry._mcpEditing._consumedInitCfg) initCfg = {};
+        else entry._mcpEditing._consumedInitCfg = true;
+        break;
+      }
+    }
+  }
+
+  if (transport === 'stdio') {
+    const args = Array.isArray(initCfg.args) ? initCfg.args.join(' ') : '';
+    const envPairs = Object.entries(initCfg.env || {}).map(([k,v]) => `${k}=${v}`).join('\n');
+    target.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Command</label>
+          <input type="text" id="me-command" value="${esc(initCfg.command || '')}" placeholder="npx"
+            style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Arguments (space-separated)</label>
+          <input type="text" id="me-args" value="${esc(args)}" placeholder="-y @modelcontextprotocol/server-filesystem /path"
+            style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+          <div style="font-size:10px;color:var(--text-faint);margin-top:3px">For arguments that need spaces inside one token, edit <code>.mcp.json</code> directly.</div>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Environment variables (one per line, KEY=value)</label>
+          <textarea id="me-env" placeholder="API_KEY=sk-..."
+            style="width:100%;min-height:60px;padding:6px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);resize:vertical">${esc(envPairs)}</textarea>
+        </div>
+      </div>`;
+  } else {
+    const headerPairs = Object.entries(initCfg.headers || {}).map(([k,v]) => `${k}: ${v}`).join('\n');
+    target.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">URL</label>
+          <input type="text" id="me-url" value="${esc(initCfg.url || '')}" placeholder="https://mcp.example.com/v1"
+            style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Headers (one per line, Name: value)</label>
+          <textarea id="me-headers" placeholder="Authorization: Bearer ..."
+            style="width:100%;min-height:60px;padding:6px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);resize:vertical">${esc(headerPairs)}</textarea>
+        </div>
+      </div>`;
+  }
+}
+
+function _mcpEditorStatus(modalId, msg, color) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry.element) return;
+  const el = entry.element.querySelector('#me-status');
+  if (el) {
+    el.textContent = msg || '';
+    el.style.color = color || 'var(--text-faint)';
+  }
+}
+
+function _parseKVLines(text, sep) {
+  const out = {};
+  for (const line of (text || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const idx = t.indexOf(sep);
+    if (idx < 0) continue;
+    const k = t.slice(0, idx).trim();
+    const v = t.slice(idx + sep.length).trim();
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+// ── MCP "From URL" mode — state machine inside openMCPEditor ────────────────
+// Lives alongside the manual editor. Toggling mode swaps which child div is
+// visible; the URL flow has its own sub-states (input → preview → installing
+// → done) handled here.
+
+function _mcpEditorSetMode(modalId, mode) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry.element) return;
+  const root = entry.element;
+  const manual = root.querySelector('#me-manual-mode');
+  const url = root.querySelector('#me-url-mode');
+  const btnManual = root.querySelector('#me-mode-manual');
+  const btnUrl = root.querySelector('#me-mode-url');
+  if (!manual || !url) return;
+  manual.style.display = mode === 'manual' ? '' : 'none';
+  url.style.display = mode === 'url' ? 'flex' : 'none';
+  if (btnManual && btnUrl) {
+    btnManual.classList.toggle('active', mode === 'manual');
+    btnManual.style.background = mode === 'manual' ? 'var(--accent)' : 'var(--surface2)';
+    btnManual.style.color = mode === 'manual' ? 'var(--bg)' : 'var(--text)';
+    btnManual.style.fontWeight = mode === 'manual' ? '600' : '400';
+    btnUrl.classList.toggle('active', mode === 'url');
+    btnUrl.style.background = mode === 'url' ? 'var(--accent)' : 'var(--surface2)';
+    btnUrl.style.color = mode === 'url' ? 'var(--bg)' : 'var(--text)';
+    btnUrl.style.fontWeight = mode === 'url' ? '600' : '400';
+  }
+  entry._mcpUrlState = entry._mcpUrlState || { stage: 'input' };
+  if (mode === 'url') _mcpUrlRender(modalId);
+}
+
+function _mcpUrlRender(modalId) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry.element) return;
+  const host = entry.element.querySelector('#me-url-mode');
+  if (!host) return;
+  const st = entry._mcpUrlState || { stage: 'input' };
+  if (st.stage === 'input')      host.innerHTML = _mcpUrlRenderInput(modalId, st);
+  else if (st.stage === 'preview')   host.innerHTML = _mcpUrlRenderPreview(modalId, st);
+  else if (st.stage === 'installing')host.innerHTML = _mcpUrlRenderInstalling(modalId, st);
+  else if (st.stage === 'done')      host.innerHTML = _mcpUrlRenderDone(modalId, st);
+}
+
+function _mcpUrlRenderInput(modalId, st) {
+  return `
+    <div>
+      <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Paste a GitHub URL, npm package name, or raw JSON config URL</label>
+      <input type="text" id="me-url-input" value="${esc(st.url || '')}"
+        placeholder="https://github.com/owner/repo  or  @scope/mcp-server  or  https://example.com/mcp.json"
+        style="width:100%;padding:8px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+      <div style="font-size:10px;color:var(--text-faint);margin-top:4px;line-height:1.5">
+        For GitHub repos: MC will clone, audit dependencies, scan the source with Claude, and show you what's about to run before any install commands fire.
+        ${st.error ? `<div style="color:#ef4444;margin-top:6px">${esc(st.error)}</div>` : ''}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn-secondary" onclick="closeModalById('${modalId}')">Cancel</button>
+      <button class="btn-add" id="me-url-preview-btn" onclick="_mcpUrlPreview('${modalId}')">Preview &rarr;</button>
+    </div>`;
+}
+
+async function _mcpUrlPreview(modalId) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry.element) return;
+  const input = entry.element.querySelector('#me-url-input');
+  const url = (input && input.value || '').trim();
+  if (!url) {
+    entry._mcpUrlState = { stage: 'input', url, error: 'URL required' };
+    _mcpUrlRender(modalId);
+    return;
+  }
+  const btn = entry.element.querySelector('#me-url-preview-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cloning & scanning... (15-30s)'; }
+  try {
+    const res = await fetch(API_BASE + '/api/mcp/url/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      entry._mcpUrlState = { stage: 'input', url, error: data.error || `preview failed (${res.status})` };
+    } else {
+      // Pick the first server config from the response — most MCP repos
+      // expose a single entry. If there are multiple we still install the
+      // first; user can manually add others later.
+      const serverNames = Object.keys(data.servers || {});
+      const firstName = serverNames[0];
+      const firstCfg = firstName ? data.servers[firstName] : null;
+      entry._mcpUrlState = {
+        stage: 'preview', url, preview: data,
+        name: data.name_hint || firstName || '',
+        scope: 'global', projectId: null,
+        config: firstCfg,
+        secretValues: {},  // populated as user types
+      };
+    }
+  } catch (e) {
+    entry._mcpUrlState = { stage: 'input', url, error: String(e) };
+  } finally {
+    _mcpUrlRender(modalId);
+  }
+}
+
+function _mcpUrlRenderPreview(modalId, st) {
+  const p = st.preview || {};
+  const gh = p.github || {};
+  const scan = p.scan || {};
+  const audit = p.audit || {};
+  const secrets = p.secrets || [];
+  const cmds = p.install_commands || [];
+  const tierLabel = p.source_tier === 1 ? 'config file in repo'
+                  : p.source_tier === 2 ? 'README JSON block'
+                  : p.source_tier === 3 ? 'Claude-extracted from README'
+                  : 'unknown source';
+
+  // GitHub trust row
+  let ghHtml = '';
+  if (gh.available) {
+    const ageDays = gh.age_days;
+    const lastCommit = gh.last_commit_days;
+    const archivedFlag = gh.archived ? `<span style="color:#ef4444;font-weight:600">ARCHIVED</span>` : '';
+    const freshFlag = ageDays !== null && ageDays < 30 ? `<span style="color:#eab308">new (${ageDays}d)</span>` : '';
+    const staleFlag = lastCommit !== null && lastCommit > 365 ? `<span style="color:#eab308">stale (last commit ${lastCommit}d ago)</span>` : '';
+    ghHtml = `
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:11px;padding:8px 12px;background:var(--surface2);border-radius:4px">
+        <span><b>${esc(gh.full_name || '')}</b></span>
+        <span>&#x2B50; ${gh.stars}</span>
+        <span>License: ${esc(gh.license || 'unknown')}</span>
+        <span>Default: <code>${esc(gh.default_branch || '')}</code></span>
+        ${archivedFlag} ${freshFlag} ${staleFlag}
+      </div>`;
+  }
+
+  // Security scan table
+  let scanHtml = '';
+  if (scan.available) {
+    const row = (label, items, isFlag) => {
+      const txt = (items || []).length ? esc((items || []).join(', ')) : '<span style="color:var(--text-faint)">none</span>';
+      return `<tr><td style="padding:4px 8px;color:var(--text-faint);width:90px;vertical-align:top">${label}</td><td style="padding:4px 8px;${isFlag && items && items.length ? 'color:#ef4444;font-weight:600':''}">${txt}</td></tr>`;
+    };
+    scanHtml = `
+      <div>
+        <div style="font-size:11px;color:var(--text-faint);margin-bottom:4px">Source scan <span style="color:var(--text-faint)">(Claude reviewed the code)</span></div>
+        <div style="font-size:12px;padding:8px 4px;background:var(--surface2);border-radius:4px">
+          <div style="padding:0 8px 6px;font-style:italic;color:var(--text)">${esc(scan.summary || '')}</div>
+          <table style="width:100%;font-size:11px;border-collapse:collapse">
+            ${row('Network', scan.network)}
+            ${row('Filesystem', scan.filesystem)}
+            ${row('Shell', scan.shell)}
+            ${row('Secrets', scan.secrets)}
+            ${row('Flags', scan.flags, true)}
+          </table>
+        </div>
+      </div>`;
+  } else if (scan.reason) {
+    scanHtml = `<div style="font-size:11px;color:var(--text-faint)">Source scan unavailable: ${esc(scan.reason)}</div>`;
+  }
+
+  // Audit banner + collapsible findings list
+  let auditHtml = '';
+  if (audit.available) {
+    const findings = audit.findings || [];
+    const critHigh = (audit.critical || 0) + (audit.high || 0);
+    const summaryLine = critHigh > 0
+      ? `<b style="color:#ef4444">${audit.critical || 0} serious, ${audit.high || 0} important</b> &middot; <span style="color:var(--text-faint)">${audit.moderate || 0} minor, ${audit.low || 0} cosmetic</span>`
+      : audit.total > 0
+        ? `<span style="color:var(--text-faint)">${audit.total} minor/cosmetic issues, none serious</span>`
+        : `<span style="color:#22c55e">clean</span>`;
+
+    // One-line recommendation in plain English, derived from the worst-case
+    // finding and whether any fix exists. The user shouldn't need to know
+    // what "npm audit fix" means to make a decision.
+    const hasFix = findings.some(f => f.fix && !f.fix.startsWith('no fix'));
+    const hasUnfixable = findings.some(f => f.fix && f.fix.startsWith('no fix'));
+    let recommendation;
+    if (critHigh === 0 && audit.total === 0) {
+      recommendation = "&#x2713; No known vulnerabilities in this server's dependencies. Safe to install.";
+    } else if (critHigh === 0) {
+      recommendation = "Issues found are minor / cosmetic. Most users can install safely. If you handle sensitive data with this server, review the findings below.";
+    } else if (hasFix && !hasUnfixable) {
+      recommendation = "&#x26A0; Serious issues exist but the affected packages have patched versions available. The repo author would need to publish an update. You can install anyway if the server's purpose doesn't expose the vulnerable code paths.";
+    } else if (hasUnfixable) {
+      recommendation = "&#x26A0; Serious issues with no patched version available yet. Recommended: skip this server for now, or proceed only if you understand the specific risk and trust the maintainer to fix it.";
+    } else {
+      recommendation = "&#x26A0; Review the findings below before installing.";
+    }
+
+    const bgStyle = critHigh > 0
+      ? 'background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4)'
+      : 'background:var(--surface2);border:1px solid var(--border)';
+    const sevColor = s => s === 'critical' ? '#ef4444'
+                       : s === 'high' ? '#f97316'
+                       : s === 'moderate' ? '#eab308'
+                       : '#9ca3af';
+    const sevLabel = s => s === 'critical' ? 'serious'
+                       : s === 'high' ? 'important'
+                       : s === 'moderate' ? 'minor'
+                       : 'cosmetic';
+
+    // Per-finding plain English: what action (if any) is needed.
+    const findingAction = f => {
+      const fix = (f.fix || '').toLowerCase();
+      if (!f.fix) return '';
+      if (fix.startsWith('no fix')) {
+        return `<div style="color:#ef4444;font-size:11px;margin-top:4px">
+          What to do: <b>No patch exists yet.</b> Either wait for the maintainer to release a fix, or install only if you understand the specific risk.
+        </div>`;
+      }
+      const breaking = f.fix_is_breaking
+        ? ' <span style="color:#eab308">Note: this is a breaking change, so an upgrade may require code changes in the repo.</span>'
+        : '';
+      return `<div style="color:var(--text);font-size:11px;margin-top:4px">
+        What to do: A patched version exists (<code>${esc(f.fix)}</code>). The repo maintainer would need to publish an update with that version; you can't change it yourself without forking the repo.${breaking}
+      </div>`;
+    };
+
+    const findingsHtml = findings.length ? findings.map(f => `
+      <div style="padding:10px 12px;border-top:1px solid var(--border);font-size:11px">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
+          <code style="font-size:12px;color:var(--text);font-weight:600">${esc(f.package || '?')}</code>
+          <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;background:${sevColor(f.severity)};color:#fff;text-transform:uppercase">${esc(sevLabel(f.severity))}</span>
+          <span style="font-size:10px;color:var(--text-faint)" title="${f.is_direct ? 'This package is listed directly in the server\'s dependencies' : 'This package was pulled in by another package the server depends on'}">${f.is_direct ? 'used directly' : 'used indirectly'}</span>
+        </div>
+        <div style="color:var(--text);margin-bottom:2px">${esc(f.why || '')}</div>
+        ${f.advisories && f.advisories.length ? `
+          <div style="color:var(--text-faint);font-size:10px;line-height:1.5">
+            More info: ${f.advisories.map(a => `
+              ${a.url ? `<a href="${esc(a.url)}" target="_blank" style="color:var(--accent);text-decoration:none">${esc(a.title || a.source || 'advisory')} &#x2197;</a>` : esc(a.title || a.source || 'advisory')}
+              ${a.cve && a.cve.length ? ` &middot; <code>${esc(Array.isArray(a.cve) ? a.cve.join(', ') : a.cve)}</code>` : ''}
+            `).join(' &nbsp; ')}
+          </div>` : ''}
+        ${f.upstream && f.upstream.length ? `
+          <div style="color:var(--text-faint);font-size:10px;margin-top:3px">
+            Pulled in via: ${f.upstream.map(esc).join(' &rarr; ')}
+          </div>` : ''}
+        ${findingAction(f)}
+      </div>`).join('') : '';
+
+    auditHtml = `
+      <div style="padding:10px 12px;${bgStyle};border-radius:4px;font-size:12px">
+        <div style="margin-bottom:4px">Dependency check: ${summaryLine}</div>
+        <div style="color:var(--text);line-height:1.5">${recommendation}</div>
+        ${findings.length ? `
+          <details style="margin-top:8px">
+            <summary style="cursor:pointer;color:var(--text-faint);font-size:11px">Show ${findings.length} finding${findings.length===1?'':'s'} in detail</summary>
+            <div style="margin-top:6px;margin-left:-12px;margin-right:-12px">
+              ${findingsHtml}
+            </div>
+          </details>` : ''}
+      </div>`;
+  } else if (audit.reason) {
+    auditHtml = `<div style="font-size:11px;color:var(--text-faint)">Audit skipped: ${esc(audit.reason)}</div>`;
+  }
+
+  // Secrets form
+  let secretsHtml = '';
+  if (secrets.length) {
+    secretsHtml = `
+      <div>
+        <div style="font-size:11px;color:var(--text-faint);margin-bottom:4px">This server needs credentials — fill them in before installing.</div>
+        ${secrets.map(s => `
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+            <code style="font-size:12px;min-width:160px">${esc(s.key)}</code>
+            <input type="password" data-secret-key="${esc(s.key)}" placeholder="${esc(s.hint)}"
+              value="${esc(st.secretValues[s.key] || '')}"
+              oninput="_mcpUrlSecretChange('${modalId}','${esc(s.key)}',this.value)"
+              style="flex:1;padding:5px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+          </div>`).join('')}
+      </div>`;
+  }
+
+  // Commands preview
+  let cmdsHtml = '';
+  if (cmds.length) {
+    cmdsHtml = `
+      <div>
+        <div style="font-size:11px;color:var(--text-faint);margin-bottom:4px">Will run (in the cloned repo):</div>
+        <pre style="margin:0;padding:8px 10px;background:var(--surface2);border-radius:4px;font-size:11px;color:var(--text);overflow-x:auto">${cmds.map(c => '$ ' + c.map(esc).join(' ')).join('\n')}</pre>
+      </div>`;
+  }
+
+  // Resulting config preview
+  const cfgPreview = JSON.stringify(st.config || {}, null, 2);
+
+  // Project realProjects re-read so the picker works
+  const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+  const projOptions = realProjects.map(p =>
+    `<option value="${esc(p.id)}"${p.id===st.projectId?' selected':''}>${esc(p.name||p.id)}</option>`
+  ).join('');
+
+  return `
+    <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-faint)">
+      <span>Source: <b style="color:var(--text)">${esc(p.kind || '')}</b></span>
+      <span>&middot;</span>
+      <span>Config detected via: <b style="color:var(--text)">${esc(tierLabel)}</b></span>
+      ${p.sha ? `<span>&middot;</span><span>SHA: <code style="font-size:10px">${esc(p.sha.slice(0,7))}</code></span>` : ''}
+    </div>
+    ${ghHtml}
+    ${auditHtml}
+    ${scanHtml}
+    ${secretsHtml}
+    ${cmdsHtml}
+    <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+      <div style="flex:1;min-width:160px">
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Server name</label>
+        <input type="text" id="me-url-name" value="${esc(st.name || '')}"
+          oninput="_mcpUrlFieldChange('${modalId}','name',this.value)"
+          style="width:100%;padding:6px 10px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono)">
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Scope</label>
+        <select id="me-url-scope" onchange="_mcpUrlFieldChange('${modalId}','scope',this.value)"
+          style="padding:6px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+          <option value="global" ${st.scope==='global'?'selected':''}>Global</option>
+          <option value="project" ${st.scope==='project'?'selected':''} ${realProjects.length?'':'disabled'}>Project</option>
+        </select>
+      </div>
+      <div id="me-url-project-wrap" style="display:${st.scope==='project'?'':'none'}">
+        <label style="display:block;font-size:11px;color:var(--text-faint);margin-bottom:4px">Project</label>
+        <select id="me-url-project" onchange="_mcpUrlFieldChange('${modalId}','projectId',this.value)"
+          style="padding:6px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);max-width:220px">
+          ${projOptions || '<option value="">No projects with a path</option>'}
+        </select>
+      </div>
+    </div>
+    <details style="font-size:11px">
+      <summary style="cursor:pointer;color:var(--text-faint)">Final config to be written</summary>
+      <pre style="margin:6px 0 0;padding:8px 10px;background:var(--surface2);border-radius:4px;font-size:11px;color:var(--text);overflow-x:auto">${esc(cfgPreview)}</pre>
+    </details>
+    <div style="display:flex;gap:8px;justify-content:space-between;align-items:center">
+      <button class="btn-secondary" onclick="_mcpUrlBack('${modalId}')">&larr; Back</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn-secondary" onclick="closeModalById('${modalId}')">Cancel</button>
+        <button class="btn-add" onclick="_mcpUrlInstall('${modalId}')">Install &rarr;</button>
+      </div>
+    </div>`;
+}
+
+function _mcpUrlFieldChange(modalId, key, value) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry._mcpUrlState) return;
+  entry._mcpUrlState[key] = value;
+  if (key === 'scope') {
+    const wrap = entry.element.querySelector('#me-url-project-wrap');
+    if (wrap) wrap.style.display = value === 'project' ? '' : 'none';
+  }
+}
+
+function _mcpUrlSecretChange(modalId, key, value) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry._mcpUrlState) return;
+  entry._mcpUrlState.secretValues = entry._mcpUrlState.secretValues || {};
+  entry._mcpUrlState.secretValues[key] = value;
+}
+
+async function _mcpUrlBack(modalId) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry._mcpUrlState) return;
+  // Clean up the staged clone server-side so we don't leak install dirs.
+  const dir = (entry._mcpUrlState.preview || {}).install_dir;
+  if (dir) {
+    try {
+      await fetch(API_BASE + '/api/mcp/url/staged', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ install_dir: dir }),
+      });
+    } catch (e) {}
+  }
+  entry._mcpUrlState = { stage: 'input', url: entry._mcpUrlState.url };
+  _mcpUrlRender(modalId);
+}
+
+async function _mcpUrlInstall(modalId) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry._mcpUrlState) return;
+  const st = entry._mcpUrlState;
+  // Required-secret check.
+  const missing = (st.preview.secrets || []).filter(s => !((st.secretValues || {})[s.key] || '').trim());
+  if (missing.length) {
+    alert('Fill in: ' + missing.map(m => m.key).join(', '));
+    return;
+  }
+  if (!st.name || !st.name.trim()) {
+    alert('Server name required');
+    return;
+  }
+  if (st.scope === 'project' && !st.projectId) {
+    alert('Pick a project');
+    return;
+  }
+  st.stage = 'installing';
+  st.log = '';
+  _mcpUrlRender(modalId);
+
+  try {
+    const res = await fetch(API_BASE + '/api/mcp/url/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        install_dir: st.preview.install_dir,
+        name: st.name.trim(),
+        scope: st.scope,
+        project_id: st.projectId,
+        config: st.config,
+        secrets: st.secretValues || {},
+      }),
+    });
+    if (!res.ok || !res.body) {
+      const err = await res.text();
+      st.log = `[install request failed: ${res.status} ${err}]`;
+      st.stage = 'preview';
+      _mcpUrlRender(modalId);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const events = buf.split('\n\n');
+      buf = events.pop() || '';
+      for (const ev of events) {
+        const line = ev.split('\n').find(l => l.startsWith('data: '));
+        if (!line) continue;
+        let payload;
+        try { payload = JSON.parse(line.slice(6)); } catch (e) { continue; }
+        if (payload.type === 'log') {
+          st.log = (st.log || '') + payload.text;
+          _mcpUrlAppendLog(modalId, payload.text);
+        } else if (payload.type === 'done') {
+          st.stage = 'done';
+          st.installedRecord = payload.record;
+          _mcpUrlRender(modalId);
+          // Invalidate cached MCP list so the dashboard reflects it.
+          if (typeof loadAllMCP === 'function') {
+            _allMCPCache.loaded = false;
+            loadAllMCP();
+          }
+        } else if (payload.type === 'error') {
+          st.log = (st.log || '') + '\n[error] ' + (payload.message || '');
+          st.stage = 'preview';
+          alert('Install failed: ' + payload.message);
+          _mcpUrlRender(modalId);
+        }
+      }
+    }
+  } catch (e) {
+    st.stage = 'preview';
+    alert('Install failed: ' + e);
+    _mcpUrlRender(modalId);
+  }
+}
+
+function _mcpUrlAppendLog(modalId, text) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry.element) return;
+  const pre = entry.element.querySelector('#me-url-log');
+  if (!pre) return;
+  pre.textContent = (pre.textContent || '') + text;
+  pre.scrollTop = pre.scrollHeight;
+}
+
+function _mcpUrlRenderInstalling(modalId, st) {
+  return `
+    <div style="font-size:12px;color:var(--text-faint)">Installing — this may take a minute...</div>
+    <pre id="me-url-log" style="margin:0;padding:10px;background:#0a0c10;color:#cfd8dc;border-radius:4px;font-size:11px;height:260px;overflow:auto;white-space:pre-wrap">${esc(st.log || '')}</pre>`;
+}
+
+function _mcpUrlRenderDone(modalId, st) {
+  const rec = st.installedRecord || {};
+  return `
+    <div style="padding:14px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.4);border-radius:6px">
+      <div style="font-size:14px;font-weight:700;color:#22c55e;margin-bottom:6px">&#x2713; Installed</div>
+      <div style="font-size:12px;color:var(--text)">MCP server <code>${esc(rec.name || st.name)}</code> is now configured in <b>${esc(rec.scope || st.scope)}</b> scope. Claude Code will pick it up on the next agent dispatch.</div>
+    </div>
+    <details style="font-size:11px">
+      <summary style="cursor:pointer;color:var(--text-faint)">Install log</summary>
+      <pre style="margin:6px 0 0;padding:8px 10px;background:#0a0c10;color:#cfd8dc;border-radius:4px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap">${esc(st.log || '')}</pre>
+    </details>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn-add" onclick="closeModalById('${modalId}')">Close</button>
+    </div>`;
+}
+
+
+async function saveMCPServer(modalId, isNew) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry.element) return;
+  const root = entry.element;
+
+  const name = (root.querySelector('#me-name').value || '').trim();
+  const transport = root.querySelector('#me-transport').value;
+  const scopeRadio = root.querySelector('input[name="me-scope"]:checked');
+  const scope = scopeRadio ? scopeRadio.value : 'global';
+  const projectSel = root.querySelector('#me-project');
+  const projectId = (scope === 'project' && projectSel) ? projectSel.value : null;
+
+  if (!name) { _mcpEditorStatus(modalId, 'Name is required', 'var(--red)'); return; }
+  if (scope === 'project' && !projectId) {
+    _mcpEditorStatus(modalId, 'Pick a project (must have a project_path configured)', 'var(--red)');
+    return;
+  }
+
+  let config = {};
+  if (transport === 'stdio') {
+    const command = (root.querySelector('#me-command').value || '').trim();
+    const argsText = (root.querySelector('#me-args').value || '').trim();
+    const envText = (root.querySelector('#me-env').value || '').trim();
+    if (!command) { _mcpEditorStatus(modalId, 'Command is required for stdio', 'var(--red)'); return; }
+    config = { command, args: argsText ? argsText.split(/\s+/) : [], env: _parseKVLines(envText, '=') };
+  } else {
+    const url = (root.querySelector('#me-url').value || '').trim();
+    const headersText = (root.querySelector('#me-headers').value || '').trim();
+    if (!url) { _mcpEditorStatus(modalId, 'URL is required', 'var(--red)'); return; }
+    config = { url, headers: _parseKVLines(headersText, ':') };
+  }
+
+  _mcpEditorStatus(modalId, 'Saving...');
+
+  try {
+    let res;
+    if (isNew) {
+      res = await fetch(API_BASE + '/api/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, scope, project_id: projectId, transport, config })
+      });
+    } else {
+      const params = new URLSearchParams();
+      if (projectId) params.set('project_id', projectId);
+      const url = API_BASE + `/api/mcp/${encodeURIComponent(scope)}/${encodeURIComponent(name)}` + (params.toString() ? '?' + params.toString() : '');
+      res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transport, config, project_id: projectId })
+      });
+    }
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      _mcpEditorStatus(modalId, errBody.error || `Save failed (HTTP ${res.status})`, 'var(--red)');
+      return;
+    }
+    closeModalById(modalId);
+    _allMCPCache.loaded = false;
+    loadAllMCP();
+  } catch(e) {
+    _mcpEditorStatus(modalId, 'Save failed: ' + e.message, 'var(--red)');
+  }
+}
+
+async function deleteMCPAction(scope, name, projectId) {
+  if (!confirm(`Delete MCP server "${name}"?\n\nThis removes it from ${scope === 'global' ? '~/.claude.json' : 'the project .mcp.json'}.`)) return;
+  try {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project_id', projectId);
+    const url = API_BASE + `/api/mcp/${encodeURIComponent(scope)}/${encodeURIComponent(name)}` + (params.toString() ? '?' + params.toString() : '');
+    const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      alert(errBody.error || `Delete failed (HTTP ${res.status})`);
+      return;
+    }
+    _allMCPCache.loaded = false;
+    loadAllMCP();
+  } catch(e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+
 // ── Walkthrough / Tour ────────────────────────────────────────────────────────
 
 let wtActive = false;
@@ -16988,6 +18748,10 @@ function startRefresh() {
     refreshCountdown--;
     document.getElementById('refresh-timer').textContent = `refresh in ${refreshCountdown}s`;
   }, 1000);
+  // Auth-status poll runs slower than the project refresh — flag is sticky
+  // server-side until cleared by a successful probe, so the dashboard mostly
+  // just needs to learn about transitions.
+  setInterval(refreshAuthStatus, 90000);
 }
 
 // Filter dropdown click handler (replaces old .filter-btn bindings)
@@ -17023,6 +18787,131 @@ if (feedCollapsed) {
 // Restore view mode
 applyViewMode();
 
+// Register the service worker eagerly on every load (not just when the user
+// opts into push). Chrome only considers the site installable as a PWA once
+// a controlling SW with a fetch handler is active — without this, the
+// `beforeinstallprompt` event never fires and the Install row stays hidden.
+window._pushState = window._pushState || {};
+if ('serviceWorker' in navigator) {
+  window._pushState.swState = 'registering';
+  navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    .then(reg => {
+      const w = reg.active || reg.waiting || reg.installing;
+      window._pushState.swState = w ? w.state : 'registered';
+      window._pushState.swScript = (w && w.scriptURL) || '/sw.js';
+      console.log('[sw] registered', window._pushState.swState, window._pushState.swScript);
+      // Watch lifecycle so the Settings panel reflects the current state.
+      const trackWorker = (worker) => {
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          window._pushState.swState = worker.state;
+          if (document.getElementById('sw-status-line')) {
+            try { refreshPushSection(); } catch (_) {}
+          }
+        });
+      };
+      trackWorker(reg.installing); trackWorker(reg.waiting); trackWorker(reg.active);
+      reg.addEventListener('updatefound', () => trackWorker(reg.installing));
+    })
+    .catch(e => {
+      window._pushState.swState = 'failed';
+      window._pushState.swError = String(e && e.message || e);
+      console.warn('[sw] register failed', e);
+    });
+} else {
+  window._pushState.swState = 'not-supported';
+}
+
+// ── Native FCM push (Capacitor / Android shell) ─────────────────────────────
+// Runs only inside the io.clayrune.app native WebView (window.Capacitor +
+// isNativePlatform). Asks for notification permission, grabs the FCM token,
+// posts it to /api/push/register-fcm, and wires deep-link routing for
+// notification taps. Web push (service worker above) still works in parallel;
+// the server routes per-subscription based on its stored type.
+(async function _initNativePush() {
+  try {
+    const Cap = window.Capacitor;
+    if (!Cap || typeof Cap.isNativePlatform !== 'function' || !Cap.isNativePlatform()) return;
+    const PN = Cap.Plugins && Cap.Plugins.PushNotifications;
+    if (!PN) { console.warn('[fcm] PushNotifications plugin not present'); return; }
+    window._pushState.native = { state: 'init', platform: Cap.getPlatform && Cap.getPlatform() };
+
+    // 1. Permission gate — Android 13+ surfaces a system prompt; older
+    //    versions grant implicitly. iOS prompts too once we support it.
+    const perm = await PN.checkPermissions();
+    let granted = perm && perm.receive === 'granted';
+    if (!granted) {
+      const req = await PN.requestPermissions();
+      granted = req && req.receive === 'granted';
+    }
+    if (!granted) {
+      window._pushState.native.state = 'denied';
+      console.warn('[fcm] permission denied');
+      return;
+    }
+
+    // 2. Token registration. The plugin fires 'registration' once FCM hands
+    //    over the device token; we POST it to MC alongside a friendly label.
+    PN.addListener('registration', async (t) => {
+      const token = (t && t.value) || '';
+      if (!token) return;
+      let label = 'Android';
+      try {
+        const info = (Cap.Plugins.Device && (await Cap.Plugins.Device.getInfo())) || {};
+        if (info.model) label = info.model;
+      } catch (_) {}
+      try {
+        const r = await fetch('/api/push/register-fcm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, label }),
+        });
+        const b = await r.json();
+        window._pushState.native.state = b.ok ? 'registered' : 'register-failed';
+        window._pushState.native.nonce = b.nonce || '';
+      } catch (e) {
+        window._pushState.native.state = 'register-error';
+        window._pushState.native.error = String(e && e.message || e);
+      }
+    });
+    PN.addListener('registrationError', (err) => {
+      window._pushState.native.state = 'registration-error';
+      window._pushState.native.error = (err && err.error) || String(err);
+      console.warn('[fcm] registrationError', err);
+    });
+
+    // 3. Foreground delivery — show a lightweight toast instead of letting
+    //    the system tray repeat what the user is already looking at. (FCM
+    //    suppresses tray display while the app is in foreground anyway.)
+    PN.addListener('pushNotificationReceived', (notif) => {
+      try {
+        const t = (notif && (notif.title || (notif.data && notif.data.title))) || 'Clayrune';
+        const b = (notif && (notif.body  || (notif.data && notif.data.body)))  || '';
+        if (typeof showToast === 'function') showToast(`${t}: ${b}`.slice(0, 120), 4000);
+      } catch (_) {}
+    });
+
+    // 4. Tap routing — user tapped the notification (foreground or from
+    //    system tray). Pull project/session out of the data payload and
+    //    hand off to the same deep-link helper the service worker uses.
+    PN.addListener('pushNotificationActionPerformed', (act) => {
+      try {
+        const data = (act && act.notification && act.notification.data) || {};
+        const url = data.url || (data.project_id
+          ? `/?project=${encodeURIComponent(data.project_id)}${data.session_id ? `&session=${encodeURIComponent(data.session_id)}` : ''}`
+          : '');
+        if (url) _handleDeepLinkFromUrl(url);
+      } catch (e) { console.warn('[fcm] tap routing failed', e); }
+    });
+
+    // 5. Kick off registration. Triggers 'registration' or 'registrationError'.
+    await PN.register();
+    window._pushState.native.state = 'registering';
+  } catch (e) {
+    console.warn('[fcm] init failed', e);
+  }
+})();
+
 fetchProjects().then(async () => {
   // Restore previously-open project modals (refresh persistence).
   // Skip on mobile: modals are full-screen there and bottom-tab nav assumes a clean slate.
@@ -17044,6 +18933,7 @@ fetchProjects().then(async () => {
   try { await _handleDeepLinkFromUrl(); } catch (e) { console.warn('deep link', e); }
   fetchGlobalUsage();
   refreshScheduleBanner();
+  refreshAuthStatus();
   renderSidebarProjects();
   // Proactive update-available indicator. Reads a CACHED status from the
   // server (no git fetch on this code path — server's daemon refreshes
@@ -17147,6 +19037,348 @@ window.addEventListener('beforeunload', () => {
 
 // ── Modal drag-to-move (multi-modal) ────────────────────────────────────────
 
+// ── Aero-Snap engine ────────────────────────────────────────────────────────
+// Drag a modal near a viewport edge / corner → translucent preview shows the
+// target zone → release commits the snap. Dragging a snapped modal more than
+// SNAP_UNSNAP_THRESHOLD px restores it to its pre-snap geometry and lets it
+// follow the cursor. Mobile (< 961px) is full-screen-by-CSS and skipped.
+
+const SNAP_TRIGGER = 24;                 // px from screen edge to activate a zone
+const SNAP_UNSNAP_THRESHOLD = 24;        // px dragged before a snapped modal pops free
+
+// Live workspace rect = viewport minus the page header and the sidebar.
+// Sidebar width is pinned to its BASE (collapsed) value — not the live
+// getBoundingClientRect — so transient `:hover` expansion (52 → 220 px)
+// doesn't shift the snap target out from under the cursor mid-drag. If the
+// user explicitly toggles `.sidebar.expanded`, we honor that as the new base.
+function _workspaceRect() {
+  const headerEl = document.querySelector('.header') || document.querySelector('.mc-app-bar');
+  const headerH = headerEl ? headerEl.getBoundingClientRect().height : 48;
+  const sidebar = document.querySelector('.sidebar');
+  let sidebarW = 0;
+  if (sidebar && getComputedStyle(sidebar).display !== 'none') {
+    if (sidebar.classList.contains('expanded')) {
+      sidebarW = sidebar.getBoundingClientRect().width;
+    } else {
+      const baseW = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w'));
+      sidebarW = baseW || 52;
+    }
+  }
+  return {
+    left: sidebarW,
+    top: headerH,
+    width: Math.max(0, window.innerWidth - sidebarW),
+    height: Math.max(0, window.innerHeight - headerH),
+  };
+}
+
+function _snapEnabled() {
+  return !_isMobileDevice && window.innerWidth > 960;
+}
+
+// Compute the rect that zone `id` should occupy within the current workspace.
+function _zoneRect(zoneId) {
+  const w = _workspaceRect();
+  const halfW = Math.round(w.width / 2);
+  const halfH = Math.round(w.height / 2);
+  const thirdW = Math.round(w.width / 3);
+  switch (zoneId) {
+    case 'full':         return { left: w.left,             top: w.top,         width: w.width,             height: w.height };
+    case 'left-half':    return { left: w.left,             top: w.top,         width: halfW,               height: w.height };
+    case 'right-half':   return { left: w.left + halfW,     top: w.top,         width: w.width - halfW,     height: w.height };
+    case 'top-half':     return { left: w.left,             top: w.top,         width: w.width,             height: halfH };
+    case 'bottom-half':  return { left: w.left,             top: w.top + halfH, width: w.width,             height: w.height - halfH };
+    case 'tl-quarter':   return { left: w.left,             top: w.top,         width: halfW,               height: halfH };
+    case 'tr-quarter':   return { left: w.left + halfW,     top: w.top,         width: w.width - halfW,     height: halfH };
+    case 'bl-quarter':   return { left: w.left,             top: w.top + halfH, width: halfW,               height: w.height - halfH };
+    case 'br-quarter':   return { left: w.left + halfW,     top: w.top + halfH, width: w.width - halfW,     height: w.height - halfH };
+    case 'left-third':   return { left: w.left,             top: w.top,         width: thirdW,              height: w.height };
+    case 'center-third': return { left: w.left + thirdW,    top: w.top,         width: thirdW,              height: w.height };
+    case 'right-third':  return { left: w.left + 2*thirdW,  top: w.top,         width: w.width - 2*thirdW,  height: w.height };
+    default: return null;
+  }
+}
+
+// Map pointer position (x,y) to a snap zone, or null if not inside any.
+// Detection uses VIEWPORT edges (0, 0, innerWidth, innerHeight) — not the
+// workspace rect — so the cursor naturally crossing into the sidebar strip
+// or above the page header (as it must, to drag to a screen edge) still
+// triggers a snap. The zone TARGET is computed by _zoneRect against the
+// workspace rect, so the modal lands inside the page chrome.
+// Layout: a 24×24 px square in each corner triggers a quarter; a 24 px strip
+// along each edge (outside the corners) triggers a half / maximize. There's
+// intentionally no bottom-edge full-width snap (matches Aero / Windows).
+function _zoneFromPointer(x, y) {
+  if (x < -8 || x > window.innerWidth + 8) return null;
+  if (y < -8 || y > window.innerHeight + 8) return null;
+  const nearTop    = y <= SNAP_TRIGGER;
+  const nearBottom = y >= window.innerHeight - SNAP_TRIGGER;
+  const nearLeft   = x <= SNAP_TRIGGER;
+  const nearRight  = x >= window.innerWidth - SNAP_TRIGGER;
+  if (nearTop && nearLeft)     return 'tl-quarter';
+  if (nearTop && nearRight)    return 'tr-quarter';
+  if (nearBottom && nearLeft)  return 'bl-quarter';
+  if (nearBottom && nearRight) return 'br-quarter';
+  if (nearTop)    return 'full';        // top edge → maximize
+  if (nearLeft)   return 'left-half';
+  if (nearRight)  return 'right-half';
+  return null;                          // bottom edge alone: no snap
+}
+
+let _snapPreviewEl = null;
+function _ensureSnapPreview() {
+  if (_snapPreviewEl && document.body.contains(_snapPreviewEl)) return _snapPreviewEl;
+  _snapPreviewEl = document.createElement('div');
+  _snapPreviewEl.className = 'mc-snap-preview';
+  document.body.appendChild(_snapPreviewEl);
+  return _snapPreviewEl;
+}
+function _drawSnapPreview(zoneId) {
+  const el = _ensureSnapPreview();
+  const r = _zoneRect(zoneId);
+  if (!r) { _clearSnapPreview(); return; }
+  el.style.left = r.left + 'px';
+  el.style.top = r.top + 'px';
+  el.style.width = r.width + 'px';
+  el.style.height = r.height + 'px';
+  el.classList.add('visible');
+}
+function _clearSnapPreview() {
+  if (!_snapPreviewEl) return;
+  _snapPreviewEl.classList.remove('visible');
+}
+
+// Apply a snap zone to a modal window. Captures pre-snap geometry on the
+// first snap so unSnap can restore it. Persists snap + preSnap in
+// mc_modal_prefs and the open-modals snapshot for restore-on-reload.
+function applySnap(modalId, zoneId) {
+  if (!_snapEnabled()) return;
+  const entry = openModals.get(modalId);
+  if (!entry) return;
+  const win = entry.element;
+  const content = win.querySelector('.modal-content');
+  if (!content) return;
+  const r = _zoneRect(zoneId);
+  if (!r) return;
+
+  // Capture pre-snap geometry the first time we snap (so unsnap restores).
+  if (!entry.snap) {
+    const cr = win.getBoundingClientRect();
+    entry.preSnap = {
+      left: Math.round(cr.left),
+      top: Math.round(cr.top),
+      width: content.offsetWidth,
+      height: content.offsetHeight,
+    };
+  }
+  entry.snap = zoneId;
+  win.classList.add('is-snapped');
+  win.style.left = r.left + 'px';
+  win.style.top = r.top + 'px';
+  content.style.width = r.width + 'px';
+  content.style.height = r.height + 'px';
+
+  // Persist (skip for synthetic modals; _setModalPref already guards mobile).
+  if (entry.projectId && !modalId.startsWith('__')) {
+    _setModalPref(entry.projectId, {
+      snap: zoneId,
+      preSnap: entry.preSnap,
+      // Don't overwrite width/height — those are the user-resized "free" size.
+    });
+  }
+  _saveOpenModalsSnapshot();
+}
+
+// Toggle the modal "pin" state. Pinned (default) shows the full data sheet;
+// unpinned collapses everything between the name row and the tab body — handy
+// when several modals are tiled and you only need the title bars visible.
+// State persists in mc_modal_prefs.unpinned (per-project).
+function toggleModalPin(modalId) {
+  const entry = openModals.get(modalId);
+  if (!entry) return;
+  const win = entry.element;
+  const becomingUnpinned = !win.classList.contains('is-unpinned');
+  win.classList.toggle('is-unpinned', becomingUnpinned);
+  entry.unpinned = becomingUnpinned;
+  if (entry.projectId && !modalId.startsWith('__')) {
+    _setModalPref(entry.projectId, { unpinned: becomingUnpinned });
+  }
+  _saveOpenModalsSnapshot();
+}
+
+// Restore a snapped modal to its pre-snap geometry. If preSnap is missing
+// (shouldn't happen, but defensive), center the modal at its previous size.
+function unSnap(modalId) {
+  const entry = openModals.get(modalId);
+  if (!entry || !entry.snap) return;
+  const win = entry.element;
+  const content = win.querySelector('.modal-content');
+  const ps = entry.preSnap;
+  if (ps && content) {
+    win.style.left = ps.left + 'px';
+    win.style.top = ps.top + 'px';
+    content.style.width = ps.width + 'px';
+    content.style.height = ps.height + 'px';
+  }
+  entry.snap = null;
+  entry.preSnap = null;
+  win.classList.remove('is-snapped');
+  if (entry.projectId && !modalId.startsWith('__')) {
+    _setModalPref(entry.projectId, { snap: null, preSnap: null });
+  }
+  _saveOpenModalsSnapshot();
+}
+
+// ── Multi-modal tile templates (header "Tile" button) ──────────────────────
+// Templates are keyed by the count of currently-visible modals. Each template
+// is `{ id, label, zones }` — `zones` is an ordered array; the modal with the
+// highest zIndex (most-recently focused) goes to zones[0], next to zones[1],
+// etc. A template only shows in the popover if its zones.length === modalCount
+// (so the user can't half-tile a set; we keep it deterministic).
+//
+// Extra entries with N+1 zones are added for "primary + leftovers stacked"
+// scenarios, but we keep Phase 1 strict-match for simplicity.
+const _TILE_TEMPLATES = {
+  1: [
+    { id: 'full',        label: 'Maximize',          zones: ['full'] },
+  ],
+  2: [
+    { id: '2-h',         label: 'Side by side',      zones: ['left-half', 'right-half'] },
+    { id: '2-v',         label: 'Top / bottom',      zones: ['top-half', 'bottom-half'] },
+  ],
+  3: [
+    { id: '3-cols',      label: 'Three columns',     zones: ['left-third', 'center-third', 'right-third'] },
+    { id: '3-l-stack',   label: 'Large left + stack',zones: ['left-half', 'tr-quarter', 'br-quarter'] },
+    { id: '3-r-stack',   label: 'Stack + large right',zones:['right-half', 'tl-quarter', 'bl-quarter'] },
+  ],
+  4: [
+    { id: '2x2',         label: '2 × 2 quadrants',   zones: ['tl-quarter', 'tr-quarter', 'bl-quarter', 'br-quarter'] },
+  ],
+};
+
+// Returns visible (non-minimized) project modal entries ordered by zIndex
+// descending so the most-recently-focused modal is first.
+function _visibleModalsByFocus() {
+  const list = [];
+  for (const [modalId, entry] of openModals) {
+    if (!entry || entry.minimized) continue;
+    if (modalId.startsWith('__')) continue;  // skip synthetic (terminal pop-outs, etc.)
+    list.push({ modalId, zIndex: entry.zIndex || 0 });
+  }
+  list.sort((a, b) => b.zIndex - a.zIndex);
+  return list.map(x => x.modalId);
+}
+
+function _templatesForCount(n) {
+  return _TILE_TEMPLATES[n] || [];
+}
+
+// Apply a template by id. The N most-recently-focused modals get assigned to
+// the template's zones in order. Idempotent — re-applies cleanly even if some
+// modals are already snapped.
+function tileAllModals(templateId) {
+  if (!_snapEnabled()) return;
+  const ids = _visibleModalsByFocus();
+  const tpl = (_TILE_TEMPLATES[ids.length] || []).find(t => t.id === templateId);
+  if (!tpl) return;
+  tpl.zones.forEach((zone, i) => {
+    if (ids[i]) applySnap(ids[i], zone);
+  });
+}
+
+// Render a mini-thumbnail of a template by stacking labelled cells in the
+// same proportions as their zones. The number on each cell indicates which
+// focused modal goes there (1 = most-recently-focused, 2 = next, etc.).
+function _renderTileThumbnail(zones) {
+  const ws = _workspaceRect();
+  if (!ws.width || !ws.height) return '<div class="tile-thumb"></div>';
+  const cells = zones.map((zone, i) => {
+    const r = _zoneRect(zone);
+    if (!r) return '';
+    const left = ((r.left - ws.left) / ws.width * 100).toFixed(2);
+    const top = ((r.top - ws.top) / ws.height * 100).toFixed(2);
+    const w = (r.width / ws.width * 100).toFixed(2);
+    const h = (r.height / ws.height * 100).toFixed(2);
+    return `<div class="ttb-cell" style="left:${left}%;top:${top}%;width:${w}%;height:${h}%">${i + 1}</div>`;
+  }).join('');
+  return `<div class="tile-thumb">${cells}</div>`;
+}
+
+// Open/close the popover. Renders templates based on the live visible-modal
+// count each time it opens — so it always reflects the current state.
+function toggleTileModalsPopover(event) {
+  if (event) event.stopPropagation();
+  const pop = document.getElementById('tile-modals-popover');
+  if (!pop) return;
+  if (pop.classList.contains('open')) {
+    pop.classList.remove('open');
+    return;
+  }
+  const ids = _visibleModalsByFocus();
+  const tpls = _templatesForCount(ids.length);
+  if (ids.length === 0) {
+    pop.innerHTML = '<div class="tmp-empty">No open modals to tile</div>';
+  } else if (tpls.length === 0) {
+    pop.innerHTML = `<div class="tmp-empty">No tile layout for ${ids.length} modals<br><span style="font-size:11px;opacity:0.7">(supported: 1–4)</span></div>`;
+  } else {
+    const heading = `<div class="tmp-title">${ids.length} modal${ids.length === 1 ? '' : 's'} open</div>`;
+    pop.innerHTML = heading + tpls.map(t => `
+      <button class="tile-tpl-btn" onclick="tileAllModals('${t.id}'); toggleTileModalsPopover()">
+        ${_renderTileThumbnail(t.zones)}
+        <span>${t.label}</span>
+      </button>
+    `).join('');
+  }
+  pop.classList.add('open');
+}
+
+// Close popover on outside click / Escape
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('tile-modals-popover');
+  if (!pop || !pop.classList.contains('open')) return;
+  if (e.target.closest('#tile-modals-btn')) return;
+  pop.classList.remove('open');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const pop = document.getElementById('tile-modals-popover');
+  if (pop && pop.classList.contains('open')) pop.classList.remove('open');
+});
+
+// Re-apply current snap zones after a viewport resize. Debounced so a continuous
+// resize drag doesn't thrash. Sidebar hover-expand transitions take ~200ms;
+// we listen on `.sidebar mouseleave` separately to recompute once the sidebar
+// has settled, avoiding mid-transition jitter.
+let _snapResizeTimer = null;
+function _reapplyAllSnaps() {
+  if (!_snapEnabled()) return;
+  for (const [, entry] of openModals) {
+    if (entry.snap) {
+      const r = _zoneRect(entry.snap);
+      if (!r) continue;
+      const content = entry.element.querySelector('.modal-content');
+      entry.element.style.left = r.left + 'px';
+      entry.element.style.top = r.top + 'px';
+      if (content) {
+        content.style.width = r.width + 'px';
+        content.style.height = r.height + 'px';
+      }
+    }
+  }
+}
+window.addEventListener('resize', () => {
+  clearTimeout(_snapResizeTimer);
+  _snapResizeTimer = setTimeout(_reapplyAllSnaps, 100);
+});
+// Sidebar collapses back from 220→52 on mouseleave; recompute after the
+// 200ms CSS transition has settled so snapped modals don't sit on stale
+// geometry.
+document.addEventListener('DOMContentLoaded', () => {
+  const sb = document.querySelector('.sidebar');
+  if (sb) sb.addEventListener('mouseleave', () => setTimeout(_reapplyAllSnaps, 220));
+});
+
 let modalDrag = null;
 
 function modalDragStart(x, y, target) {
@@ -17156,7 +19388,21 @@ function modalDragStart(x, y, target) {
   const win = target.closest('.modal-window');
   if (!win) return false;
   const rect = win.getBoundingClientRect();
-  modalDrag = { element: win, startX: x, startY: y, origLeft: rect.left, origTop: rect.top };
+  // Find the modal entry so we can read/clear snap state during the drag.
+  let entryRef = null, modalIdRef = null;
+  for (const [mid, ent] of openModals) {
+    if (ent.element === win) { entryRef = ent; modalIdRef = mid; break; }
+  }
+  modalDrag = {
+    element: win,
+    entry: entryRef,
+    modalId: modalIdRef,
+    startX: x, startY: y,
+    origLeft: rect.left, origTop: rect.top,
+    wasSnapped: !!(entryRef && entryRef.snap),
+    activeZone: null,
+    unsnapped: false,
+  };
   header.classList.add('dragging');
   return true;
 }
@@ -17165,15 +19411,61 @@ function modalDragMove(x, y) {
   if (!modalDrag) return;
   const dx = x - modalDrag.startX;
   const dy = y - modalDrag.startY;
+
+  // If we started on a snapped modal, hold position until the user has dragged
+  // far enough to "tear it off" — then pop it free at the cursor (Aero-Snap
+  // tear-off: the modal recenters on the cursor at its pre-snap size, not its
+  // snapped size, so it doesn't visually leap).
+  if (modalDrag.wasSnapped && !modalDrag.unsnapped) {
+    if (Math.hypot(dx, dy) < SNAP_UNSNAP_THRESHOLD) return;
+    const entry = modalDrag.entry;
+    const ps = entry && entry.preSnap;
+    if (entry) {
+      entry.snap = null;
+      modalDrag.element.classList.remove('is-snapped');
+      const content = modalDrag.element.querySelector('.modal-content');
+      if (ps && content) {
+        content.style.width = ps.width + 'px';
+        content.style.height = ps.height + 'px';
+      }
+      entry.preSnap = null;
+    }
+    // Recenter the un-snapped window under the cursor so it tracks naturally.
+    const w = modalDrag.element.offsetWidth;
+    const h = modalDrag.element.offsetHeight;
+    modalDrag.origLeft = x - w / 2;
+    modalDrag.origTop = y - 12;
+    modalDrag.startX = x;
+    modalDrag.startY = y;
+    modalDrag.unsnapped = true;
+    return;
+  }
+
   modalDrag.element.style.left = Math.max(0, Math.min(window.innerWidth - 100, modalDrag.origLeft + dx)) + 'px';
   modalDrag.element.style.top = Math.max(0, Math.min(window.innerHeight - 50, modalDrag.origTop + dy)) + 'px';
+
+  // Update snap-zone preview based on cursor position
+  if (_snapEnabled()) {
+    const zone = _zoneFromPointer(x, y);
+    if (zone !== modalDrag.activeZone) {
+      modalDrag.activeZone = zone;
+      if (zone) _drawSnapPreview(zone); else _clearSnapPreview();
+    }
+  }
 }
 
 function modalDragEnd() {
   if (!modalDrag) return;
   modalDrag.element.querySelector('.modal-header.dragging')?.classList.remove('dragging');
+  const zone = modalDrag.activeZone;
+  const modalId = modalDrag.modalId;
+  _clearSnapPreview();
   modalDrag = null;
-  _saveOpenModalsSnapshot();
+  if (zone && modalId) {
+    applySnap(modalId, zone);
+  } else {
+    _saveOpenModalsSnapshot();
+  }
 }
 
 document.getElementById('modal-layer').addEventListener('mousedown', (e) => {
