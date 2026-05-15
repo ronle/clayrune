@@ -47,3 +47,23 @@ Backend: `skills.py` module + `# ── Skills endpoints` section in
 `server.py`. Frontend: `// ── Skills (global + per-project ...)` section
 in `static/index.html`. Architecture and rollback recipe in CHANGELOG
 `[2026-05-10]`.
+
+## memsearch — cross-session persistent memory layer (added 2026-05-14)
+
+Claude Code has the `memsearch` plugin installed (Zilliz, MIT, v0.4.2+).
+It gives sessions persistent semantic recall across conversations without
+external services — markdown files at `.memsearch/memory/<YYYY-MM-DD>.md`
+are the source of truth, Milvus Lite at `.memsearch/milvus.db` is a
+rebuildable vector index, embeddings via local ONNX bge-m3 (no API key,
+no daemon, no Docker).
+
+**At task start** (especially for non-trivial work in this repo): use the
+plugin's memory-recall skill / query memsearch for the topic *before*
+starting. Memory files at `~/.claude/projects/C--Users-levir-Documents--claude-mission-control/memory/`
+are still the curated stable index ([[feedback-grep-memory-dir]]); memsearch
+holds the fluid auto-captured context (decisions, debugging notes,
+what-was-tried). The two are complementary, not redundant.
+
+**Storage**: per-project (each MC project gets its own `.memsearch/`).
+Both the memory dir and the index are gitignored. To wipe and rebuild
+from scratch: `rm -rf .memsearch && memsearch index --force`.

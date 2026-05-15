@@ -93,6 +93,12 @@ data/firebase_admin.json
 static/downloads/*.apk
 static/downloads/*.aab
 
+# memsearch (Zilliz) — Claude Code persistent-memory plugin. Per-project
+# storage dir holds daily session-summary markdown, the Milvus Lite vector
+# index, and a watch-process PID file. Markdown is regenerable (claude-mem
+# rebuilds from session); vector index is a derived cache. Nothing to commit.
+.memsearch/
+
 # Bundled third-party binaries (cloudflared, future Rust mc-tunnel artifacts)
 # These are fetched at build time, not committed. README + LICENSE stay.
 mc_tunnel/bin/cloudflared

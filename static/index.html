@@ -1685,6 +1685,76 @@
   .feed-entry-msg { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
   .feed-entry-ts  { font-size: 10px; color: var(--text-faint); margin-top: 3px; font-family: 'JetBrains Mono', monospace; }
 
+  /* ── Bucketed feed (Needs-you + Recent) ──────────────────────────────── */
+  .feed-section-head {
+    font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+    color: var(--text-faint); font-weight: 700;
+    padding: 10px 8px 4px; display: flex; align-items: center; gap: 6px;
+  }
+  .feed-section-head .fsh-count {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    background: var(--surface2); color: var(--text-dim);
+    border-radius: 3px; padding: 1px 5px; font-weight: 600;
+  }
+  .feed-section-head.needs .fsh-count { background: var(--accent); color: var(--bg); }
+  .feed-section-head.needs { color: var(--accent); }
+  .feed-bucket { display: flex; flex-direction: column; gap: 4px; }
+  .feed-bucket + .feed-section-head { margin-top: 6px; }
+  .feed-entry-row {
+    display: grid; grid-template-columns: 16px 1fr auto; gap: 8px;
+    align-items: baseline;
+  }
+  .fe-icon {
+    font-size: 11px; line-height: 1; text-align: center;
+    color: var(--text-faint); user-select: none;
+  }
+  .fe-icon.dispatch  { color: var(--accent); }
+  .fe-icon.followup  { color: var(--text-dim); }
+  .fe-icon.completed { color: #6aa66a; }
+  .fe-icon.error     { color: #c66; }
+  .fe-icon.attention { color: var(--accent); }
+  .fe-icon.hivemind  { color: var(--accent); }
+  .fe-icon.github    { color: var(--text-faint); }
+  /* Attention rows pop: thicker accent rail + accent project name */
+  .feed-entry.attention {
+    border-left-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  .feed-entry.attention:hover {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  .feed-entry.attention .feed-entry-project { color: var(--accent); }
+  .feed-entry.attention .feed-entry-msg     { color: var(--text); }
+  .fe-more {
+    font-size: 10px; color: var(--text-faint);
+    font-family: 'JetBrains Mono', monospace; margin-top: 2px;
+  }
+  /* Badge on the collapsed feed-expand-tab so urgency survives a hidden feed */
+  .feed-tab-badge {
+    position: absolute; top: -6px; right: -6px;
+    min-width: 16px; height: 16px; padding: 0 4px;
+    background: var(--accent); color: var(--bg);
+    border-radius: 8px; font-size: 10px; font-weight: 700;
+    display: none; align-items: center; justify-content: center;
+    font-family: 'Inter', sans-serif; line-height: 1;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.15);
+  }
+  .feed-expand-tab.has-attention .feed-tab-badge { display: inline-flex; }
+  .feed-empty {
+    color: var(--text-faint); text-align: center; padding: 8px 12px;
+    font-size: 11px; font-style: italic;
+  }
+  /* Time-bucket subheads inside the Recent section */
+  .feed-subhead {
+    font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--text-faint); font-weight: 600;
+    padding: 8px 8px 2px; opacity: 0.85;
+  }
+  /* Continuous fade as project rows age — fresh pops, older recedes */
+  .feed-entry.bucket-today  { opacity: 0.86; }
+  .feed-entry.bucket-week   { opacity: 0.58; }
+  .feed-entry.bucket-week .feed-entry-msg { color: var(--text-faint); }
+
   .loading { color: var(--text-faint); text-align: center; padding: 48px; font-size: 13px; letter-spacing: 1px; grid-column: 1 / -1; }
 
   @media (max-width: 960px) {
@@ -4176,7 +4246,7 @@
       <div class="list-view" id="list-view" style="display:none"></div>
     </div>
     <!-- Feed Expand Tab (visible when feed collapsed) -->
-    <div class="feed-expand-tab" id="feed-expand-tab" onclick="toggleFeed()" title="Show activity feed">&#x276F;</div>
+    <div class="feed-expand-tab" id="feed-expand-tab" onclick="toggleFeed()" title="Show activity feed">&#x276F;<span class="feed-tab-badge" id="feed-tab-badge">0</span></div>
     <!-- Feed Column -->
     <div class="feed-col" id="feed-col">
       <div class="feed-header">
@@ -4519,6 +4589,9 @@ function computeLiveStatus(projectId) {
     if (cache.waitingForPlanApproval) {
       currentTask = 'Awaiting plan approval';
       currentTaskClass = 'plan-approval';
+    } else if (cache.waitingForQuestion) {
+      currentTask = 'Awaiting your answer';
+      currentTaskClass = 'question';
     } else if (currentTaskClass !== 'running') {
       const task = runningSess.task || 'Working...';
       currentTask = task.length > 60 ? task.slice(0, 57) + '...' : task;
@@ -4578,6 +4651,7 @@ function friendlyStatus(p) {
   const c = live.currentTaskClass;
   if (c === 'running')        return 'working';
   if (c === 'plan-approval')  return 'asking';
+  if (c === 'question')       return 'asking';
   if (c === 'error')          return 'stuck';
   if (p.blocked)              return 'stuck';
   switch (p.status) {
@@ -6191,9 +6265,22 @@ function refreshModalById(modalId) {
     const el = document.getElementById(id);
     if (el) el.style.height = h;
   }
-  if (focusedId && focusedId !== _preservedInputId) {
+  if (focusedId) {
     const el = document.getElementById(focusedId);
-    if (el) { el.focus(); el.selectionStart = selStart; el.selectionEnd = selEnd; }
+    if (el) {
+      if (focusedId === _preservedInputId) {
+        // Reattached node lost focus during detach. Refocus, but DO NOT touch
+        // .selectionStart/.selectionEnd — the reattached node still carries
+        // the correct selection + Android IME compose buffer, and writing to
+        // those properties desyncs the IME (the original reason this branch
+        // was skipped). Without this refocus, any cross-modal refreshModal()
+        // — e.g. SSE turn_start from another agent — silently blurs whatever
+        // textarea the user was typing in. Regression introduced in e473323.
+        if (el !== document.activeElement) el.focus();
+      } else {
+        el.focus(); el.selectionStart = selStart; el.selectionEnd = selEnd;
+      }
+    }
   }
   const newScrollBody = content.querySelector('.modal-scroll-body');
   if (newScrollBody) {
@@ -6977,23 +7064,186 @@ async function deleteAttachment(e, projectId, itemId, attId) {
 
 // ── Feed ────────────────────────────────────────────────────────────────────
 
-function renderFeed() {
-  const entries = [];
+// Derive a small icon + kind from a free-text activity_log message so the eye
+// can scan event types in the Recent bucket. Pattern matches mirror the
+// _log_agent_activity call sites in server.py — keep in sync if those change.
+function classifyFeedEvent(msg) {
+  const m = String(msg || '').toLowerCase();
+  if (!m) return { icon: '·', kind: '' };  // middle dot
+  if (m.startsWith('resume failed') || m.includes(' error')) return { icon: '⚠', kind: 'error' };       // ⚠
+  if (m.startsWith('agent stopped'))           return { icon: '◼', kind: 'followup' };  // ◼
+  if (m.startsWith('agent interrupted'))       return { icon: '⏸', kind: 'followup' };  // ⏸
+  if (m.startsWith('agent revived'))           return { icon: '↻', kind: 'dispatch' };  // ↻
+  if (m.startsWith('agent resumed'))           return { icon: '↻', kind: 'dispatch' };  // ↻
+  if (m.startsWith('agent dispatched'))        return { icon: '▸', kind: 'dispatch' };  // ▸
+  if (m.startsWith('agent follow-up queued'))  return { icon: '⋯', kind: 'followup' };  // ⋯
+  if (m.startsWith('agent follow-up'))         return { icon: '↗', kind: 'followup' };  // ↗
+  if (m.startsWith('hivemind'))                return { icon: '◆', kind: 'hivemind' };  // ◆
+  if (m.startsWith('github'))                  return { icon: '◒', kind: 'github' };    // ◒
+  if (m.includes('completed'))                 return { icon: '✓', kind: 'completed' }; // ✓
+  return { icon: '·', kind: '' };
+}
+
+// Build the "Needs you" bucket purely from live project state (don't trust
+// activity_log here — it lags). Each item is something the user can act on:
+// asking → plan approval / question / generic input; stuck → blocked or error.
+function _buildAttentionList() {
+  const items = [];
   allProjects.forEach(p => {
-    (p.activity_log||[]).forEach(e => entries.push({...e, project: p.name||p.id, projectId: p.id, domain: p.domain}));
+    const fs = friendlyStatus(p);
+    if (fs !== 'asking' && fs !== 'stuck') return;
+    const live = computeLiveStatus(p.id) || {};
+    let icon = '✋';  // ✋ default for asking
+    let msg = '';
+    if (fs === 'asking') {
+      const sess = agentHistory.find(h => h.projectId === p.id && (h.status === 'running' || h.status === 'idle'));
+      const cache = sess ? (agentStatusCache[sess.sessionId] || {}) : {};
+      if (cache.waitingForPlanApproval) { icon = '\u{1F4CB}'; msg = 'Plan ready — needs approval'; }       // 📋
+      else if (cache.waitingForQuestion) { icon = '❓'; msg = 'Question pending — needs answer'; }    // ❓
+      else { msg = 'Awaiting input to proceed'; }
+    } else {
+      icon = '⚠';  // ⚠
+      if (p.blocked) {
+        msg = p.blocked_reason ? `Blocked: ${p.blocked_reason}` : 'Blocked';
+      } else if (live.currentTaskClass === 'error') {
+        msg = live.currentTask && live.currentTask !== 'Idle' ? `Error: ${live.currentTask}` : 'Error — needs intervention';
+      } else {
+        msg = 'Stuck — needs intervention';
+      }
+    }
+    items.push({ projectId: p.id, project: p.name || p.id, domain: p.domain, msg, icon });
   });
-  entries.sort((a,b) => (b.ts||'').localeCompare(a.ts||''));
+  return items;
+}
+
+// Age bucket for the Recent feed. `old` means too stale to show at all — the
+// feed isn't an archive, it's a "what's been alive lately" surface.
+function _feedAgeBucket(ts) {
+  if (!ts) return { key: 'old', label: '' };
+  const ageMs = Date.now() - new Date(ts).getTime();
+  if (isNaN(ageMs)) return { key: 'old', label: '' };
+  if (ageMs < 0) return { key: 'fresh', label: 'Fresh' };  // clock skew → treat as fresh
+  const H = 3600 * 1000, D = 24 * H;
+  if (ageMs < H)       return { key: 'fresh', label: 'Fresh · last hour' };
+  if (ageMs < D)       return { key: 'today', label: 'Today' };
+  if (ageMs < 7 * D)   return { key: 'week',  label: 'This week' };
+  return { key: 'old', label: '' };
+}
+
+function _updateFeedAttentionBadge(count) {
+  const tab = document.getElementById('feed-expand-tab');
+  const badge = document.getElementById('feed-tab-badge');
+  if (!tab || !badge) return;
+  if (count > 0) {
+    tab.classList.add('has-attention');
+    badge.textContent = String(count);
+  } else {
+    tab.classList.remove('has-attention');
+  }
+}
+
+function renderFeed() {
   const feedEl = document.getElementById('feed-entries');
-  feedEl.innerHTML = entries.slice(0,40).map(e => `
-    <div class="feed-entry" data-project-id="${esc(e.projectId)}">
-      <div class="feed-entry-project" style="color:${getDomainConfig(e.domain).color}">${esc(e.project)}</div>
-      <div class="feed-entry-msg">${esc(e.msg||'')}</div>
-      <div class="feed-entry-ts">${esc(e.ts_relative||e.ts||'')}</div>
-    </div>`).join('') || '<div class="loading">No activity</div>';
-  // Click feed entry to open project modal
+  if (!feedEl) return;
+
+  // ── Bucket 1: Needs you (derived from live state, not the log) ────────
+  const attention = _buildAttentionList();
+
+  // ── Bucket 2: Recent — one rolling line per project ───────────────────
+  // activity_log is insert(0,…) so index 0 is the newest entry per project.
+  const groups = [];
+  allProjects.forEach(p => {
+    const log = p.activity_log || [];
+    if (!log.length) return;
+    const newest = log[0];
+    groups.push({
+      projectId: p.id,
+      project: p.name || p.id,
+      domain: p.domain,
+      ts: newest.ts || '',
+      ts_relative: newest.ts_relative || '',
+      msg: newest.msg || '',
+      count: log.length,
+    });
+  });
+  groups.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+  const recent = groups.slice(0, 24);
+
+  const parts = [];
+
+  if (attention.length) {
+    parts.push(`<div class="feed-section-head needs">Needs you <span class="fsh-count">${attention.length}</span></div>`);
+    parts.push('<div class="feed-bucket">');
+    attention.forEach(it => {
+      const color = getDomainConfig(it.domain).color;
+      parts.push(`
+        <div class="feed-entry attention" data-project-id="${esc(it.projectId)}" title="Click to open">
+          <div class="feed-entry-row">
+            <span class="fe-icon attention">${it.icon}</span>
+            <div>
+              <div class="feed-entry-project" style="color:${color}">${esc(it.project)}</div>
+              <div class="feed-entry-msg">${esc(it.msg)}</div>
+            </div>
+            <span></span>
+          </div>
+        </div>`);
+    });
+    parts.push('</div>');
+  }
+
+  // Time-bucket the per-project rows. Anything older than a week drops off —
+  // the Recent surface is for what's alive, not an archive (Agent Log covers
+  // history). Fresh stays full-color; older buckets fade via CSS.
+  const buckets = { fresh: [], today: [], week: [] };
+  let droppedOld = 0;
+  recent.forEach(g => {
+    const b = _feedAgeBucket(g.ts);
+    if (b.key === 'old') { droppedOld++; return; }
+    buckets[b.key].push(g);
+  });
+  const visibleCount = buckets.fresh.length + buckets.today.length + buckets.week.length;
+
+  parts.push(`<div class="feed-section-head">Recent${visibleCount ? ` <span class="fsh-count">${visibleCount}</span>` : ''}</div>`);
+  if (!visibleCount) {
+    parts.push(`<div class="feed-empty">${droppedOld ? 'No activity in the last 7 days' : 'No activity yet'}</div>`);
+  } else {
+    const order = [
+      { key: 'fresh', label: 'Fresh · last hour' },
+      { key: 'today', label: 'Today' },
+      { key: 'week',  label: 'This week' },
+    ];
+    order.forEach(({ key, label }) => {
+      const rows = buckets[key];
+      if (!rows.length) return;
+      parts.push(`<div class="feed-subhead">${label}</div>`);
+      parts.push('<div class="feed-bucket">');
+      rows.forEach(g => {
+        const color = getDomainConfig(g.domain).color;
+        const cls = classifyFeedEvent(g.msg);
+        const more = g.count > 1 ? `<div class="fe-more">+${g.count - 1} earlier</div>` : '';
+        parts.push(`
+          <div class="feed-entry bucket-${key}" data-project-id="${esc(g.projectId)}">
+            <div class="feed-entry-row">
+              <span class="fe-icon ${esc(cls.kind)}">${cls.icon}</span>
+              <div>
+                <div class="feed-entry-project" style="color:${color}">${esc(g.project)}</div>
+                <div class="feed-entry-msg">${esc(g.msg)}</div>
+                ${more}
+              </div>
+              <span class="feed-entry-ts">${esc(g.ts_relative || g.ts || '')}</span>
+            </div>
+          </div>`);
+      });
+      parts.push('</div>');
+    });
+  }
+
+  feedEl.innerHTML = parts.join('');
   feedEl.querySelectorAll('.feed-entry[data-project-id]').forEach(el => {
     el.addEventListener('click', () => openProjectModal(el.dataset.projectId));
   });
+
+  _updateFeedAttentionBadge(attention.length);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -7989,6 +8239,55 @@ let followupTimeouts = {};  // sessionId → { timerId, projectId }
 // post-POST status=running transition is never seen → UI stays IDLE.
 let _sendInFlight = {};
 
+// Per-session lock so concurrent reconcile triggers don't double-apply.
+let _reconcileBusy = {};
+
+// Compare server's authoritative log_lines against our SSE-received count and
+// silently apply any missed lines. Mobile-network drops, page-suspension SSE
+// kills, and stale `since=` cursors can all leave a hole where one or more
+// `output` events never reached onmessage — most visibly, a follow-up prompt
+// that never appears in the chat even though the server received and replied
+// to it. This helper gives us a deterministic catch-up path that runs at the
+// moments a hole is most likely to have just opened.
+async function _reconcileAgentBuffer(projectId, sessionId) {
+  if (!projectId || !sessionId) return;
+  if (_reconcileBusy[sessionId]) return;
+  _reconcileBusy[sessionId] = true;
+  try {
+    const r = await fetch(API_BASE + `/api/project/${projectId}/agent/status`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const sess = (data.sessions || []).find(s => s.session_id === sessionId);
+    if (!sess) return;
+    const serverLines = sess.log_lines || [];
+    const have = agentServerLines[sessionId] || 0;
+    if (serverLines.length <= have) return;  // in sync — nothing to recover
+    const missing = serverLines.slice(have);
+    for (const text of missing) {
+      // Race guard: SSE may have delivered the same line between fetch start
+      // and now. Re-check our cursor against the index this iteration targets.
+      if ((agentServerLines[sessionId] || 0) >= have + missing.indexOf(text) + 1) continue;
+      if (!agentOutputBuffers[sessionId]) agentOutputBuffers[sessionId] = [];
+      agentOutputBuffers[sessionId].push(text);
+      agentServerLines[sessionId] = (agentServerLines[sessionId] || 0) + 1;
+      // Mirror the SSE onmessage echo-dedup so a recovered `> Ron:` line
+      // wipes the local echo that sendFollowup left in the DOM.
+      if (text && text.trimStart().startsWith('> ')) {
+        const el = document.getElementById(`agent-output-${sessionId}`);
+        if (el) {
+          const echo = el.querySelector('.agent-echo');
+          if (echo) echo.remove();
+        }
+      }
+      appendAgentLine(sessionId, text);
+    }
+  } catch (_) {
+    // silent — reconciliation is best-effort
+  } finally {
+    _reconcileBusy[sessionId] = false;
+  }
+}
+
 function connectAgentStream(projectId, sessionId) {
   if (agentEventSources[sessionId]) {
     agentEventSources[sessionId].close();
@@ -8018,6 +8317,9 @@ function connectAgentStream(projectId, sessionId) {
       const cached = agentStatusCache[sessionId];
       if (cached && (cached.status === 'running' || cached.status === 'idle')) {
         connectAgentStream(projectId, sessionId);
+        // A silent SSE death often means we missed lines while the connection
+        // was zombie. Reconcile after the new stream has had a moment to flow.
+        setTimeout(() => _reconcileAgentBuffer(projectId, sessionId), 1500);
       }
     }
   }, 10000);
@@ -8085,7 +8387,11 @@ function connectAgentStream(projectId, sessionId) {
           refreshProjectBacklog(projectId);
         }
       } else if (msg.type === 'question' && msg.questions) {
+        if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForQuestion = true;
+        const _hQ = agentHistory.find(h => h.sessionId === sessionId);
+        if (_hQ) _hQ.waitingForQuestion = true;
         renderAgentQuestion(sessionId, projectId, msg.questions, msg.question_id || '');
+        refreshModal();
       } else if (msg.type === 'turn_start') {
         // Phase 2 (2026-04-27): server tells us a new turn started so we can
         // flip the status UI without optimistic cache writes in sendFollowup.
@@ -8095,6 +8401,7 @@ function connectAgentStream(projectId, sessionId) {
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = 'running';
           agentStatusCache[sessionId].waitingForPlanApproval = false;
+          agentStatusCache[sessionId].waitingForQuestion = false;
         }
         updateHistoryStatus(sessionId, 'running');
         updateAgentStatusUI(sessionId, 'running');
@@ -8114,6 +8421,7 @@ function connectAgentStream(projectId, sessionId) {
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = 'idle';
           agentStatusCache[sessionId].waitingForPlanApproval = false;
+          agentStatusCache[sessionId].waitingForQuestion = false;
           if (msg.usage) agentStatusCache[sessionId].usage = msg.usage;
           if (msg.cost_usd !== undefined) agentStatusCache[sessionId].cost_usd = msg.cost_usd;
           if (msg.num_turns !== undefined) agentStatusCache[sessionId].num_turns = msg.num_turns;
@@ -8138,6 +8446,7 @@ function connectAgentStream(projectId, sessionId) {
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = msg.status;
           agentStatusCache[sessionId].waitingForPlanApproval = false;
+          agentStatusCache[sessionId].waitingForQuestion = false;
           if (msg.usage) agentStatusCache[sessionId].usage = msg.usage;
           if (msg.cost_usd !== undefined) agentStatusCache[sessionId].cost_usd = msg.cost_usd;
           if (msg.num_turns !== undefined) agentStatusCache[sessionId].num_turns = msg.num_turns;
@@ -8380,9 +8689,40 @@ function expandAgentOutput(sessionId) {
 // "Pinned to bottom" detection: only auto-scroll when the user is already within
 // ~80 px of the bottom. Otherwise leave their scroll position alone — they're
 // reading earlier output and don't want to be yanked back.
-function _isAgentOutputPinned(el) {
+// rAF-batched scroll-to-bottom for streaming agent output.
+// Each `appendAgentLine` call used to do `el.scrollTop = el.scrollHeight`
+// synchronously — that's a forced layout reflow per line. On Android WebView
+// during a 50-line streaming burst that's 50 reflows back-to-back, blocking
+// the input handler for hundreds of ms (keyboard delete drops, typing lag).
+// Coalescing all writes within a frame into one rAF callback collapses 50
+// reflows into 1.
+const _pinScrollQueue = new Map();  // sessionId -> {el, freshMount}
+
+function _isAgentOutputPinned(el, sessionId) {
   if (!el) return true;
+  // If we have a pending pin-scroll for this session, treat as still pinned —
+  // the DOM read below would return the pre-write state during a streaming
+  // burst and report "not at bottom" even though we're about to scroll there.
+  if (sessionId && _pinScrollQueue.has(sessionId)) return true;
   return (el.scrollHeight - el.scrollTop - el.clientHeight) < 80;
+}
+
+function _scheduleAgentPinScroll(sessionId, el, freshMount) {
+  if (!el) return;
+  const wasQueued = _pinScrollQueue.has(sessionId);
+  _pinScrollQueue.set(sessionId, { el, freshMount: !!freshMount });
+  if (wasQueued) return;
+  requestAnimationFrame(() => {
+    const entry = _pinScrollQueue.get(sessionId);
+    _pinScrollQueue.delete(sessionId);
+    if (!entry) return;
+    const target = entry.el;
+    if (!target || !target.isConnected) return;
+    target.scrollTop = target.scrollHeight;
+    if (entry.freshMount && target.scrollHeight > 0) {
+      target.dataset.scrollInitialized = '1';
+    }
+  });
 }
 
 // ── Mermaid diagram interception ────────────────────────────────────────────
@@ -8639,7 +8979,7 @@ function appendAgentLine(sessionId, text) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el) return;
   const freshMount = !el.dataset.scrollInitialized;
-  const wasPinned = freshMount || _isAgentOutputPinned(el);
+  const wasPinned = freshMount || _isAgentOutputPinned(el, sessionId);
   el.style.display = 'block';
 
   // Split multi-line text blocks into individual lines
@@ -8654,7 +8994,7 @@ function appendAgentLine(sessionId, text) {
   // Mermaid diagram interception. Must come before all other line handling
   // so ```mermaid fences are caught even if they look like other syntaxes.
   if (_handleMermaidLine(sessionId, text, el)) {
-    if (wasPinned) el.scrollTop = el.scrollHeight;
+    if (wasPinned) _scheduleAgentPinScroll(sessionId, el, freshMount);
     return;
   }
 
@@ -8676,7 +9016,7 @@ function appendAgentLine(sessionId, text) {
       block.className = 'hl-table-pre';
       block.innerHTML = block._rawLines.map(l => formatTableLine(esc(l))).join('\n');
     }
-    if (wasPinned) el.scrollTop = el.scrollHeight;
+    if (wasPinned) _scheduleAgentPinScroll(sessionId, el, freshMount);
     return;
   }
   // Blank lines inside a table: keep them in the table block
@@ -8684,7 +9024,7 @@ function appendAgentLine(sessionId, text) {
     const last = el.lastElementChild;
     if (last && (last.classList.contains('hl-table') || last.classList.contains('hl-table-pre'))) {
       last._rawLines.push(text);
-      if (wasPinned) el.scrollTop = el.scrollHeight;
+      if (wasPinned) _scheduleAgentPinScroll(sessionId, el, freshMount);
       return;
     }
   }
@@ -8703,10 +9043,7 @@ function appendAgentLine(sessionId, text) {
     div.innerHTML = formatAgentText(text);
   }
   el.appendChild(div);
-  if (wasPinned) {
-    el.scrollTop = el.scrollHeight;
-    if (freshMount && el.scrollHeight > 0) el.dataset.scrollInitialized = '1';
-  }
+  if (wasPinned) _scheduleAgentPinScroll(sessionId, el, freshMount);
 
   // Plan detection: [tool: ExitPlanMode] signals end of plan
   if (text.trim() === '[tool: ExitPlanMode]') {
@@ -8741,7 +9078,7 @@ function appendAgentLine(sessionId, text) {
           <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>
           <button style="background:var(--bg2);color:var(--text);border:1px solid var(--border2);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer" onclick="collapseIntoPlanButton('${esc(sessionId)}',this.closest('.agent-output'))">Collapse Plan</button>`;
         el.appendChild(approveRow);
-        if (wasPinned) el.scrollTop = el.scrollHeight;
+        if (wasPinned) _scheduleAgentPinScroll(sessionId, el, freshMount);
       }
     }
 
@@ -8756,7 +9093,7 @@ function appendAgentLine(sessionId, text) {
       warn.style.cssText = 'background:var(--amber-dim);border:1px solid var(--amber);color:var(--amber-text);padding:8px 12px;border-radius:6px;margin:6px 0;font-size:12px;line-height:1.5;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
       warn.innerHTML = `&#x26A0; Agent is stuck trying to exit plan mode.${pid ? ` <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>` : ''}`;
       el.appendChild(warn);
-      if (wasPinned) el.scrollTop = el.scrollHeight;
+      if (wasPinned) _scheduleAgentPinScroll(sessionId, el, freshMount);
       exitPlanModeCount[sessionId] = 0; // Reset so it doesn't spam
     }
 
@@ -8942,6 +9279,11 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
   if (actionsEl) actionsEl.innerHTML = `<div class="agent-question-answer">Answered: ${esc(answers.map(a => a.answer).join(', '))}</div>`;
   // Disable inputs
   container.querySelectorAll('input').forEach(i => i.disabled = true);
+  // Clear waiting_for_question locally — server will confirm on turn_start,
+  // but we want the tile + feed to drop out of "asking" immediately.
+  if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForQuestion = false;
+  const _hAns = agentHistory.find(h => h.sessionId === sessionId);
+  if (_hAns) _hAns.waitingForQuestion = false;
   // Clear the rendered-question dedup set — server clears pending_questions on
   // followup, but if SSE has a transient retry between here and there we don't
   // want a fresh question for a new turn to be suppressed.
@@ -9088,6 +9430,10 @@ async function sendFollowup(projectId, sessionId) {
       // missing); retry now that we know the server route resolved.
       connectAgentStream(projectId, targetSessionId);
     }
+    // Reconcile after a short window: gives SSE a chance to deliver the new
+    // `> Ron:` line normally, and if it didn't (mobile drop, stale cursor),
+    // we silently fill in the gap so the user always sees their prompt.
+    setTimeout(() => _reconcileAgentBuffer(projectId, targetSessionId), 1500);
   }).catch(e => console.error('Send error:', e));
 
   // Start followup response timeout — if no output in 20s, warn user
@@ -9179,9 +9525,14 @@ async function fetchAgentStatus(projectId) {
       if (stoppedAt && (Date.now() - stoppedAt >= 15000)) {
         delete _recentlyStoppedSessions[sid];
       }
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
+        // Anchor the SSE since= cursor to the server's authoritative count so
+        // a subsequent connectAgentStream() resumes at the right index instead
+        // of replaying all log_lines from 0 (which would double the buffer
+        // and double-render every line in the DOM).
+        agentServerLines[sid] = s.log_lines.length;
       }
       const existingHist = agentHistory.find(h => h.sessionId === sid);
       if (!existingHist) {
@@ -19089,6 +19440,24 @@ setInterval(async () => {
 document.getElementById('modal-layer').addEventListener('input', e => {
   if (e.target.tagName === 'TEXTAREA' && e.target.id) {
     textareaValues[e.target.id] = e.target.value;
+  }
+});
+
+// ── Resume from background: silent buffer reconcile ────────────────────────
+// Mobile browsers suspend backgrounded tabs aggressively — SSE EventSources
+// can be killed without firing close events, leaving the watchdog as the only
+// recovery path (which takes 30s). When the page returns to visible, fan out
+// a one-shot reconcile against /agent/status for every visible modal's active
+// agent so any holes are repaired immediately, before the user notices.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  for (const [modalId, entry] of openModals) {
+    if (!entry || entry.minimized || !entry.projectId) continue;
+    const sid = activeAgentTab[entry.projectId];
+    if (!sid) continue;
+    const cache = agentStatusCache[sid];
+    if (!cache || (cache.status !== 'running' && cache.status !== 'idle')) continue;
+    _reconcileAgentBuffer(entry.projectId, sid);
   }
 });
 

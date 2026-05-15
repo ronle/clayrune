@@ -4,6 +4,82 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-15] — Activity feed redesign, focus-theft fix, AskUserQuestion status wiring, mobile missing-prompt reconciliation
+
+A single-session bundle: one feature reshape + three correctness fixes.
+All changes are `static/index.html` only — no `server.py` changes, so a
+hard refresh picks everything up (no restart).
+
+**Activity feed redesign — bucketed + time-aware (`static/index.html`)**
+The feed was a flat, equal-weight reverse-chron list — nothing rose to
+the top, so it carried no signal. `renderFeed()` now splits into two
+buckets. **"Needs you"** is derived live from project state (not the
+lagging `activity_log`): `friendlyStatus(p)` of `asking` or `stuck`,
+with the reason resolved from plan-approval / question-pending / blocked
+/ error. It renders with an accent rail and pins to the top, and the
+collapsed feed tab carries an attention-count badge so urgency survives
+a hidden feed. **"Recent"** collapses to one rolling line per project
+(newest event + `+N earlier`) and is time-bucketed by the age of that
+newest event: `Fresh · last hour` / `Today` / `This week`, with
+progressive CSS opacity fade and a 7-day cutoff (the feed is a
+"what's alive" surface; Agent Log remains the archive). New helpers:
+`classifyFeedEvent` (msg-text → icon/kind), `_buildAttentionList`,
+`_feedAgeBucket`, `_updateFeedAttentionBadge`.
+
+**Focus-theft regression — fixed (`static/index.html`)**
+Regression introduced in `e473323` (the Android-IME chat-input
+preservation). `refreshModalById` detaches the focused
+`agent-followup-${sid}` textarea and reattaches it across the
+`innerHTML` wipe; removing a node from the DOM blurs it, and the
+focus-restore block deliberately *skipped* the preserved input
+(re-assigning `.value`/selection would desync the IME). Net effect:
+any cross-modal `refreshModal()` — e.g. an SSE `turn_start` from a
+different agent — silently blurred whatever textarea the user was
+typing in. Fix: the restore block now re-focuses the preserved input
+when it isn't already `document.activeElement`, **without** touching
+`.selectionStart/.selectionEnd` (the reattached node still carries the
+correct selection + IME compose buffer).
+
+**AskUserQuestion status pipeline (`static/index.html`)**
+`waiting_for_question` was fully tracked server-side and exposed on
+`/agent/status`, but the frontend never propagated it, so an agent
+blocking on `AskUserQuestion` showed as `working`/`idle` instead of
+`asking` — tiles and the new Needs-you bucket couldn't surface it.
+Wired the full chain: `fetchAgentStatus` now reads
+`s.waiting_for_question` into `agentStatusCache[sid].waitingForQuestion`;
+`computeLiveStatus` emits a new `currentTaskClass = 'question'`;
+`friendlyStatus` maps `'question'` → `'asking'`. The flag is set on
+the SSE `question` event (with a `refreshModal()` so tiles repaint)
+and cleared on `submitQuestionAnswer`, `turn_start`, and the terminal
+`turn_complete`/`status` handlers (alongside the existing
+`waitingForPlanApproval` clears).
+
+**Mobile missing-prompt — latent bug + silent reconciliation (`static/index.html`)**
+Symptom: a follow-up sent from the mobile shell never appeared in the
+chat even though the server received it and the agent replied
+(confirmed against a live session's `log_lines`). Two fixes. (1)
+Latent bug: `fetchAgentStatus` populated `agentOutputBuffers[sid]`
+from server `log_lines` but never set `agentServerLines[sid]`, so a
+later `connectAgentStream` used `since=0` and replayed every line on
+top of the populated buffer — silent double-render. It now anchors
+`agentServerLines[sid] = log_lines.length`. (2) New
+`_reconcileAgentBuffer(projectId, sessionId)`: fetches `/agent/status`,
+diffs server `log_lines.length` against `agentServerLines[sid]`, and
+silently appends any missed tail entries through the normal
+echo-dedup + `appendAgentLine` path. Per-session `_reconcileBusy`
+lock + an in-loop race guard prevent double-apply if SSE catches up
+mid-iteration. Triggered at the three moments a hole is most likely
+to have just opened: `sendFollowup`'s POST resolution (+1.5 s), the
+SSE watchdog reconnect (+1.5 s), and `visibilitychange → visible`
+(fan-out over every visible modal's active session — covers mobile
+backgrounding the tab and killing the EventSource without a close
+event). No console/toast/flash — the recovered line appears as if
+SSE delivered it.
+
+**Rollback**: revert this commit. No persisted state or schema
+changed; the feed/status changes are pure render-path, and the
+reconciliation is additive (best-effort, silent on error).
+
 ## [2026-05-14b] — Modal snap layouts, tile-all button, pin/unpin, AskUserQuestion + mobile SSE fixes, Clayrune onboarding project
 
 A single-session bundle of three usability issues + two larger features.

@@ -348,7 +348,14 @@ Two views of "what happened":
 - **Per-project Activity** tab — chronological event log for one project:
   agent dispatches, status changes, backlog edits, etc.
 - **Cross-project Activity Feed** — the right-side feed column on the
-  desktop dashboard. Real-time stream of events across every project.
+  desktop dashboard, split into two sections. **Needs you** pins
+  projects that are waiting on you (a question, a plan approval, or a
+  blocked/errored agent) to the top with an accent highlight; when the
+  feed is collapsed, the edge tab shows a count badge so you still see
+  there's something to act on. **Recent** shows the latest activity —
+  one rolling line per project — grouped by age (Fresh · last hour /
+  Today / This week) with older items fading out; anything older than
+  7 days drops off (use a project's own Activity tab for full history).
   Clicking any entry jumps to the source project.
 
 ---
