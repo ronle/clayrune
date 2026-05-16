@@ -10153,7 +10153,10 @@ def push_subscriptions_list():
             'last_used_at': s.get('last_used_at', 0),
             'project_filter': s.get('project_filter'),
             'notify_agent_push': bool(s.get('notify_agent_push', True)),
-            'notify_turn_complete': bool(s.get('notify_turn_complete', False)),
+            # Display-only; the per-sub turn_complete gate was removed
+            # 2026-05-16 (delivery now ignores this field). Default True so
+            # the list view reflects the actual "waiting for me" policy.
+            'notify_turn_complete': bool(s.get('notify_turn_complete', True)),
         })
     out.sort(key=lambda x: x.get('last_used_at', 0), reverse=True)
     return jsonify({'ok': True, 'subscriptions': out})
