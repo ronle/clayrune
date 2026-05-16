@@ -9884,8 +9884,12 @@ def _notify_push(title: str, body: str, *, url: str = '',
             continue
         if kind == 'agent' and not sub.get('notify_agent_push', True):
             continue
-        if kind == 'turn_complete' and not sub.get('notify_turn_complete', True):
-            continue
+        # No per-subscription opt-out for turn_complete: "waiting for me" is
+        # THE policy (Ron, 2026-05-16) and has no per-device UI. Control lives
+        # at the project level (notify_turn_complete / notify_push_enabled) +
+        # the presence focus-suppression gate. A legacy stored
+        # notify_turn_complete=False on a sub (set when this was opt-in) must
+        # NOT silently swallow the policy — that was the no-push bug.
         pf = sub.get('project_filter')
         if pf and project_id and pf != project_id:
             continue
