@@ -4,6 +4,45 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-16] — Push policy: "waiting for me" + focus-suppression gate
+
+Implements the notification policy Ron chose ("option 1 — notify me when
+the agent is waiting for me; but stay silent if I already have that chat
+open and focused"). `server.py` + `static/index.html`; server restart
+required (server.py changed).
+
+**turn-complete push is ON by default.** Previously `notify_turn_complete`
+defaulted `False` on both the per-project gate (`_handle_push_signal`) and
+the per-subscription gate (`_notify_push`), so the "agent finished, waiting
+for you" buzz never fired unless explicitly opted in — the gap Ron hit
+("no notification when you responded; I opened after waiting a while").
+Both defaults flipped to `True`; a project can still explicitly opt out
+via `notify_turn_complete=False`. Payload text changed `Turn complete`
+→ `Waiting for you`. The agent-decided deep push (`kind='agent'`,
+PushNotification tool) is unchanged — it stays "only when something
+important happens".
+
+**Focus-suppression gate (new).** A dashboard with a session's chat open
+in a non-minimized modal, while the tab is `visibilityState==='visible'`
+*and* `document.hasFocus()`, pings `POST /api/presence` every 15s with the
+watched `[{project_id, session_id}]`. Server keeps an in-memory
+`_presence_state` (lock-guarded, global — any device watching suppresses
+all devices, since if Ron is at a screen his phone shouldn't buzz either).
+`_handle_push_signal` calls `_is_being_watched()` before delivering
+*either* kind and skips if a ping is fresher than `PRESENCE_FRESH_SEC`
+(25s). The frontend stops pinging on blur/hide, so presence goes stale
+and push resumes automatically — no explicit "I left" signal.
+
+**Internal agents excluded (new guard).** `_handle_push_signal` now bails
+when `agent_sessions[session_id]` has `housekeeping` or `incognito` set.
+Without it, flipping the turn-complete default ON would have spammed a
+push for every scribe / condense / hivemind worker+orchestrator `result`
+(all set `housekeeping=True`).
+
+New: `_presence_state`/`_presence_lock`/`PRESENCE_FRESH_SEC`,
+`_presence_touch()`, `_is_being_watched()`, `POST /api/presence`,
+frontend `_watchedSessions()` / `_pingPresence()`.
+
 ## [2026-05-15] — Activity feed redesign, focus-theft fix, AskUserQuestion status wiring, mobile missing-prompt reconciliation
 
 A single-session bundle: one feature reshape + three correctness fixes.

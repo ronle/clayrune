@@ -9627,6 +9627,34 @@ PUSH_SUBS_PATH = _DATA_ROOT / 'data' / 'push_subscriptions.json'
 _push_state_lock = threading.Lock()
 
 
+# ── Dashboard presence (push focus-suppression gate) ─────────────────────────
+# A browser/PWA that has a session's chat OPEN and the tab/window VISIBLE +
+# FOCUSED pings /api/presence every ~15s. While a fresh ping exists for
+# (project_id, session_id), push for that session is suppressed — the user is
+# already watching it, so a buzz would be pure noise. Presence is global (any
+# device watching → suppress all devices): if Ron is at a screen looking at
+# the chat, his phone shouldn't buzz either.
+_presence_state: dict = {}
+_presence_lock = threading.Lock()
+PRESENCE_FRESH_SEC = 25  # ping cadence ~15s; tolerate one missed beat + latency
+
+
+def _presence_touch(project_id: str, session_id: str) -> None:
+    if not project_id or not session_id:
+        return
+    with _presence_lock:
+        _presence_state[(project_id, session_id)] = _time.time()
+
+
+def _is_being_watched(project_id: str, session_id: str) -> bool:
+    """True iff a dashboard has this session's chat open + focused right now."""
+    if not project_id or not session_id:
+        return False
+    with _presence_lock:
+        ts = _presence_state.get((project_id, session_id), 0.0)
+    return (_time.time() - ts) < PRESENCE_FRESH_SEC
+
+
 def _load_vapid_keys() -> dict:
     """Return the VAPID keypair, generating + persisting one if missing.
 
@@ -9856,7 +9884,7 @@ def _notify_push(title: str, body: str, *, url: str = '',
             continue
         if kind == 'agent' and not sub.get('notify_agent_push', True):
             continue
-        if kind == 'turn_complete' and not sub.get('notify_turn_complete', False):
+        if kind == 'turn_complete' and not sub.get('notify_turn_complete', True):
             continue
         pf = sub.get('project_filter')
         if pf and project_id and pf != project_id:
@@ -9929,6 +9957,12 @@ def _handle_push_signal(project_id: str, session_id: str, msg: dict) -> None:
     Wrapped in a broad try so a delivery problem never breaks the reader.
     """
     try:
+        # Never notify for internal/background work or private sessions —
+        # scribe, condense, hivemind workers/orchestrator all set
+        # housekeeping=True; incognito sessions opt out of all signals.
+        s = agent_sessions.get(session_id) or {}
+        if s.get('housekeeping') or s.get('incognito'):
+            return
         msg_type = msg.get('type', '')
         if msg_type == 'assistant' and 'message' in msg:
             for block in msg['message'].get('content', []):
@@ -9940,6 +9974,9 @@ def _handle_push_signal(project_id: str, session_id: str, msg: dict) -> None:
                     p = load_project(project_id) or {}
                     if not p.get('notify_push_enabled', True):
                         continue
+                    # Focus-suppression: user is already watching this chat.
+                    if _is_being_watched(project_id, session_id):
+                        continue
                     title = (p.get('name') or 'Clayrune')[:60]
                     target = f'/?project={project_id}&session={session_id}'
                     _notify_push(title, text, url=target,
@@ -9947,13 +9984,18 @@ def _handle_push_signal(project_id: str, session_id: str, msg: dict) -> None:
                                  kind='agent')
         elif msg_type == 'result':
             p = load_project(project_id) or {}
-            if not p.get('notify_turn_complete', False):
-                return
             if not p.get('notify_push_enabled', True):
+                return
+            # "Waiting for me" policy: turn-complete push is ON by default;
+            # a project may still explicitly opt out (notify_turn_complete=False).
+            if not p.get('notify_turn_complete', True):
+                return
+            # Focus-suppression: don't buzz for a chat the user is watching.
+            if _is_being_watched(project_id, session_id):
                 return
             title = (p.get('name') or 'Clayrune')[:60]
             target = f'/?project={project_id}&session={session_id}'
-            _notify_push(title, 'Turn complete', url=target,
+            _notify_push(title, 'Waiting for you', url=target,
                          project_id=project_id, session_id=session_id,
                          kind='turn_complete')
     except Exception as e:
@@ -10147,6 +10189,29 @@ def push_test():
     result = _notify_push(title, msg, url=url, project_id=pid,
                           session_id=sid, kind='agent')
     return jsonify(result)
+
+
+@app.route('/api/presence', methods=['POST'])
+def api_presence():
+    """Heartbeat from a dashboard that has chat(s) open + visible + focused.
+
+    Body: {"watching": [{"project_id": "..", "session_id": ".."}, ...]}.
+    Each pair is timestamped; while fresh (< PRESENCE_FRESH_SEC) push for
+    that session is suppressed (the user is already looking at it). The
+    frontend stops pinging on blur/hide, so presence goes stale and push
+    resumes automatically — no explicit "I left" signal needed.
+    """
+    body = request.get_json(silent=True) or {}
+    watching = body.get('watching') or []
+    n = 0
+    if isinstance(watching, list):
+        for w in watching:
+            if not isinstance(w, dict):
+                continue
+            _presence_touch((w.get('project_id') or '').strip(),
+                            (w.get('session_id') or '').strip())
+            n += 1
+    return jsonify({'ok': True, 'touched': n})
 
 
 # ── Per-CF-session "name this device" labels ────────────────────────────────

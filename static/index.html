@@ -19645,6 +19645,40 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// ── Presence heartbeat: push focus-suppression ──────────────────────────────
+// While the tab is VISIBLE + FOCUSED and one or more session chats are open
+// (non-minimized modal), tell the server which (project, session) the user is
+// actively watching. The server suppresses push for any watched session, so a
+// chat you're already looking at never buzzes your phone. On blur/hide we stop
+// pinging; presence goes stale server-side (~25s) and push resumes on its own.
+function _watchedSessions() {
+  const out = [];
+  for (const [, entry] of openModals) {
+    if (!entry || entry.minimized || !entry.projectId) continue;
+    const sid = activeAgentTab[entry.projectId];
+    if (!sid) continue;
+    out.push({ project_id: entry.projectId, session_id: sid });
+  }
+  return out;
+}
+function _pingPresence() {
+  if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+  const watching = _watchedSessions();
+  if (!watching.length) return;
+  try {
+    fetch(API_BASE + '/api/presence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ watching }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {}
+}
+setInterval(_pingPresence, 15000);
+window.addEventListener('focus', _pingPresence);
+document.addEventListener('visibilitychange', _pingPresence);
+_pingPresence();
+
 // ── Cleanup running agents on page close ────────────────────────────────────
 window.addEventListener('beforeunload', () => {
   // Persist open-modal snapshot one last time so the next load can restore it
