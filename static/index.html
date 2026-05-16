@@ -5451,9 +5451,18 @@ async function _handleDeepLinkFromUrl(rawUrl) {
   if (!known.has(pid)) return;
   try { openProjectModal(pid); } catch (e) { console.warn('openProjectModal', e); }
   if (sid) {
-    // Wait one paint so the modal DOM exists before we point activeAgentTab at it.
-    await new Promise(r => setTimeout(r, 80));
-    try { switchAgentTab(pid, sid); } catch (e) { console.warn('switchAgentTab', e); }
+    // openProjectModal kicks off fetchAgentStatus async (and skips it
+    // entirely on a warm tap where the modal is already open). The old
+    // fixed-80ms guess lost that race on mobile cold-start, so the chat
+    // rendered before the agent's reply was loaded from server log_lines —
+    // user saw only their own message. Await an authoritative load, then
+    // select the tab. If the URL's session id is stale (server restarted →
+    // session revived under a new id) fall back to the project's real
+    // active session so the conversation still shows.
+    try { await fetchAgentStatus(pid); } catch (_) {}
+    const targetSid = agentStatusCache[sid] ? sid : (activeAgentTab[pid] || sid);
+    try { switchAgentTab(pid, targetSid); } catch (e) { console.warn('switchAgentTab', e); }
+    try { refreshModalById(pid); } catch (_) {}
   }
   // Clean the URL so a manual refresh doesn't keep re-firing the deep link.
   try {
