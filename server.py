@@ -9999,7 +9999,16 @@ def _handle_push_signal(project_id: str, session_id: str, msg: dict) -> None:
                 return
             title = (p.get('name') or 'Clayrune')[:60]
             target = f'/?project={project_id}&session={session_id}'
-            _notify_push(title, 'Waiting for you', url=target,
+            # Use the agent's actual closing message as the body (the
+            # stream-json `result` field carries the final assistant text —
+            # same content the chat renders). Collapse whitespace so the
+            # notification preview is clean; _notify_push caps to 280 chars.
+            # Fall back to the static phrase only when there's no text.
+            rt = msg.get('result')
+            body = ' '.join(rt.split()).strip() if isinstance(rt, str) else ''
+            if not body:
+                body = 'Waiting for you'
+            _notify_push(title, body, url=target,
                          project_id=project_id, session_id=session_id,
                          kind='turn_complete')
     except Exception as e:
