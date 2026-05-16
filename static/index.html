@@ -4105,6 +4105,171 @@
 <body>
 <span id="name-measure" class="name-measure"></span>
 
+<!-- ── PERF HUD (diagnostic, opt-in) ─────────────────────────────────────
+     Enable: append ?perf=1 to the URL, or run localStorage.mcPerfHUD='1'
+     then reload. Disable: ?perf=0 or remove the localStorage key.
+     Measures the real cost of input lag with zero hypotheses:
+       • Event Timing API → splits each slow keystroke into
+         inputDelay (main thread busy BEFORE the event dispatches) /
+         processing (handler cost) / presentation (paint+composite).
+       • Long Tasks → any ≥50ms main-thread block + count.
+       • FPS / long-frame count from a rAF loop.
+     Self-contained, gated, no effect when off. -->
+<div id="mc-perf-hud" style="display:none"></div>
+<script>
+(function(){
+  try {
+    // Opt-in only: append ?perf=1 (persists via localStorage) or set
+    // localStorage.mcPerfHUD='1'. ?perf=0 clears it. Kept in the tree as a
+    // diagnostic tool — it's how the 2026-05-15 mobile input-lag root cause
+    // (Capacitor captureInput) was isolated. Off by default; zero cost when off.
+    var qs = new URLSearchParams(location.search);
+    if (qs.get('perf') === '0') { try{localStorage.removeItem('mcPerfHUD');}catch(e){} return; }
+    if (qs.get('perf') === '1') { try{localStorage.setItem('mcPerfHUD','1');}catch(e){} }
+    var on = false;
+    try { on = localStorage.getItem('mcPerfHUD') === '1'; } catch(e) {}
+    if (!on) return;
+
+    var hud = document.getElementById('mc-perf-hud');
+    hud.style.cssText = 'display:block;position:fixed;top:0;left:0;right:0;z-index:2147483647;'
+      + 'background:rgba(0,0,0,.86);color:#0f0;font:11px/1.35 monospace;'
+      + 'padding:4px 8px;white-space:pre;pointer-events:none;max-height:42vh;overflow:hidden';
+
+    var worstEvt = {name:'',total:0,inputDelay:0,proc:0,present:0};
+    var ltCount = 0, ltMax = 0, ltSum = 0;
+    var longFrames = 0, frames = 0, lastT = performance.now(), fps = 0, fpsAccum = 0, fpsFrames = 0;
+
+    // DECISIVE PROBE: is the chat textarea being destroyed/recreated (the
+    // thing that kills Android IME autocorrect/predictive + needs multi-press
+    // backspace), and how often? A MutationObserver on the DOM counts every
+    // removal of an agent-followup-* textarea and every full .modal-content
+    // innerHTML swap. If taKills climbs while IDLE → periodic modal rebuild
+    // is destroying the input = root cause, full stop.
+    var taKills = 0, taKillsAtIdle = 0, modalRebuilds = 0, lastKillMs = 0, typing = false;
+
+    // ATTRIBUTION: patch the .modal-content innerHTML setter so we capture the
+    // SYNCHRONOUS call stack of whatever rebuilds it (that's what wipes the
+    // textarea). MutationObserver can't do this — it fires async, after the
+    // mutation, so its stack is useless for attribution. Records count + the
+    // top app frames of the last rebuild. Non-destructive (calls the original
+    // setter). Diagnostic build only.
+    var mcInnerHTMLSets = 0, lastRebuildWho = '-';
+    try {
+      var ihDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+      if (ihDesc && ihDesc.set && ihDesc.get) {
+        Object.defineProperty(Element.prototype, 'innerHTML', {
+          configurable: true, enumerable: ihDesc.enumerable, get: ihDesc.get,
+          set: function(v) {
+            try {
+              if (this.classList && this.classList.contains('modal-content')) {
+                mcInnerHTMLSets++;
+                var st = (new Error()).stack || '';
+                // Pull the first 3 app frames (skip this setter + Error).
+                var frames = st.split('\n').map(function(s){return s.trim();})
+                  .filter(function(s){
+                    return s && s.indexOf('Error')!==0 &&
+                           s.indexOf('innerHTML')<0 && s.indexOf('mc-perf')<0;
+                  }).slice(0,3);
+                lastRebuildWho = frames.map(function(f){
+                  var m = f.match(/at\s+([^\s(]+)/); return m ? m[1] : f.slice(0,40);
+                }).join(' < ') || '(anon)';
+              }
+            } catch(e) {}
+            return ihDesc.set.call(this, v);
+          }
+        });
+      }
+    } catch(e) {}
+
+    try {
+      var mo = new MutationObserver(function(muts){
+        for (var i=0;i<muts.length;i++){
+          var m = muts[i];
+          for (var j=0;j<m.removedNodes.length;j++){
+            var n = m.removedNodes[j];
+            if (n.nodeType !== 1) continue;
+            var isTA = (n.id && n.id.indexOf('agent-followup-')===0) ||
+              (n.querySelector && n.querySelector('textarea[id^="agent-followup-"]'));
+            if (isTA) {
+              taKills++; lastKillMs = Math.round(performance.now());
+              if (!typing) taKillsAtIdle++;
+            }
+            if (n.classList && n.classList.contains('modal-content')) modalRebuilds++;
+          }
+        }
+      });
+      mo.observe(document.documentElement, {childList:true, subtree:true});
+      document.addEventListener('input', function(e){
+        if (e.target && e.target.id && e.target.id.indexOf('agent-followup-')===0){
+          typing = true; clearTimeout(window.__hudTypingT);
+          window.__hudTypingT = setTimeout(function(){ typing=false; }, 1500);
+        }
+      }, true);
+    } catch(e) {}
+
+    // Event Timing — the decisive instrument for input lag.
+    try {
+      new PerformanceObserver(function(list){
+        list.getEntries().forEach(function(e){
+          var total = e.duration;
+          var inputDelay = e.processingStart - e.startTime;
+          var proc = e.processingEnd - e.processingStart;
+          var present = (e.startTime + e.duration) - e.processingEnd;
+          if (total > worstEvt.total) worstEvt = {
+            name:e.name, total:Math.round(total),
+            inputDelay:Math.round(inputDelay), proc:Math.round(proc),
+            present:Math.round(present)
+          };
+        });
+      }).observe({type:'event', durationThreshold:16, buffered:true});
+    } catch(e) {}
+
+    try {
+      new PerformanceObserver(function(list){
+        list.getEntries().forEach(function(e){
+          ltCount++; ltSum += e.duration;
+          if (e.duration > ltMax) ltMax = e.duration;
+        });
+      }).observe({entryTypes:['longtask']});
+    } catch(e) {}
+
+    function tick(){
+      var now = performance.now(), dt = now - lastT; lastT = now;
+      frames++; fpsFrames++; fpsAccum += dt;
+      if (dt > 32) longFrames++;
+      if (fpsAccum >= 500) { fps = Math.round(1000/(fpsAccum/fpsFrames)); fpsAccum=0; fpsFrames=0; }
+      hud.textContent =
+        'PERF  fps:'+fps+'  longFrames:'+longFrames+'\n'+
+        'LongTasks  n:'+ltCount+'  max:'+Math.round(ltMax)+'ms  sum:'+Math.round(ltSum)+'ms\n'+
+        'Worst input ('+ (worstEvt.name||'-') +')  total:'+worstEvt.total+'ms\n'+
+        '   inputDelay:'+worstEvt.inputDelay+'ms  (main thread busy before dispatch)\n'+
+        '   processing:'+worstEvt.proc+'ms  (event handlers)\n'+
+        '   present:'+worstEvt.present+'ms  (paint+composite)\n'+
+        'TEXTAREA kills:'+taKills+'  idleKills:'+taKillsAtIdle+'\n'+
+        'modalContent innerHTML sets:'+mcInnerHTMLSets+'\n'+
+        'last rebuild by: '+lastRebuildWho+'\n'+
+        '   lastKill:'+(lastKillMs?((Math.round(performance.now())-lastKillMs)+'ms ago'):'never')+'\n'+
+        'double-tap to reset';
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+
+    hud.style.pointerEvents = 'auto';
+    var lastTap = 0;
+    hud.addEventListener('click', function(){
+      var t = Date.now();
+      if (t - lastTap < 400) {
+        worstEvt = {name:'',total:0,inputDelay:0,proc:0,present:0};
+        ltCount=0; ltMax=0; ltSum=0; longFrames=0;
+        taKills=0; taKillsAtIdle=0; modalRebuilds=0; lastKillMs=0;
+        mcInnerHTMLSets=0; lastRebuildWho='-';
+      }
+      lastTap = t;
+    });
+  } catch(e) {}
+})();
+</script>
+
 <!-- ── SIDEBAR ──────────────────────────────────────── -->
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-logo">
@@ -6208,15 +6373,21 @@ function refreshModalById(modalId) {
     }
   }
 
-  // Preserve the focused chat textarea DOM node. Rebuilding it via innerHTML
-  // wipes the Android IME composition buffer, causing the next backspace to
-  // need several presses (the IME thinks the word is still in its compose
-  // buffer; the new DOM textarea has no such buffer). Detach + reattach
-  // keeps the same element + selection + IME state across refreshes.
-  let savedChatInput = null;
+  // Preserve the chat textarea DOM node UNCONDITIONALLY across the innerHTML
+  // rebuild. Rebuilding it recreates a fresh element every agent turn (+ on
+  // idle SSE ticks), which on mobile measured as: text-size reset, dead
+  // autocorrect/predictive, multi-press backspace (Android IME compose buffer
+  // wiped), and ~205ms paint per keystroke. The old guard only preserved the
+  // node when it was document.activeElement — which is false on mobile
+  // whenever a rebuild lands between keystrokes / during a focus race, i.e.
+  // almost always. Keeping the SAME node (detach + reattach) carries its
+  // font-size, height, value, selection, and IME state through the rebuild.
+  // Verified via the perf-HUD textarea-kill probe (2026-05-15).
+  let savedChatInput = null, savedSelStart = null, savedSelEnd = null;
   if (sid && curTab === 'agent') {
     const existingInput = document.getElementById(`agent-followup-${sid}`);
-    if (existingInput && existingInput === document.activeElement) {
+    if (existingInput) {
+      try { savedSelStart = existingInput.selectionStart; savedSelEnd = existingInput.selectionEnd; } catch (_) {}
       existingInput.remove();
       savedChatInput = existingInput;
     }
@@ -6238,11 +6409,15 @@ function refreshModalById(modalId) {
       }
     }
   }
-  // Re-attach preserved chat input textarea
+  // Re-attach preserved chat input textarea (same node → IME/size/value kept)
   if (savedChatInput) {
     const newInput = document.getElementById(`agent-followup-${sid}`);
     if (newInput) {
       newInput.replaceWith(savedChatInput);
+      // Restore caret/selection — detaching can drop it in some engines.
+      if (savedSelStart !== null) {
+        try { savedChatInput.setSelectionRange(savedSelStart, savedSelEnd); } catch (_) {}
+      }
     }
   }
 
@@ -8405,7 +8580,14 @@ function connectAgentStream(projectId, sessionId) {
         }
         updateHistoryStatus(sessionId, 'running');
         updateAgentStatusUI(sessionId, 'running');
-        refreshModal();
+        // NOTE: deliberately NO refreshModal() here. It does
+        // content.innerHTML = modalContentHTML(p), which detaches/recreates
+        // the chat textarea on EVERY turn — measured root cause of the mobile
+        // IME death (dead autocorrect/predictive, multi-press backspace),
+        // text-size reset, and ~205ms/keystroke paint. updateAgentStatusUI +
+        // updateHistoryStatus already update the status dot/label/tab in
+        // place. The only thing lost is the input placeholder text flipping
+        // ("Interrupt…" vs "Send follow-up…") — cosmetic, worth it.
         renderAgentConsole();
       } else if (msg.type === 'turn_complete') {
         if (_sendInFlight[sessionId]) {
@@ -8432,7 +8614,9 @@ function connectAgentStream(projectId, sessionId) {
         delete agentEventSources[sessionId];
         delete sseRetryCount[sessionId];
         if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
-        refreshModal();
+        // No refreshModal() — same reason as turn_start. Session is idle but
+        // alive; the input must stay put so the IME survives. Status dot
+        // already updated in place above.
         renderAgentConsole();
       } else if (msg.type === 'status') {
         // 'stopped' is user-initiated and always authoritative even mid-send.
