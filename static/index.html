@@ -19627,23 +19627,34 @@ document.getElementById('modal-layer').addEventListener('input', e => {
   }
 });
 
-// ── Resume from background: silent buffer reconcile ────────────────────────
+// ── Resume from background: authoritative resync ───────────────────────────
 // Mobile browsers suspend backgrounded tabs aggressively — SSE EventSources
-// can be killed without firing close events, leaving the watchdog as the only
-// recovery path (which takes 30s). When the page returns to visible, fan out
-// a one-shot reconcile against /agent/status for every visible modal's active
-// agent so any holes are repaired immediately, before the user notices.
-document.addEventListener('visibilitychange', () => {
+// die without firing close events. While suspended the agent can finish AND
+// the zombie-connection retry cascade can exhaust and stamp the local cache
+// `status:'error'` (see connectAgentStream es.onerror). The OLD handler here
+// called _reconcileAgentBuffer but GATED it on cache.status being
+// running/idle — so a session left in stale 'error' hit `continue`, never
+// healed, and the card showed "ERROR + only the prompt" until a full app
+// close/reopen. Fix: on resurface, run the SAME authoritative resync a
+// reopen does — fetchAgentStatus() rebuilds the cache from server truth
+// (with the recently-stopped guard), reloads log_lines, reconnects SSE,
+// and re-renders. No status gate: the server decides the truth.
+let _lastResyncAt = 0;
+function _resyncOpenModalsFromServer() {
   if (document.visibilityState !== 'visible') return;
-  for (const [modalId, entry] of openModals) {
+  const now = Date.now();
+  if (now - _lastResyncAt < 1200) return;  // debounce focus+visibility double-fire
+  _lastResyncAt = now;
+  const pids = new Set();
+  for (const [, entry] of openModals) {
     if (!entry || entry.minimized || !entry.projectId) continue;
-    const sid = activeAgentTab[entry.projectId];
-    if (!sid) continue;
-    const cache = agentStatusCache[sid];
-    if (!cache || (cache.status !== 'running' && cache.status !== 'idle')) continue;
-    _reconcileAgentBuffer(entry.projectId, sid);
+    pids.add(entry.projectId);
   }
-});
+  for (const pid of pids) fetchAgentStatus(pid);
+}
+document.addEventListener('visibilitychange', _resyncOpenModalsFromServer);
+window.addEventListener('focus', _resyncOpenModalsFromServer);
+window.addEventListener('pageshow', _resyncOpenModalsFromServer);  // bfcache restore
 
 // ── Presence heartbeat: push focus-suppression ──────────────────────────────
 // While the tab is VISIBLE + FOCUSED and one or more session chats are open
