@@ -224,6 +224,22 @@ just `marketing_preview`; the rest is genuine refactoring work.
     (pervasive shared state, ~30+ dispersed call sites incl. agent-spawn
     + guardian). Not auto-proceeding; each needs a designed
     deps-injection PR + Ron's go-ahead. `SERVER_SPLIT_PLAN.md` corrected.
+- **Ron's call (Option 1):** skip the stateful trio, do the independent
+  safe items; promote the trio to a documented deferred sprint.
+  - **P1-2** ✅ `2e4128b` — `_encode_project_path` 4-site dedupe (the
+    original F2-deferred item; clean now server.py is committed). 16/16.
+  - **P2-1** ✅ `23344ff` — memory-condensation visibility: backend
+    state + `/agent/status` `condense` block; +4 tests. 20/20.
+  - **P2-2** ✅ `08949a2` — per-project upload quota: `upload_quota_bytes`
+    + `upload_max_file_bytes` (default 0 = inert), both upload endpoints;
+    +7 tests. 27/27.
+  - **Stateful trio** → documented in `SERVER_SPLIT_PLAN.md`
+    §"Tier 1-stateful (deferred)": deps-injection pattern (re-export
+    shim keeps the ~30-call-site diff mechanical), measured per-module
+    scope, mandatory verification (incl. guardian/agent-spawn manual
+    smoke for process_tracker). To be scheduled as its own sprint.
+  - **P2-3** still deferred (Ron: post-split; also the most file-wide
+    diff → wait until files are small).
 
 ## Status summary for Ron
 

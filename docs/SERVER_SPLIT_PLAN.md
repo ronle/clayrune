@@ -86,6 +86,63 @@ contract written first, call sites migrated deliberately, smoke +
 manual agent-spawn/guardian check), each gated on Ron's explicit
 go-ahead because they touch the agent lifecycle. Do not auto-proceed.
 
+## Tier 1-stateful (deferred — schedule as its own sprint)
+
+`process_tracker`, `terminal_sessions`, `scheduler` are **not** Tier-1
+verbatim moves (F7). They are *designed deps-injection refactors*, one
+PR each, with Ron's explicit go-ahead — **not** auto-proceeded. Tracked
+here so they can be scheduled as their own sprint later.
+
+### The deps-injection pattern (same shape `github_sync.register()` proven)
+
+Per module `X`:
+
+1. New `X.py` **owns** the state: the dict + its `threading.Lock` move
+   into the module as module globals.
+2. `X.py` exposes a small typed API over that state — the *only* way
+   the rest of the app touches it — plus a `register(app, deps)` that
+   (a) registers the routes blueprint and (b) injects the server
+   callbacks the module needs (`load_project`, `now_iso`,
+   `agent_sessions` accessor, `_log_agent_activity`, …), exactly like
+   `github_sync.register(...)` already does.
+3. `server.py` keeps a thin re-export shim for the *call-side* names
+   (e.g. `from process_tracker import register_process as _register_process`)
+   so the ~30 existing call sites change by import, not by hand — this
+   keeps the migration diff mechanical and reviewable.
+4. Move the routes (`# ── … endpoints`) into the module blueprint.
+5. Delete the old state + helpers from `server.py`.
+
+The shim in step 3 is the key risk-reducer: call sites stay textually
+identical; only the binding moves. The behavior-risking part is purely
+that the state is now one object in one module — verified below.
+
+### Per-module scope (measured 2026-05-17b)
+
+| Module | State to move | Call-site load | Routes | Est. risk |
+|---|---|---|---|---|
+| `process_tracker` | `tracked_processes` dict + `process_tracker_lock` | `_register_process` ×17, `tracked_processes` ×13, `_unregister_process` ×13 — spread across agent spawn / revival / followup / housekeeping / **guardian loop** | Process Tracker endpoints | **High** — touches every agent-spawn path + guardian |
+| `terminal_sessions` | `terminal_sessions` dict + `terminal_lock` | `terminal_sessions` ×18, `terminal_lock` ×7 — incl. the `/agent/status` log-line filter that references `terminal_sessions` | Terminal session mgmt endpoints | Medium-high |
+| `scheduler` | `schedules`/`SCHEDULES`/`SCHEDULES_PATH` + `_save_schedules` + the `_scheduler` loop thread | `schedules` ×35, `_scheduler` ×8, `_save_schedules` ×6 | Scheduled Tasks endpoints | Medium (more self-contained than the other two, but 35 `schedules` refs) |
+
+### Verification strategy (mandatory before each merges)
+
+- `pytest -q` green (smoke import catches binding breakage immediately).
+- **`process_tracker` only — manual smoke:** start a real agent, confirm
+  it appears in Process Manager; let it finish, confirm it deregisters;
+  trip the guardian (hung-session path) and confirm it still reaps via
+  the moved state. The guardian + agent-spawn coupling is the single
+  highest-risk surface in the whole split.
+- `terminal_sessions`: open a terminal pop-out, run a command, confirm
+  streaming + the `/agent/status` terminal-line filter still works.
+- `scheduler`: create a once+interval schedule, confirm it fires and
+  `run-now` works; restart and confirm persistence (`SCHEDULES_PATH`).
+- Each PR: CHANGELOG entry (Done/Files/Rollback); rollback = revert the
+  single PR (the re-export shim makes the revert clean; no schema).
+
+Recommended order when scheduled: `scheduler` (most self-contained) →
+`terminal_sessions` → `process_tracker` (do the guardian-coupled one
+last, with the most manual verification).
+
 ## Revised execution order (when server.py is clean)
 
 One PR per module, no behavior change, smoke test (`tests/test_smoke.py`)
