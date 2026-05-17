@@ -30,15 +30,44 @@ exactly the code Ron is actively shipping, and the plan's own rule says
 Documented in detail in the Sprint 4 analysis (task #5). Proposed revised
 P1-1: extract only genuinely-cold modules.
 
-### F2 — server.py split is unsafe while Ron has uncommitted server.py WIP
-**Severity: high.** At plan authoring HEAD `8fab4a9`, the working tree has
-**uncommitted modifications to `server.py`** (54 KB diff) and
-`static/index.html`. A 12.5K-line file split (P1-1) layered on top of
-uncommitted changes guarantees painful conflicts and risks silently
-dropping Ron's in-flight work. The plan does not account for this.
-**Resolution:** Sprint 4 is gated on a clean server.py working tree. Until
-Ron commits/parks his WIP, P1-1 is analysis-only (see task #5). Not a
-reviewer error in the problem statement — a sequencing gap.
+### F2 — server.py WIP is far larger than the freeze list says; blocks P1-1 AND P1-2
+**Severity: high. CONFIRMED WITH EVIDENCE (Sprint 3).** The plan's
+"Active development — do not touch" list implies the WIP is confined to
+push/presence/feed/etc. Reality, measured: `git diff HEAD -- server.py`
+(line-ending-normalized) = **23 hunks spanning lines 231–12518**, i.e.
+Ron's uncommitted `server.py` work is spread across the *entire* file,
+not a few subsystems. One hunk is `@@ -557,+564,123 @@` — **+123 lines
+exactly in the `_native_memory_path` / transcript-helper region that
+P1-2 edits.**
+**Impact:**
+- **P1-1 (server.py split)** on top of this is reckless — confirmed, not
+  hypothetical. Deferred (see task #5 analysis).
+- **P1-2 (`_encode_project_path` extraction)** also unsafe: my 4 dedupe
+  edits could not be cleanly isolated from Ron's adjacent/overlapping WIP
+  at ~557, and `git add server.py` would sweep in 23 hunks of his work.
+**Resolution:** Implemented P1-2 cleanly, verified it (smoke green), then
+**reverted it** and restored `server.py` byte-identical to Ron's WIP
+baseline (`diff -q` confirmed). P1-2 is **deferred** until Ron's
+server.py WIP is committed/parked. Recommended revised sequencing: P1-2
+and P1-1 both block on a clean server.py tree. Not a problem-statement
+error — a sequencing gap the plan under-stated.
+
+### F6 — P1-3 (per-project use_streaming_agent) is already fully implemented
+**Severity: medium (no-op item).** P1-3 ("Same as v1") asks for a
+per-project `use_streaming_agent` override. The backend **already has
+it, end to end**:
+- Both agent-dispatch decision sites read
+  `p.get('use_streaming_agent', CONFIG.get('use_streaming_agent', False))`
+  (server.py ~3548 dispatch, ~4402 resume).
+- `update_project` (server.py 1490-1492) writes through *arbitrary*
+  keys (only `log_msg`/`backlog` excluded), so a client can already
+  `POST /api/project/<id> {"use_streaming_agent": true}` and have it
+  honored.
+The only missing piece is a per-project *toggle in the settings UI*,
+which lives in `static/index.html` — frozen (Ron's WIP + freeze list).
+**Resolution:** No backend change made (would be redundant). Documented.
+Recommend Ron add the UI toggle himself when next in index.html; the
+backend needs nothing.
 
 ### F3 — P1-5 "wire pytest into install scripts" touches the frozen installer
 **Severity: medium.** P1-5 acceptance wants the `--dev` test step wired
@@ -106,3 +135,16 @@ in each sprint's commit so Ron can correct. Flagged per-item as reached.
   - P0-7: `_MAX_PUSH_CREATES_PER_CYCLE=25`; remainder deferred + logged.
   Schema change: additive `last_synced_state` / `github_deleted` keys —
   old code ignores them, so downgrade is safe (noted in module docstring).
+- **Sprint 3 (P1-2 / P1-3 / N4)** ⚠️ partial by design:
+  - **N4** ✅ — `nul` (132 B regular file, Windows reserved name) deleted
+    via Win32 extended-path `os.remove(r'\\?\…\nul')`. Already gitignored
+    (`.gitignore:54`), so nothing to commit for it; no .gitignore change
+    needed (plan over-specified — it's already ignored).
+  - **P1-2** ⛔ DEFERRED — implemented, verified, then reverted; blocked
+    by F2 (server.py WIP overlap). server.py restored byte-identical to
+    Ron's WIP. **Action for Ron:** once your server.py WIP is committed,
+    P1-2 is a clean ~30-min mechanical extraction (helper + 4 call
+    sites; the exact diff is reproducible from this register).
+  - **P1-3** ✅ no-op — already implemented (F6).
+  Net committable change this sprint: docs only (this register). No code
+  commit — correct outcome given F2.
