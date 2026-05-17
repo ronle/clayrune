@@ -877,6 +877,40 @@ def _project_guardian_loop(manager):
 _condensing_projects = set()
 _condense_lock = threading.Lock()
 
+# P2-1 (IMPROVEMENT_PLAN_V2.md): per-project memory-condensation visibility.
+# Condensation is a background `claude -p` housekeeping agent the user never
+# sees. Track its state so /agent/status can surface it. Guarded by
+# _condense_lock (same lock that gates _condensing_projects, so state and
+# membership never disagree). Shape per pid:
+#   {state: idle|running|done|error, started_at, finished_at,
+#    bytes_before, bytes_after, error}
+_condense_status: dict = {}
+
+
+def _condense_combined_bytes(project):
+    """Combined size of a project's MEMORY.md + archive (0 if absent)."""
+    total = 0
+    for p in (_get_memory_path(project), _get_archive_path(project)):
+        try:
+            if p and p.exists():
+                total += p.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def _set_condense_status(pid, **kw):
+    with _condense_lock:
+        cur = _condense_status.get(pid, {})
+        cur.update(kw)
+        _condense_status[pid] = cur
+
+
+def _get_condense_status(pid):
+    with _condense_lock:
+        st = _condense_status.get(pid)
+        return dict(st) if st else {'state': 'idle'}
+
 # Dedicated scribe lock — distinct from condense so they never cannibalize each
 # other (SPEC §3 Leg A B6). One in-flight scribe per project.
 _scribing_projects = set()
@@ -4243,6 +4277,12 @@ def _dispatch_condense(project):
     archive_path = _get_archive_path(project)
     pp = project.get('project_path', '')
 
+    # P2-1: mark condensation in-flight (bytes_before = pre-condense size).
+    _set_condense_status(pid, state='running', started_at=now_iso(),
+                         finished_at=None, error=None,
+                         bytes_before=_condense_combined_bytes(project),
+                         bytes_after=None)
+
     # Check if CLAUDE.md exists and is large enough to warrant condensation
     claude_md_path = Path(pp) / 'CLAUDE.md' if pp else None
     claude_md_big = False
@@ -4362,8 +4402,16 @@ def _dispatch_condense(project):
             _read_agent_stream(proc, session)
         except Exception as e:
             print(f"[condense] error for {pid}: {e}")
+            _set_condense_status(pid, state='error', error=str(e),
+                                 finished_at=now_iso())
         finally:
+            # P2-1: record outcome. bytes_after = post-condense size; a
+            # still-'running' state means the body finished without raising.
+            _set_condense_status(pid, finished_at=now_iso(),
+                                 bytes_after=_condense_combined_bytes(project))
             with _condense_lock:
+                if _condense_status.get(pid, {}).get('state') == 'running':
+                    _condense_status[pid]['state'] = 'done'
                 _condensing_projects.discard(pid)
 
     threading.Thread(target=_run, daemon=True).start()
@@ -5466,7 +5514,10 @@ def agent_status(project_id):
     # Within each group, newest first
     sessions.sort(key=lambda s: s.get('started_at', ''), reverse=True)
     sessions.sort(key=lambda s: 0 if s['status'] in ('running', 'idle') else 1)
-    return jsonify({'sessions': sessions})
+    # P2-1: surface memory-condensation state (default {'state':'idle'} so
+    # the field is always present for the frontend).
+    return jsonify({'sessions': sessions,
+                    'condense': _get_condense_status(project_id)})
 
 
 @app.route('/api/project/<project_id>/agent/guardian-reset', methods=['POST'])
