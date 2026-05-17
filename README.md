@@ -232,4 +232,17 @@ Contributions are welcome! Here's how to get started:
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — **except** two source-available-but-proprietary
+directories:
+
+| Path | License |
+|------|---------|
+| Everything else (core: `server.py`, `static/`, `github_sync.py`, `mc_remote_iface/`, …) | MIT |
+| `mc_remote/` | Proprietary — see [`mc_remote/PROPRIETARY.md`](mc_remote/PROPRIETARY.md) |
+| `mc_tunnel/` | Proprietary — see [`mc_tunnel/PROPRIETARY.md`](mc_tunnel/PROPRIETARY.md) |
+
+`mc_remote` + `mc_tunnel` are the closed platform-binding moat for
+clayrune.io; they live in this repo for build convenience but are **not**
+MIT. The open-core seam is `mc_remote_iface/` (MIT) — implement that
+contract to plug in your own remote-access provider without touching the
+proprietary modules. Rationale: [`docs/remote-access/07-licensing.md`](docs/remote-access/07-licensing.md).

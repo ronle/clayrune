@@ -148,9 +148,63 @@ in each sprint's commit so Ron can correct. Flagged per-item as reached.
   - **P1-3** ✅ no-op — already implemented (F6).
   Net committable change this sprint: docs only (this register). No code
   commit — correct outcome given F2.
+- **Sprint 5 (P2-1/P2-2/P2-3)** ⛔ ALL BLOCKED by F2 — every P2 item is
+  a `server.py` edit, same isolation problem as P1-2 (can't `git add
+  server.py` without sweeping Ron's 23 WIP hunks). Turnkey specs for Ron
+  to apply once server.py is clean:
+  - **P2-1 memory-condensation visibility**: condensation runs as a
+    background `claude -p` (server.py §"Memory condensation state" ~863,
+    WIP at 842). Add a status field (`condense_state`: idle/running/
+    error + last_run_iso + bytes_before/after) to the project's agent
+    status payload (`/agent/status` ~5430) and surface it. Frontend bit
+    is in frozen index.html — backend field is the deferred deliverable.
+  - **P2-2 per-project upload quota**: attachment upload (~1987) +
+    agent image upload (~2178). Add `upload_quota_bytes` (project key,
+    default from a new global config key) checked before write; 413 +
+    activity-log line on exceed. Reuse the existing arbitrary-key
+    `update_project` path (no schema work). No WIP at 1987–2063 — clean
+    once tree is clean.
+  - **P2-3 standardize log volume**: server uses bare `print(...)` ~200×.
+    Introduce a single `_log(level, msg)` honoring a `log_level` config
+    key; mechanical `print(` → `_log(` sweep. Big diff across all of
+    server.py → maximally F2-conflicting; do LAST, right after the split
+    when files are small.
 - **Sprint 4 (P1-1 server.py split)** ⛔ BLOCKED, analysis delivered —
   `docs/SERVER_SPLIT_PLAN.md`: WIP heat map (23 hunks vs section
   banners), F1 resolved (frozen ≠ "easiest"), revised 3-tier order
   (Tier 1 = marketing_preview/process_tracker/scheduler/terminal_sessions
   — no WIP overlap, not frozen), per-PR checklist. Execution gated on a
   clean server.py tree + freeze lifting. No code touched.
+- **Sprint 6/7 (P2-4 / N3 / P3-1 / N1 / N2)** — docs/cleanup, none touch
+  server.py or frozen index.html:
+  - **P2-4** done: `mc_remote_iface/README.md` — registration mechanism,
+    full `RemoteAccessProvider` method table, DTOs, `MC_DEV_REMOTE_STUB`
+    surface, fork checklist, cross-links. Acceptance met.
+  - **N3** done: root `README.md` License: MIT-except-`mc_remote/`-and-
+    `mc_tunnel/` table + open-core-seam note + rationale link.
+    PROPRIETARY.md verified present for both dirs.
+  - **P3-1** DEFER (plan says so): gated on clayrune.io CF Pages going
+    live (Ron to-do per RESUME_HERE §0); also a server.py edit → F2.
+  - **N1** DEFER (plan says so): after server.py split; index.html frozen.
+  - **N2** open question for Ron: `src-tauri/src/` is only lib.rs+main.rs,
+    active desktop path is pywebview/app.py. If parked, delete
+    `src-tauri/` (target/ already gitignored). NOT deleting unilaterally
+    — source-dir removal pending Ron's intent.
+
+## Status summary for Ron
+
+**Shipped on `plan-v2-execution`:** Sprint 0 KB refresh · Sprint 1 test
+scaffolding (6 tests) · Sprint 2 all 7 github_sync P0 fixes
+(regression-proven, 16/16 green) · N4 nul deleted · P2-4 + N3 docs ·
+Sprint 4 split analysis. The plan's highest-value/highest-risk item —
+the github_sync data-integrity P0 work — is **done and tested**.
+
+**Everything still open is blocked by ONE thing — your uncommitted
+server.py WIP (F2).** P1-1, P1-2, P2-1, P2-2, P2-3 all edit server.py
+and can't be committed without sweeping in / endangering your 23 hunks
+of in-flight work. Each has a turnkey spec above. Unblock by committing
+or stashing your server.py + index.html WIP; then these are mechanical.
+
+**Open questions:** N2 (Tauri parked → delete src-tauri/?) + the plan's
+original four (Tauri; mc_remote licensing — now documented via N3;
+control-plane free-tier limits; mobile test harness).
