@@ -344,12 +344,32 @@ def _ensure_incognito_project():
     return rec
 
 
+def _encode_project_path(project_path):
+    """Encode a project path to Claude Code's ~/.claude/projects/<encoded>
+    directory name.  C:\\Users\\foo\\bar  →  C--Users-foo-bar.
+
+    Returns None when the path is empty or cannot be resolved (callers
+    treat that as "no transcript dir").  Extracted from four inline
+    duplicates (IMPROVEMENT_PLAN_V2.md P1-2); the underscore→dash
+    fallback some callers also try stays at the call site since not all
+    of them want it.
+    """
+    if not project_path:
+        return None
+    try:
+        resolved = str(Path(project_path).resolve())
+    except Exception:
+        return None
+    return resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
+
+
 def _session_transcript_path(project_path, claude_session_id):
     """Return the .jsonl transcript path for a Claude session."""
-    if not project_path or not claude_session_id:
+    if not claude_session_id:
         return None
-    resolved = str(Path(project_path).resolve())
-    encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
+    encoded = _encode_project_path(project_path)
+    if not encoded:
+        return None
     return CLAUDE_HOME / encoded / f'{claude_session_id}.jsonl'
 
 
@@ -387,13 +407,9 @@ def _recent_claude_transcripts(project_path, limit=5):
     Returns [{session_id, mtime, first_user, last_user, turns, size}] sorted by mtime desc.
     Covers both `_`→`-` encodings, dedups by filename.
     """
-    if not project_path:
+    encoded = _encode_project_path(project_path)
+    if not encoded:
         return []
-    try:
-        resolved = str(Path(project_path).resolve())
-    except Exception:
-        return []
-    encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
     candidates = [CLAUDE_HOME / encoded]
     encoded_alt = encoded.replace('_', '-')
     if encoded_alt != encoded:
@@ -461,13 +477,11 @@ def _recent_claude_transcripts(project_path, limit=5):
 
 def _find_transcript_file(project_path, claude_session_id):
     """Locate the Claude Code transcript JSONL for a given csid, or None."""
-    if not project_path or not claude_session_id:
+    if not claude_session_id:
         return None
-    try:
-        resolved = str(Path(project_path).resolve())
-    except Exception:
+    encoded = _encode_project_path(project_path)
+    if not encoded:
         return None
-    encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
     candidates = [CLAUDE_HOME / encoded]
     encoded_alt = encoded.replace('_', '-')
     if encoded_alt != encoded:
@@ -530,11 +544,9 @@ def _native_memory_path(project_path):
     Claude stores memory at ~/.claude/projects/<encoded-path>/memory/MEMORY.md
     where the path encoding replaces : and path separators with -.
     """
-    if not project_path:
+    encoded = _encode_project_path(project_path)
+    if not encoded:
         return None
-    resolved = str(Path(project_path).resolve())
-    # Encode: C:\Users\foo\bar → C--Users-foo-bar
-    encoded = resolved.replace(':', '-').replace('\\', '-').replace('/', '-')
     mem_path = CLAUDE_HOME / encoded / 'memory' / 'MEMORY.md'
     # Claude Code may also replace underscores with dashes — check both
     # and prefer whichever was modified most recently
