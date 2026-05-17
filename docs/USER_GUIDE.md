@@ -279,8 +279,18 @@ project's modal with the item highlighted.
 Two layers of context every agent sees:
 
 - **`MEMORY.md`** (per project) — a living index of facts about the
-  project, curated automatically by housekeeping agents and editable by
-  you in the modal's 3-dot menu → Memory.
+  project, editable by you in the modal's 3-dot menu → Memory. It has two
+  parts: **your curated notes on top** (never touched by automation) and a
+  **managed "Session Log" below it** that Clayrune writes for you. When an
+  agent session finishes, a server-side *Scribe* reads that session's full
+  transcript and appends a one-line summary of what it did/learned — so the
+  next agent builds on it without you relaying anything. Errored/stopped
+  sessions are captured too (tagged `(error)`/`(stopped)`). Older entries
+  overflow to the archive automatically; nothing is deleted. Agents can also
+  search past memory on demand via the built-in **mc-memory-search** skill,
+  and the most relevant prior notes for a task are surfaced into the agent
+  automatically. Tunables live in Settings (`scribe_*`, `index_line_*`); set
+  `scribe_enabled=false` to turn the Scribe off.
 - **Shared Rules** (`SHARED_RULES.md`) — sidebar entry → injects rules
   into every agent's system prompt across every project. Use for stuff like
   *"never commit without my approval"*, *"always run tests before

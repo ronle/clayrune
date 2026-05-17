@@ -4,6 +4,91 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-17] — Memory system: server-side Scribe + self-learning pipeline
+
+Headless project agents can't use CC memory plugins, and the old write path
+appended *the last stdout line* (often a sign-off sentence) as the only
+cross-session memory — so agents didn't meaningfully build on prior work.
+This replaces that with a server-side pipeline. Full design + committee
+review in `docs/MEMORY_SYSTEM_SPEC.md`. **Server restart required
+(server.py changed).** Verified end-to-end on the live server.
+
+**Leg 0 — format contract.** `MEMORY.md` now has a sentinel-delimited
+*managed region* (`<!-- clayrune:managed:begin/end -->`, `## Session Log`)
+below the human/condense-*curated* pointer index. Migration is lazy +
+idempotent + additive: the curated region is byte-preserved, never touched
+by machinery. Helpers `_mem_split/_mem_compose/_mem_migrate`.
+
+**Leg A — the Scribe.** On session end MC reads the CLI's full-fidelity
+on-disk `.jsonl` transcript (the only place tool results / thinking survive
+— MC's in-memory `log_lines` keeps neither) and a cheap model (`scribe_model`,
+default haiku) extracts one dense memory line, chunked map-reduce for huge
+transcripts, base64/image stripped. Robustness guards: an activity-thin
+transcript or a model refusal falls back to the stdout tail rather than
+writing a hallucinated entry. Any failure falls back; completion never
+breaks. Outcome telemetry at `GET /api/project/<id>/scribe-stats`. The old
+`server.py` "update MEMORY.md yourself" agent instruction is removed (B8) —
+the agent is told memory is maintained for it and not to hand-edit.
+
+**Leg B — retrieval.** `GET /api/project/<id>/memory/search?q=&k=` ranked
+grep over topic files + archive + the managed region (curated index excluded
+— agents auto-load it). A deterministic top-k read-floor is injected into
+fresh-dispatch system prompts (`_build_agent_context`, `RELEVANT MEMORY`),
+plus a `mc-memory-search` built-in skill for on-demand pulls.
+
+**Leg C — trim.** The condense agent prompt is rewritten: a **line budget**
+(`index_line_budget`, not a KB target), curated-vs-managed aware, fold/
+demote/keep by value not recency, never hard-delete except dupes/strict
+supersede, and the archive is now **never deleted/truncated** (it is the
+permanent searchable cold store Leg B depends on). A judgment-free,
+lossless, line-keyed mechanical floor (`index_line_hard_floor`) relocates
+the oldest managed entries to the archive — replacing the old byte-keyed
+20 KB / keep-last-20 logic, which silently truncated past the ~200-line
+harness load limit.
+
+**Fix A** — the scribe fires for `error`/`stopped` sessions too (tagged
+`_(error)_`/`_(stopped)_`), not only clean completion; it reads the
+transcript, not stdout, so it needs no clean summary.
+
+**Fix B** — startup reconciliation closes the hard-MC-kill gap (completion
+never ran): `_reconcile_unscribed_sessions` baseline-stamps pre-existing
+agent_log entries `scribed:true` **without** scribing history (cost guard:
+verified 0 boot-scribes across 16 projects / 441 entries), then captures
+only genuinely-missed terminal sessions, capped per project per boot. Shared
+`_write_session_memory` is the single write path for completion + reconcile;
+`scribed` marker prevents double-capture; dedicated `_scribe_lock` distinct
+from condense.
+
+**Bug found & fixed in the verify loop.** `_scribe_stat` wrote
+`{pid}_scribe_stats.json` into `DATA_DIR` (= `data/projects/`, the
+project-records dir). `load_projects()` only excluded `_agent_log.json`, so
+the stats file parsed as a malformed project and 500'd **both
+`/api/system/restart` and `/restart/status`** (via
+`_get_active_restart_blockers`). Fixed at source: `load_projects` excludes
+`('_agent_log.json', '_scribe_stats.json')`; `_get_active_restart_blockers`
+hardened to skip entries without `id`. Regression-closure verified (restart
+path stays 200 after the stats file is recreated). Rule: anything written
+into `DATA_DIR` MUST be suffix-excluded in `load_projects`.
+
+**Known limitation.** With `use_streaming_agent` (Mode B, the global
+default) the persistent process doesn't exit at turn end, so the Scribe
+fires at session *teardown* (stop/error/kill/reap), not per turn. Long idle
+Mode B sessions capture nothing until torn down. Mid-session checkpointing
+(SPEC §3.A.MID / "Step 6", default-off, not yet built) is the planned fix.
+
+**Config (all in `_CONFIG_EDITABLE_KEYS`, editable via Settings):**
+`scribe_enabled` (T), `scribe_model` (''→haiku), `scribe_reconcile_enabled`
+(T), `scribe_reconcile_cap` (5), `read_floor_topk` (3),
+`index_line_budget` (160), `index_line_hard_floor` (185),
+`scribe_checkpoint_kb` (reserved, Step 6).
+
+**Rollback.** Set `scribe_enabled=false` (no scribe; legacy stdout-tail
+write resumes) and/or `scribe_reconcile_enabled=false` (no startup
+reconcile). The Leg 0 format is forward-safe and idempotent; the mechanical
+floor and condense changes are independent of the scribe flag. New surfaces
+(`/memory/search`, `/scribe-stats`, the skill) are additive and inert when
+unused.
+
 ## [2026-05-16] — Push policy: "waiting for me" + focus-suppression gate
 
 Implements the notification policy Ron chose ("option 1 — notify me when

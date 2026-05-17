@@ -231,6 +231,13 @@ def _load_config():
         'condense_threshold_kb': 30,
         'condense_model': '',
         'condense_enabled': True,
+        'index_line_budget': 160,      # SPEC §3 Leg C model-tier target (lines)
+        'index_line_hard_floor': 185,  # SPEC §3 Leg C mechanical floor (lines)
+        'scribe_enabled': True,        # SPEC §3 Leg A session-end scribe
+        'scribe_model': '',            # '' -> 'haiku'
+        'scribe_reconcile_enabled': True,  # Fix B startup reconciliation
+        'scribe_reconcile_cap': 5,     # max reconciled sessions/project/boot
+        'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor
         'agent_channels': '',
         'agent_remote_control': False,
         'agent_revive_from_log': True,
@@ -557,6 +564,123 @@ def _get_archive_path(project):
     return mem_path.parent / 'MEMORY_ARCHIVE.md'
 
 
+# ── Leg 0: MEMORY.md managed-region format contract ──────────────────────────
+# See docs/MEMORY_SYSTEM_SPEC.md §3 Leg 0. MEMORY.md has two regions:
+#   • curated region (top): human/condense-curated pointer index. NEVER touched
+#     by the mechanical floor; only the condense model tier may rewrite it.
+#   • managed region: machine-written session entries, between the sentinels.
+# '## Session Log' is RESERVED as the managed-region header — curated content
+# must not use that literal heading.
+_MEM_BEGIN = '<!-- clayrune:managed:begin -->'
+_MEM_END = '<!-- clayrune:managed:end -->'
+_MEM_LOG_HEADER = '## Session Log'
+
+
+def _mem_split(content):
+    """Split MEMORY.md text into (curated_text, [entry_lines]).
+
+    Priority: sentinel-delimited managed region; else a legacy bare
+    '## Session Log' section (pre-Leg-0 files); else no managed content.
+    Entry lines are those starting with '- [' and are taken ONLY from the
+    managed region — curated pointer lines (also '- [...]') are never
+    collected. Pure function.
+    """
+    content = content or ''
+    if _MEM_BEGIN in content and _MEM_END in content:
+        i = content.index(_MEM_BEGIN)
+        j = content.index(_MEM_END, i)
+        curated = content[:i].rstrip()
+        mid = content[i + len(_MEM_BEGIN):j]
+    elif _MEM_LOG_HEADER in content:
+        i = content.index(_MEM_LOG_HEADER)
+        curated = content[:i].rstrip()
+        mid = content[i + len(_MEM_LOG_HEADER):]
+    else:
+        return content.rstrip(), []
+    entries = [ln for ln in mid.splitlines() if ln.strip().startswith('- [')]
+    return curated, entries
+
+
+def _mem_compose(curated, entries):
+    """Rebuild canonical MEMORY.md text from a curated region + entry lines.
+
+    Always emits exactly one sentinel-delimited managed region. Inverse of
+    _mem_split for normalized input.
+    """
+    curated = (curated or '').rstrip()
+    body = '\n'.join(entries)
+    block = f'{_MEM_BEGIN}\n{_MEM_LOG_HEADER}\n'
+    if body:
+        block += body + '\n'
+    block += f'{_MEM_END}\n'
+    return (curated + '\n\n' + block) if curated else block
+
+
+def _mem_migrate(content):
+    """Idempotent, additive migration to the Leg 0 canonical format.
+
+    Already-migrated content round-trips unchanged. Legacy bare
+    '## Session Log' sections get wrapped in sentinels. Files with no managed
+    content gain an empty managed region. Curated content is preserved
+    verbatim (modulo trailing whitespace); curated lines are never reordered
+    or dropped.
+    """
+    return _mem_compose(*_mem_split(content))
+
+
+def _memory_search(project, query, topk=3):
+    """Ranked-grep over the project's memory corpus (SPEC §3 Leg B).
+
+    Corpus = the memory dir's topic *.md files + MEMORY_ARCHIVE.md entries +
+    the MANAGED region of MEMORY.md. The curated MEMORY.md index is excluded
+    by construction — the agent already auto-loads it. Deterministic, no
+    model. Returns [{file, score, snippet}] sorted by score desc.
+    """
+    import re  # module has no top-level `re` import (see _re_auth pattern)
+    terms = [t for t in re.findall(r'[a-z0-9_]+', (query or '').lower())
+             if len(t) >= 3]
+    if not terms:
+        return []
+    try:
+        mem_path = _get_memory_path(project)
+        mem_dir = mem_path.parent
+    except Exception:
+        return []
+    if not mem_dir.is_dir():
+        return []
+    mem_name = mem_path.name
+    arch_name = _get_archive_path(project).name
+    units = []  # (label, text)
+    for f in sorted(mem_dir.glob('*.md')):
+        try:
+            txt = f.read_text(encoding='utf-8', errors='replace')
+        except Exception:
+            continue
+        if f.name == mem_name:
+            for e in _mem_split(txt)[1]:           # managed entries only
+                units.append((f'{f.name}#managed', e))
+        elif f.name == arch_name:
+            for ln in txt.splitlines():
+                if ln.strip().startswith('- ['):
+                    units.append((f.name, ln.strip()))
+        else:
+            units.append((f.name, txt))            # topic file (whole)
+    scored = []
+    for label, text in units:
+        low = text.lower()
+        score = sum(low.count(t) for t in terms)
+        if score <= 0:
+            continue
+        if any(t in label.lower() for t in terms):
+            score += 2                              # filename relevance bonus
+        pos = min((low.find(t) for t in terms if t in low), default=0)
+        start = max(0, pos - 120)
+        snip = text[start:start + 400].replace('\n', ' ').strip()
+        scored.append({'file': label, 'score': score, 'snippet': snip})
+    scored.sort(key=lambda r: r['score'], reverse=True)
+    return scored[:max(1, topk)]
+
+
 DEFAULT_DOMAINS = [
     {'id': 'general', 'label': 'General', 'color': 'var(--text-dim)', 'bg': 'var(--surface3)'},
     {'id': 'trading', 'label': 'Trading', 'color': 'var(--accent)', 'bg': 'var(--accent-dim)'},
@@ -740,6 +864,11 @@ def _project_guardian_loop(manager):
 _condensing_projects = set()
 _condense_lock = threading.Lock()
 
+# Dedicated scribe lock — distinct from condense so they never cannibalize each
+# other (SPEC §3 Leg A B6). One in-flight scribe per project.
+_scribing_projects = set()
+_scribe_lock = threading.Lock()
+
 
 def _has_running_agent(project_id):
     """Return True if any non-housekeeping agent is running or idle for this project."""
@@ -842,7 +971,10 @@ def save_project(project_id, data):
 def load_projects():
     projects = []
     for f in DATA_DIR.glob('*.json'):
-        if f.name.endswith('_agent_log.json'):
+        # Sibling data files co-located in DATA_DIR that are NOT project
+        # records (mirror the _agent_log.json precedent; _scribe_stats.json
+        # added with SPEC §8 telemetry).
+        if f.name.endswith(('_agent_log.json', '_scribe_stats.json')):
             continue
         try:
             p = json.loads(f.read_text(encoding='utf-8'))
@@ -1499,6 +1631,39 @@ def delete_project(project_id):
     # Delete project file
     filepath.unlink()
     return jsonify({'ok': True})
+
+
+# ── Scribe telemetry (SPEC §8) ───────────────────────────────────────────────
+
+@app.route('/api/project/<project_id>/scribe-stats', methods=['GET'])
+def get_scribe_stats(project_id):
+    """Scribe-outcome counters: scribe_extracted vs scribe_fell_back:<reason>.
+    Lets a silent 100%-fallback be detected before relying on scribe output."""
+    fp = DATA_DIR / f'{project_id}_scribe_stats.json'
+    if not fp.exists():
+        return jsonify({})
+    try:
+        return jsonify(json.loads(fp.read_text(encoding='utf-8') or '{}'))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/project/<project_id>/memory/search', methods=['GET'])
+def memory_search(project_id):
+    """Ranked-grep over the project memory corpus (SPEC §3 Leg B). The
+    mc-memory-search skill wraps this; the deterministic read floor calls
+    _memory_search directly at dispatch."""
+    p = load_project(project_id)
+    if p is None:
+        return jsonify({'error': 'not found'}), 404
+    q = (request.args.get('q') or '').strip()
+    if not q:
+        return jsonify({'error': 'missing q'}), 400
+    try:
+        k = int(request.args.get('k', 3))
+    except (TypeError, ValueError):
+        k = 3
+    return jsonify(_memory_search(p, q, k))
 
 
 # ── Backlog endpoints ────────────────────────────────────────────────────────
@@ -2229,10 +2394,17 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         f"before, do NOT guess endpoint names (e.g. /api/cron, /api/jobs). "
         f"Grep server.py for `@app.route` to enumerate the real endpoints, "
         f"or curl http://localhost:{port}/ and inspect the served HTML.",
+
+        # Leg B priming — name the skill so it's reached for at the right moment.
+        f"Project memory: when you hit an unknown about this project's history, "
+        f"a prior decision, or a convention, use the mc-memory-search skill "
+        f"before guessing — it ranks the project's topic files, archive, and "
+        f"session log. Relevant memory for the current task is also "
+        f"auto-surfaced in your context under 'RELEVANT MEMORY'.",
     ]
 
 
-def _build_agent_context(project, incognito=False):
+def _build_agent_context(project, incognito=False, task=''):
     """Build system prompt context for the agent.
 
     incognito=True keeps the full project context (rules, memory pointer,
@@ -2292,7 +2464,8 @@ def _build_agent_context(project, incognito=False):
     archive_file = str(archive_path)
     awareness = [
         "You are managed by Clayrune.",
-        f"Memory: {mem_file} (auto-loaded). Update it when you learn important project info.",
+        f"Memory: {mem_file} is auto-loaded and maintained for you by Clayrune. "
+        f"To retrieve older context, search it; do NOT hand-edit it.",
         f"Archive: {archive_file} — older session logs, read if needed.",
     ]
     if pp:
@@ -2331,6 +2504,22 @@ def _build_agent_context(project, incognito=False):
         f"Before creating, ask the user clarifying questions about scope, priorities, and constraints.",
     ])
     parts.append("--- SYSTEM ---\n" + "\n".join(awareness))
+
+    # Leg B.3 — deterministic read floor (no model; ranked grep). The agent
+    # already auto-loads the curated index; this surfaces relevant topic-file /
+    # archive / session-log detail for THIS task so the read side never depends
+    # solely on the probabilistic search skill. SPEC §3 Leg B.
+    if task:
+        try:
+            hits = _memory_search(project, task,
+                                  int(CONFIG.get('read_floor_topk', 3) or 3))
+        except Exception:
+            hits = []
+        if hits:
+            rl = "\n".join(f"  • [{h['file']}] {h['snippet']}" for h in hits)
+            parts.append(
+                "--- RELEVANT MEMORY (auto-surfaced for this task; "
+                "use the mc-memory-search skill to dig deeper) ---\n" + rl)
 
     # Recent activity
     log = project.get('activity_log', [])[:3]
@@ -3174,6 +3363,108 @@ def _backfill_all_agent_logs():
         print(f"[backfill] done: {total} synthesized entr{'y' if total == 1 else 'ies'} across {len(projects)} project(s)")
 
 
+_SCRIBE_TERMINAL_STATUSES = ('completed', 'error', 'stopped', 'interrupted')
+
+
+def _reconcile_unscribed_sessions():
+    """Fix B — close the hard-MC-kill gap (SPEC §3 Leg A §3.A).
+
+    `_log_agent_completion` never runs when the MC process is killed mid-
+    session, so those sessions get no memory entry. This pass, run once at
+    startup AFTER backfill (so orphan transcripts already have agent_log
+    rows), captures them.
+
+    First encounter per project (no entry carries the 'scribed' key — i.e. the
+    log predates Fix B) → BASELINE-STAMP every entry scribed=True WITHOUT
+    running the scribe. We deliberately do NOT retro-scribe history; the goal
+    is to stop LOSING future hard-killed sessions, not to mine the past.
+
+    Thereafter → for terminal entries lacking `scribed` (post-baseline orphans
+    = the hard-kill victims), run the shared memory write, capped per project
+    per boot to bound Haiku cost. Over-cap remainder retried next boot.
+    """
+    if not CONFIG.get('scribe_enabled', True):
+        return
+    if not CONFIG.get('scribe_reconcile_enabled', True):
+        return
+    cap = int(CONFIG.get('scribe_reconcile_cap', 5) or 5)
+    try:
+        projects = load_projects()
+    except Exception as e:
+        print(f"[scribe-reconcile] load_projects failed: {e}")
+        return
+    baselined = scribed_n = 0
+    for p in projects:
+        pid = p.get('id')
+        if not pid:
+            continue
+        if p.get('_is_incognito_project') or pid == INCOGNITO_PROJECT_ID:
+            continue
+        try:
+            log = _load_agent_log(pid)
+            if not log:
+                continue
+            first_encounter = not any('scribed' in e for e in log)
+            if first_encounter:
+                for e in log:
+                    e['scribed'] = True
+                _save_agent_log(pid, log)
+                baselined += 1
+                continue
+            # Don't race a live session for this project.
+            if _has_running_agent(pid):
+                continue
+            wrote = False
+            done = 0
+            for e in log:
+                if done >= cap:
+                    break
+                if e.get('scribed'):
+                    continue
+                if e.get('status') not in _SCRIBE_TERMINAL_STATUSES:
+                    continue
+                if not e.get('claude_session_id'):
+                    continue
+                sess = {
+                    'project_id': pid,
+                    'claude_session_id': e.get('claude_session_id', ''),
+                    'task': e.get('task', ''),
+                    'incognito': False,
+                    'housekeeping': False,
+                }
+                try:
+                    if _write_session_memory(p, sess, e.get('status', 'interrupted'),
+                                              e.get('summary', ''),
+                                              (e.get('ts', '') or now_iso())[:10]):
+                        e['scribed'] = True
+                        wrote = True
+                        scribed_n += 1
+                        done += 1
+                except Exception as ex:
+                    print(f"[scribe-reconcile] {pid} entry: {ex}")
+            if wrote:
+                _save_agent_log(pid, log)
+        except Exception as e:
+            print(f"[scribe-reconcile] {pid}: {e}")
+    if baselined or scribed_n:
+        print(f"[scribe-reconcile] baselined {baselined} project(s); "
+              f"reconciled {scribed_n} previously-unscribed session(s)")
+
+
+def _startup_memory_maintenance():
+    """Background startup chain: backfill agent_log from transcripts, THEN
+    reconcile unscribed sessions (order matters — reconcile needs the
+    synthesized orphan rows backfill creates). Off the app.run() path."""
+    try:
+        _backfill_all_agent_logs()
+    except Exception as e:
+        print(f"[backfill] failed: {e}")
+    try:
+        _reconcile_unscribed_sessions()
+    except Exception as e:
+        print(f"[scribe-reconcile] bootstrap failed: {e}")
+
+
 def _revive_history_lines(project_path, claude_sid, user_label, max_messages=40):
     """Reconstruct prior-conversation log_lines from the on-disk Claude transcript.
 
@@ -3473,6 +3764,59 @@ def _reconcile_pending_agent_log_entries():
         print(f"[reconcile-pending] flipped {flipped_total} orphaned in_progress entr{'y' if flipped_total == 1 else 'ies'} to 'interrupted'")
 
 
+def _write_session_memory(p, session, status, summary_fallback, ts_date):
+    """Shared Leg A/0/C memory write — used by BOTH the completion path and the
+    startup scribe-reconciler so they can never diverge. Scribe over the
+    full-fidelity .jsonl → brief (fallback to summary, then a guaranteed
+    breadcrumb) → migrate+append into the managed region → lossless line-keyed
+    floor → condense trigger. Returns True iff a memory entry was written.
+    Never raises (callers wrap, but this is the single source of truth).
+    SPEC docs/MEMORY_SYSTEM_SPEC.md §3 Leg A/0/C.
+    """
+    project_id = p.get('id', '')
+    task = (session.get('task', '') or '').strip()
+    scribed, _why = _scribe_extract(p, session)
+    _scribe_stat(project_id, 'scribe_extracted' if scribed
+                 else f'scribe_fell_back:{_why}')
+    fb = (summary_fallback or '')[:300].replace('\n', ' ').strip()
+    brief = (scribed or fb
+             or f"ended with status={status}, no captured output"
+             ).replace('\n', ' ').strip()
+    tag = '' if status == 'completed' else f' _({status})_'
+    mem_entry = f"- [{ts_date}] **{task[:80]}**{tag} — {brief}"
+    mem_path = _get_memory_path(p)
+    mem_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = (mem_path.read_text(encoding='utf-8')
+                if mem_path.exists() else '')
+    # Leg 0: idempotent, additive migration; curated region untouched.
+    curated, mem_entries = _mem_split(_mem_migrate(existing))
+    mem_entries.append(mem_entry)
+    # Step 2 mechanical floor: lossless, managed-region only, line-keyed.
+    hard_floor = int(CONFIG.get('index_line_hard_floor', 185) or 185)
+    overflow = []
+    while mem_entries and len(
+            _mem_compose(curated, mem_entries).splitlines()) > hard_floor:
+        overflow.append(mem_entries.pop(0))  # oldest → archive
+    if overflow:
+        archive_path = _get_archive_path(p)
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        archive_existing = ''
+        if archive_path.exists():
+            archive_existing = archive_path.read_text(encoding='utf-8').rstrip()
+        archive_header = '## Archived Session Log'
+        if archive_header not in archive_existing:
+            archive_existing = (archive_existing + f'\n\n{archive_header}'
+                                if archive_existing else archive_header)
+        archive_path.write_text(
+            archive_existing + '\n' + '\n'.join(overflow) + '\n',
+            encoding='utf-8')
+    mem_path.write_text(_mem_compose(curated, mem_entries), encoding='utf-8')
+    # Leg C model tier trigger (condense is itself gated + locked).
+    if _should_condense(p, include_claude_md=True):
+        _dispatch_condense(p)
+    return True
+
+
 def _log_agent_completion(session):
     """Save a summary entry when an agent session finishes."""
     project_id = session.get('project_id')
@@ -3519,6 +3863,10 @@ def _log_agent_completion(session):
         # trigger_id: schedule_id, hivemind_id, or workstream_id depending on type
         'trigger_type': session.get('trigger_type', 'manual'),
         'trigger_id': session.get('trigger_id', ''),
+        # Fix B marker: whether this session's memory was captured. Presence of
+        # this key on ANY entry means the log was written by Fix-B-aware code
+        # (used by the reconciler to distinguish first-boot baseline).
+        'scribed': False,
     }
     log = _load_agent_log(project_id)
     # Upsert: if a pending entry was written at dispatch time (non-manual trigger),
@@ -3539,60 +3887,22 @@ def _log_agent_completion(session):
     if is_housekeeping:
         return
 
-    # Auto-append session summary to project memory (native Claude MEMORY.md)
-    if session.get('status') == 'completed' and summary:
+    # Auto-append session summary to project memory (native Claude MEMORY.md).
+    # NOT gated to 'completed' only: error/stopped sessions are exactly where
+    # "what was tried / why it broke" is most valuable, and the scribe reads
+    # the .jsonl (not stdout) so it doesn't need a clean summary. The hard
+    # MC-kill case (this function never runs) is closed by the startup
+    # scribe-reconciliation pass, not here. SPEC §3 Leg A.
+    status = session.get('status')
+    if status in ('completed', 'error', 'stopped'):
         try:
             p = load_project(project_id)
-            if p:
-                task = session.get('task', '').strip()
-                ts = entry['ts'][:10]  # date only
-                brief = summary[:300].replace('\n', ' ').strip()
-                mem_entry = f"- [{ts}] **{task[:80]}** — {brief}"
-                mem_path = _get_memory_path(p)
-                mem_path.parent.mkdir(parents=True, exist_ok=True)
-                existing = ''
-                if mem_path.exists():
-                    existing = mem_path.read_text(encoding='utf-8').rstrip()
-                header = '## Session Log'
-                if header not in existing:
-                    existing = existing + f'\n\n{header}' if existing else header
-                new_content = existing + '\n' + mem_entry + '\n'
-                mem_path.write_text(new_content, encoding='utf-8')
-
-                # Archive overflow: if file exceeds 10KB, keep last 20 entries, archive the rest
-                if len(new_content.encode('utf-8')) > 20 * 1024:
-                    marker = '## Session Log'
-                    idx = new_content.find(marker)
-                    if idx >= 0:
-                        before = new_content[:idx]
-                        log_section = new_content[idx + len(marker):]
-                        entries = [l for l in log_section.strip().splitlines() if l.startswith('- [')]
-                        if len(entries) > 20:
-                            overflow = entries[:-20]
-                            kept = entries[-20:]
-                            # Append overflow to archive
-                            archive_path = _get_archive_path(p)
-                            archive_path.parent.mkdir(parents=True, exist_ok=True)
-                            archive_existing = ''
-                            if archive_path.exists():
-                                archive_existing = archive_path.read_text(encoding='utf-8').rstrip()
-                            archive_header = '## Archived Session Log'
-                            if archive_header not in archive_existing:
-                                archive_existing = (archive_existing + f'\n\n{archive_header}'
-                                                    if archive_existing else archive_header)
-                            archive_path.write_text(
-                                archive_existing + '\n' + '\n'.join(overflow) + '\n',
-                                encoding='utf-8',
-                            )
-                            # Rewrite MEMORY.md with only kept entries
-                            mem_path.write_text(
-                                before.rstrip() + '\n\n' + marker + '\n' + '\n'.join(kept) + '\n',
-                                encoding='utf-8',
-                            )
-
-                # Trigger condensation if thresholds met (include CLAUDE.md in check)
-                if _should_condense(p, include_claude_md=True):
-                    _dispatch_condense(p)
+            if p and _write_session_memory(p, session, status, summary,
+                                           entry['ts'][:10]):
+                # Persist the Fix B marker so the startup reconciler never
+                # re-scribes a session the completion path already captured.
+                entry['scribed'] = True
+                _save_agent_log(project_id, log)
         except Exception:
             pass  # never fail the completion flow for memory
 
@@ -3688,6 +3998,239 @@ def _check_context_budget(project, appended_prompt):
     return None
 
 
+# ── Leg A: session-end Scribe ────────────────────────────────────────────────
+# SPEC docs/MEMORY_SYSTEM_SPEC.md §3 Leg A. MC retains nothing full-fidelity
+# (see [[discovery: MC retains zero full-fidelity transcript]]), so the scribe
+# reads the CLI's on-disk .jsonl — the only full-fidelity source — and asks a
+# cheap model to extract one tight memory line. Any failure falls back to the
+# legacy stdout-tail summary so completion never breaks.
+
+_SCRIBE_PROMPT = (
+    "You are a project-memory scribe. Below is a full agent session transcript "
+    "(actions, tool results, reasoning). Write ONE dense line (max 280 chars, no "
+    "newlines) for a project memory log: what was done, what was decided/learned, "
+    "and any gotcha or follow-up. Be concrete (files, names, decisions). Output "
+    "ONLY that line — no preamble, no markdown, no quotes."
+)
+_SCRIBE_MAP_PROMPT = (
+    "This is ONE CHUNK of a longer agent session transcript. In 1-2 tight "
+    "sentences, note what was done/decided/learned/broken in THIS chunk only. "
+    "Output only those sentences."
+)
+_SCRIBE_REDUCE_PROMPT = (
+    "Below are ordered partial notes from consecutive chunks of one agent "
+    "session. Synthesize them into ONE dense line (max 280 chars, no newlines) "
+    "for a project memory log: what was done, decided/learned, and any gotcha. "
+    "Output ONLY that line."
+)
+# Single-call ceiling (~chars). Above this -> chunked map-reduce.
+_SCRIBE_SINGLE_LIMIT = 350_000
+_SCRIBE_RESULT_CAP = 2000  # per tool_result bulk cap in the rendered transcript
+# A transcript is "thin" (skip the model, fall back to stdout-tail) only when
+# it shows NO activity (no tool ACTION/RESULT, no THINKING) AND its text is
+# trivially short. Keying on activity — not raw length — avoids rejecting a
+# genuinely substantive but compact session (one tool call + a one-line
+# answer renders well under any fixed char threshold). A bare "ASSISTANT: OK"
+# has no activity and ~13 chars → thin; "ACTION Bash… RESULT… ASSISTANT…" is
+# substantive at any length.
+_SCRIBE_THIN_TEXT_CHARS = 120
+_SCRIBE_ACTIVITY_PREFIXES = ('ACTION ', 'RESULT:', 'THINKING:')
+# If the model's reply looks like a refusal / request-for-input rather than a
+# summary, never write it as memory — fall back. Lowercased substring match.
+_SCRIBE_REFUSAL_MARKERS = (
+    "i don't see a transcript", "i do not see a transcript",
+    "no transcript", "please paste", "paste the session",
+    "paste the transcript", "share the transcript",
+    "provide the transcript", "don't have access to",
+    "didn't receive", "did not receive", "cannot see any transcript",
+    "no session transcript", "there is no transcript",
+)
+
+
+def _scribe_stat(project_id, key):
+    """Increment a scribe-outcome counter (SPEC §8 telemetry). Best-effort."""
+    try:
+        fp = DATA_DIR / f'{project_id}_scribe_stats.json'
+        stats = {}
+        if fp.exists():
+            stats = json.loads(fp.read_text(encoding='utf-8') or '{}')
+        stats[key] = int(stats.get(key, 0)) + 1
+        stats['_updated'] = now_iso()
+        fp.write_text(json.dumps(stats, indent=2), encoding='utf-8')
+    except Exception:
+        pass  # telemetry must never break completion
+
+
+def _scribe_render_transcript(path):
+    """Render the raw CLI .jsonl into a compact, full-sequence text view.
+
+    Keeps EVERY message (no 300-msg cap, unlike _parse_transcript_messages),
+    but strips base64/image blocks (token-waste noise) and bulk-caps oversized
+    tool_results head+tail. Returns '' if nothing useful.
+    """
+    out = []
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                m = json.loads(line)
+            except Exception:
+                continue
+            msg = m.get('message') if isinstance(m.get('message'), dict) else None
+            if not msg or not isinstance(msg.get('content'), list):
+                continue
+            mtype = m.get('type', '')
+            for b in msg['content']:
+                if not isinstance(b, dict):
+                    continue
+                bt = b.get('type', '')
+                if bt == 'text' and mtype == 'assistant':
+                    t = (b.get('text') or '').strip()
+                    if t:
+                        out.append(f"ASSISTANT: {t}")
+                elif bt == 'thinking':
+                    t = (b.get('thinking') or b.get('text') or '').strip()
+                    if t:
+                        out.append(f"THINKING: {t[:2000]}")
+                elif bt == 'tool_use':
+                    inp = b.get('input', {})
+                    try:
+                        s = json.dumps(inp, ensure_ascii=False)
+                    except Exception:
+                        s = str(inp)
+                    out.append(f"ACTION {b.get('name','?')}: {s[:400]}")
+                elif bt == 'tool_result':
+                    c = b.get('content')
+                    if isinstance(c, list):
+                        parts = []
+                        for cb in c:
+                            if isinstance(cb, dict) and cb.get('type') == 'text':
+                                parts.append(cb.get('text', ''))
+                            # image/base64 blocks intentionally dropped
+                        c = '\n'.join(parts)
+                    elif not isinstance(c, str):
+                        c = json.dumps(c, ensure_ascii=False) if c else ''
+                    c = (c or '').strip()
+                    if not c:
+                        continue
+                    if len(c) > _SCRIBE_RESULT_CAP:
+                        half = _SCRIBE_RESULT_CAP // 2
+                        c = f"{c[:half]}\n…[{len(c)-_SCRIBE_RESULT_CAP} chars elided]…\n{c[-half:]}"
+                    out.append(f"RESULT: {c}")
+    return '\n'.join(out)
+
+
+def _scribe_call(model, instruction, body):
+    """One blocking `claude -p` call (prompt via stdin to dodge arg limits).
+
+    Returns the model's text output, or raises on failure/timeout.
+    """
+    cmd = [_resolve_claude(), '-p', '--model', model, '--max-turns', '1',
+           '--dangerously-skip-permissions']
+    r = subprocess.run(
+        cmd,
+        input=f"{instruction}\n\n---TRANSCRIPT---\n{body}",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        cwd=str(Path.home()),
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        timeout=180,
+        creationflags=_POPEN_FLAGS,
+        startupinfo=_STARTUPINFO,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"scribe claude exited {r.returncode}")
+    return (r.stdout or '').strip()
+
+
+def _scribe_extract(project, session):
+    """Leg A scribe. Returns (entry_text, outcome_reason).
+
+    entry_text is None when the caller must fall back to the legacy
+    stdout-tail summary. Never raises. Dispatch-time incognito/housekeeping
+    gate is asserted here too so Phase-2 mid-session triggers inherit it.
+    """
+    if not CONFIG.get('scribe_enabled', True):
+        return None, 'disabled'
+    if session.get('incognito') or session.get('housekeeping'):
+        return None, 'gated'
+    pid = project.get('id', '')
+    pp = project.get('project_path', '')
+    csid = session.get('claude_session_id', '')
+    if not csid:
+        return None, 'no_csid'
+    tf = _find_transcript_file(pp, csid)
+    if not tf:
+        return None, 'no_transcript'
+    with _scribe_lock:
+        if pid in _scribing_projects:
+            return None, 'busy'
+        _scribing_projects.add(pid)
+    try:
+        try:
+            transcript = _scribe_render_transcript(tf)
+        except Exception:
+            return None, 'parse_empty'
+        _stripped = transcript.strip()
+        _has_activity = any(
+            ln.startswith(_SCRIBE_ACTIVITY_PREFIXES)
+            for ln in _stripped.splitlines())
+        if not _has_activity and len(_stripped) < _SCRIBE_THIN_TEXT_CHARS:
+            # No tool/think activity and only a trivial assistant blip
+            # (aborted/no-op/instant-stop). Falling back to the stdout tail
+            # yields an honest short entry instead of a hallucinated
+            # "paste the transcript" reply. A session that ran ANY tool is
+            # substantive regardless of length and is NOT skipped here.
+            return None, 'parse_empty'
+        model = CONFIG.get('scribe_model', '') or 'haiku'
+        try:
+            if len(transcript) <= _SCRIBE_SINGLE_LIMIT:
+                out = _scribe_call(model, _SCRIBE_PROMPT, transcript)
+            else:
+                # Chunk on line boundaries, map then reduce.
+                chunks, cur, n = [], [], 0
+                for ln in transcript.split('\n'):
+                    cur.append(ln)
+                    n += len(ln) + 1
+                    if n >= _SCRIBE_SINGLE_LIMIT:
+                        chunks.append('\n'.join(cur))
+                        cur, n = [], 0
+                if cur:
+                    chunks.append('\n'.join(cur))
+                partials = []
+                for ch in chunks:
+                    try:
+                        partials.append(_scribe_call(model, _SCRIBE_MAP_PROMPT, ch))
+                    except Exception:
+                        pass
+                if not partials:
+                    return None, 'model_error'
+                out = _scribe_call(
+                    model, _SCRIBE_REDUCE_PROMPT,
+                    '\n'.join(f"- {p}" for p in partials if p))
+        except subprocess.TimeoutExpired:
+            return None, 'model_error'
+        except Exception:
+            return None, 'model_error'
+        out = (out or '').strip().replace('\n', ' ').strip()
+        if not out:
+            return None, 'model_error'
+        low = out.lower()
+        if any(mk in low for mk in _SCRIBE_REFUSAL_MARKERS):
+            # Model didn't summarize — it asked for the transcript / refused.
+            # Never persist that as memory; fall back. (Defense-in-depth: the
+            # min-chars guard should already prevent the usual cause.)
+            return None, 'model_refused'
+        return out[:300], 'extracted'
+    finally:
+        with _scribe_lock:
+            _scribing_projects.discard(pid)
+
+
 def _dispatch_condense(project):
     """Launch a housekeeping agent to condense memory + CLAUDE.md for a project."""
     pid = project['id']
@@ -3709,40 +4252,62 @@ def _dispatch_condense(project):
         except OSError:
             pass
 
+    budget = int(CONFIG.get('index_line_budget', 160) or 160)
     prompt_parts = [
-        "You are a memory housekeeping agent. Your ONLY job is to condense the project context files "
-        "so they stay concise and effective.\n",
-        f"## MEMORY.md condensation — target under 15KB\n"
+        "You are a memory housekeeping agent (SPEC Leg C model tier). Your ONLY "
+        "job is to curate the project context files so they stay concise and "
+        "effective. You decide by VALUE, never by recency.\n",
+        f"## MEMORY.md curation — target: the WHOLE file under {budget} LINES\n"
+        f"(The harness only auto-loads ~200 lines; staying under {budget} keeps "
+        f"headroom. This is a LINE budget, not a KB target.)\n"
         f"1. Read {mem_path}\n"
         f"2. Read {archive_path} (if it exists)\n"
-        "3. First-line tactics (use these before touching curated prose):\n"
-        "   - If a '## Session Log' section exists: keep only the last 5 entries; fold useful insights "
-        "from the rest into the matching curated knowledge sections.\n"
-        "   - Move older session log overflow into the archive file.\n"
-        "4. If still over 15KB after step 3, tighten the curated sections themselves:\n"
-        "   - Merge overlapping sections (e.g., two sections covering the same subsystem).\n"
-        "   - Drop stale 'as of YYYY-MM-DD' notes whose content has clearly been superseded by a later section.\n"
-        "   - Remove redundant examples and excessive prose; keep the fact, cut the narration.\n"
-        "   - Collapse bullet lists that restate the same idea.\n"
-        "5. DO NOT lose hard-won facts. Preserve verbatim: file paths, line numbers, function/class names, "
-        "config keys, exact numeric thresholds, API signatures, command snippets, and any 'gotcha' warnings.\n"
-        f"6. Write the condensed result back to {mem_path}. Target under 15KB; if after honest tightening "
-        f"the file is still slightly over, that is acceptable — do NOT delete critical facts just to hit a number.\n"
-        f"7. Delete {archive_path} when done (if it exists and its contents have been folded in).\n",
+        "3. MEMORY.md has two regions, treat them differently:\n"
+        "   - CURATED region (everything ABOVE the "
+        "`<!-- clayrune:managed:begin -->` sentinel): the hand-curated pointer "
+        "index. You ARE permitted to compact THIS region (you are the only "
+        "agent allowed to): merge overlapping pointers/sections covering the "
+        "same subsystem, drop stale 'as of YYYY-MM-DD' notes clearly superseded "
+        "by a later section, cut narration but keep the fact.\n"
+        "   - MANAGED region (between `<!-- clayrune:managed:begin -->` and "
+        "`<!-- clayrune:managed:end -->`, under `## Session Log`): raw "
+        "machine-written session entries. For EACH entry decide, by value: "
+        "(a) fold its durable insight into the matching curated pointer/topic "
+        "then remove the raw entry; (b) if it has no lasting value, DEMOTE it "
+        "(move it) to the archive; (c) keep it in the managed region only if "
+        "it's recent and not yet foldable. Never keep/drop by recency alone.\n"
+        "4. KEEP THE FORMAT: the rewritten file must still have the "
+        "`<!-- clayrune:managed:begin -->` / `## Session Log` / "
+        "`<!-- clayrune:managed:end -->` structure intact. The managed region "
+        "may legitimately end up EMPTY after folding — that is fine; keep the "
+        "sentinels and header.\n"
+        "5. NEVER hard-delete a fact. The only permitted deletions are exact "
+        "duplicates or an entry STRICTLY superseded by a newer one that wholly "
+        "contains it. 'Not worth a curated slot' means DEMOTE to the archive "
+        "(still searchable cold storage), never erase.\n"
+        "6. DO NOT lose hard-won facts. Preserve verbatim: file paths, line "
+        "numbers, function/class names, config keys, exact numeric thresholds, "
+        "API signatures, command snippets, and any 'gotcha' warnings.\n"
+        f"7. Append demoted/overflow entries to {archive_path} (create it if "
+        f"needed). NEVER delete or truncate the archive — it is permanent "
+        f"searchable cold storage (SPEC D3).\n"
+        f"8. Write the curated result back to {mem_path}. Target under {budget} "
+        f"lines; if after honest folding it is still slightly over, that is "
+        f"acceptable — do NOT delete critical facts just to hit a number.\n",
     ]
 
     if claude_md_big:
         prompt_parts.append(
             f"\n## CLAUDE.md condensation — target under 15KB\n"
-            f"8. Read {claude_md_path}\n"
-            "9. This file contains project instructions and context that Claude CLI loads natively. "
+            f"9. Read {claude_md_path}\n"
+            "10. This file contains project instructions and context that Claude CLI loads natively. "
             "Condense it while preserving ALL critical information:\n"
             "   - Keep all instructions, rules, and constraints verbatim.\n"
             "   - Merge duplicate/overlapping sections.\n"
             "   - Remove redundant examples, excessive formatting, and verbose explanations.\n"
             "   - Compress session logs / historical notes into brief summaries.\n"
             "   - Preserve code snippets, API references, and config patterns exactly.\n"
-            f"10. Write the condensed result back to {claude_md_path}. Target under 15KB; do NOT "
+            f"11. Write the condensed result back to {claude_md_path}. Target under 15KB; do NOT "
             f"strip critical rules just to hit a number.\n"
         )
 
@@ -3860,7 +4425,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             if resume_id:
                 cmd = [_resolve_claude(), '-r', resume_id, *_build_claude_flags(p, streaming=True)]
             else:
-                context = _build_agent_context(p, incognito=incognito)
+                context = _build_agent_context(p, incognito=incognito, task=task)
                 cmd = [_resolve_claude(), *_build_claude_flags(p, streaming=True),
                        '--append-system-prompt', context]
 
@@ -3923,7 +4488,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             if resume_id:
                 cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *_build_claude_flags(p)]
             else:
-                context = _build_agent_context(p, incognito=incognito)
+                context = _build_agent_context(p, incognito=incognito, task=task)
                 cmd = [_resolve_claude(), '-p', task, *_build_claude_flags(p),
                        '--append-system-prompt', context]
 
@@ -8398,7 +8963,10 @@ _CONFIG_EDITABLE_KEYS = {
     'user_name', 'agent_name', 'agent_model', 'agent_max_turns',
     'agent_permission_mode', 'agent_channels', 'agent_remote_control',
     'use_streaming_agent', 'condense_enabled', 'condense_threshold_kb',
-    'condense_model', 'projects_base', 'shared_rules_path', 'port',
+    'condense_model', 'index_line_budget', 'index_line_hard_floor',
+    'scribe_enabled', 'scribe_model', 'scribe_reconcile_enabled',
+    'scribe_reconcile_cap', 'read_floor_topk', 'projects_base',
+    'shared_rules_path', 'port',
 }
 
 @app.route('/api/config')
@@ -11482,7 +12050,10 @@ def _get_active_restart_blockers():
     orchestrator. Idle/completed/error/stopped sessions are NOT blockers — their
     process is either dead or just waiting on stdin and is safe to drop.
     """
-    project_names = {p['id']: p.get('name', p['id']) for p in load_projects()}
+    # Defensive: never let a stray/malformed file in DATA_DIR (no 'id') crash
+    # the restart path — it shares this helper with the GET status endpoint.
+    project_names = {p['id']: p.get('name', p['id'])
+                     for p in load_projects() if isinstance(p, dict) and p.get('id')}
     active_sessions = []
     for sid, sess in list(agent_sessions.items()):
         if sess.get('status') != 'running':
@@ -11947,7 +12518,7 @@ if __name__ == '__main__':
     # never finalized (server killed before stream reader's finally) visible in
     # the Agent Log tab. Runs once, in the background, so app.run() isn't blocked.
     # Roll back: set agent_log_backfill_enabled = false in data/config.json.
-    threading.Thread(target=_backfill_all_agent_logs, daemon=True).start()
+    threading.Thread(target=_startup_memory_maintenance, daemon=True).start()
     # One-shot: transition orphaned 'active' hiveminds to 'stale'. Cheap, runs
     # synchronously before app.run().
     try:
