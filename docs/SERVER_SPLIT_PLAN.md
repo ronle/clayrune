@@ -44,6 +44,48 @@ easiest extractions because they're already self-contained." They are
 development (presence is literally the HEAD commit). Self-containment ≠
 safe to move. They are Tier 3, not first.
 
+## ⚠️ CORRECTION (2026-05-17b) — banner proximity ≠ extractability (flaw F7)
+
+The Tier table above classified modules by *section-banner vs.
+WIP/freeze proximity*. It did **not** measure **call-site dispersion**,
+and that turns out to be the property that actually governs a safe
+verbatim extraction. Measured after Tier 1a shipped:
+
+| Module | Shared mutable state | Call sites | Spread | Verdict |
+|---|---|---|---|---|
+| `marketing_preview` | none | 1 route, self-contained | 1 region | ✅ **true verbatim Tier 1 — DONE (`f3c083a`)** |
+| `process_tracker` | `tracked_processes` dict + lock | `_register_process` ×17, `tracked_processes` ×13, `_unregister_process` ×13 | ~13 of 25 file regions | ❌ NOT verbatim — pervasive |
+| `terminal_sessions` | `terminal_sessions` dict + lock | 18 + 7 refs | dispersed | ❌ NOT verbatim |
+| `scheduler` | schedule state | `_load_schedules` ×8 | dispersed; `9216` banner is cron-parse utils, not endpoints | ❌ NOT verbatim |
+
+Also: the "Process tracker" / "Terminal session tracking" banners are
+immediately followed by **core** `load_project`/`save_project`/
+`load_projects`/`time_ago` — the banner does not bound the section.
+
+**Consequence.** Only `marketing_preview` was a clean
+move-and-register. The other three are **deps-injection refactors**, not
+moves: the module must own the state dict + lock and expose accessor
+functions, and every one of the ~30+ dispersed call sites in server.py
+(including agent-spawn and the guardian loop — code adjacent to frozen
+subsystems) must be rewritten to call the module. That is a real
+behavior-risking refactor per module, not a Tier-1 verbatim PR, and it
+violates this plan's own "move code verbatim — no opportunistic edits"
+rule if attempted as one.
+
+## Revised Tier-1 definition
+
+A module is **verbatim Tier-1** only if it has **(a) no shared mutable
+module state** and **(b) all call sites within its own
+banner-bounded region**. By that test, of the originally-listed Tier-1
+set only `marketing_preview` qualified. The split as a low-risk
+mechanical effort is therefore much smaller than the plan implied.
+
+**Recommendation:** treat `process_tracker` / `terminal_sessions` /
+`scheduler` as their own *designed* refactors (one per PR, deps-injection
+contract written first, call sites migrated deliberately, smoke +
+manual agent-spawn/guardian check), each gated on Ron's explicit
+go-ahead because they touch the agent lifecycle. Do not auto-proceed.
+
 ## Revised execution order (when server.py is clean)
 
 One PR per module, no behavior change, smoke test (`tests/test_smoke.py`)

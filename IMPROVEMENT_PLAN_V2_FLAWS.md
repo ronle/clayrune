@@ -102,6 +102,27 @@ volume), P1-2, P1-3 acceptance criteria are therefore not fully specified.
 implement the defensible minimal version, and document the assumed spec
 in each sprint's commit so Ron can correct. Flagged per-item as reached.
 
+### F7 — SERVER_SPLIT_PLAN Tier-1 classification was wrong (banner ≠ extractability)
+**Severity: high. CONFIRMED post-Tier-1a.** `docs/SERVER_SPLIT_PLAN.md`
+classified the 4 Tier-1 modules by section-banner-vs-WIP/freeze
+proximity and asserted they were "well-bounded by section banners." Two
+defects: (1) the banners don't bound the sections — "Process tracker" /
+"Terminal session tracking" are immediately followed by *core*
+load_project/save_project/load_projects; (2) the real gate is **call-site
+dispersion**, which was never measured. Measured: `marketing_preview` =
+1 self-contained route, zero shared state (genuinely clean — shipped
+`f3c083a`); `process_tracker` = `_register_process`×17 /
+`tracked_processes`×13 / `_unregister_process`×13 across ~13 file
+regions incl. agent-spawn + guardian; `terminal_sessions` / `scheduler`
+similar. So 3 of 4 are deps-injection refactors, not verbatim moves.
+**Resolution:** corrected `SERVER_SPLIT_PLAN.md` (new dispersion table +
+revised Tier-1 definition: no shared mutable state AND all call sites
+in-region). Tier 1a kept (correctly clean). **Stopped auto-proceeding**
+— the remaining three each need a designed deps-injection PR with Ron's
+explicit go-ahead (they touch the agent lifecycle / guardian, adjacent
+to frozen code). Honest scope: the "low-risk mechanical split" is really
+just `marketing_preview`; the rest is genuine refactoring work.
+
 ---
 
 ## Execution log
@@ -190,6 +211,19 @@ in each sprint's commit so Ron can correct. Flagged per-item as reached.
     active desktop path is pywebview/app.py. If parked, delete
     `src-tauri/` (target/ already gitignored). NOT deleting unilaterally
     — source-dir removal pending Ron's intent.
+
+- **Sprint 4 resumed (2026-05-17b, server.py WIP landed)** — Ron
+  committed his WIP (`7d9bc7b`, `24a3af8`); F2 cleared. Fresh anchor:
+  tag `plan-v2-sprint4-base` (= `24a3af8`), branch `plan-v2-sprint4`,
+  off-repo backup `_plan_v2_backups/<ts>_sprint4/`. Re-measured: Tier 1
+  banner line numbers unchanged.
+  - **Tier 1a** ✅ `f3c083a` — `marketing_preview.py` blueprint; route
+    verbatim; `pytest` 16/16; url_map verified. Clean as predicted.
+  - **Tier 1b/c/d** ⛔ STOPPED — F7: `process_tracker` /
+    `terminal_sessions` / `scheduler` are NOT verbatim-extractable
+    (pervasive shared state, ~30+ dispersed call sites incl. agent-spawn
+    + guardian). Not auto-proceeding; each needs a designed
+    deps-injection PR + Ron's go-ahead. `SERVER_SPLIT_PLAN.md` corrected.
 
 ## Status summary for Ron
 
