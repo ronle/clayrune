@@ -67,3 +67,47 @@ what-was-tried). The two are complementary, not redundant.
 **Storage**: per-project (each MC project gets its own `.memsearch/`).
 Both the memory dir and the index are gitignored. To wipe and rebuild
 from scratch: `rm -rf .memsearch && memsearch index --force`.
+
+## Memory system — server-side Scribe + Leg 0 (added 2026-05-17)
+
+Headless project agents get cross-session memory via a **server-side
+pipeline** in `server.py`, not via plugins. Full design + committee review:
+`docs/MEMORY_SYSTEM_SPEC.md`. The shape:
+
+- **Leg 0 format**: a project's `MEMORY.md` = a *curated* pointer index on
+  top + a sentinel-delimited *managed region* below
+  (`<!-- clayrune:managed:begin/end -->`, `## Session Log`). The curated
+  region is human/condense-owned and byte-preserved; only the condense model
+  tier may rewrite it. Machinery touches the managed region only. Helpers:
+  `_mem_split` / `_mem_compose` / `_mem_migrate` (idempotent, additive).
+- **Scribe** (`_scribe_extract` → shared `_write_session_memory`): on
+  session end, reads the CLI's on-disk `.jsonl` (the only full-fidelity
+  source — MC's in-memory `log_lines` drops tool results & thinking),
+  cheap-model-summarizes one line, falls back to the stdout tail on any
+  failure. Telemetry: `/api/project/<id>/scribe-stats`.
+- **Retrieval**: `/api/project/<id>/memory/search`, a deterministic
+  read-floor injected in `_build_agent_context`, and the `mc-memory-search`
+  built-in skill.
+- **Trim**: line-keyed lossless mechanical floor + the condense model tier
+  (`index_line_budget`/`index_line_hard_floor`); the archive is **permanent
+  searchable cold storage — never delete/truncate it**.
+- **Fix B**: `_reconcile_unscribed_sessions` at startup closes the
+  hard-MC-kill gap; first encounter baseline-stamps history `scribed:true`
+  without scribing it.
+
+**LOAD-BEARING RULE — DATA_DIR pollution.** `DATA_DIR` (`data/projects/`)
+is the project-records dir; `load_projects()` treats every `*.json` there
+as a project. Anything else written into `DATA_DIR` (telemetry, sidecars)
+**MUST be suffix-excluded in `load_projects()`** (it already excludes
+`_agent_log.json` and `_scribe_stats.json`). A stray file there becomes a
+malformed "project" and 500s `_get_active_restart_blockers` → both restart
+endpoints. New per-session/sidecar state belongs OUTSIDE `DATA_DIR`.
+
+**Mode B caveat.** With `use_streaming_agent` (global default) the
+persistent process doesn't exit per turn, so the Scribe fires at session
+*teardown*, not per turn. Mid-session checkpointing (SPEC §3.A.MID,
+default-off, not yet built) is the planned fix; until then long idle Mode B
+sessions only capture memory when stopped/reaped.
+
+**Rollback**: `scribe_enabled=false` reverts to the legacy stdout-tail
+write; `scribe_reconcile_enabled=false` disables startup reconcile.
