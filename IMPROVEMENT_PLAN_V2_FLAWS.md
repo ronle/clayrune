@@ -148,3 +148,9 @@ in each sprint's commit so Ron can correct. Flagged per-item as reached.
   - **P1-3** ✅ no-op — already implemented (F6).
   Net committable change this sprint: docs only (this register). No code
   commit — correct outcome given F2.
+- **Sprint 4 (P1-1 server.py split)** ⛔ BLOCKED, analysis delivered —
+  `docs/SERVER_SPLIT_PLAN.md`: WIP heat map (23 hunks vs section
+  banners), F1 resolved (frozen ≠ "easiest"), revised 3-tier order
+  (Tier 1 = marketing_preview/process_tracker/scheduler/terminal_sessions
+  — no WIP overlap, not frozen), per-PR checklist. Execution gated on a
+  clean server.py tree + freeze lifting. No code touched.
