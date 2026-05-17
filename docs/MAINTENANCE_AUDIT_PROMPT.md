@@ -23,6 +23,12 @@ HARD RULES — violation aborts the run:
    data/maintenance_reports/<today-YYYY-MM-DD>.md
    (Creating the report file is the ONLY write you may perform; if the
    reports directory does not exist, create it.)
+   PREREQUISITE: data/maintenance_reports/ MUST be gitignored — verify
+   before each run (`git check-ignore data/maintenance_reports/`). It is
+   (.gitignore). This is what reconciles RULE 1 (git status byte-
+   identical) with this write; if it ever stops being ignored, abort and
+   report "blocked: reports dir not gitignored" rather than dirtying the
+   tree.
 4. No prose theatre. Findings are bullet points with file:line refs and
    measured numbers. No introductions, no conclusions, no recommendations
    you cannot justify with a number.

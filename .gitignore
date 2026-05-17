@@ -88,6 +88,12 @@ data/system_status.json
 # to the native Android app. Contains a private RSA key; never commit.
 data/firebase_admin.json
 
+# Monthly maintenance audit reports — runtime output of the read-only
+# audit (docs/MAINTENANCE_AUDIT_PROMPT.md). Reviewed by Ron, not
+# committed. Gitignoring this is what lets the audit satisfy its own
+# "git status byte-identical" read-only invariant.
+data/maintenance_reports/
+
 # Build artifacts served from /downloads (Android APK, etc.) — produced by
 # the mobile build pipeline, not source.
 static/downloads/*.apk
