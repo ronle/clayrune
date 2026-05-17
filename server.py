@@ -229,6 +229,13 @@ def _load_config():
         'user_name': '',
         'agent_name': '',
         'use_streaming_agent': False,
+        # P2-1/P2-2 upload limits. 0 = unlimited (default → no behavior
+        # change; enforcement is opt-in). upload_quota_bytes caps a
+        # project's cumulative backlog-attachment storage;
+        # upload_max_file_bytes caps any single uploaded file. Both can be
+        # overridden per-project via the arbitrary-key update_project path.
+        'upload_quota_bytes': 0,
+        'upload_max_file_bytes': 0,
         'condense_threshold_kb': 30,
         'condense_model': '',
         'condense_enabled': True,
@@ -2020,6 +2027,47 @@ def github_status(project_id):
 
 # ── Attachment endpoints ─────────────────────────────────────────────────────
 
+# P2-2 (IMPROVEMENT_PLAN_V2.md): per-project upload quota.
+
+def _upload_limit(project, key):
+    """Resolve an upload limit: per-project override → global config → 0.
+    0 (or missing/invalid) means unlimited."""
+    val = None
+    if project is not None:
+        val = project.get(key)
+    if val is None:
+        val = CONFIG.get(key, 0)
+    try:
+        val = int(val)
+    except (TypeError, ValueError):
+        return 0
+    return val if val > 0 else 0
+
+
+def _incoming_file_size(f):
+    """Size of a werkzeug FileStorage without consuming it."""
+    try:
+        pos = f.stream.tell()
+        f.stream.seek(0, os.SEEK_END)
+        size = f.stream.tell()
+        f.stream.seek(pos)
+        return size
+    except (OSError, AttributeError):
+        return 0
+
+
+def _project_attachment_usage(project):
+    """Sum of recorded attachment sizes across all backlog items."""
+    total = 0
+    for item in project.get('backlog', []):
+        for a in item.get('attachments', []):
+            try:
+                total += int(a.get('size', 0))
+            except (TypeError, ValueError):
+                pass
+    return total
+
+
 @app.route('/api/project/<project_id>/backlog/<item_id>/attachments', methods=['POST'])
 def upload_attachment(project_id, item_id):
     """Upload a file and attach it to a backlog item."""
@@ -2037,6 +2085,32 @@ def upload_attachment(project_id, item_id):
     f = request.files['file']
     if not f.filename:
         return jsonify({'error': 'empty filename'}), 400
+
+    # P2-2: enforce per-file + per-project cumulative upload limits before
+    # touching disk. Limits default to 0 (unlimited) so this is a no-op
+    # unless Ron sets upload_max_file_bytes / upload_quota_bytes globally
+    # or per-project.
+    incoming = _incoming_file_size(f)
+    max_file = _upload_limit(p, 'upload_max_file_bytes')
+    if max_file and incoming > max_file:
+        _log_agent_activity(
+            project_id,
+            f"Upload rejected: '{f.filename}' is {incoming} B, over the "
+            f"{max_file} B per-file limit")
+        return jsonify({'error': 'file too large',
+                        'limit_bytes': max_file,
+                        'file_bytes': incoming}), 413
+    quota = _upload_limit(p, 'upload_quota_bytes')
+    if quota:
+        used = _project_attachment_usage(p)
+        if used + incoming > quota:
+            _log_agent_activity(
+                project_id,
+                f"Upload rejected: project attachment quota exceeded "
+                f"({used}+{incoming} B > {quota} B)")
+            return jsonify({'error': 'project upload quota exceeded',
+                            'quota_bytes': quota, 'used_bytes': used,
+                            'file_bytes': incoming}), 413
 
     original_name = f.filename
     ext = Path(original_name).suffix.lower()
@@ -2219,6 +2293,15 @@ def agent_upload_image():
     f = request.files['file']
     if not f.filename:
         return jsonify({'error': 'empty filename'}), 400
+    # P2-2: per-file cap only — this endpoint has no project context for a
+    # cumulative quota. 0 = unlimited (default).
+    max_file = _upload_limit(None, 'upload_max_file_bytes')
+    if max_file:
+        incoming = _incoming_file_size(f)
+        if incoming > max_file:
+            return jsonify({'error': 'file too large',
+                            'limit_bytes': max_file,
+                            'file_bytes': incoming}), 413
     ext = Path(f.filename).suffix.lower() or '.png'
     stored_name = f'agent_{uuid.uuid4().hex[:10]}{ext}'
     dest = UPLOADS_DIR / stored_name
