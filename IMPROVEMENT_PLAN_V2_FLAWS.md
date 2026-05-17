@@ -83,3 +83,26 @@ in each sprint's commit so Ron can correct. Flagged per-item as reached.
   harness sanity tests + `tests.yml` CI (PR-scoped). `pytest` green (6/6).
   Flaws F3/F4 applied. Per-P0 regression tests deferred to Sprint 2 (plan
   says pair them with each fix).
+- **Sprint 2 (P0-1..P0-7)** ✅ — `github_sync.py` rewritten with all 7
+  fixes; `tests/test_github_sync_p0.py` (10 tests). **Regression proof
+  done:** restored `github_sync.py.orig`, ran the P0 file → 9/10 FAIL on
+  unfixed code; all 10 PASS on fixed. (The 1 that passes on both —
+  `github_adopted_when_local_untouched` — is a deliberate non-regression
+  guard, since GitHub-wins was the old behavior.) Full suite 16/16 green.
+  Design notes for Ron's review:
+  - P0-1: single high `--limit 2000` (gh paginates GraphQL internally up
+    to the cap) + truncation detection that disables P0-4 that cycle.
+  - P0-2: `last_synced_state` = 3-way base. Missing base (pre-upgrade /
+    freshly-linked items) seeds from current local values → first cycle
+    behaves like the old GitHub-wins path, then 3-way engages. Conflict
+    (both sides moved) = local wins + activity-log line.
+  - P0-3: close/reopen only when local status ≠ base status; base updated
+    on successful push so it doesn't re-fire.
+  - P0-4: missing number ⇒ unlink + `github_deleted=True`, task kept;
+    skipped when list truncated; resurrected if the issue reappears.
+  - P0-5: `sanitize()` applied symmetrically (push title + stored back).
+  - P0-6: body from `body|notes|description`, new `sanitize_body()`
+    (65 KB cap vs. the 1 KB title cap).
+  - P0-7: `_MAX_PUSH_CREATES_PER_CYCLE=25`; remainder deferred + logged.
+  Schema change: additive `last_synced_state` / `github_deleted` keys —
+  old code ignores them, so downgrade is safe (noted in module docstring).
