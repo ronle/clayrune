@@ -188,7 +188,7 @@ try:
     import mc_remote_iface  # noqa: F401  (import for side-effect: surface available)
 except Exception as _e:
     mc_remote_iface = None  # type: ignore[assignment]
-    print(f"[remote-access] mc_remote_iface not available: {_e}", flush=True)
+    _log(f"[remote-access] mc_remote_iface not available: {_e}", flush=True)
 
 if mc_remote_iface is not None:
     # Dev stub takes precedence when its env var is set — useful for UI work
@@ -199,17 +199,17 @@ if mc_remote_iface is not None:
         try:
             from mc_remote_iface.dev_stub import maybe_register_dev_stub
             if maybe_register_dev_stub():
-                print(f"[remote-access] dev stub registered "
+                _log(f"[remote-access] dev stub registered "
                       f"(MC_DEV_REMOTE_STUB={os.environ.get('MC_DEV_REMOTE_STUB')})", flush=True)
         except Exception as _e:
-            print(f"[remote-access] dev stub unavailable: {_e}", flush=True)
+            _log(f"[remote-access] dev stub unavailable: {_e}", flush=True)
     else:
         try:
             import mc_remote  # noqa: F401  (provider self-registers via __init__)
         except Exception as _e:
             # Absence is normal in an open-source build with no proprietary
             # provider installed. Log at info volume only.
-            print(f"[remote-access] no provider installed: {_e}", flush=True)
+            _log(f"[remote-access] no provider installed: {_e}", flush=True)
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -236,6 +236,7 @@ def _load_config():
         # overridden per-project via the arbitrary-key update_project path.
         'upload_quota_bytes': 0,
         'upload_max_file_bytes': 0,
+        'log_level': 'info',  # P2-3: debug|info|warn|error gate for _log()
         'condense_threshold_kb': 30,
         'condense_model': '',
         'condense_enabled': True,
@@ -270,6 +271,30 @@ def _load_config():
 
 CONFIG = _load_config()
 PORT = int(os.environ.get('MC_PORT', CONFIG.get('port', 5199)))
+
+# ── Logging shim (IMPROVEMENT_PLAN_V2.md P2-3) ───────────────────────────────
+# Single chokepoint for the ~100 diagnostic _log()s. Deliberately
+# _log()-signature-compatible: *args + **kw pass straight through, so the
+# `_log(` → `_log(` sweep is purely mechanical and behavior-IDENTICAL at
+# the default level ('info' shows everything info+). Set `log_level` to
+# 'warn'/'error' to quiet the chatter, or 'debug' for more. Levels are
+# advisory — a bare `_log("...")` is 'info'; pass level='warn'/'error' at
+# noteworthy call sites over time (opportunistic, not a sweep).
+import builtins as _builtins
+
+_LOG_LEVELS = {'debug': 10, 'info': 20, 'warn': 30, 'error': 40}
+
+
+def _log(*args, level='info', **kw):
+    """_log()-compatible, level-gated. Default level keeps current output
+    exactly (info threshold ≤ info). flush defaults True (most existing
+    call sites already pass flush=True; making it the default is harmless
+    and keeps subprocess-interleaved logs ordered)."""
+    threshold = _LOG_LEVELS.get(str(CONFIG.get('log_level', 'info')).lower(), 20)
+    if _LOG_LEVELS.get(level, 20) < threshold:
+        return
+    kw.setdefault('flush', True)
+    _builtins.print(*args, **kw)
 
 @app.after_request
 def add_cors_headers(response):
@@ -878,7 +903,7 @@ def _project_guardian_loop(manager):
             try:
                 _guardian_check_session(sid, session, now)
             except Exception as e:
-                print(f"[guardian:{manager.project_id[:8]}] Error checking {sid[:8]}: {e}")
+                _log(f"[guardian:{manager.project_id[:8]}] Error checking {sid[:8]}: {e}")
 
 # ── Memory condensation state ────────────────────────────────────────────────
 _condensing_projects = set()
@@ -1045,7 +1070,7 @@ def load_projects():
             p.setdefault('project_path', '')
             projects.append(p)
         except Exception as e:
-            print(f"Error loading {f}: {e}")
+            _log(f"Error loading {f}: {e}")
     projects.sort(key=lambda p: (p.get('display_order', 9999), p.get('last_updated', '1970-01-01T00:00:00Z')))
     # Secondary sort: within same display_order, most recently updated first
     projects.sort(key=lambda p: p.get('last_updated', '1970-01-01T00:00:00Z'), reverse=True)
@@ -3262,7 +3287,7 @@ def _auto_recover_failed_resume(session):
 
     session['log_lines'].append(
         f'[Resume of session {resume_id[:12]} failed — restarting fresh]')
-    print(f"[dispatch] Resume {resume_id[:12]} failed for {project_id}, retrying fresh")
+    _log(f"[dispatch] Resume {resume_id[:12]} failed for {project_id}, retrying fresh")
     _log_agent_activity(project_id, f"Resume failed, restarting fresh: {task[:80]}")
 
     context = _build_agent_context(p)
@@ -3335,7 +3360,7 @@ def _auto_recover_failed_resume(session):
     except Exception as e:
         session['log_lines'].append(f'[Fresh restart also failed: {e}]')
         session['status'] = 'error'
-        print(f"[dispatch] Fresh retry failed for {project_id}: {e}")
+        _log(f"[dispatch] Fresh retry failed for {project_id}: {e}")
 
 
 def _log_agent_activity(project_id, msg):
@@ -3448,7 +3473,7 @@ def _backfill_agent_log_from_transcripts(project_id, project):
     if added:
         log.sort(key=lambda e: e.get('ts', ''), reverse=True)
         _save_agent_log(project_id, log)
-        print(f"[backfill] {project_id}: added {added} synthesized log entr{'y' if added == 1 else 'ies'} from transcripts")
+        _log(f"[backfill] {project_id}: added {added} synthesized log entr{'y' if added == 1 else 'ies'} from transcripts")
     return added
 
 
@@ -3462,7 +3487,7 @@ def _backfill_all_agent_logs():
     try:
         projects = load_projects()
     except Exception as e:
-        print(f"[backfill] load_projects failed: {e}")
+        _log(f"[backfill] load_projects failed: {e}")
         return
     total = 0
     for p in projects:
@@ -3475,9 +3500,9 @@ def _backfill_all_agent_logs():
         try:
             total += _backfill_agent_log_from_transcripts(pid, p)
         except Exception as e:
-            print(f"[backfill] {pid}: {e}")
+            _log(f"[backfill] {pid}: {e}")
     if total:
-        print(f"[backfill] done: {total} synthesized entr{'y' if total == 1 else 'ies'} across {len(projects)} project(s)")
+        _log(f"[backfill] done: {total} synthesized entr{'y' if total == 1 else 'ies'} across {len(projects)} project(s)")
 
 
 _SCRIBE_TERMINAL_STATUSES = ('completed', 'error', 'stopped', 'interrupted')
@@ -3508,7 +3533,7 @@ def _reconcile_unscribed_sessions():
     try:
         projects = load_projects()
     except Exception as e:
-        print(f"[scribe-reconcile] load_projects failed: {e}")
+        _log(f"[scribe-reconcile] load_projects failed: {e}")
         return
     baselined = scribed_n = 0
     for p in projects:
@@ -3558,13 +3583,13 @@ def _reconcile_unscribed_sessions():
                         scribed_n += 1
                         done += 1
                 except Exception as ex:
-                    print(f"[scribe-reconcile] {pid} entry: {ex}")
+                    _log(f"[scribe-reconcile] {pid} entry: {ex}")
             if wrote:
                 _save_agent_log(pid, log)
         except Exception as e:
-            print(f"[scribe-reconcile] {pid}: {e}")
+            _log(f"[scribe-reconcile] {pid}: {e}")
     if baselined or scribed_n:
-        print(f"[scribe-reconcile] baselined {baselined} project(s); "
+        _log(f"[scribe-reconcile] baselined {baselined} project(s); "
               f"reconciled {scribed_n} previously-unscribed session(s)")
 
 
@@ -3575,11 +3600,11 @@ def _startup_memory_maintenance():
     try:
         _backfill_all_agent_logs()
     except Exception as e:
-        print(f"[backfill] failed: {e}")
+        _log(f"[backfill] failed: {e}")
     try:
         _reconcile_unscribed_sessions()
     except Exception as e:
-        print(f"[scribe-reconcile] bootstrap failed: {e}")
+        _log(f"[scribe-reconcile] bootstrap failed: {e}")
 
 
 def _revive_history_lines(project_path, claude_sid, user_label, max_messages=40):
@@ -3629,7 +3654,7 @@ def _transcript_buffer_lines(project_path, claude_sid, user_label, max_messages=
                     lines.append(txt)
         return lines
     except Exception as e:
-        print(f"[transcript-render] failed: {e}")
+        _log(f"[transcript-render] failed: {e}")
         return []
 
 
@@ -3700,7 +3725,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
                 creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
             )
         except Exception as e:
-            print(f"[revive] {project_id}: spawn failed: {e}")
+            _log(f"[revive] {project_id}: spawn failed: {e}")
             return None
         threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
         _register_process(proc, 'Agent revived (B)', 'agent', session_id, project_id, message[:80])
@@ -3741,7 +3766,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
                 proc.stdin.flush()
             except Exception as e:
                 session['log_lines'].append(f'[stdin write error on revive: {e}]')
-        print(f"[revive] {project_id}: Mode B revived session {session_id} via -r {claude_sid[:12]}")
+        _log(f"[revive] {project_id}: Mode B revived session {session_id} via -r {claude_sid[:12]}")
         return session
 
     # Mode A
@@ -3760,7 +3785,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
             creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
         )
     except Exception as e:
-        print(f"[revive] {project_id}: spawn failed: {e}")
+        _log(f"[revive] {project_id}: spawn failed: {e}")
         return None
     threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
     _register_process(proc, 'Agent revived (A)', 'agent', session_id, project_id, message[:80])
@@ -3792,7 +3817,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
         agent_sessions[session_id] = session
         mgr.session_ids.add(session_id)
     threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True).start()
-    print(f"[revive] {project_id}: Mode A revived session {session_id} via -r {claude_sid[:12]}")
+    _log(f"[revive] {project_id}: Mode A revived session {session_id} via -r {claude_sid[:12]}")
     return session
 
 
@@ -3842,7 +3867,7 @@ def _log_agent_dispatch_pending(session):
         log.insert(0, entry)
         _save_agent_log(project_id, log)
     except Exception as e:
-        print(f"[dispatch-log] {project_id}: pending write failed: {e}")
+        _log(f"[dispatch-log] {project_id}: pending write failed: {e}")
 
 
 def _reconcile_pending_agent_log_entries():
@@ -3856,7 +3881,7 @@ def _reconcile_pending_agent_log_entries():
     try:
         projects = load_projects()
     except Exception as e:
-        print(f"[reconcile-pending] load_projects failed: {e}")
+        _log(f"[reconcile-pending] load_projects failed: {e}")
         return
     flipped_total = 0
     for p in projects:
@@ -3876,9 +3901,9 @@ def _reconcile_pending_agent_log_entries():
             if changed:
                 _save_agent_log(pid, log)
         except Exception as e:
-            print(f"[reconcile-pending] {pid}: {e}")
+            _log(f"[reconcile-pending] {pid}: {e}")
     if flipped_total:
-        print(f"[reconcile-pending] flipped {flipped_total} orphaned in_progress entr{'y' if flipped_total == 1 else 'ies'} to 'interrupted'")
+        _log(f"[reconcile-pending] flipped {flipped_total} orphaned in_progress entr{'y' if flipped_total == 1 else 'ies'} to 'interrupted'")
 
 
 def _write_session_memory(p, session, status, summary_fallback, ts_date):
@@ -4484,7 +4509,7 @@ def _dispatch_condense(project):
             # Reuse existing stream reader
             _read_agent_stream(proc, session)
         except Exception as e:
-            print(f"[condense] error for {pid}: {e}")
+            _log(f"[condense] error for {pid}: {e}")
             _set_condense_status(pid, state='error', error=str(e),
                                  finished_at=now_iso())
         finally:
@@ -4538,7 +4563,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
         too_large, size_bytes = _session_too_large(pp, resume_id)
         if too_large:
             size_mb = size_bytes / (1024 * 1024)
-            print(f"[dispatch] Session {resume_id} transcript is {size_mb:.1f} MB — starting fresh")
+            _log(f"[dispatch] Session {resume_id} transcript is {size_mb:.1f} MB — starting fresh")
             _log_agent_activity(project_id,
                                 f"Auto-fresh: previous session too large ({size_mb:.0f} MB)")
             # Prepend context about the previous session
@@ -4688,9 +4713,9 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
 
     resume_label = f" (resuming {resume_id})" if resume_id else ""
     try:
-        print(f"[dispatch] cmd: {' '.join(cmd)}")
+        _log(f"[dispatch] cmd: {' '.join(cmd)}")
     except (UnicodeEncodeError, UnicodeDecodeError):
-        print(f"[dispatch] cmd: {' '.join(cmd).encode('ascii', 'replace').decode()}")
+        _log(f"[dispatch] cmd: {' '.join(cmd).encode('ascii', 'replace').decode()}")
     _log_agent_activity(project_id, f"Agent dispatched{resume_label}: {task[:100]}")
     return session_id
 
@@ -4975,13 +5000,13 @@ def agent_followup(project_id):
 
                 if not claude_sid and not was_resume:
                     # No session ID at all and wasn't a resume — can't continue
-                    print(f"[followup] {project_id}: no claude_session_id, starting fresh")
+                    _log(f"[followup] {project_id}: no claude_session_id, starting fresh")
                     context = _build_agent_context(p)
                     message = (f"[Previous conversation had no session ID to resume. "
                                f"Starting fresh.]\n\n{message}")
                 elif not claude_sid and was_resume:
                     # Was a resume but CLI never emitted a session_id — start fresh
-                    print(f"[followup] {project_id}: resume never emitted session_id, starting fresh")
+                    _log(f"[followup] {project_id}: resume never emitted session_id, starting fresh")
                     context = _build_agent_context(p)
                     message = (f"[Resumed session did not provide a continuable session ID. "
                                f"Starting fresh.]\n\n{message}")
@@ -4989,7 +5014,7 @@ def agent_followup(project_id):
                     # Session was originally a resume that succeeded but process died.
                     # Don't try to -r the same session again — it already proved fragile.
                     # Start fresh to avoid the same failure loop.
-                    print(f"[followup] {project_id}: resumed session {claude_sid[:12]} died after turn, starting fresh")
+                    _log(f"[followup] {project_id}: resumed session {claude_sid[:12]} died after turn, starting fresh")
                     context = _build_agent_context(p)
                     existing['log_lines'].append(
                         f'[Resumed session process exited — restarting fresh]')
@@ -5000,7 +5025,7 @@ def agent_followup(project_id):
                     too_large, size_bytes = _session_too_large(pp, claude_sid)
                     if too_large:
                         size_mb = size_bytes / (1024 * 1024)
-                        print(f"[followup] Session {claude_sid} is {size_mb:.1f} MB — starting fresh")
+                        _log(f"[followup] Session {claude_sid} is {size_mb:.1f} MB — starting fresh")
                         _log_agent_activity(project_id,
                                             f"Auto-fresh: session too large ({size_mb:.0f} MB)")
                         existing['log_lines'].append(
@@ -5010,7 +5035,7 @@ def agent_followup(project_id):
                                    f"to resume ({size_mb:.0f} MB). Start fresh.]\n\n{message}")
                     else:
                         resume_flags = ['-r', claude_sid]
-                        print(f"[followup] {project_id}: respawning Mode B with -r {claude_sid[:12]}")
+                        _log(f"[followup] {project_id}: respawning Mode B with -r {claude_sid[:12]}")
 
                 user_label = CONFIG.get('user_name') or 'User'
                 existing['log_lines'].append(f"\n> {user_label}: {message}\n")
@@ -5097,14 +5122,14 @@ def agent_followup(project_id):
             _kill_proc_background(rb['old_proc'])
         def _do_respawn_b():
             try:
-                print(f"[respawn-B] {rb['project_id']}: spawning cmd={' '.join(rb['cmd'][:5])}...")
+                _log(f"[respawn-B] {rb['project_id']}: spawning cmd={' '.join(rb['cmd'][:5])}...")
                 proc = subprocess.Popen(
                     rb['cmd'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, cwd=rb['pp'],
                     text=True, encoding='utf-8', errors='replace',
                     creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
                 )
-                print(f"[respawn-B] {rb['project_id']}: spawned PID {proc.pid}")
+                _log(f"[respawn-B] {rb['project_id']}: spawned PID {proc.pid}")
                 threading.Thread(target=_hide_windows_delayed,
                                  args=(proc.pid,), daemon=True).start()
                 _register_process(proc, 'Agent respawn (B)', 'agent',
@@ -5130,7 +5155,7 @@ def agent_followup(project_id):
                     proc.stdin.write(stdin_msg)
                     proc.stdin.flush()
             except Exception as e:
-                print(f"[respawn-B] {rb['project_id']}: FAILED — {e}")
+                _log(f"[respawn-B] {rb['project_id']}: FAILED — {e}")
                 rb['existing']['log_lines'].append(f'[respawn error: {e}]')
                 rb['existing']['status'] = 'error'
                 rb['existing']['last_status_change_time'] = _time.time()
@@ -5148,7 +5173,7 @@ def agent_followup(project_id):
                 too_large, size_bytes = _session_too_large(pp, claude_sid)
                 if too_large:
                     size_mb = size_bytes / (1024 * 1024)
-                    print(f"[followup-A] Session {claude_sid} is {size_mb:.1f} MB — starting fresh")
+                    _log(f"[followup-A] Session {claude_sid} is {size_mb:.1f} MB — starting fresh")
                     _log_agent_activity(project_id,
                                         f"Auto-fresh: session too large ({size_mb:.0f} MB)")
                     with get_manager(project_id).lock:
@@ -6004,7 +6029,7 @@ def register_external_process():
     # Verify PID is actually running (warn but still register — process may have exited quickly)
     alive = _pid_is_alive(pid)
     if not alive:
-        print(f"[process-register] Warning: PID {pid} not detected as alive, registering anyway")
+        _log(f"[process-register] Warning: PID {pid} not detected as alive, registering anyway")
     project_name = project_id
     try:
         p = load_project(project_id)
@@ -6405,10 +6430,10 @@ def _hm_reconcile_stale_on_startup():
                 _hm_save_manifest(d.name, manifest)
                 transitioned += 1
     except Exception as e:
-        print(f"[hivemind-reconcile] failed: {e}")
+        _log(f"[hivemind-reconcile] failed: {e}")
         return
     if transitioned:
-        print(f"[hivemind-reconcile] marked {transitioned} long-active hivemind(s) as 'stale' (>{_HM_STALE_HOURS}h idle)")
+        _log(f"[hivemind-reconcile] marked {transitioned} long-active hivemind(s) as 'stale' (>{_HM_STALE_HOURS}h idle)")
 
 
 # ── Hivemind API: Management ─────────────────────────────────────────────────
@@ -7132,7 +7157,7 @@ def _hm_dispatch_orchestrator(hivemind_id, task_type, extra_context=''):
             })
 
         except Exception as e:
-            print(f"[hivemind-orchestrator-cli] error: {e}")
+            _log(f"[hivemind-orchestrator-cli] error: {e}")
         finally:
             with _hivemind_orch_lock:
                 _hivemind_orchestrating.discard(hivemind_id)
@@ -7245,7 +7270,7 @@ def _hm_auto_spawn_workers(hivemind_id):
             _log_agent_activity(project_id, f"Hivemind auto-spawned worker for {ws.get('title', ws_id)}")
 
         except Exception as e:
-            print(f"[hivemind] Failed to spawn worker for {ws_id}: {e}")
+            _log(f"[hivemind] Failed to spawn worker for {ws_id}: {e}")
 
 
 # ── Hivemind API: Message Bus ────────────────────────────────────────────────
@@ -7647,7 +7672,7 @@ def _hivemind_orchestrator_loop():
                     _hm_dispatch_orchestrator(hivemind_id, 'synthesize')
 
         except Exception as e:
-            print(f"[hivemind-orchestrator] Error: {e}")
+            _log(f"[hivemind-orchestrator] Error: {e}")
 
         _hivemind_orchestrator_stop.wait(10)
 
@@ -8763,11 +8788,11 @@ def _install_builtin_skills():
         updated = result.get('updated') or []
         preserved = result.get('preserved') or []
         if installed or updated:
-            print(f"[skills] installed={installed} updated={updated}")
+            _log(f"[skills] installed={installed} updated={updated}")
         if preserved:
-            print(f"[skills] preserved user-modified builtins: {preserved}")
+            _log(f"[skills] preserved user-modified builtins: {preserved}")
     except Exception as e:
-        print(f"[skills] builtin install failed: {e}")
+        _log(f"[skills] builtin install failed: {e}")
 
 
 # ── MCP server endpoints ────────────────────────────────────────────────────
@@ -9100,7 +9125,7 @@ _CONFIG_EDITABLE_KEYS = {
     'condense_model', 'index_line_budget', 'index_line_hard_floor',
     'scribe_enabled', 'scribe_model', 'scribe_reconcile_enabled',
     'scribe_reconcile_cap', 'read_floor_topk', 'projects_base',
-    'shared_rules_path', 'port',
+    'shared_rules_path', 'port', 'log_level',
 }
 
 @app.route('/api/config')
@@ -9557,9 +9582,9 @@ def _scheduler_loop():
                                                           trigger_type='schedule',
                                                           trigger_id=sched.get('id', ''))
                             tag = ' (resumed)' if resume_id else ''
-                            print(f"[scheduler] Dispatched{tag} for {pid}: {task[:60]} -> session {sid}")
+                            _log(f"[scheduler] Dispatched{tag} for {pid}: {task[:60]} -> session {sid}")
                         except Exception as e:
-                            print(f"[scheduler] Failed to dispatch for {pid}: {e}")
+                            _log(f"[scheduler] Failed to dispatch for {pid}: {e}")
                     sched['last_run'] = now_iso()
                     if sched.get('schedule_type') == 'once':
                         sched['enabled'] = False
@@ -9570,7 +9595,7 @@ def _scheduler_loop():
             if changed:
                 _save_schedules(schedules)
         except Exception as e:
-            print(f"[scheduler] Error: {e}")
+            _log(f"[scheduler] Error: {e}")
 
         # ── GitHub auto-sync (every 5 minutes) ──
         try:
@@ -9589,9 +9614,9 @@ def _scheduler_loop():
                     try:
                         _gh_sync.sync_project(proj['id'])
                     except Exception as e:
-                        print(f"[scheduler] GitHub sync error for {proj['id']}: {e}")
+                        _log(f"[scheduler] GitHub sync error for {proj['id']}: {e}")
         except Exception as e:
-            print(f"[scheduler] GitHub sync loop error: {e}")
+            _log(f"[scheduler] GitHub sync loop error: {e}")
 
         # ── Purge stale sessions from memory ──────────────────────────────
         try:
@@ -9619,7 +9644,7 @@ def _scheduler_loop():
                         mgr.session_ids.discard(sid)
                     total_stale += len(stale)
             if total_stale:
-                print(f"[scheduler] Purged {total_stale} stale agent session(s)")
+                _log(f"[scheduler] Purged {total_stale} stale agent session(s)")
             with terminal_lock:
                 stale_t = []
                 for sid, s in terminal_sessions.items():
@@ -9628,7 +9653,7 @@ def _scheduler_loop():
                 for sid in stale_t:
                     terminal_sessions.pop(sid, None)
         except Exception as e:
-            print(f"[scheduler] Session purge error: {e}")
+            _log(f"[scheduler] Session purge error: {e}")
 
         # ── Process tracker: liveness sweep ───────────────────────────────
         try:
@@ -9638,9 +9663,9 @@ def _scheduler_loop():
                 for pid in dead_pids:
                     tracked_processes.pop(pid, None)
                 if dead_pids:
-                    print(f"[scheduler] Cleaned {len(dead_pids)} dead process(es) from tracker")
+                    _log(f"[scheduler] Cleaned {len(dead_pids)} dead process(es) from tracker")
         except Exception as e:
-            print(f"[scheduler] Process tracker sweep error: {e}")
+            _log(f"[scheduler] Process tracker sweep error: {e}")
 
         _scheduler_stop.wait(30)
 
@@ -9944,7 +9969,7 @@ def _guardian_check_session(sid, session, now):
     if status == 'running' and now - last_change > 15:
         proc_dead = proc is None or proc.poll() is not None
         if proc_dead:
-            print(f"[guardian] Session {sid[:8]}: stuck running, process dead/missing")
+            _log(f"[guardian] Session {sid[:8]}: stuck running, process dead/missing")
             with get_manager(session['project_id']).lock:
                 session['status'] = 'error'
                 session['last_status_change_time'] = now
@@ -9966,7 +9991,7 @@ def _guardian_check_session(sid, session, now):
             if session.get('waiting_for_question') or session.get('waiting_for_plan_approval'):
                 return
             old_status = status
-            print(f"[guardian] Session {sid[:8]}: PID {proc.pid} dead, was {old_status}")
+            _log(f"[guardian] Session {sid[:8]}: PID {proc.pid} dead, was {old_status}")
             with get_manager(session['project_id']).lock:
                 if mode == 'B':
                     session['process_alive'] = False
@@ -9983,7 +10008,7 @@ def _guardian_check_session(sid, session, now):
     if status == 'running' and proc and proc.poll() is None:
         silent_secs = now - last_output
         if silent_secs > GUARDIAN_HUNG_TIMEOUT and _proc_is_cpu_idle(session, proc, now):
-            print(f"[guardian] Session {sid[:8]}: no output for {silent_secs:.0f}s, killing")
+            _log(f"[guardian] Session {sid[:8]}: no output for {silent_secs:.0f}s, killing")
             with get_manager(session['project_id']).lock:
                 session['log_lines'].append(
                     f'[Guardian: no output for {silent_secs:.0f}s — killing hung process]')
@@ -10098,9 +10123,9 @@ def _check_port_conflict():
                 # Clean — clear the marker so a subsequent restart starts fresh
                 # and doesn't inherit a stale value.
                 os.environ.pop('MC_RESTART_FROM_PID', None)
-                print(f"[port-conflict] dying parent (PID {restart_parent}) released port {PORT}; continuing.", flush=True)
+                _log(f"[port-conflict] dying parent (PID {restart_parent}) released port {PORT}; continuing.", flush=True)
                 return
-        print(f"[port-conflict] waited 15s for parent PID {restart_parent} to release port {PORT}; falling through to conflict check.", flush=True)
+        _log(f"[port-conflict] waited 15s for parent PID {restart_parent} to release port {PORT}; falling through to conflict check.", flush=True)
 
     other_pids: list[str] = []
     pid_details: dict[str, str] = {}
@@ -10168,7 +10193,7 @@ def _check_port_conflict():
         "=" * 72,
         "",
     ]
-    print('\n'.join(msg_lines), flush=True)
+    _log('\n'.join(msg_lines), flush=True)
 
     # Forensic log
     try:
@@ -10182,7 +10207,7 @@ def _check_port_conflict():
         pass
 
     if os.environ.get('MC_ALLOW_PORT_CONFLICT') == '1':
-        print(f"[port-conflict] MC_ALLOW_PORT_CONFLICT=1 set — proceeding ANYWAY. "
+        _log(f"[port-conflict] MC_ALLOW_PORT_CONFLICT=1 set — proceeding ANYWAY. "
               f"You will likely see traffic split between instances.", flush=True)
         return
 
@@ -10360,7 +10385,7 @@ if os.environ.get('MC_REMOTE_LOCAL_MOCK') == '1':
         except Exception:
             return 'clayrune.io'
 
-    print('[remote-access] LOCAL MOCK control plane enabled at /api/_mock/connect '
+    _log('[remote-access] LOCAL MOCK control plane enabled at /api/_mock/connect '
           '(dev only; do not enable in production)', flush=True)
 
 
@@ -10493,9 +10518,9 @@ def _load_vapid_keys() -> dict:
                 priv_raw = priv_int.to_bytes(32, 'big')
                 d['private'] = base64.urlsafe_b64encode(priv_raw).decode().rstrip('=')
                 needs_persist = True
-                print('[push] migrated VAPID private key from PEM to raw format', flush=True)
+                _log('[push] migrated VAPID private key from PEM to raw format', flush=True)
             except Exception as e:
-                print(f"[push] VAPID PEM migration failed: {e}; regenerating", flush=True)
+                _log(f"[push] VAPID PEM migration failed: {e}; regenerating", flush=True)
                 d = None  # fall through to regen
         if d is not None:
             if not needs_persist:
@@ -10519,7 +10544,7 @@ def _load_vapid_keys() -> dict:
             d = {'public': public_b64, 'private': private_b64, 'created_at': int(_time.time())}
             needs_persist = True
         except Exception as e:
-            print(f"[push] VAPID generation failed: {e}", flush=True)
+            _log(f"[push] VAPID generation failed: {e}", flush=True)
             return {}
 
     if needs_persist:
@@ -10586,11 +10611,11 @@ def _fcm_initialize():
         from firebase_admin import credentials
         cred = credentials.Certificate(str(PUSH_FCM_KEY_PATH))
         _fcm_app = firebase_admin.initialize_app(cred, name='clayrune-fcm')
-        print('[push/fcm] firebase_admin initialized', flush=True)
+        _log('[push/fcm] firebase_admin initialized', flush=True)
         return _fcm_app
     except Exception as e:
         _fcm_init_error = f'{type(e).__name__}: {e}'
-        print(f'[push/fcm] init failed: {_fcm_init_error}', flush=True)
+        _log(f'[push/fcm] init failed: {_fcm_init_error}', flush=True)
         return None
 
 
@@ -10709,7 +10734,7 @@ def _notify_push(title: str, body: str, *, url: str = '',
                 else:
                     failed += 1
                     last_error = err
-                    print(f"[push/fcm] delivery failed for {nonce[:12]}…: {err}", flush=True)
+                    _log(f"[push/fcm] delivery failed for {nonce[:12]}…: {err}", flush=True)
             continue
 
         # Web push (default)
@@ -10738,15 +10763,15 @@ def _notify_push(title: str, body: str, *, url: str = '',
                 failed += 1
                 detail = (resp.text[:200] if resp is not None and resp.text else str(e))
                 last_error = f'code={code} {detail}'
-                print(f"[push] delivery failed for {nonce[:12]}…: code={code} {e} body={detail}", flush=True)
+                _log(f"[push] delivery failed for {nonce[:12]}…: code={code} {e} body={detail}", flush=True)
         except Exception as e:
             failed += 1
             last_error = f'{type(e).__name__}: {e}'
-            print(f"[push] unexpected error for {nonce[:12]}…: {e}", flush=True)
+            _log(f"[push] unexpected error for {nonce[:12]}…: {e}", flush=True)
     if removed:
         for n in removed:
             subs.pop(n, None)
-        print(f"[push] removed {len(removed)} stale subscription(s)", flush=True)
+        _log(f"[push] removed {len(removed)} stale subscription(s)", flush=True)
     _save_push_subscriptions(subs)
     return {
         'ok': True, 'sent': sent, 'failed': failed, 'removed': len(removed),
@@ -10815,7 +10840,7 @@ def _handle_push_signal(project_id: str, session_id: str, msg: dict) -> None:
                          project_id=project_id, session_id=session_id,
                          kind='turn_complete')
     except Exception as e:
-        print(f"[push] _handle_push_signal error: {e}", flush=True)
+        _log(f"[push] _handle_push_signal error: {e}", flush=True)
 
 
 # Endpoints ──────────────────────────────────────────────────────────────────
@@ -10851,7 +10876,7 @@ def push_subscribe():
                 if k != nonce and isinstance(v, dict) and v.get('endpoint') == endpoint:
                     existing = v
                     subs.pop(k, None)
-                    print(f"[push] migrated subscription {k[:12]}… → {nonce[:12]}… (same endpoint, re-OTP)", flush=True)
+                    _log(f"[push] migrated subscription {k[:12]}… → {nonce[:12]}… (same endpoint, re-OTP)", flush=True)
                     break
         subs[nonce] = {
             'label': label[:80] if label != 'Device' else (existing.get('label') or label)[:80],
@@ -10899,7 +10924,7 @@ def push_register_fcm():
                 if k != nonce and isinstance(v, dict) and v.get('token') == token:
                     existing = v
                     subs.pop(k, None)
-                    print(f"[push/fcm] migrated subscription {k[:12]}… → {nonce[:12]}…", flush=True)
+                    _log(f"[push/fcm] migrated subscription {k[:12]}… → {nonce[:12]}…", flush=True)
                     break
         subs[nonce] = {
             'type': 'fcm',
@@ -11407,7 +11432,7 @@ def _enforce_session_labels_once(force: bool = False) -> dict:
     _ENFORCER_STATE['last_revoked_count'] = len(revoked)
     _ENFORCER_STATE['last_skipped_count'] = len(skipped_unsupported)
     if revoked:
-        print(f"[remote-access] auto-revoked {len(revoked)} unnamed session(s): "
+        _log(f"[remote-access] auto-revoked {len(revoked)} unnamed session(s): "
               f"{[r['short_id'] for r in revoked]}", flush=True)
     return {
         'ok': True,
@@ -11440,9 +11465,9 @@ def _warmup_control_plane():
         t0 = _time.monotonic()
         r = requests.get(url, timeout=15)
         dt_ms = int((_time.monotonic() - t0) * 1000)
-        print(f"[remote-access] CP warmup {url} -> {r.status_code} in {dt_ms}ms", flush=True)
+        _log(f"[remote-access] CP warmup {url} -> {r.status_code} in {dt_ms}ms", flush=True)
     except Exception as e:
-        print(f"[remote-access] CP warmup failed (will not retry): {e}", flush=True)
+        _log(f"[remote-access] CP warmup failed (will not retry): {e}", flush=True)
 
 
 def _session_label_enforcer_loop():
@@ -11453,7 +11478,7 @@ def _session_label_enforcer_loop():
             with _enforcer_lock:
                 _enforce_session_labels_once()
         except Exception as e:
-            print(f"[remote-access] enforcer crashed: {e}", flush=True)
+            _log(f"[remote-access] enforcer crashed: {e}", flush=True)
             _ENFORCER_STATE['last_error'] = str(e)
         _time.sleep(interval)
 
@@ -11554,7 +11579,7 @@ def _launch_browser_for_user(url: str) -> bool:
         subprocess.Popen(["xdg-open", url], close_fds=True)
         return True
     except Exception as e:
-        print(f"[remote-access] _launch_browser_for_user failed: {e}", flush=True)
+        _log(f"[remote-access] _launch_browser_for_user failed: {e}", flush=True)
         return False
 
 
@@ -11689,7 +11714,7 @@ def remote_sessions():
                     s['label'] = lab.get('label')
                     s['ua'] = lab.get('ua') or ''
     except Exception as _e:
-        print(f"[remote-access] session label enrichment failed: {_e}", flush=True)
+        _log(f"[remote-access] session label enrichment failed: {_e}", flush=True)
     return jsonify(body)
 
 
@@ -12233,7 +12258,7 @@ def _append_restart_log(entry):
         RESTART_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         RESTART_LOG_PATH.write_text(json.dumps(log, indent=2), encoding='utf-8')
     except Exception as e:
-        print(f"[restart] failed to append log: {e}")
+        _log(f"[restart] failed to append log: {e}")
 
 
 def _stop_all_sessions_for_restart(grace_seconds=3.0):
@@ -12264,7 +12289,7 @@ def _stop_all_sessions_for_restart(grace_seconds=3.0):
                     if proc is not None:
                         procs.append(proc)
         except Exception as e:
-            print(f"[restart] graceful stop failed for {sid}: {e}")
+            _log(f"[restart] graceful stop failed for {sid}: {e}")
 
     # Schedule background kills (existing helper handles tree-kill + wait).
     for proc in procs:
@@ -12293,12 +12318,12 @@ def _perform_server_restart_async(audit_entry):
         try:
             _stop_all_sessions_for_restart()
         except Exception as e:
-            print(f"[restart] stop-all failed (continuing anyway): {e}")
+            _log(f"[restart] stop-all failed (continuing anyway): {e}")
         try:
             _append_restart_log(audit_entry)
         except Exception:
             pass
-        print("[restart] spawning fresh server process and exiting old one")
+        _log("[restart] spawning fresh server process and exiting old one")
         # Use subprocess.Popen instead of os.execv. On Windows execv is
         # implemented as spawn-new-then-exit-old AND the new process inherits
         # open handles (including the listening socket). Worse, any child
@@ -12334,7 +12359,7 @@ def _perform_server_restart_async(audit_entry):
                 # CREATE_NEW_CONSOLE branch above gives Windows users a visible window.
             subprocess.Popen([sys.executable] + sys.argv, **popen_kwargs)
         except Exception as e:
-            print(f"[restart] failed to spawn new instance: {e}")
+            _log(f"[restart] failed to spawn new instance: {e}")
             os._exit(1)
         # Give the spawn ~250ms to get past its own startup before we exit and
         # release the listening socket. (The new instance's port-conflict
@@ -12524,7 +12549,7 @@ def _update_check_loop():
         try:
             _refresh_update_cache()
         except Exception as e:
-            print(f"[update-check] loop error: {e}", flush=True)
+            _log(f"[update-check] loop error: {e}", flush=True)
         _time.sleep(_UPDATE_CHECK_INTERVAL_S)
 
 
@@ -12630,15 +12655,15 @@ if __name__ == '__main__':
     try:
         n = _skills.cleanup_stale_staging(max_age_hours=24)
         if n:
-            print(f"[skills] cleaned {n} stale staging dir(s)")
+            _log(f"[skills] cleaned {n} stale staging dir(s)")
     except Exception as e:
-        print(f"[skills] staging cleanup failed: {e}")
+        _log(f"[skills] staging cleanup failed: {e}")
     # Ensure the global incognito pseudo-project exists so it shows up in
     # /api/projects without the FE needing a first-touch bootstrap.
     try:
         _ensure_incognito_project()
     except Exception as e:
-        print(f"[incognito] bootstrap failed: {e}")
+        _log(f"[incognito] bootstrap failed: {e}")
     # Reconcile pending agent_log rows: any 'in_progress' entry leftover from a
     # session that was killed by the previous shutdown is by definition orphaned
     # (no live sessions exist yet at startup). Flip those to 'interrupted' so
@@ -12647,7 +12672,7 @@ if __name__ == '__main__':
     try:
         _reconcile_pending_agent_log_entries()
     except Exception as e:
-        print(f"[reconcile-pending] bootstrap failed: {e}")
+        _log(f"[reconcile-pending] bootstrap failed: {e}")
     # Backfill agent_log from Claude transcripts: makes mid-flight sessions that
     # never finalized (server killed before stream reader's finally) visible in
     # the Agent Log tab. Runs once, in the background, so app.run() isn't blocked.
@@ -12658,7 +12683,7 @@ if __name__ == '__main__':
     try:
         _hm_reconcile_stale_on_startup()
     except Exception as e:
-        print(f"[hivemind-reconcile] bootstrap failed: {e}")
+        _log(f"[hivemind-reconcile] bootstrap failed: {e}")
     # Auto-cleanup unnamed CF Access sessions (per-session revoke, strict mode).
     # Roll back: set auto_revoke_unnamed_sessions=false in data/config.json.
     threading.Thread(target=_session_label_enforcer_loop, daemon=True).start()
@@ -12671,5 +12696,5 @@ if __name__ == '__main__':
     # firing a 12s git operation on every page load. Frontend polls
     # /api/system/update/cached.
     threading.Thread(target=_update_check_loop, daemon=True, name='update-check').start()
-    print(f"Clayrune running at http://localhost:{PORT}")
+    _log(f"Clayrune running at http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
