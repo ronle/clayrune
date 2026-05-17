@@ -1,0 +1,40 @@
+name: Tests
+
+# Safety-net test run for the main app + control plane.
+# Added by IMPROVEMENT_PLAN_V2.md P1-5.
+#
+# Scoped to pull_request + manual dispatch ONLY (deliberately NOT
+# `on: push`): the project convention favors local validation and Ron
+# pushes straight to master, so a per-push run would be pure noise. This
+# gates PRs (the github_sync P0 work + the server.py split land as PRs)
+# without changing the direct-to-master workflow.
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dev deps
+        run: pip install -r requirements-dev.txt
+
+      - name: Main-app tests
+        run: pytest -q
+
+      - name: Control-plane tests
+        run: pytest control_plane/tests -q
