@@ -3174,6 +3174,57 @@ def _backfill_all_agent_logs():
         print(f"[backfill] done: {total} synthesized entr{'y' if total == 1 else 'ies'} across {len(projects)} project(s)")
 
 
+def _revive_history_lines(project_path, claude_sid, user_label, max_messages=40):
+    """Reconstruct prior-conversation log_lines from the on-disk Claude transcript.
+
+    On server restart a session is revived with `-r <claude_sid>` so the model
+    keeps context, but the visible chat buffer would otherwise start empty —
+    the user sees only their own new message, not the agent's earlier reply
+    (this is what makes a tapped push land on a one-sided chat). Re-render the
+    last `max_messages` turns from the transcript in the same buffer format the
+    live stream uses ('> Label: ...' for user turns, raw text for assistant).
+
+    Returns [] on any failure (no transcript, parse error) — revival still
+    proceeds, just without restored history.
+    """
+    lines = _transcript_buffer_lines(project_path, claude_sid, user_label,
+                                     max_messages=max_messages)
+    if lines:
+        lines.append('[— restored from transcript; conversation continues below —]')
+    return lines
+
+
+def _transcript_buffer_lines(project_path, claude_sid, user_label, max_messages=40):
+    """Render a Claude .jsonl transcript into chat-buffer lines (user+assistant).
+
+    Same line format the live stream/log_lines uses: '> Label: ...' for user
+    turns (single buffer entry, leading/trailing newline like the live seed),
+    raw text for assistant turns. tool_call/error rows are skipped — the chat
+    renders user/assistant bubbles and tool noise isn't wanted here. Returns
+    [] on any failure so callers can degrade gracefully.
+    """
+    try:
+        f = _find_transcript_file(project_path, claude_sid)
+        if not f:
+            return []
+        msgs = _parse_transcript_messages(f, max_messages=max_messages)
+        lines = []
+        for m in msgs:
+            role = m.get('role')
+            if role == 'user':
+                txt = (m.get('text') or '').strip()
+                if txt:
+                    lines.append(f"\n> {user_label}: {txt}\n")
+            elif role == 'assistant':
+                txt = (m.get('text') or '').strip()
+                if txt:
+                    lines.append(txt)
+        return lines
+    except Exception as e:
+        print(f"[transcript-render] failed: {e}")
+        return []
+
+
 def _revive_from_agent_log(project_id, session_id, message, p):
     """Revive a finalized/purged session by spawning a fresh process with -r <claude_session_id>.
 
@@ -3222,6 +3273,12 @@ def _revive_from_agent_log(project_id, session_id, message, p):
     mgr.ensure_guardian()
     user_label = CONFIG.get('user_name') or 'User'
     revive_note = f'[Session revived from agent log — resuming claude_session={claude_sid[:12]}]'
+    # Restore the prior conversation into the visible buffer so a tapped push
+    # (about the agent's pre-restart reply) doesn't land on a one-sided chat.
+    # Skipped when the transcript was too large to resume directly (we started
+    # fresh, so there's no coherent -r history to show anyway).
+    history_lines = [] if too_large else _revive_history_lines(pp, claude_sid, user_label)
+    seed_lines = history_lines + [revive_note, f"\n> {user_label}: {message}\n"]
 
     if use_streaming:
         cmd = [_resolve_claude(), *resume_flags, *_build_claude_flags(p, streaming=True)]
@@ -3244,7 +3301,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
             'proc': proc,
             'status': 'running',
             'task': entry.get('task', ''),
-            'log_lines': [revive_note, f"\n> {user_label}: {message}\n"],
+            'log_lines': list(seed_lines),
             'started_at': now_iso(),
             'session_id': session_id,
             'project_id': project_id,
@@ -3304,7 +3361,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
         'proc': proc,
         'status': 'running',
         'task': entry.get('task', ''),
-        'log_lines': [revive_note, f"\n> {user_label}: {message}\n"],
+        'log_lines': list(seed_lines),
         'started_at': now_iso(),
         'session_id': session_id,
         'project_id': project_id,
@@ -6974,6 +7031,50 @@ def get_project_transcript(project_id, claude_session_id):
         'size': size,
         'message_count': len(messages),
         'messages': messages,
+    })
+
+
+@app.route('/api/project/<project_id>/session/<session_id>/reconstruct')
+def reconstruct_dead_session(project_id, session_id):
+    """Rebuild a finalized/purged MC session's chat buffer from its transcript.
+
+    Read-only path for a tapped push whose session is dead (server bounced,
+    not yet revived because the user hasn't sent a follow-up). The status
+    endpoint only knows live in-memory sessions, so without this the deep-link
+    lands on an empty tab and the user sees nothing — the very symptom this
+    closes. Maps MC session_id → agent_log entry → claude_session_id → the
+    on-disk .jsonl, rendered with the same _transcript_buffer_lines() the
+    revive path uses so the read-only view is byte-identical to the live one.
+
+    Returns 404 when the session isn't a known dead session with a resolvable
+    transcript (caller then falls back to its existing behaviour).
+    """
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    # A live session should go through /agent/status, not here.
+    if session_id in agent_sessions:
+        return jsonify({'error': 'session is live'}), 409
+    entry = next((e for e in _load_agent_log(project_id)
+                  if e.get('session_id') == session_id), None)
+    if not entry:
+        return jsonify({'error': 'session not in agent log'}), 404
+    claude_sid = entry.get('claude_session_id')
+    if not claude_sid:
+        return jsonify({'error': 'no claude_session_id to resume from'}), 404
+    user_label = CONFIG.get('user_name') or 'User'
+    lines = _transcript_buffer_lines(p.get('project_path', ''), claude_sid,
+                                     user_label, max_messages=300)
+    if not lines:
+        return jsonify({'error': 'transcript not found or empty'}), 404
+    lines.append('[— read-only history; send a message to resume this session —]')
+    return jsonify({
+        'session_id': session_id,
+        'claude_session_id': claude_sid,
+        'task': entry.get('task', ''),
+        'started_at': entry.get('timestamp', '') or entry.get('started_at', ''),
+        'log_lines': lines,
+        'read_only': True,
     })
 
 

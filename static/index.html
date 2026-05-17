@@ -5460,6 +5460,30 @@ async function _handleDeepLinkFromUrl(rawUrl) {
     // session revived under a new id) fall back to the project's real
     // active session so the conversation still shows.
     try { await fetchAgentStatus(pid); } catch (_) {}
+    // If the deep-linked session isn't live (server bounced and it hasn't
+    // been revived — no follow-up sent yet), it won't be in the status
+    // response at all. Reconstruct a read-only buffer from its transcript so
+    // the tap shows the full conversation (incl. the agent reply the push
+    // was about) instead of an empty tab. Falls back silently if the session
+    // can't be reconstructed.
+    if (!agentStatusCache[sid] && !activeAgentTab[pid]) {
+      try {
+        const rr = await fetch(API_BASE + `/api/project/${pid}/session/${encodeURIComponent(sid)}/reconstruct`);
+        if (rr.ok) {
+          const rd = await rr.json();
+          agentStatusCache[sid] = { status: 'completed', task: rd.task || '', projectId: pid,
+            startedAt: rd.started_at || '', claudeSessionId: rd.claude_session_id || '',
+            _readOnlyRevived: true };
+          agentOutputBuffers[sid] = rd.log_lines || [];
+          agentServerLines[sid] = (rd.log_lines || []).length;
+          if (!agentHistory.find(h => h.sessionId === sid)) {
+            const pName = (allProjects.find(x => x.id === pid) || {}).name || pid;
+            agentHistory.unshift({ projectId: pid, sessionId: sid, projectName: pName,
+              task: rd.task || '', status: 'completed', startedAt: rd.started_at || '' });
+          }
+        }
+      } catch (_) {}
+    }
     const targetSid = agentStatusCache[sid] ? sid : (activeAgentTab[pid] || sid);
     try { switchAgentTab(pid, targetSid); } catch (e) { console.warn('switchAgentTab', e); }
     try { refreshModalById(pid); } catch (_) {}
@@ -9756,7 +9780,11 @@ async function fetchAgentStatus(projectId) {
     // Clean up stale sessions that the server no longer knows about
     // (e.g., after server restart when in-memory sessions are lost)
     const serverSids = new Set(sessions.map(s => s.session_id));
-    const staleEntries = agentHistory.filter(h => h.projectId === projectId && !serverSids.has(h.sessionId));
+    // Read-only reconstructed sessions (deep-link tap on a dead session) are
+    // intentionally client-injected and will never be in serverSids — don't
+    // treat them as stale or a background poll would wipe the tab mid-read.
+    const _isInjectedRO = sid => !!(agentStatusCache[sid] || {})._readOnlyRevived;
+    const staleEntries = agentHistory.filter(h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId));
     for (const stale of staleEntries) {
       delete agentStatusCache[stale.sessionId];
       delete agentOutputBuffers[stale.sessionId];
@@ -9770,10 +9798,11 @@ async function fetchAgentStatus(projectId) {
       }
     }
     if (staleEntries.length > 0) {
-      agentHistory = agentHistory.filter(h => !(h.projectId === projectId && !serverSids.has(h.sessionId)));
+      agentHistory = agentHistory.filter(h => !(h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId)));
     }
-    // Clear active tab if it points to a stale session
-    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId])) {
+    // Clear active tab if it points to a stale session (but keep an injected
+    // read-only tab the user is actively viewing).
+    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId]) && !_isInjectedRO(activeAgentTab[projectId])) {
       delete activeAgentTab[projectId];
     }
 
