@@ -17,6 +17,7 @@ import secrets
 import skills as _skills
 import mcp as _mcp
 import mcp_installer as _mcpinst
+import marketing_preview as _marketing_preview  # P1-1 Tier 1a (blueprint)
 
 
 def _resolve_dirs():
@@ -1039,23 +1040,10 @@ def serve_asset(filename):
 
 
 # ── Marketing-site preview (dev convenience) ─────────────────────────────────
-# Lets you iterate on marketing/index.html etc. by hitting
-# http://localhost:5199/marketing/ in a browser instead of spinning up a
-# separate http server. Also reachable through the Cloudflare tunnel
-# (clayrune.io/marketing/) once remote access is enabled, which is how this
-# preview is useful from a phone before the real website goes live.
-# Not a production hosting path — when the site ships it'll be served by
-# Cloudflare Pages directly off the marketing/ folder, not by Flask.
-@app.route('/marketing/')
-@app.route('/marketing/<path:filename>')
-def serve_marketing(filename='index.html'):
-    marketing_dir = Path(__file__).parent / 'marketing'
-    # Directory-style URLs (e.g. /marketing/v2/) — Flask hands us the path
-    # as 'v2/' but send_from_directory expects a file. Map to index.html.
-    target = (marketing_dir / filename)
-    if target.is_dir():
-        filename = filename.rstrip('/') + '/index.html'
-    return send_from_directory(str(marketing_dir), filename)
+# Extracted to marketing_preview.py (P1-1 Tier 1a). Routes /marketing/ and
+# /marketing/<path> are unchanged — see that module's docstring. `app`
+# exists here (created above), so the blueprint registers at import time.
+_marketing_preview.register(app)
 
 
 # ── "Ask Claydo" guide assistant ────────────────────────────────────────────

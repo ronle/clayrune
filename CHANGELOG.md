@@ -4,6 +4,30 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-17b] — server.py split P1-1 Tier 1a: marketing_preview blueprint
+
+First extraction of the `server.py` blueprint split
+(`IMPROVEMENT_PLAN_V2.md` P1-1, sequenced per `docs/SERVER_SPLIT_PLAN.md`
+Tier 1). No behavior change — code moved verbatim.
+
+**Done.** The `/marketing/` + `/marketing/<path:filename>` preview route
+moved out of `server.py` into a new `marketing_preview.py` Flask
+Blueprint. `server.py` imports it and calls `_marketing_preview.register(app)`
+where the route used to live. `Path(__file__).parent` resolves to the
+same dir (module sits in repo root next to server.py; co-bundled at the
+same _MEIPASS root when frozen), so the `marketing/` folder resolves
+identically in dev and frozen builds.
+
+**Files changed.** `marketing_preview.py` (new), `server.py` (import +
+register call, route block removed), `CHANGELOG.md`.
+
+**Verification.** `pytest -q` 16/16 green; `server.app.url_map`
+confirmed to still expose both `/marketing/` rules via the blueprint.
+
+**Rollback.** Revert this commit (re-inlines the route). No persisted
+state or schema involved. Anchor: tag `plan-v2-sprint4-base` (= the
+commit before Tier 1 started); off-repo copy in `_plan_v2_backups/`.
+
 ## [2026-05-17] — Memory system: server-side Scribe + self-learning pipeline
 
 Headless project agents can't use CC memory plugins, and the old write path
