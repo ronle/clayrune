@@ -4,6 +4,29 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18b] — Step 6 live-enabled + validated end-to-end
+
+Follow-up to the entry below (the original recorded Step 6 as committed
+default-off with behavioral validation "not yet run" — true at that commit;
+this records what happened after). Restarted onto `9683996`, confirmed it
+booted **OFF** (default-off inertness held), then flipped
+`scribe_checkpoint_enabled=true` / `scribe_checkpoint_kb=8` and drove a real
+2-turn Mode-B session. Result: **ALL PASS, first try, no iteration** —
+`checkpoint_extracted` 0→1→2; the `<!-- clayrune:wm:<sid> … -->` marker
+appeared with `byte_offset` advancing across turns (49316→58431);
+`running_summary` changed between turns (the reduce ran); append-only
+`_(live)_` entries written (real summaries); on stop the marker was removed
+(clean teardown) + terminal entry written + agent_log `scribed=True`.
+
+**Step 6 is now ENABLED on this deployment** (`scribe_checkpoint_enabled=true`,
+`scribe_checkpoint_kb=8`) per Ron's call — it ships default-off in code;
+revert any time via the Settings toggle (`scribe_checkpoint_enabled=false`,
+no restart). Soak signal to watch: the `checkpoint_*` counters in
+`/scribe-stats` under real parallel/long-session load. Docs trued up
+(CLAUDE.md, `docs/MEMORY_SYSTEM.md`, `docs/MEMORY_SYSTEM_SPEC.md` header,
+USER_GUIDE Memory & Rules). Step 7 (bge-m3 semantic search) remains
+deliberately deferred — see `decision_step7_semantic_search_deferral` memory.
+
 ## [2026-05-18] — Step 6: mid-session note-taker (implemented, default-OFF)
 
 Mode B (the global `use_streaming_agent` default) keeps one persistent
