@@ -113,8 +113,16 @@ default-off in code; revert with `scribe_checkpoint_enabled=false` (a
 Settings toggle, no restart). So Mode-B sessions now DO capture per-turn,
 not only at teardown. When working on memory code: the Step-6
 `<!-- clayrune:wm:<sid> … -->` watermark markers are load-bearing — never
-strip them; `_commit_managed_entry` is the ONE leaf-locked atomic MEMORY.md
-writer (completion, checkpoint, reconcile all route through it).
+strip them. The MEMORY.md write discipline is **leaf-locked + atomic**:
+`_commit_managed_entry` (completion, checkpoint, reconcile) is one such
+writer; `_condense_apply` (structured Leg C, `condense_mode=structured`) is a
+co-equal second one — both take the SAME per-project `_get_mem_write_lock`,
+both write via `_atomic_write_text`, and both route archive overflow through
+the shared `_append_to_archive`. Any new MEMORY.md mutation MUST follow that
+same lock+atomic+shared-archive discipline (do not add an unlocked or
+non-atomic writer). The legacy `condense_mode=agent` path is the exception
+that proves the rule — it writes from a subprocess outside the lock, which is
+exactly why it needs the `_condense_integrity_check` heal/restore guard.
 
 **Rollback**: `scribe_enabled=false` reverts to the legacy stdout-tail
 write; `scribe_reconcile_enabled=false` disables startup reconcile.

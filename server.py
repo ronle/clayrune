@@ -240,6 +240,11 @@ def _load_config():
         'condense_threshold_kb': 30,
         'condense_model': '',
         'condense_enabled': True,
+        # Leg C executor. 'agent' = legacy free claude -p + Write tool
+        # (default until the structured path is telemetry-validated).
+        # 'structured' = one non-agentic JSON model call applied server-side
+        # through the leaf-locked writer. See docs/CONDENSE_STRUCTURED_DESIGN.md.
+        'condense_mode': 'agent',
         'index_line_budget': 160,      # SPEC §3 Leg C model-tier target (lines)
         'index_line_hard_floor': 185,  # SPEC §3 Leg C mechanical floor (lines)
         'scribe_enabled': True,        # SPEC §3 Leg A session-end scribe
@@ -1120,6 +1125,23 @@ def _should_condense(project, include_claude_md=False):
     # Skip running-agent check when called from pre-dispatch (agent hasn't started yet)
     if not include_claude_md and _has_running_agent(pid):
         return False
+    # The structured executor is line-keyed and only ever acts on MEMORY.md's
+    # managed region. Trigger it on the auto-loaded file's LINE count vs. the
+    # model-tier budget — NOT on combined bytes. Byte-keying would let a large
+    # CLAUDE.md (which structured deliberately doesn't touch) keep the trigger
+    # permanently hot, firing a no-op model call every session-end. This also
+    # makes the structured trigger and its target agree in units (closes
+    # docs/CONDENSE_STRUCTURED_DESIGN.md Open Question #5). The legacy agent
+    # path keeps its existing combined-byte trigger below, unchanged.
+    if (CONFIG.get('condense_mode', 'agent') or 'agent') == 'structured':
+        mem_path = _get_memory_path(project)
+        if not mem_path.exists():
+            return False
+        try:
+            n_lines = len(mem_path.read_text(encoding='utf-8').splitlines())
+        except Exception:
+            return False  # a trigger check must never raise
+        return n_lines > int(CONFIG.get('index_line_budget', 160) or 160)
     mem_path = _get_memory_path(project)
     archive_path = _get_archive_path(project)
     combined = 0
@@ -3129,7 +3151,7 @@ def _read_agent_stream(proc, session):
                 msg_type = msg.get('type', '')
                 # Capture Claude CLI session UUID from init or result messages
                 if 'session_id' in msg:
-                    session['claude_session_id'] = msg['session_id']
+                    _note_claude_sid(session, msg['session_id'])
                 # Refresh the account-global system status cache from
                 # `system/init` and `rate_limit_event` messages (every claude
                 # session emits these). No-op for any other message type.
@@ -3190,7 +3212,7 @@ def _read_agent_stream(proc, session):
                 elif msg_type == 'result':
                     # Capture session_id from result as fallback
                     if 'session_id' in msg:
-                        session['claude_session_id'] = msg['session_id']
+                        _note_claude_sid(session, msg['session_id'])
                     # Capture token usage and cost data
                     if 'usage' in msg:
                         session['usage'] = msg['usage']
@@ -3287,7 +3309,7 @@ def _read_agent_stream_b(proc, session):
                 msg = json.loads(line)
                 msg_type = msg.get('type', '')
                 if 'session_id' in msg:
-                    session['claude_session_id'] = msg['session_id']
+                    _note_claude_sid(session, msg['session_id'])
                 # See Mode A reader: refresh the system-status cache.
                 _capture_system_init(msg)
                 if msg_type == 'assistant' and 'message' in msg:
@@ -3341,7 +3363,7 @@ def _read_agent_stream_b(proc, session):
                                     pass
                 elif msg_type == 'result':
                     if 'session_id' in msg:
-                        session['claude_session_id'] = msg['session_id']
+                        _note_claude_sid(session, msg['session_id'])
                     if 'usage' in msg:
                         session['usage'] = msg['usage']
                     if 'cost_usd' in msg:
@@ -4002,6 +4024,46 @@ def _revive_from_agent_log(project_id, session_id, message, p):
     return session
 
 
+def _note_claude_sid(session, sid):
+    """Record the Claude CLI session UUID on the live session and, the first time
+    it becomes known for a non-manual (scheduled/hivemind) trigger, backfill it
+    into the still-'in_progress' agent_log row.
+
+    Chain fix (Defect B): _log_agent_completion is the only OTHER writer of
+    claude_session_id into the log, and for a persistent Mode-B session it does
+    not run until the process tears down (CLAUDE.md "Mode B caveat"). Without
+    this backfill, _latest_claude_sid_for_schedule / _revive_from_agent_log find
+    an empty csid on the pending row and every scheduled fire cold-starts a new
+    conversation. Called from both stream readers on every message carrying a
+    session_id; the prev==sid early-out makes it a cheap no-op after the first
+    capture (no repeated agent_log IO on the hot path)."""
+    if not sid:
+        return
+    prev = session.get('claude_session_id')
+    session['claude_session_id'] = sid
+    if prev == sid:
+        return
+    tt = session.get('trigger_type')
+    if not tt or tt == 'manual':
+        return
+    if session.get('incognito') or session.get('housekeeping'):
+        return
+    pid = session.get('project_id')
+    msid = session.get('session_id', '')
+    if not pid or not msid:
+        return
+    try:
+        log = _load_agent_log(pid)
+        for e in log:
+            if e.get('session_id') == msid and e.get('status') == 'in_progress':
+                if e.get('claude_session_id') != sid:
+                    e['claude_session_id'] = sid
+                    _save_agent_log(pid, log)
+                break
+    except Exception as ex:
+        _log(f"[csid-backfill] {pid}: {ex}")
+
+
 def _log_agent_dispatch_pending(session):
     """Write a placeholder agent_log row at dispatch time so trigger correlation
     survives a server restart that kills the session before _log_agent_completion
@@ -4045,7 +4107,21 @@ def _log_agent_dispatch_pending(session):
     }
     try:
         log = _load_agent_log(project_id)
-        log.insert(0, entry)
+        # Upsert: a continued scheduled run reuses the prior run's session_id
+        # (see _dispatch_agent_internal reuse_session_id). Refresh that row in
+        # place — reset it to in_progress for this fire, preserve any csid
+        # already captured — instead of orphaning a fresh row every cadence
+        # tick. New session_ids fall through to insert(0) as before.
+        existing_i = next((i for i, e in enumerate(log)
+                           if e.get('session_id') == sid), None)
+        if existing_i is not None:
+            prev = log[existing_i]
+            entry['claude_session_id'] = prev.get('claude_session_id', '')
+            entry['started_at'] = prev.get('started_at', '') or entry['started_at']
+            log.pop(existing_i)
+            log.insert(0, entry)
+        else:
+            log.insert(0, entry)
         _save_agent_log(project_id, log)
     except Exception as e:
         _log(f"[dispatch-log] {project_id}: pending write failed: {e}")
@@ -4087,9 +4163,31 @@ def _reconcile_pending_agent_log_entries():
         _log(f"[reconcile-pending] flipped {flipped_total} orphaned in_progress entr{'y' if flipped_total == 1 else 'ies'} to 'interrupted'")
 
 
+_MEM_ARCHIVE_HEADER = '## Archived Session Log'
+
+
+def _append_to_archive(project, lines):
+    """Append raw '- [' lines to the project's permanent archive, creating the
+    file + header on first write. Read-modify-write under the caller's leaf
+    lock; the archive is append-only cold storage — never truncated (SPEC D3).
+    Shared by _commit_managed_entry (mechanical floor) and _condense_apply."""
+    if not lines:
+        return
+    ap = _get_archive_path(project)
+    ap.parent.mkdir(parents=True, exist_ok=True)
+    prev = ap.read_text(encoding='utf-8').rstrip() if ap.exists() else ''
+    if _MEM_ARCHIVE_HEADER not in prev:
+        prev = (prev + f'\n\n{_MEM_ARCHIVE_HEADER}'
+                if prev else _MEM_ARCHIVE_HEADER)
+    _atomic_write_text(ap, prev + '\n' + '\n'.join(lines) + '\n')
+
+
 def _commit_managed_entry(p, mem_entry=None, wm_upsert=None, wm_remove_sid=None):
-    """Leaf-locked atomic MEMORY.md commit — the ONE write path shared by the
-    completion scribe, the Step-6 checkpoint worker, and teardown. In a single
+    """Leaf-locked atomic MEMORY.md commit — the write path shared by the
+    completion scribe, the Step-6 checkpoint worker, and teardown (the
+    structured Leg C `_condense_apply` is a co-equal writer under the SAME
+    leaf lock + atomic primitive; both route archive overflow through
+    `_append_to_archive`). In a single
     per-project mem-write-locked, atomic (temp+replace) operation:
       • optionally append `mem_entry` ('- [' line) to the managed region,
       • optionally `_wm_upsert`/`_wm_remove` this session's watermark marker,
@@ -4119,19 +4217,7 @@ def _commit_managed_entry(p, mem_entry=None, wm_upsert=None, wm_remove_sid=None)
         while mem_entries and len(
                 _mem_compose(curated, mem_entries, wm_markers).splitlines()) > hard_floor:
             overflow.append(mem_entries.pop(0))  # oldest → archive
-        if overflow:
-            archive_path = _get_archive_path(p)
-            archive_path.parent.mkdir(parents=True, exist_ok=True)
-            archive_existing = ''
-            if archive_path.exists():
-                archive_existing = archive_path.read_text(encoding='utf-8').rstrip()
-            archive_header = '## Archived Session Log'
-            if archive_header not in archive_existing:
-                archive_existing = (archive_existing + f'\n\n{archive_header}'
-                                    if archive_existing else archive_header)
-            _atomic_write_text(
-                archive_path,
-                archive_existing + '\n' + '\n'.join(overflow) + '\n')
+        _append_to_archive(p, overflow)
         _atomic_write_text(mem_path,
                            _mem_compose(curated, mem_entries, wm_markers))
         return _should_condense(p, include_claude_md=True)
@@ -4561,14 +4647,17 @@ _SCRIBE_REFUSAL_MARKERS = (
 )
 
 
-def _scribe_stat(project_id, key):
-    """Increment a scribe-outcome counter (SPEC §8 telemetry). Best-effort."""
+def _scribe_stat(project_id, key, n=1):
+    """Add n to a scribe-outcome counter (SPEC §8 telemetry). Best-effort;
+    n<=0 is a no-op (no file touch)."""
+    if n <= 0:
+        return
     try:
         fp = DATA_DIR / f'{project_id}_scribe_stats.json'
         stats = {}
         if fp.exists():
             stats = json.loads(fp.read_text(encoding='utf-8') or '{}')
-        stats[key] = int(stats.get(key, 0)) + 1
+        stats[key] = int(stats.get(key, 0)) + n
         stats['_updated'] = now_iso()
         fp.write_text(json.dumps(stats, indent=2), encoding='utf-8')
     except Exception:
@@ -4786,6 +4875,360 @@ def _scribe_summarize_text(text, model):
     return out[:300], 'extracted'
 
 
+def _condense_integrity_check(mem_path, pre_mem, pre_wm, rc):
+    """Post-condense safety net for MEMORY.md.
+
+    A condense run is an external `claude` subprocess that rewrites MEMORY.md
+    with the Write tool. If it is truncated mid-task (e.g. it hits --max-turns
+    before the write step, the failure that motivated this guard) it can leave
+    the file empty, drop the managed-region sentinels, nuke the curated index,
+    or — worst — delete a `clayrune:wm:` watermark and lose a live session's
+    progress. Compare the post-run file against the pre-run snapshot and decide:
+
+      ('ok', ...)      file intact (or no pre-image to protect)
+      ('heal', ...)    structure fine but live watermark(s) dropped — caller
+                       re-injects them, preserving the agent's curation work
+      ('restore', ...) hard corruption — caller rewrites `pre_mem` verbatim
+
+    Returns (action, reason, status_kw). status_kw is merged into the per-
+    project condense status so chronic turn-cap failures stay visible in
+    telemetry instead of silently self-healing on the next trigger.
+    """
+    if pre_mem is None:
+        # No pre-image captured — can only trust the exit code.
+        if rc not in (0, None):
+            return 'ok', f'agent exited {rc}', {
+                'state': 'error', 'turn_cap': True,
+                'error': f'condense agent exited {rc} (likely --max-turns); '
+                         'no pre-image captured to verify integrity'}
+        return 'ok', '', {}
+    try:
+        post = mem_path.read_text(encoding='utf-8') if mem_path.exists() else ''
+    except Exception as e:
+        return 'restore', f'post-read failed ({e})', {
+            'state': 'error',
+            'error': f'MEMORY.md unreadable after condense ({e}); restored pre-image'}
+    if not post.strip():
+        return 'restore', 'empty after condense', {
+            'state': 'error',
+            'error': 'MEMORY.md empty after condense; restored pre-image'}
+
+    if (_MEM_BEGIN in pre_mem and _MEM_END in pre_mem
+            and not (_MEM_BEGIN in post and _MEM_END in post)):
+        return 'restore', 'managed-region sentinels missing', {
+            'state': 'error',
+            'error': 'condense dropped the managed-region sentinels; restored pre-image'}
+
+    pre_cur = _mem_split_full(pre_mem)[0]
+    post_cur = _mem_split_full(post)[0]
+    if len(pre_cur) > 200 and len(post_cur) < 0.25 * len(pre_cur):
+        return 'restore', 'curated index lost >75%', {
+            'state': 'error',
+            'error': 'condense truncated the curated index (>75% lost); '
+                     'restored pre-image'}
+
+    post_wm = set(_mem_split_full(post)[2])
+    missing_wm = [w for w in (pre_wm or []) if w not in post_wm]
+    if missing_wm:
+        if rc not in (0, None):
+            kw = {'state': 'error', 'turn_cap': True,
+                  'wm_repaired': len(missing_wm),
+                  'error': f'condense agent exited {rc} (likely --max-turns) and '
+                           f'dropped {len(missing_wm)} live-session watermark(s); '
+                           're-injected, no progress lost'}
+        else:
+            kw = {'state': 'done', 'wm_repaired': len(missing_wm)}
+        return 'heal', f'{len(missing_wm)} watermark(s) dropped', kw
+
+    if rc not in (0, None):
+        return 'ok', f'agent exited {rc}', {
+            'state': 'error', 'turn_cap': True,
+            'error': f'condense agent exited {rc} (likely --max-turns); '
+                     'MEMORY.md integrity OK — no facts or watermarks lost'}
+    return 'ok', '', {}
+
+
+# ── Leg C structured condense (docs/CONDENSE_STRUCTURED_DESIGN.md) ────────────
+# Replaces the free `claude -p` + Write agent with ONE non-agentic JSON model
+# call (reusing _scribe_call: --max-turns 1, no tools, stdin) whose decision
+# list the server applies deterministically through the same leaf-locked
+# atomic writer the completion scribe + Step-6 use. The model never touches the
+# filesystem and never sees `clayrune:wm:` watermarks. Gated by
+# CONFIG['condense_mode'] == 'structured' (default 'agent').
+_CONDENSE_ACTIONS = ('keep', 'demote', 'fold')   # the only valid per-entry verbs
+_CONDENSE_ARCHIVE_TAIL_KB = 4   # dedupe-context slice of the archive sent in
+_CONDENSE_PLAN_PROMPT = (
+    "You are the memory-condense decider (SPEC Leg C). You are NOT an agent: "
+    "you have no tools, you do not write files. You receive a JSON object and "
+    "you return ONLY a JSON object — no prose, no markdown fences.\n\n"
+    "INPUT shape:\n"
+    "  curated_headings: exact heading lines of the hand-curated pointer index\n"
+    "  entries: [{id, text}] — raw machine-written `- [date] ...` session-log lines\n"
+    "  archive_tail: recent already-archived lines (dedupe context only)\n"
+    "  line_budget: target max lines for the whole auto-loaded file\n\n"
+    "For EACH entry decide, by VALUE not recency:\n"
+    "  • keep   — recent, not yet foldable; stays in the session log\n"
+    "  • demote — no lasting value as a pointer; the raw line is moved to the\n"
+    "             permanent archive (still searchable). NOTHING is erased.\n"
+    "  • fold   — its durable insight belongs in the curated index. Provide\n"
+    "             `fold_into` (an EXACT string from curated_headings) and\n"
+    "             `pointer_line` (one new `- [...]` index line, single line,\n"
+    "             no newline, must NOT contain the substring 'clayrune:'). The\n"
+    "             raw entry is ALSO archived (fact preserved verbatim).\n\n"
+    "Rules: never invent a heading; `fold_into` must match curated_headings\n"
+    "verbatim. Prefer fold/demote enough that the file trends under\n"
+    "line_budget, but never sacrifice a hard-won fact (paths, line numbers,\n"
+    "symbol names, config keys, thresholds, gotchas) — those go to fold or\n"
+    "demote, never 'keep-and-hope'. Entries you don't mention default to keep.\n\n"
+    "OUTPUT exactly: {\"entry_decisions\":[{\"id\":\"..\",\"action\":\"keep|demote|fold\","
+    "\"fold_into\":\"..\",\"pointer_line\":\"..\"}],\"curated_rewrite\":null}\n"
+    "(`fold_into`/`pointer_line` only on fold entries; `curated_rewrite` must "
+    "be null — wholesale curated re-authoring is not permitted in this mode.)"
+)
+
+
+def _condense_parse_json(raw):
+    """Extract the JSON object from a model reply (tolerates ``` fences /
+    leading prose). Returns dict or None."""
+    s = (raw or '').strip()
+    if s.startswith('```'):
+        s = s.split('```', 2)[1] if s.count('```') >= 2 else s.strip('`')
+        if s.lstrip().lower().startswith('json'):
+            s = s.lstrip()[4:]
+    i, j = s.find('{'), s.rfind('}')
+    if i < 0 or j <= i:
+        return None
+    try:
+        v = json.loads(s[i:j + 1])
+        return v if isinstance(v, dict) else None
+    except Exception:
+        return None
+
+
+def _validate_condense_payload(payload, valid_ids, valid_headings):
+    """Schema + invariant gate, applied BEFORE the server writes anything.
+    Returns (True, '') or (False, reason). Strictly pre-write: a reject leaves
+    MEMORY.md untouched (no pre-image / restore needed)."""
+    if not isinstance(payload, dict):
+        return False, 'not_object'
+    if payload.get('curated_rewrite') is not None:
+        return False, 'curated_rewrite_forbidden_v1'
+    decs = payload.get('entry_decisions')
+    if not isinstance(decs, list):
+        return False, 'entry_decisions_not_list'
+    seen = set()
+    for d in decs:
+        if not isinstance(d, dict):
+            return False, 'decision_not_object'
+        did = d.get('id')
+        if did not in valid_ids:
+            return False, 'unknown_id'
+        if did in seen:
+            return False, 'duplicate_id'
+        seen.add(did)
+        act = d.get('action')
+        if act not in _CONDENSE_ACTIONS:
+            return False, 'bad_action'
+        if act == 'fold':
+            fi = d.get('fold_into')
+            pl = d.get('pointer_line')
+            if fi not in valid_headings:
+                return False, 'fold_into_not_a_heading'
+            if not isinstance(pl, str) or not pl.strip():
+                return False, 'empty_pointer_line'
+            if '\n' in pl or '\r' in pl:
+                return False, 'multiline_pointer_line'
+            if 'clayrune:' in pl:
+                return False, 'pointer_line_synthesizes_machinery'
+    return True, ''
+
+
+def _condense_plan(project):
+    """Assemble bounded read-only input, make ONE non-agentic model call, parse
+    + validate. Returns (payload|None, reason, model_ms). Never raises."""
+    t0 = _time.time()
+    try:
+        mem_path = _get_memory_path(project)
+        if not mem_path.exists():
+            return None, 'no_memory_file', 0
+        curated, entries, _wm = _mem_split_full(
+            _mem_migrate(mem_path.read_text(encoding='utf-8')))
+        if not entries:
+            return None, 'noop', 0
+        # Collect curated headings as fold targets, but skip any '#' line
+        # inside a fenced code block (a shell comment / ATX-looking line in a
+        # ``` fence is not a real section) — otherwise a pointer could be
+        # folded into code. _condense_apply additionally requires the heading
+        # to resolve UNIQUELY at apply time, else it downgrades to demote.
+        valid_headings, _in_fence = [], False
+        for ln in curated.splitlines():
+            if ln.lstrip().startswith('```'):
+                _in_fence = not _in_fence
+                continue
+            if not _in_fence and ln.lstrip().startswith('#'):
+                valid_headings.append(ln.strip())
+        in_entries, valid_ids = [], set()
+        for e in entries:
+            eid = _sha8(e)
+            valid_ids.add(eid)
+            in_entries.append({'id': eid, 'text': e})
+        archive_tail = ''
+        ap = _get_archive_path(project)
+        if ap.exists():
+            try:
+                blob = ap.read_text(encoding='utf-8')
+                archive_tail = blob[-_CONDENSE_ARCHIVE_TAIL_KB * 1024:]
+            except Exception:
+                pass
+        body = json.dumps({
+            'curated_headings': valid_headings,
+            'entries': in_entries,
+            'archive_tail': archive_tail,
+            'line_budget': int(CONFIG.get('index_line_budget', 160) or 160),
+        }, ensure_ascii=False)
+        model = CONFIG.get('condense_model', '') or 'sonnet'
+        try:
+            raw = _scribe_call(model, _CONDENSE_PLAN_PROMPT, body)
+        except subprocess.TimeoutExpired:
+            return None, 'model_timeout', int((_time.time() - t0) * 1000)
+        except Exception:
+            return None, 'model_error', int((_time.time() - t0) * 1000)
+        ms = int((_time.time() - t0) * 1000)
+        payload = _condense_parse_json(raw)
+        if payload is None:
+            return None, 'parse_error', ms
+        ok, why = _validate_condense_payload(
+            payload, valid_ids, set(valid_headings))
+        if not ok:
+            return None, why, ms
+        return payload, 'ok', ms
+    except Exception as e:
+        # Static reason — keeps the colon-suffixed telemetry key bounded
+        # (raw exception text must never become a _scribe_stats.json key).
+        # Detail goes to the log + the bounded last-write-wins status field.
+        _log(f"[condense] {project.get('id','')}: plan exception — {e}")
+        return None, 'plan_exc', int((_time.time() - t0) * 1000)
+
+
+def _condense_apply(project, payload):
+    """Rebased, transactional apply under the SAME leaf lock the completion
+    scribe + Step-6 use. Decisions are keyed by _sha8(entry); any decision
+    whose entry vanished meanwhile (Step-6 fold / teardown / floor) is silently
+    skipped. wm markers pass through untouched. Returns a stats dict."""
+    pid = project.get('id', '')
+    mem_path = _get_memory_path(project)
+    hard_floor = int(CONFIG.get('index_line_hard_floor', 185) or 185)
+    decs = {d['id']: d for d in payload.get('entry_decisions', [])}
+    st = {'kept': 0, 'demoted': 0, 'folded': 0,
+          'skipped_rebased': 0, 'fold_downgraded': 0, 'curated_lines': 0}
+    with _get_mem_write_lock(pid):
+        existing = (mem_path.read_text(encoding='utf-8')
+                    if mem_path.exists() else '')
+        curated, entries, wm = _mem_split_full(_mem_migrate(existing))
+        cur_lines = curated.splitlines()
+        cur_norm = {ln.strip() for ln in cur_lines}
+        present_ids = set()
+        new_entries, overflow = [], []
+        for e in entries:
+            eid = _sha8(e)
+            present_ids.add(eid)
+            # Duplicate byte-identical entry lines hash to the same id, so one
+            # decision intentionally applies to ALL of them. This is safe and
+            # desirable: demote/fold route every copy verbatim to the
+            # append-only archive (no fact lost) and collapse the noise; keep
+            # is a per-copy no-op. _validate_condense_payload already rejects
+            # duplicate ids in the decision LIST, so the model can't disagree
+            # with itself across copies.
+            d = decs.get(eid)
+            act = d.get('action') if d else 'keep'
+            if act == 'demote':
+                overflow.append(e)
+                st['demoted'] += 1
+            elif act == 'fold':
+                heading = d.get('fold_into')
+                pl = d.get('pointer_line', '').strip()
+                hits = [k for k, ln in enumerate(cur_lines)
+                        if ln.strip() == heading]
+                if len(hits) != 1:
+                    # Heading vanished, or is ambiguous (0 or >1 matches since
+                    # plan time) — never misplace a pointer or lose the fact:
+                    # demote the raw entry, skip the curated insert.
+                    overflow.append(e)
+                    st['fold_downgraded'] += 1
+                    continue
+                if pl and pl not in cur_norm:
+                    cur_lines.insert(hits[0] + 1, pl)
+                    cur_norm.add(pl)
+                overflow.append(e)        # fact preserved verbatim in archive
+                st['folded'] += 1
+            else:
+                new_entries.append(e)
+                st['kept'] += 1
+        # Decisions whose target entry is gone (concurrent Step-6 / teardown).
+        st['skipped_rebased'] = sum(
+            1 for did in decs if did not in present_ids)
+        curated2 = '\n'.join(cur_lines)
+        # Mechanical line floor backstop (same rule as _commit_managed_entry).
+        while new_entries and len(_mem_compose(
+                curated2, new_entries, wm).splitlines()) > hard_floor:
+            overflow.append(new_entries.pop(0))
+        # Post-apply curated size — a gauge (not additive) so soak can watch
+        # the model-authored curated index for monotonic low-value drift
+        # (additive-only fold has no mechanical eviction path until v2).
+        st['curated_lines'] = len(cur_lines)
+        _append_to_archive(project, overflow)
+        _atomic_write_text(mem_path, _mem_compose(curated2, new_entries, wm))
+    return st
+
+
+def _run_structured_condense(project):
+    """Orchestrator for condense_mode='structured'. Mirrors the agent path's
+    status/lock discipline; the slow model call is OUTSIDE the leaf lock.
+    Caller (_dispatch_condense) already holds the _condensing_projects guard
+    and this MUST discard it. Never raises."""
+    pid = project['id']
+    _set_condense_status(pid, state='running', started_at=now_iso(),
+                         finished_at=None, error=None,
+                         turn_cap=False, wm_repaired=0,
+                         bytes_before=_condense_combined_bytes(project),
+                         bytes_after=None)
+    try:
+        payload, reason, ms = _condense_plan(project)
+        if payload is None:
+            if reason in ('noop', 'no_memory_file'):
+                _scribe_stat(pid, f'condense_{reason}')
+                _set_condense_status(pid, state='done', model_ms=ms)
+            else:
+                _scribe_stat(pid, f'condense_rejected:{reason}')
+                _set_condense_status(
+                    pid, state='error', model_ms=ms,
+                    error=f'structured condense not applied ({reason}); '
+                          'MEMORY.md left untouched')
+            return
+        st = _condense_apply(project, payload)
+        _scribe_stat(pid, 'condense_structured_ok')
+        for k in ('kept', 'demoted', 'folded'):
+            _scribe_stat(pid, f'condense_entries_{k}', st.get(k, 0))
+        _scribe_stat(pid, 'condense_decisions_skipped_rebased',
+                     st.get('skipped_rebased', 0))
+        _scribe_stat(pid, 'condense_fold_downgraded',
+                     st.get('fold_downgraded', 0))
+        _set_condense_status(pid, state='done', model_ms=ms, **st)
+        _log(f"[condense] {pid}: structured ok — "
+             f"kept={st['kept']} demoted={st['demoted']} "
+             f"folded={st['folded']} skipped_rebased={st['skipped_rebased']}")
+    except Exception as e:
+        _log(f"[condense] {pid}: structured error — {e}")
+        _set_condense_status(pid, state='error', error=str(e))
+    finally:
+        _set_condense_status(pid, finished_at=now_iso(),
+                             bytes_after=_condense_combined_bytes(project))
+        with _condense_lock:
+            if _condense_status.get(pid, {}).get('state') == 'running':
+                _condense_status[pid]['state'] = 'done'
+            _condensing_projects.discard(pid)
+
+
 def _dispatch_condense(project):
     """Launch a housekeeping agent to condense memory + CLAUDE.md for a project."""
     pid = project['id']
@@ -4794,6 +5237,15 @@ def _dispatch_condense(project):
             return
         _condensing_projects.add(pid)
 
+    # Leg C executor selection. 'structured' (docs/CONDENSE_STRUCTURED_DESIGN.md)
+    # replaces the free claude -p + Write agent below with one non-agentic JSON
+    # call applied server-side. The structured runner owns the
+    # _condensing_projects discard in its finally, same as the agent _run.
+    if (CONFIG.get('condense_mode', 'agent') or 'agent') == 'structured':
+        threading.Thread(target=_run_structured_condense,
+                         args=(project,), daemon=True).start()
+        return
+
     mem_path = _get_memory_path(project)
     archive_path = _get_archive_path(project)
     pp = project.get('project_path', '')
@@ -4801,6 +5253,7 @@ def _dispatch_condense(project):
     # P2-1: mark condensation in-flight (bytes_before = pre-condense size).
     _set_condense_status(pid, state='running', started_at=now_iso(),
                          finished_at=None, error=None,
+                         turn_cap=False, wm_repaired=0,
                          bytes_before=_condense_combined_bytes(project),
                          bytes_after=None)
 
@@ -4876,12 +5329,24 @@ def _dispatch_condense(project):
         )
 
     prompt_parts.append(
+        "\nBE TURN-EFFICIENT (you have a limited turn budget): read EVERY "
+        "input file you need in your FIRST turn using parallel tool calls, "
+        "do all the folding/demotion reasoning, then write each output file "
+        "EXACTLY ONCE. Do not re-read a file you have already read. The write "
+        "step is what matters — do not spend the whole budget exploring.\n"
         "\nDo NOT create any other files. Do NOT modify any code. Only touch the files listed above."
     )
     prompt = '\n'.join(prompt_parts)
 
     model = CONFIG.get('condense_model', '') or 'sonnet'
-    cmd = [_resolve_claude(), '-p', prompt, '--model', model, '--max-turns', '5',
+    # --max-turns 14 (was 5): the workload is read MEMORY.md + read archive
+    # (+ optionally read CLAUDE.md) + fold/demote N entries + append archive
+    # + rewrite MEMORY.md. 5 turns were routinely exhausted on the reads
+    # alone, so the CLI exited 1 *before the write step* and the run was
+    # flagged ERROR (it only "self-healed" because the next trigger retried).
+    # The post-run integrity guard below makes a truncated run safe; this
+    # gives it enough room to actually finish.
+    cmd = [_resolve_claude(), '-p', prompt, '--model', model, '--max-turns', '14',
            '--print', '--verbose', '--output-format', 'stream-json',
            '--dangerously-skip-permissions']
 
@@ -4889,6 +5354,14 @@ def _dispatch_condense(project):
 
     def _run():
         session_id = f'condense_{uuid.uuid4().hex[:8]}'
+        # Pre-image snapshot for the post-run integrity guard. Captured here
+        # (just before launch) so a truncated/botched run can never corrupt
+        # MEMORY.md or lose a live-session watermark.
+        try:
+            pre_mem = mem_path.read_text(encoding='utf-8') if mem_path.exists() else None
+        except Exception:
+            pre_mem = None
+        pre_wm = _mem_split_full(pre_mem)[2] if pre_mem else []
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -4922,8 +5395,49 @@ def _dispatch_condense(project):
                 agent_sessions[session_id] = session
                 mgr.session_ids.add(session_id)
 
-            # Reuse existing stream reader
+            # Reuse existing stream reader (blocks until proc exits)
             _read_agent_stream(proc, session)
+
+            # Post-run safety net: a truncated condense (e.g. --max-turns hit
+            # before the write step) must never leave MEMORY.md corrupted or
+            # drop a live-session watermark.
+            rc = proc.returncode
+            action, reason, kw = _condense_integrity_check(
+                mem_path, pre_mem, pre_wm, rc)
+            if action == 'restore':
+                try:
+                    mem_path.write_text(pre_mem, encoding='utf-8')
+                    _log(f"[condense] {pid}: integrity FAIL ({reason}) — "
+                         f"restored pre-image")
+                except Exception as e:
+                    _log(f"[condense] {pid}: RESTORE FAILED ({e}) — {reason}")
+            elif action == 'heal':
+                try:
+                    cur, ent, wm = _mem_split_full(
+                        mem_path.read_text(encoding='utf-8'))
+                    have = set(wm)
+                    for w in pre_wm:
+                        if w not in have:
+                            wm.append(w)
+                            have.add(w)
+                    mem_path.write_text(_mem_compose(cur, ent, wm),
+                                        encoding='utf-8')
+                    _log(f"[condense] {pid}: healed ({reason}) — re-injected "
+                         f"dropped watermark(s), kept agent curation")
+                except Exception as e:
+                    # Heal failed — fall back to full restore to protect the
+                    # load-bearing watermark over the agent's curation.
+                    try:
+                        mem_path.write_text(pre_mem, encoding='utf-8')
+                    except Exception:
+                        pass
+                    _log(f"[condense] {pid}: heal FAILED ({e}) — restored "
+                         f"pre-image")
+                    kw = {'state': 'error',
+                          'error': f'watermark heal failed ({e}); '
+                                   'restored pre-image'}
+            if kw:
+                _set_condense_status(pid, **kw)
         except Exception as e:
             _log(f"[condense] error for {pid}: {e}")
             _set_condense_status(pid, state='error', error=str(e),
@@ -4942,7 +5456,8 @@ def _dispatch_condense(project):
 
 
 def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
-                             trigger_type='manual', trigger_id=''):
+                             trigger_type='manual', trigger_id='',
+                             reuse_session_id=''):
     """Core dispatch logic shared by HTTP endpoint and scheduler.
 
     Returns session_id on success, raises ValueError on error.
@@ -4955,6 +5470,13 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     trigger_type/trigger_id annotate the resulting agent_log entry so callers
     (scheduler, hivemind dispatch) can later list "all runs for this trigger".
     Defaults are 'manual'/'' for direct user dispatch.
+
+    reuse_session_id: when set, the new process adopts this existing MC
+    session_id instead of minting a fresh uuid. Used by the scheduler when a
+    continued run cold-respawns `-r <csid>` against the SAME Claude
+    conversation — reusing the prior run's session_id keeps it on one agent_log
+    row / one UI tab / one resolvable transcript instead of orphaning a new
+    csid-less row per fire.
     """
     p = load_project(project_id)
     if not p:
@@ -4990,7 +5512,12 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     mgr = get_manager(project_id)
     mgr.ensure_guardian()
     with mgr.lock:
-        session_id = uuid.uuid4().hex[:12]
+        # Reuse the prior run's id (continued scheduled thread) unless that id is
+        # somehow still a live session — never clobber a running session dict.
+        if reuse_session_id and reuse_session_id not in agent_sessions:
+            session_id = reuse_session_id
+        else:
+            session_id = uuid.uuid4().hex[:12]
 
         if use_streaming:
             # Mode B: persistent process with stream-json stdin
@@ -8234,13 +8761,38 @@ def schedule_run_now(schedule_id):
     task = sched.get('task', '')
     if not pid or not task:
         return jsonify({'error': 'schedule missing project or task'}), 400
+    cont = sched.get('continue_session', True)
+    # Continue the schedule's existing thread/tab when possible (same as the
+    # cron path) instead of always minting a new session_id → new tab.
+    if cont:
+        prev_sid = _latest_session_id_for_schedule(pid, schedule_id)
+        if prev_sid:
+            pcur = load_project(pid)
+            if pcur:
+                outcome = _scheduled_continue(pcur, pid, prev_sid,
+                                              _scheduled_run_marker() + task)
+                if outcome == 'busy':
+                    return jsonify({'ok': False, 'busy': True,
+                                    'session_id': prev_sid,
+                                    'error': 'previous run still active'}), 409
+                if outcome in ('appended', 'revived'):
+                    sched['last_run'] = now_iso()
+                    _save_schedules(schedules)
+                    return jsonify({'ok': True, 'session_id': prev_sid,
+                                    'continued': outcome})
     resume_id = ''
-    if sched.get('continue_session', True):
+    if cont:
         resume_id = _latest_claude_sid_for_schedule(pid, schedule_id)
+    reuse_sid = ''
+    dispatch_task = task
+    if resume_id:
+        reuse_sid = _newest_run_session_id_for_schedule(pid, schedule_id)
+        dispatch_task = _scheduled_run_marker() + task
     try:
-        sid = _dispatch_agent_internal(pid, task, resume_id=resume_id,
+        sid = _dispatch_agent_internal(pid, dispatch_task, resume_id=resume_id,
                                        trigger_type='schedule',
-                                       trigger_id=schedule_id)
+                                       trigger_id=schedule_id,
+                                       reuse_session_id=reuse_sid)
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code
@@ -9539,7 +10091,8 @@ _CONFIG_EDITABLE_KEYS = {
     'user_name', 'agent_name', 'agent_model', 'agent_max_turns',
     'agent_permission_mode', 'agent_channels', 'agent_remote_control',
     'use_streaming_agent', 'condense_enabled', 'condense_threshold_kb',
-    'condense_model', 'index_line_budget', 'index_line_hard_floor',
+    'condense_model', 'condense_mode', 'index_line_budget',
+    'index_line_hard_floor',
     'scribe_enabled', 'scribe_model', 'scribe_reconcile_enabled',
     'scribe_reconcile_cap', 'scribe_checkpoint_enabled',
     'scribe_checkpoint_kb', 'read_floor_topk',
@@ -9992,16 +10545,49 @@ def _scheduler_loop():
                     pid = sched.get('project_id', '')
                     task = sched.get('task', '')
                     if pid and task:
-                        resume_id = ''
-                        if sched.get('continue_session', True):
-                            resume_id = _latest_claude_sid_for_schedule(pid, sched.get('id', ''))
+                        sched_id = sched.get('id', '')
+                        cont = sched.get('continue_session', True)
                         try:
-                            sid = _dispatch_agent_internal(pid, task,
-                                                          resume_id=resume_id,
-                                                          trigger_type='schedule',
-                                                          trigger_id=sched.get('id', ''))
-                            tag = ' (resumed)' if resume_id else ''
-                            _log(f"[scheduler] Dispatched{tag} for {pid}: {task[:60]} -> session {sid}")
+                            outcome = None
+                            if cont:
+                                prev_sid = _latest_session_id_for_schedule(pid, sched_id)
+                                if prev_sid:
+                                    pp_ = load_project(pid)
+                                    if pp_:
+                                        # Continued thread: stamp a local-time
+                                        # header so the long single transcript
+                                        # reads as a time series.
+                                        outcome = _scheduled_continue(
+                                            pp_, pid, prev_sid,
+                                            _scheduled_run_marker() + task)
+                            if outcome == 'busy':
+                                _log(f"[scheduler] Skipped for {pid}: prior run of "
+                                     f"{sched_id} still active -> session {prev_sid}")
+                            elif outcome in ('appended', 'revived'):
+                                _log(f"[scheduler] Continued ({outcome}) for {pid}: "
+                                     f"{task[:60]} -> session {prev_sid}")
+                            else:
+                                # First run, or nothing continuable — fresh dispatch.
+                                resume_id = ''
+                                if cont:
+                                    resume_id = _latest_claude_sid_for_schedule(pid, sched_id)
+                                # Resuming the same Claude convo by cold respawn:
+                                # reuse the prior run's MC row + mark the turn,
+                                # so continued fires stay one thread / one tab /
+                                # one resolvable transcript instead of orphaning
+                                # a csid-less row per cadence tick.
+                                reuse_sid = ''
+                                dispatch_task = task
+                                if resume_id:
+                                    reuse_sid = _newest_run_session_id_for_schedule(pid, sched_id)
+                                    dispatch_task = _scheduled_run_marker() + task
+                                sid = _dispatch_agent_internal(pid, dispatch_task,
+                                                              resume_id=resume_id,
+                                                              trigger_type='schedule',
+                                                              trigger_id=sched_id,
+                                                              reuse_session_id=reuse_sid)
+                                tag = ' (resumed)' if resume_id else ''
+                                _log(f"[scheduler] Dispatched{tag} for {pid}: {task[:60]} -> session {sid}")
                         except Exception as e:
                             _log(f"[scheduler] Failed to dispatch for {pid}: {e}")
                     sched['last_run'] = now_iso()
@@ -10107,6 +10693,146 @@ def _latest_claude_sid_for_schedule(project_id, schedule_id):
                 and e.get('claude_session_id')):
             return e.get('claude_session_id', '')
     return ''
+
+
+def _latest_session_id_for_schedule(project_id, schedule_id):
+    """Return the MC session_id of this schedule's most recent run so the next
+    fire can CONTINUE it (same thread, same UI tab) instead of minting a fresh
+    session_id (Defect A — every _dispatch_agent_internal call does
+    `uuid.uuid4().hex[:12]`, which the frontend tab strip keys on, so a new id
+    is by construction a new tab).
+
+    Prefers a still-live in-memory session (the common case: a persistent Mode-B
+    session sitting idle between fires — exactly the "endless idle tabs"
+    screenshot). Falls back to the newest agent_log row for this schedule that
+    carries a claude_session_id (revivable after a restart, thanks to the
+    _note_claude_sid backfill). Returns '' when there is nothing to continue
+    (first run, or no revivable history)."""
+    if not project_id or not schedule_id:
+        return ''
+    # Live session wins — pick the most recently dispatched one for this trigger.
+    best_sid, best_t = '', -1.0
+    for s in list(agent_sessions.values()):
+        if (s.get('project_id') == project_id
+                and s.get('trigger_type') == 'schedule'
+                and s.get('trigger_id') == schedule_id
+                and not s.get('incognito')):
+            t = s.get('_dispatch_time') or 0
+            if t >= best_t:
+                best_sid, best_t = s.get('session_id', ''), t
+    if best_sid:
+        return best_sid
+    # Otherwise the newest revivable logged run (csid present → -r resumable).
+    log = _load_agent_log(project_id)
+    for e in log:
+        if (e.get('trigger_type') == 'schedule'
+                and e.get('trigger_id') == schedule_id
+                and e.get('claude_session_id')
+                and e.get('session_id')):
+            return e.get('session_id', '')
+    return ''
+
+
+def _newest_run_session_id_for_schedule(project_id, schedule_id):
+    """Return the MC session_id of this schedule's newest agent_log row REGARDLESS
+    of status or csid presence ('' if none).
+
+    Differs from _latest_session_id_for_schedule (which only returns a row that is
+    live or carries a csid). Used by the scheduler's fresh-resume fallback to
+    REUSE the prior run's row instead of orphaning a brand-new one every fire —
+    the orphan-row bug that left scheduled threads with no resolvable transcript
+    (continued runs share one Claude session, so they belong on one MC row)."""
+    if not project_id or not schedule_id:
+        return ''
+    for e in _load_agent_log(project_id):  # newest-first
+        if (e.get('trigger_type') == 'schedule'
+                and e.get('trigger_id') == schedule_id
+                and e.get('session_id')):
+            return e.get('session_id', '')
+    return ''
+
+
+def _scheduled_run_marker():
+    """A local-time header prepended to the task of a CONTINUED scheduled run so a
+    single long thread reads as a time series ('when did each fire happen')."""
+    try:
+        ts = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')
+    except Exception:
+        ts = now_iso()
+    return f"[Scheduled run · {ts}]\n\n"
+
+
+def _scheduled_continue(p, project_id, session_id, task):
+    """Continue an existing scheduled run with `task` as the next turn, keeping
+    the SAME session_id (→ same UI tab, same Claude conversation). Mirrors the
+    proven agent_followup decision tree but for the scheduler:
+
+      - live persistent Mode-B process, idle  → append task to its stdin
+      - live session currently running        → 'busy' (skip this fire; don't
+                                                 pile overlapping turns — the
+                                                 prior run continues, the next
+                                                 cadence tick will catch up)
+      - session gone / dead / Mode A          → _revive_from_agent_log (spawns
+                                                 fresh `-r <csid>`, REUSES the
+                                                 same session_id by design)
+
+    Returns 'appended' | 'busy' | 'revived', or None to tell the caller to fall
+    back to a fresh dispatch (nothing continuable)."""
+    pp = p.get('project_path', '')
+    mgr = get_manager(project_id)
+    mgr.ensure_guardian()
+    with mgr.lock:
+        existing = agent_sessions.get(session_id)
+        if existing and existing.get('project_id') == project_id:
+            status = existing.get('status')
+            if status == 'running':
+                return 'busy'
+            proc = existing.get('proc')
+            alive = (existing.get('mode') == 'B'
+                     and existing.get('process_alive')
+                     and proc is not None
+                     and proc.poll() is None
+                     and _pid_is_alive(proc.pid))
+            if alive:
+                existing['status'] = 'running'
+                existing['last_status_change_time'] = _time.time()
+                existing['last_output_time'] = _time.time()
+                existing['log_lines'].append(f"\n> [scheduled run]: {task}\n")
+                stdin_msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user", "content": task},
+                }) + '\n'
+
+                def _write_stdin():
+                    lock = existing.get('stdin_lock')
+                    if lock:
+                        lock.acquire()
+                    try:
+                        existing['proc'].stdin.write(stdin_msg)
+                        existing['proc'].stdin.flush()
+                    except Exception as e:
+                        existing['log_lines'].append(f'[stdin write error: {e}]')
+                        existing['status'] = 'error'
+                        existing['last_status_change_time'] = _time.time()
+                        existing['process_alive'] = False
+                    finally:
+                        if lock:
+                            lock.release()
+
+                threading.Thread(target=_write_stdin, daemon=True).start()
+                _log_agent_activity(project_id, f"Scheduled run (appended): {task[:100]}")
+                return 'appended'
+    # Not live (purged / dead / Mode A) — revive from log; this reuses the same
+    # session_id so the UI tab stays addressed (see _revive_from_agent_log).
+    if not pp or not Path(pp).is_dir():
+        return None
+    try:
+        if _revive_from_agent_log(project_id, session_id, task, p):
+            _log_agent_activity(project_id, f"Scheduled run (revived): {task[:100]}")
+            return 'revived'
+    except Exception as e:
+        _log(f"[scheduled-continue] {project_id}: revive failed: {e}")
+    return None
 
 
 @app.route('/api/schedules')
