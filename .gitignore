@@ -114,3 +114,36 @@ mc_tunnel/bin/cloudflared-darwin-arm64
 mc_tunnel/bin/cloudflared-linux-amd64
 mc_tunnel/bin/cloudflared-linux-arm64
 mc_tunnel/bin/*/cloudflared
+
+# ── Internal design / planning / scratch docs — local-only ─────────────────
+# Kept on disk (CLAUDE.md + agent sessions still reference them locally) but
+# intentionally NOT published to the public repo. Untracked 2026-05-18.
+# To re-publish one: git add -f <path>.
+IMPROVEMENT_PLAN_V2.md
+IMPROVEMENT_PLAN_V2_FLAWS.md
+MissionControl_DotNet_Diagnosis.md
+MissionControl_DotNet_Diagnosis_3.md
+RESUME_HERE.md
+CLAUDE_KB.md
+docs/HOSTING.md
+docs/CONDENSE_STRUCTURED_DESIGN.md
+docs/HIVEMIND_SPEC.md
+docs/MEMORY_SYSTEM.md
+docs/MEMORY_SYSTEM_SPEC.md
+docs/SKILLS_CURATION_DESIGN.md
+docs/SERVER_SPLIT_PLAN.md
+docs/MAINTENANCE_AUDIT_PROMPT.md
+docs/MAINTENANCE_PROTOCOL.md
+docs/web-push-handoff.md
+docs/design_system_extracted/
+docs/remote-access/00-user-flow.md
+docs/remote-access/01-architecture.md
+docs/remote-access/02-attestation-protocol.md
+docs/remote-access/03-control-plane-api.md
+docs/remote-access/04-abuse-prevention.md
+docs/remote-access/05-build-pipeline.md
+docs/remote-access/06-rollout-plan.md
+docs/remote-access/PATH_B_RUNBOOK.md
+docs/remote-access/RESUME_HERE.md
+docs/remote-access/SETUP_CHECKLIST.md
+docs/remote-access/error_codes.md
