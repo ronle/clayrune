@@ -284,7 +284,11 @@ Two layers of context every agent sees:
   **managed "Session Log" below it** that Clayrune writes for you. When an
   agent session finishes, a server-side *Scribe* reads that session's full
   transcript and appends a one-line summary of what it did/learned — so the
-  next agent builds on it without you relaying anything. Errored/stopped
+  next agent builds on it without you relaying anything. Long streaming
+  (Mode B) sessions are *also* captured **mid-session**, not just at the
+  end: as the agent works it periodically folds progress into a running
+  `_(live)_` summary, so a crash or a long idle session never loses hours of
+  work and a freshly-started agent sees it. Errored/stopped
   sessions are captured too (tagged `(error)`/`(stopped)`). Older entries
   overflow to the archive automatically; nothing is deleted. Agents can also
   search past memory on demand via the built-in **mc-memory-search** skill,

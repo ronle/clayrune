@@ -106,11 +106,12 @@ endpoints. New per-session/sidecar state belongs OUTSIDE `DATA_DIR`.
 **Mode B caveat.** With `use_streaming_agent` (global default) the
 persistent process doesn't exit per turn, so the session-end Scribe fires at
 *teardown*, not per turn. Step 6 mid-session checkpointing (SPEC §3.A.MID) is
-the fix — **implemented & offline-verified, but ships DEFAULT-OFF**
-(`scribe_checkpoint_enabled=false`, `scribe_checkpoint_kb=0`) and is fully
-inert until both are set; behavioral (live-enabled) validation is a
-deliberate user-gated step. Until enabled, long idle Mode B sessions still
-only capture memory at stop/reap. When working on memory code: the Step-6
+the fix — **implemented (commit `9683996`), offline- AND live-validated
+end-to-end (2026-05-18), and currently ENABLED** on this deployment
+(`scribe_checkpoint_enabled=true`, `scribe_checkpoint_kb=8`). It ships
+default-off in code; revert with `scribe_checkpoint_enabled=false` (a
+Settings toggle, no restart). So Mode-B sessions now DO capture per-turn,
+not only at teardown. When working on memory code: the Step-6
 `<!-- clayrune:wm:<sid> … -->` watermark markers are load-bearing — never
 strip them; `_commit_managed_entry` is the ONE leaf-locked atomic MEMORY.md
 writer (completion, checkpoint, reconcile all route through it).

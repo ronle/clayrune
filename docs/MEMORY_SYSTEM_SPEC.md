@@ -10,10 +10,11 @@ Status: **DRAFT v2 (post-committee-review)** · Author: design session 2026-05-1
 > rationale (B7), mandated 2295 rewrite (B8), anchor corrections, narrowed
 > pre-impl spike (`.jsonl` readability empirically de-risked 2026-05-15 — only
 > tool_result-truncation [v1] and live-flush [Phase 2] remain), scribe
-> telemetry. Mid-session checkpointing is **in v1 scope,
-> same build** — gated behind `scribe_checkpoint_kb` (default disabled), flipped
-> on once session-end telemetry validates extraction quality; NOT a separate
-> release. Its one hard prerequisite is the crash-durable watermark (§3.A.MID).
+> telemetry. **STATUS (2026-05-18): mid-session checkpointing SHIPPED
+> separately as commit `9683996`** (after v1 `24a3af8`), offline- AND
+> live-validated end-to-end, and currently ENABLED
+> (`scribe_checkpoint_enabled=true`, `scribe_checkpoint_kb=8`; default-off in
+> code). §3.A.MID + §7 below are authoritative for the as-built design.
 >
 > Decisions resolved: **D2** `condense_threshold_kb`=20 · **D3** no hard-delete,
 > no periodic archive compaction, unbounded archive + Leg B search · **D4**

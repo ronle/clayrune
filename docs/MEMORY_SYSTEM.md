@@ -1,8 +1,11 @@
 # Clayrune Memory System — Layout (canonical map)
 
-> Status: v1 shipped & committed `24a3af8` (2026-05-17). Step 6 designed,
-> committee-hardened, **not built** (default-off). This is the at-a-glance
-> map; **design rationale + committee reviews live in
+> Status: v1 (Legs 0/A/B/C + Fix A/B) committed `24a3af8` (2026-05-17).
+> Step 6 mid-session note-taker committed `9683996`, **offline- AND
+> live-validated end-to-end (2026-05-18), currently ENABLED**
+> (`scribe_checkpoint_enabled=true`, `scribe_checkpoint_kb=8`; ships
+> default-off in code, one Settings toggle to revert). Both on `origin/master`.
+> This is the at-a-glance map; **design rationale + committee reviews live in
 > [`MEMORY_SYSTEM_SPEC.md`](MEMORY_SYSTEM_SPEC.md)** — that is authoritative
 > for *why*; this doc is authoritative for *what's where*.
 
@@ -53,7 +56,7 @@ to self-document.
 | **Fix B** | Startup reconciler closes the hard-MC-kill gap; first boot baseline-stamps history `scribed:true` *without* re-scribing it. | ✅ shipped |
 | **Leg B — Read** | `/memory/search` ranked grep + a deterministic top-k floor injected into fresh dispatches + `mc-memory-search` skill. | ✅ shipped |
 | **Leg C — Trim** | Line-keyed lossless mechanical floor (relocate oldest→archive) + condense model tier (value-based fold/demote, never delete). Archive is permanent searchable cold storage. | ✅ shipped |
-| **Step 6 — Mid-session note-taker** | Mode-B per-turn capture (not just teardown). Append-only checkpoint entries; watermark folded into MEMORY.md; leaf-locked; semaphore-bounded. | 📐 designed, committee-hardened, **NOT built**, default-off |
+| **Step 6 — Mid-session note-taker** | Mode-B per-turn capture (not just teardown). Append-only checkpoint entries; watermark folded into MEMORY.md; leaf-locked; semaphore-bounded. | ✅ shipped `9683996`, live-validated 2026-05-18, **currently ENABLED** (default-off in code) |
 | **Step 7 — bge-m3 retrieval** | Replace grep with server-side semantic search. | ⏸ deferred (telemetry-gated) |
 
 ## Key files & anchors
@@ -94,7 +97,7 @@ to self-document.
 ```
 dispatch ─▶ _build_agent_context injects "--- RELEVANT MEMORY ---" (read-floor)
          ─▶ agent works; may pull mc-memory-search skill on demand
-         ─▶ [Step 6, designed] on each Mode-B turn boundary: render delta from
+         ─▶ [Step 6, LIVE] on each Mode-B turn boundary: render delta from
             watermark, reduce into running_summary, append a checkpoint entry,
             update embedded wm: marker — one atomic write, leaf-locked, bounded
          ─▶ session ends (completed / error / stopped)
@@ -119,18 +122,23 @@ MC restart ─▶ _startup_memory_maintenance: backfill → _reconcile_unscribed
   region only.
 - The **archive is permanent** — relocate/demote, never delete or truncate;
   Leg B search depends on it.
-- **Mode B caveat:** with `use_streaming_agent` (the global default) the
-  Scribe fires at session *teardown*, not per turn — Step 6 is the planned
-  fix for per-turn capture.
-- **Step 6 fold-in contract:** the `<!-- clayrune:wm:<sid> … -->` watermark
-  marker is not a `- [` entry — `_mem_split` must bucket it separately,
-  `_mem_compose` must re-emit it, the floor must not relocate it, and the
-  Leg C condense prompt must preserve it verbatim. Build *with* §3.A.MID.
+- **Mode B note:** with `use_streaming_agent` (the global default) the
+  session-end Scribe fires at *teardown* — Step 6 (LIVE) adds the per-turn
+  capture on top of it. If Step 6 is ever disabled, Mode-B reverts to
+  teardown-only memory.
+- **Step 6 fold-in contract (implemented — don't break):** the
+  `<!-- clayrune:wm:<sid> … -->` watermark marker is not a `- [` entry.
+  `_mem_split_full` buckets it (back-compat `_mem_split` is the 2-tuple
+  wrapper), `_mem_compose` re-emits it, the floor never relocates it, and
+  the Leg C condense prompt preserves it verbatim. Any change to the Leg-0
+  format/floor/condense must keep these.
 
 ## Open items
 
-1. **Step 6** — build-ready, default-off, **not built**. One pre-build check:
-   spike-2 (live-`.jsonl` flush completeness).
+1. **Step 6** — shipped, live-validated, currently enabled. Soak-watch the
+   `checkpoint_*` counters in `/scribe-stats` under real parallel/long-session
+   load (cost + semaphore/coalescing behavior); revert via
+   `scribe_checkpoint_enabled=false` if anything looks off.
 2. **Step 7** — bge-m3 semantic retrieval, deferred until archive-size
    telemetry shows grep degrading.
 3. **Spec header true-up** — `MEMORY_SYSTEM_SPEC.md` top-of-file blurb
