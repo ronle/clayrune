@@ -219,31 +219,138 @@ Config: `scribe_enabled` (default True), `scribe_model`
 (`CONFIG.get('scribe_model','') or 'haiku'` — empty-string-safe idiom per
 server.py:3697, NOT `.get(k,'haiku')`).
 
-#### §3.A.MID — Mid-session checkpoints (v1 build, flag-gated)
+#### §3.A.MID — Mid-session checkpoints (REVISED post-committee 2026-05-17)
 
-Built in v1, **enabled by config, not by release**. Triggers: KB-delta since
-watermark / observed milestone in `_read_agent_stream` (server.py:2634, clean
-hook point ~2659-2729 — Edit/Write/ExitPlanMode/TodoWrite already detected
-there) / turn interval / idle timeout — observed-event-driven, never
-agent-judged. Reuses the dispatch-time incognito+housekeeping gate and the
-dedicated `_scribe_lock` already specified above (completion scribe has lock
-priority; checkpoint scribes debounce and yield).
+Status: design only, **not built**, ships **default-off**. v1-sketch had a
+fatal flaw (rolling-entry-in-place) the skeptic+pragmatist committee converged
+on independently; this is the corrected, simpler design. The append-only
+correction also **dissolves the (i)/(ii) goal fork** — append-only checkpoint
+entries are immediately visible to search and the read-floor, so live
+cross-agent visibility (ii) is delivered for free with no rolling-entry
+machinery.
 
-**The one hard prerequisite — crash-durable watermark.** "Delta since last
-checkpoint" needs a boundary that survives MC restart **and** `claude -r`
-resume/revival (which may open a *fresh* `.jsonl` — interacts with the
-session-lifecycle machinery; getting this wrong silently produces duplicate or
-missed deltas with no error). Contract: persist a `(transcript_path,
-byte_offset)` watermark per session keyed so a resumed/revived session resolves
-its predecessor's offset or correctly resets to 0 on a new file. Plus the
-partial-line rule: read only up to the last newline-terminated complete JSON
-object; discard any trailing partial. These two contracts must be designed and
-tested before the flag is enabled — they are the gate, not "Phase 2."
+**Trigger — Mode B `result`→idle ONLY.** The earlier prose pointing at
+`_read_agent_stream` ~2659-2729 was a **Mode-A artifact and is wrong for
+Mode B**. The sole correct hook is the Mode B reader's `result` handler
+(`_read_agent_stream_b`, ~server.py:3170-3182, right after `status='idle'`),
+cloning the existing `_auto_snapshot_notes_on_turn(session)` precedent at the
+same point. Debounced by `scribe_checkpoint_kb` (≥N KB new transcript since
+last checkpoint). **Exclude** the AskUserQuestion / plan-approval idle
+transitions and any `process_alive=False` — those are not real turn
+boundaries. Snapshot `(session_id, claude_session_id, num_turns, project_id,
+transcript_path)` into locals **before** spawning the side thread; the worker
+must never touch the live `session` dict (the reader mutates it lock-free on
+the hot path). Inherits the dispatch-time incognito/housekeeping skip.
 
-**Enablement criterion.** `scribe_checkpoint_kb` stays `0` until §8 telemetry
-(`scribe_extracted` vs `scribe_fell_back`, spot-checked entry quality) confirms
-session-end extraction is sound. Then raise it (start conservative, ~40 KB) and
-watch `floor_relocations` / cost.
+**Append-only — NO rolling entry, NO locator (committee blocker #1).** The
+mechanical floor (`pop(0)` oldest→archive) and the Leg C condense model
+rewrite/relocate the managed region *between* checkpoints, so any sidecar
+locator (offset/line-index) goes stale → duplicate entries, eviction of a
+live session's entry, or overwrite of an *unrelated* session's line
+(cross-session corruption) — and it triggers in normal multi-session steady
+state, silently. Therefore: **each checkpoint appends a normal, self-contained
+managed entry**, reusing `_write_session_memory`'s existing append+floor+compose
+tail **verbatim, zero format change**. Self-containment comes from the
+cumulative `running_summary` (below), not from rewriting a prior line. A
+session's multiple checkpoint lines are deduped/merged by the **Leg C model
+tier** (it already merges "a newer entry wholly containing an older one") —
+that is where judgment belongs. `mem_entry_locator` is deleted from the
+watermark.
+
+**Watermark — keyed by the stable MC `session_id` (committee blocker #2);
+stored embedded in MEMORY.md (D6 RESOLVED — fold-in).** Per-live-session
+durable record `{session_id, claude_session_id, transcript_path, byte_offset,
+slice_hash, running_summary}`, persisted as a **single non-entry marker line
+inside the managed region**, e.g. `<!-- clayrune:wm:<session_id> {…json…} -->`
+— NOT a `- [` entry (so the mechanical floor's `pop(0)` and `_mem_split`'s
+entry extraction ignore it), removed on clean teardown. It must carry the
+`running_summary` because append-only entries are deliberately
+non-addressable (blocker #1) — the marker is the *only* durable handle for
+the next checkpoint's reduce base. One line per *live* session; bounded by
+concurrent sessions (hivemind is housekeeping-excluded), transient, counts
+toward the line budget like any line. `claude -r` resume/revival mints a **new
+`session_id`/`.jsonl`** while MC reuses the internal session id; the v1
+"resolve the predecessor's offset" was unimplementable (the only join key is
+cleared before the new csid is known). Corrected contract: **if the resolved
+transcript path differs from the watermarked `transcript_path` → reset
+`byte_offset=0` and treat the new file as delta, but carry `running_summary`
+forward unchanged as the reduce base** (no context lost). Detect the csid
+change in the reader at the `session_id` message (~3117/3171) where both old
+and new are in hand — not later from `_resume_id` (cleared on the recovery
+path). **Delta render:** new `_scribe_render_delta(path, byte_offset)` —
+`seek(byte_offset)`; if offset≠0 discard bytes up to and including the first
+newline (**leading**-partial rule); read to the last complete newline
+(**trailing**-partial rule); return `(text, offset_of_last_consumed_newline)`.
+Offset only ever advances to a consumed `\n`. (`_scribe_render_transcript`
+today reads the whole file and has no offset param — this is a required new
+function, not a reuse.)
+
+**Cumulative synthesis.** `new_running_summary = reduce(prev_running_summary,
+scribe(delta))` — map-reduce, reusing `_scribe_call` verbatim. Skip the reduce
+call when the delta extracts to "no material change" (advance the offset, don't
+spend a model call).
+
+**Concurrency — dedicated leaf lock (committee blocker #3).** A per-project
+`_mem_write_lock[pid]` (accessor cloned from `get_manager`) wraps **only the
+MEMORY.md read-modify-write inside `_write_session_memory`** — never the model
+call, never nested under `get_manager(pid).lock`. Strict ordering:
+outer(manager RLock at the teardown finally) → inner(mem leaf); the checkpoint
+path never holds the manager lock at all, so the ordering is single-direction
+and cannot deadlock. Move `_dispatch_condense` outside the locked region
+(capture a "should-condense" boolean inside, dispatch after release) so the
+mutex stays sub-ms. **Reject the serialized-writer-queue alternative** — its
+teardown-flush against the manager lock is itself the deadlock generator.
+*Side-benefit:* this also fixes a latent issue in already-committed code —
+today the manager RLock is held across the ≤180s scribe call, so a parallel
+session's teardown can stall on another's Haiku; the leaf-lock split removes
+that. **Backpressure (replaces the removed per-project `'busy'` gate):** model
+calls run fully parallel per-session, but a per-project **semaphore** (cap ~2)
++ a coalescing budget bound fan-out — over-budget checkpoints are *skipped*
+(the next covers the larger cumulative delta — safe, deltas are cumulative),
+never dropped. Parallel: yes. Unbounded fan-out: no.
+
+**Atomicity (simplified by D6 fold-in).** Because the watermark lives *inside*
+MEMORY.md, a checkpoint is **one atomic write** (temp + `os.replace`) carrying
+both the new appended entry and the updated `wm:` marker — there is no
+cross-file gap, so the duplicate/loss-on-crash class is *eliminated*, not just
+ordered around. `_write_session_memory` must move to atomic temp+replace.
+
+**Fix B reconcile coordination (simplified by D6 fold-in).** Clean teardown
+**removes this session's `wm:` marker** as part of its final atomic MEMORY.md
+write. A `wm:` marker still present at startup ⇒ the session was killed
+mid-flight: `_reconcile_unscribed_sessions`, before its `_write_session_memory`
+call, scans the managed region for a `wm:` marker for the entry's session — if
+present with a non-empty `running_summary`, write **one finalizing entry from
+that `running_summary` (no Haiku call)** instead of re-scribing the whole
+transcript, set `scribed=True`, and drop the marker (one atomic write).
+Absent → existing full-re-scribe behavior. The `_has_running_agent(pid)` skip
+and the first-boot baseline / `scribed`-marker invariants are unchanged
+(the `wm:` markers are orthogonal to the baseline; the `scribed` field stays
+the source of truth for "captured?").
+
+**D6 RESOLVED — watermark folded into MEMORY.md** (principal took the
+recommendation). Rationale: a single atomic write deletes *two whole failure
+classes the committee found* — the watermark/MEMORY.md atomicity gap and the
+entire DATA_DIR-pollution-500 class — at the price of one machine-metadata
+comment line per live session in the agent-visible file. **Accepted cost — a
+load-bearing Leg-0 contract:** the `<!-- clayrune:wm:… -->` marker lives inside
+the managed sentinels but is *not* a `- [` entry, so:
+- `_mem_split` must return it as a third bucket (curated, entries, **wm
+  markers**), and `_mem_compose` must re-emit the markers (today it
+  reconstructs only from the entry list — it would silently drop them).
+- The mechanical floor relocates only `- [` entries — it must never move/
+  archive a `wm:` marker.
+- The **Leg C condense prompt must be told to preserve `<!-- clayrune:wm:… -->`
+  lines verbatim** (it rewrites the managed/curated regions; an un-preserved
+  marker = a lost reduce base = a re-scribe-from-zero on the next checkpoint).
+This Leg-0 preservation requirement is the real implementation cost of
+fold-in and must be built *with* §3.A.MID, not after.
+
+**Enablement criterion (unchanged).** `scribe_checkpoint_enabled=false` and
+`scribe_checkpoint_kb=0` until §8 telemetry (`scribe_extracted` vs
+`scribe_fell_back`, spot-checked quality) confirms session-end extraction is
+sound; then flip the boolean and raise the KB dial conservatively (~8 KB),
+watching the semaphore/budget counters and cost.
 
 ### Leg B — READ: server-side search + bounded index + pull skill
 
@@ -351,7 +458,8 @@ firing. This is the §1.3 argument and stands on its own.
 | `read_floor_topk` | `3` | Deterministic read-floor snippet count (Leg B.3) |
 | `condense_enabled` | `true` | Existing — model tier on/off |
 | `condense_threshold_kb` | `20` | **Lowered from 30** — the scribe writes far more than `summary[:300]`, so the model tier must run sooner to keep the curated region under the line budget. Still KB-keyed (operates on archive too); the *line* guarantee is the mechanical floor's job, this just paces the model tier. |
-| `scribe_checkpoint_kb` | `0` | Mid-session cadence (KB of new transcript). **`0` = disabled**; built in v1, raised once §8 telemetry validates session-end quality (§3.A.MID). |
+| `scribe_checkpoint_enabled` | `false` | Mid-session note-taker kill-switch (§3.A.MID). Default-off; flip on only after §8 telemetry validates session-end quality. |
+| `scribe_checkpoint_kb` | `0` | Mid-session cadence dial (KB of new transcript before a checkpoint). Recommended ≈ 8 once enabled. Both this **and** `scribe_checkpoint_enabled` must be set for checkpoints to fire (§3.A.MID). |
 
 Defaults block opens at `_load_config()` server.py:**219** (`condense_threshold_kb`
 at 231); allowlist `_CONFIG_EDITABLE_KEYS` is the set at server.py:**8296-8301**.
@@ -449,7 +557,26 @@ grep injection is *not* the router — no model, no relevance LLM.
 
 ---
 
-## 7. Decisions — ALL RESOLVED (2026-05-15)
+## 7. Decisions
+
+### Mid-session §3.A.MID — committee-revised 2026-05-17 (Legs 0/A/B/C + Fix A/B already shipped, committed `24a3af8`)
+
+- **D5 — DISSOLVED:** the (i) crash-durability vs (ii) live-cross-agent-visibility
+  fork no longer exists. The append-only correction (committee blocker #1)
+  makes every checkpoint entry immediately visible to search/read-floor, so
+  (ii) is delivered for free. No choice needed.
+- **D6 — RESOLVED (principal took recommendation): fold the watermark into
+  MEMORY.md.** A single atomic write eliminates the atomicity gap *and* the
+  DATA_DIR-pollution-500 class. Accepted cost: a load-bearing Leg-0 contract —
+  `_mem_split`/`_mem_compose` must preserve `<!-- clayrune:wm:… -->` markers,
+  the floor must not relocate them, and the Leg C condense prompt must
+  preserve them verbatim. Built *with* §3.A.MID. See §3.A.MID.
+- **D7 — RESOLVED (principal took recommendation):** ship
+  `scribe_checkpoint_enabled=false` (kill-switch) + `scribe_checkpoint_kb=0`;
+  recommended cadence ≈ **8 KB** once enabled, after §8 telemetry validates
+  session-end quality.
+
+### Original D1–D4 — ALL RESOLVED (2026-05-15)
 
 - **D1 — RESOLVED:** scribe writes flat dated entries into the managed region
   for v1; structured-delta + model-routed placement is a later iteration.
@@ -467,11 +594,11 @@ grep injection is *not* the router — no model, no relevance LLM.
   motivated the redesign; deferring it to a "v2" would defer the half of the
   value the principal cares most about.
 
-No open decisions remain. The Step 0 spike is **narrowed and largely
-de-risked** (§6): `.jsonl` readability is empirically proven; only spike-1
-(tool_result truncation — a quality ceiling, not a blocker, gates Leg A) and
-spike-2 (live-flush — gates the Phase-2 mid-session flag only) remain. Leg 0 +
-the mechanical floor are unblocked now; nothing gates starting the build.
+v1 (Legs 0/A/B/C + Fix A/B) shipped & committed `24a3af8`. **No open
+decisions remain** — D5 dissolved, D6/D7 resolved. §3.A.MID is design-
+complete and committee-hardened; the one remaining pre-build check is spike-2
+(live-`.jsonl` flush completeness). It is **build-ready, default-off** — no
+implementation until the principal asks.
 
 ---
 

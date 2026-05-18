@@ -4,6 +4,78 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18] — Step 6: mid-session note-taker (implemented, default-OFF)
+
+Mode B (the global `use_streaming_agent` default) keeps one persistent
+process alive across turns, so the Leg A Scribe only fired at session
+*teardown* — a long/idle/killed Mode-B session captured nothing until
+stopped. Step 6 adds per-turn capture. **Implemented, offline-verified,
+ships DEFAULT-OFF** (`scribe_checkpoint_enabled=false`,
+`scribe_checkpoint_kb=0`); fully inert until both are set. Committee-hardened
+design + rationale in `docs/MEMORY_SYSTEM_SPEC.md` §3.A.MID; at-a-glance map
+in the new `docs/MEMORY_SYSTEM.md`. **Server restart required (server.py).**
+
+**Trigger.** A fast, model-free gate (`_maybe_checkpoint`) clones the
+existing `_auto_snapshot_notes_on_turn` precedent at the Mode-B `result`→idle
+boundary: config flags, incognito/housekeeping, real-boundary (not
+AskUserQuestion/plan-approval/dead-proc), KB-delta debounce, one-in-flight
+per session — then spawns a daemon worker.
+
+**Worker.** `_scribe_render_delta(path, byte_offset)` renders only the new
+transcript bytes (leading+trailing partial-line rules; EOF-reset on
+rotation). The delta is summarized and folded into a cumulative
+`running_summary` via `_SCRIBE_CHECKPOINT_REDUCE`; a self-contained
+`_(live)_` entry is appended. Append-only by design (no rewrite-in-place) —
+Leg C dedups a session's checkpoint lines. Thin/refused deltas advance the
+offset with no entry. Per-project `BoundedSemaphore` (cap 2) + coalescing
+bound fan-out without re-serializing cheap model calls.
+
+**Watermark folded into MEMORY.md (D6).** A single `<!-- clayrune:wm:<sid>
+… -->` marker per live session inside the managed region carries
+`{transcript_path, byte_offset, slice_hash, running_summary}` — one atomic
+write per checkpoint eliminates the watermark/file atomicity gap and the
+DATA_DIR-sidecar 500 class. Leg-0 contract: `_mem_split_full` buckets wm
+markers (back-compat `_mem_split` 2-tuple unchanged), `_mem_compose(...,
+wm_markers)` re-emits them (falsy ⇒ byte-identical to pre-Step-6), the
+mechanical floor never relocates them, and the Leg C condense prompt is told
+to preserve `<!-- clayrune:wm:` lines verbatim.
+
+**One shared writer.** `_commit_managed_entry` is now the single leaf-locked
+(`_get_mem_write_lock`, per-project) + atomic (`_atomic_write_text`,
+temp+os.replace) MEMORY.md mutator used by the completion scribe, the
+checkpoint worker, AND reconcile-finalize — they cannot diverge. The scribe
+model call and condense dispatch stay OUTSIDE the leaf lock; strict
+outer(manager RLock)→inner(leaf) ordering, no deadlock. This also hardens
+the already-shipped completion path (parallel same-project teardowns no
+longer serialize across a ≤180s scribe call).
+
+**Teardown / Fix-B coordination.** A clean terminal write drops the
+session's wm marker in the same atomic write. A marker still present at boot
+⇒ killed mid-flight: `_reconcile_unscribed_sessions` finalizes from the
+marker's `running_summary` (NO model call, `_(reconciled)_` tag, wm-remove)
+instead of a full re-scribe; absent ⇒ existing behavior. Baseline /
+`scribed` / `_has_running_agent` invariants unchanged.
+
+**Config (defaults + `_CONFIG_EDITABLE_KEYS`):** `scribe_checkpoint_enabled`
+(false), `scribe_checkpoint_kb` (0; ≈8 recommended once enabled).
+Telemetry: `checkpoint_extracted` / `checkpoint_coalesced` /
+`checkpoint_skipped:<reason>` / `checkpoint_offset_reset` /
+`checkpoint_finalized` via the existing `/scribe-stats`.
+
+**Verification.** spike-2 passed (every `.jsonl` line is a standalone JSON
+object → partial-line cut is sound; 6 real transcripts incl. 3.9 MB).
+`py_compile` clean throughout; Leg-0 regression intact after the
+`_commit_managed_entry` refactor; wm round-trip / floor-safety / trigger &
+branch wiring / default-off inertness / bounded-semaphore integrity all
+pass. **Behavioral (live-enabled) validation is the deliberate user-gated
+step per the SPEC enablement criterion — not yet run.**
+
+**Rollback.** It's default-off — nothing changes until
+`scribe_checkpoint_enabled=true`. Setting it back to `false` (or
+`scribe_checkpoint_kb=0`) fully disables the path. The Leg-0 wm support is
+forward-safe (falsy ⇒ byte-identical output); the leaf-lock/atomic-write
+refactor is independent of the flag and beneficial regardless.
+
 ## [2026-05-17b] — server.py split P1-1 Tier 1a: marketing_preview blueprint
 
 First extraction of the `server.py` blueprint split
