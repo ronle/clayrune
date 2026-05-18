@@ -46,8 +46,13 @@ A Claude-driven installer. The user runs one command; Claude executes the instal
 
 | File | Purpose |
 |---|---|
+| `Clayrune-Installer.exe` | **Primary Windows path.** A thin native console launcher (double-click). Does no install work itself — discloses, then fetches & runs `install.ps1` fresh from GitHub raw (cache-busted) and offers a built-in `claude /login` retry loop. Built from `win-exe/` (see below); commit the rebuilt binary alongside the source. |
+| `win-exe/ClayruneInstaller.cs` | Source for `Clayrune-Installer.exe`. Faithful port of the old `Clayrune-Setup.bat` flow. |
+| `win-exe/build.ps1` | Compiles the exe with the .NET Framework `csc.exe` already on every Windows 10/11 box (no SDK, no signing). Output → `installer/Clayrune-Installer.exe`. |
+| `Clayrune-Setup.bat` | Legacy Windows double-click path, superseded by the `.exe`. Kept as a plain-text fallback for users who distrust binaries. |
+| `Clayrune-Setup.command` | macOS double-click path (same role as the `.bat`). |
 | `install.sh` | Bootstrap for macOS / Linux. The user runs `curl -sSL https://clayrune.io/install.sh \| sh`. |
-| `install.ps1` | Bootstrap for Windows. The user runs `iwr https://clayrune.io/install.ps1 -useb \| iex` from PowerShell. |
+| `install.ps1` | Bootstrap for Windows. The canonical install logic the `.exe` (and the PowerShell one-liner) hand off to. |
 | `install-prompt.md` | The actual installer logic, written as a prescriptive prompt for Claude. The bootstrap fetches this and pipes it into `claude --dangerously-skip-permissions`. |
 | `start.sh` | Per-user launcher (Linux). Activates `.venv`, starts `python server.py`, opens the browser. The installer registers this as a `.desktop` file in `~/.local/share/applications/`. |
 | `start.command` | Per-user launcher (macOS). Same role as `start.sh`. The installer copies it to `~/Applications/Clayrune.command`. |
@@ -69,6 +74,7 @@ The bootstrap clearly prints the exact `claude --dangerously-skip-permissions` l
 
 | URL | What it serves | Source |
 |---|---|---|
+| `https://clayrune.io/Clayrune-Installer.exe` | the thin Windows launcher (primary) | this repo: `installer/Clayrune-Installer.exe` (built from `installer/win-exe/`) |
 | `https://clayrune.io/install.sh` | the bootstrap (macOS/Linux) | this repo: `installer/install.sh` |
 | `https://clayrune.io/install.ps1` | the bootstrap (Windows) | this repo: `installer/install.ps1` |
 | `https://clayrune.io/install-prompt.md` | the install prompt | this repo: `installer/install-prompt.md` |

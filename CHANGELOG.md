@@ -4,6 +4,50 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18n] — Thin Windows .exe installer (replaces the .bat double-click path)
+
+Installer-only change (`installer/`); no server or app code, no restart.
+
+Symptom: the Windows "easy" path was *download `Clayrune-Setup.bat`,
+double-click it*. A downloaded `.bat` triggers an even harsher
+SmartScreen/AV reaction than an unsigned exe and reads as untrustworthy to
+non-technical users — the install funnel's weakest link.
+
+Change: ship `installer/Clayrune-Installer.exe` — a **thin native console
+launcher** that does no install work itself. It discloses what will
+happen, then hands off to the canonical `install.ps1` fetched fresh from
+GitHub raw (cache-busted), with the same built-in `claude /login` retry
+loop the `.bat` had. A faithful port of `Clayrune-Setup.bat`; the install
+logic stays in exactly one place and can never go stale inside a shipped
+binary.
+
+Build posture (consistent with the no-code-signing / no-build-pipeline
+ethos): compiled by the .NET Framework `csc.exe` already present on every
+Windows 10/11 box — no SDK, no third-party module, no cert spend. Still
+unsigned, so SmartScreen shows a normal "More info → Run anyway" *app*
+prompt once (a milder, more familiar dialog than the script one). Source
+(`installer/win-exe/ClayruneInstaller.cs`) is linked from the landing-page
+download note so the binary is auditable.
+
+- `installer/win-exe/ClayruneInstaller.cs` — launcher source.
+- `installer/win-exe/build.ps1` — `csc.exe` build → `installer/Clayrune-Installer.exe` (commit the rebuilt binary alongside source).
+- `installer/index.html` — Windows download now points at the `.exe`.
+- `installer/README.md` — files + hosting tables updated; `Clayrune-Setup.bat` retained as a plain-text fallback for binary-averse users.
+
+Validated end-to-end offline (banner/UTF-8, disclosure→handoff→exit-code→
+L/R/Q menu, graceful quit on stdin-EOF — the one bug found and fixed in
+review).
+
+Rollback: revert the `installer/index.html` link to `/Clayrune-Setup.bat`
+(the `.bat` and its hosting are untouched).
+
+> **Not in this commit:** the Settings "Update Clayrune" / dashboard-toast
+> human-version display (`vX.Y.Z build N` installed-vs-latest) is complete
+> and validated but lives in `server.py` + `static/index.html`, which carry
+> unrelated pre-existing WIP. Held back per the "stage only what belongs"
+> rule; ships separately once that tree is clean. Needs a server restart
+> and a `docs/USER_GUIDE.md` "Update Clayrune" update when it lands.
+
 ## [2026-05-18m] — Alive-between-turns agent is 'working', not 'idle'
 
 Frontend-only (`static/index.html`, `friendlyStatus()`); no server change,
