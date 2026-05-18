@@ -1110,6 +1110,43 @@ def _has_running_agent(project_id):
     return False
 
 
+def _project_live_agent(project_id):
+    """Server-authoritative live-agent state for a project, from the in-memory
+    agent_sessions map (the source of truth — fresh for ALL projects, every
+    poll).
+
+    The client's per-project agentHistory is only refreshed when that
+    project's modal is open, so for a closed project computeLiveStatus()
+    falls back to a stale errored session and mislabels an actively-running
+    project as "Error/stuck" with no live presence. Surfacing this on the
+    regularly-polled /api/projects lets friendlyStatus() trust server truth
+    instead. Returns {'state', 'task'} or None.
+
+    Priority: asking (needs the user) > working (a turn is running) > idle
+    (process alive between turns). Housekeeping/incognito sessions are
+    excluded so the public indicator respects incognito gating.
+    """
+    best = None  # 0=idle, 1=working, 2=asking
+    rank = {'idle': 0, 'working': 1, 'asking': 2}
+    for s in agent_sessions.values():
+        if s.get('project_id') != project_id:
+            continue
+        if s.get('housekeeping') or s.get('incognito'):
+            continue
+        st = s.get('status')
+        if st not in ('running', 'idle'):
+            continue
+        if s.get('waiting_for_question') or s.get('waiting_for_plan_approval'):
+            state = 'asking'   # turn done, process idle, awaiting the user
+        elif st == 'running':
+            state = 'working'  # a turn is actively running
+        else:
+            state = 'idle'     # process alive, between turns, not waiting
+        if best is None or rank[state] > rank[best['state']]:
+            best = {'state': state, 'task': (s.get('task') or '').strip()[:80]}
+    return best
+
+
 def _should_condense(project, include_claude_md=False):
     """Check whether memory condensation should be triggered for this project.
 
@@ -1664,6 +1701,7 @@ def api_projects():
     projects = load_projects()
     for p in projects:
         p['last_updated_relative'] = time_ago(p.get('last_updated'))
+        p['live_agent'] = _project_live_agent(p.get('id'))
         for entry in p.get('activity_log', []):
             entry['ts_relative'] = time_ago(entry.get('ts'))
         for item in p.get('backlog', []):
