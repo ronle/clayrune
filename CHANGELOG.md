@@ -4,6 +4,29 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18h] — Mobile chat list: horizontal overflow + Android back
+
+Two on-device fixes to `[2026-05-18g]` (frontend-only, `static/index.html`).
+
+- **Horizontal overflow** (timestamp shoved off-screen, needed sideways
+  scroll): root cause was `.projects-col` staying `display: grid` on mobile —
+  a lone grid item has default `min-width: auto`, so a long unbroken subtitle
+  blew the track past the viewport. The original `:has(.mc-chat-list)` rule
+  only touched padding and isn't reliable in Android WebView anyway. Fix:
+  `renderProjects()` now toggles an explicit `.mc-chat-mode` class on
+  `#projects-col`; CSS overrides it to `display: block` + `overflow-x: hidden`,
+  and `min-width: 0` was added down the `.cr-top`/`.cr-bot` flex chain so the
+  name/subtitle ellipsis actually clips.
+- **Android hardware back** now closes an open project modal and returns to
+  the chat list instead of exiting the app. Pure History API — no native
+  APK change (Capacitor's default back handler calls `history.back()`, which
+  fires `popstate`). One sentinel `pushState` per modal stack on mobile
+  (`mcPushModalHistory()` after `openModals.set`); `popstate` closes all open
+  modals; UI-close paths (X / Esc / Home) consume the sentinel via
+  `history.back()` in `closeModalById` so back-press count stays correct (the
+  popstate guard makes that a no-op on the back path — no double-close).
+  Desktop unaffected (gated on `isMobileChatList()`).
+
 ## [2026-05-18g] — Mobile: WhatsApp-style project chat list
 
 Frontend-only (`static/index.html`), scoped entirely to the existing

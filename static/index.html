@@ -2008,14 +2008,23 @@
       font-size: 11px !important; color: var(--text-faint);
     }
 
-    /* ── WhatsApp-style chat list (replaces the card grid on mobile) ── */
-    .projects-col:has(.mc-chat-list) { padding: 0 0 16px; gap: 0; }
-    .mc-chat-list { display: flex; flex-direction: column; }
+    /* ── WhatsApp-style chat list (replaces the card grid on mobile) ──
+       .mc-chat-mode is set on #projects-col by renderMobileChatList(). We
+       must override display:grid → block: a lone grid item has default
+       min-width:auto, so a long unbroken subtitle blows the track wider
+       than the viewport and shoves the timestamp off-screen. Not :has() —
+       Android WebView support is uneven and this is load-bearing. */
+    .projects-col.mc-chat-mode {
+      display: block; padding: 0 0 16px; gap: 0;
+      min-width: 0; max-width: 100%; overflow-x: hidden;
+    }
+    .mc-chat-list { display: flex; flex-direction: column; width: 100%; }
     .mc-chat-row {
       display: flex; align-items: center; gap: 12px;
       padding: 11px 16px; cursor: pointer;
       border-bottom: 1px solid var(--border);
       -webkit-tap-highlight-color: transparent;
+      max-width: 100%; overflow: hidden;
     }
     .mc-chat-row:active { background: var(--surface3); }
     .cr-avatar {
@@ -2042,13 +2051,13 @@
       100% { transform: scale(1.35); opacity: 0;   }
     }
     .cr-main { flex: 1; min-width: 0; }
-    .cr-top { display: flex; align-items: baseline; gap: 8px; }
+    .cr-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
     .cr-name {
       flex: 1; min-width: 0; font-size: 16px; font-weight: 600; color: var(--text);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .cr-time { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
-    .cr-bot { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+    .cr-bot { display: flex; align-items: center; gap: 8px; margin-top: 3px; min-width: 0; }
     .cr-sub {
       flex: 1; min-width: 0; font-size: 13.5px; color: var(--text-dim);
       line-height: 1.35;
@@ -4807,6 +4816,22 @@ function renderMobileChatList(col) {
   });
 }
 
+// ── Android hardware back → close modal, return to the chat list ─────────────
+// Pure History API (no native APK change): Capacitor's default back handler
+// calls window.history.back() when it can, which fires popstate. We push one
+// sentinel entry when a modal stack opens on mobile so "back" lands on us
+// (close the conversation, stay in the app) instead of exiting the app.
+let _mcModalHistoryActive = false;
+function mcPushModalHistory() {
+  if (!isMobileChatList() || _mcModalHistoryActive) return;
+  try { history.pushState({ mcModal: true }, ''); _mcModalHistoryActive = true; } catch (e) {}
+}
+window.addEventListener('popstate', () => {
+  if (!_mcModalHistoryActive) return;          // not our entry → let it through
+  _mcModalHistoryActive = false;               // entry already consumed by back
+  if (openModals.size) Array.from(openModals.keys()).forEach(id => closeModalById(id));
+});
+
 function renderStats() {
   const runningAgents = agentHistory.filter(h => h.status === 'running' || h.status === 'idle').length;
   const agentEl = document.getElementById('header-agent-count');
@@ -4846,7 +4871,8 @@ function filterProjects() {
 
 function renderProjects() {
   const col = document.getElementById('projects-col');
-  if (isMobileChatList()) { renderMobileChatList(col); return; }
+  if (isMobileChatList()) { col.classList.add('mc-chat-mode'); renderMobileChatList(col); return; }
+  col.classList.remove('mc-chat-mode');
   const filtered = filterProjects();
   if (!filtered.length) { col.innerHTML = '<div class="loading">No projects match filter</div>'; return; }
   const filteredIds = new Set(filtered.map(p => p.id));
@@ -5703,6 +5729,7 @@ function openProjectModal(projectId, restoreState) {
   const z = nextModalZ++;
   win.style.zIndex = z;
   openModals.set(projectId, { projectId, element: win, minimized: false, zIndex: z });
+  mcPushModalHistory();
 
   // Apply persistent per-project prefs (size + zoom) before positioning
   const pref = (!_isMobileDevice && window.innerWidth > 960) ? _getModalPref(projectId) : null;
@@ -5807,6 +5834,14 @@ function closeModalById(modalId) {
     if (topId) focusModal(topId);
   }
   _saveOpenModalsSnapshot();
+  // Closed via UI (X / Esc / Home), not via hardware back: pop the sentinel
+  // we pushed so the next back press isn't swallowed by a dead entry. On the
+  // back path _mcModalHistoryActive is already false, so this is a no-op
+  // there — no double-close.
+  if (_mcModalHistoryActive && openModals.size === 0) {
+    _mcModalHistoryActive = false;
+    try { history.back(); } catch (e) {}
+  }
 }
 
 function closeModal() {
