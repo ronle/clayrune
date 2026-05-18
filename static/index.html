@@ -4997,12 +4997,24 @@ function computeLiveStatus(projectId) {
 // user-facing states from the design handoff: working/asking/stuck/done/idle.
 function friendlyStatus(p) {
   if (!p) return 'idle';
+  // Server-authoritative live-agent state from /api/projects (polled for ALL
+  // projects, every cycle). Wins over computeLiveStatus(), whose agentHistory
+  // is only refreshed for projects whose modal THIS client has open —
+  // otherwise it falls back to a stale errored session and mislabels an
+  // actively-running project as "Error/stuck" with no live presence.
+  const la = p.live_agent;
+  if (la && la.state === 'working') return 'working';
+  if (la && la.state === 'asking')  return 'asking';
+
   const live = computeLiveStatus(p.id) || {};
   const c = live.currentTaskClass;
   if (c === 'running')        return 'working';
   if (c === 'plan-approval')  return 'asking';
   if (c === 'question')       return 'asking';
-  if (c === 'error')          return 'stuck';
+  // A stale client-side errored session must NOT override a server that
+  // reports a live agent on this project (the actual root cause of the
+  // false "Error on …" rows).
+  if (c === 'error' && !la)   return 'stuck';
   if (p.blocked)              return 'stuck';
   switch (p.status) {
     case 'active':    return 'working';
@@ -5052,7 +5064,10 @@ function friendlySummary(p) {
         ? `Making progress on ${goal} — ${done} of ${ws.length} done.`
         : `In progress on ${goal} (${done}/${ws.length} complete).`;
     }
-    const task = taskOf(runningSess) || 'the current task';
+    // Prefer the client's own session task; fall back to the server-provided
+    // live_agent task so closed projects (no runningSess client-side) still
+    // get a meaningful subtitle instead of the generic placeholder.
+    const task = taskOf(runningSess) || clip((p.live_agent && p.live_agent.task) || '', 60) || 'the current task';
     return isCasual ? `Working on ${task}. I'll let you know when it's ready.` : `In progress: ${task}.`;
   }
 

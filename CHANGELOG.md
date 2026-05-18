@@ -4,6 +4,37 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18i] — Server-authoritative live-agent state (fixes stale "Error" rows)
+
+Fixes the WhatsApp chat list showing a project as "Error on …" with no live
+"working" presence while an agent was in fact actively running on it (e.g.
+Mission Control during its own UI work). **Requires a server restart** to
+activate (backend change); frontend is regression-free pre-restart
+(`p.live_agent` undefined → `friendlyStatus()` falls back to prior behavior).
+
+Root cause (pre-existing, not a chat-list bug — the prominent per-row status
+just exposed it): the client's `agentHistory` is only refreshed by
+`fetchAgentStatus()`, which after cold-start runs **only for projects whose
+modal this client has open** (+ focus-resync of open modals). There is no
+periodic refresh of live agent state for the closed projects shown in the
+list. So a closed project's row froze at cold-start state; `computeLiveStatus()`
+found no running session and fell through to a **stale errored session**,
+and `friendlyStatus()` checked that client `error` class *before* the
+server-authoritative `p.status` — so a months-old errored session overrode
+`status: active`.
+
+Fix A (proper, server-authoritative — benefits desktop tiles too, not just
+the chat list; no new polling, rides the existing `/api/projects` cycle):
+- `server.py`: `_project_live_agent(pid)` derives `{state, task}` from the
+  in-memory `agent_sessions` map (the source of truth, fresh for all
+  projects) — priority asking > working > idle; housekeeping/incognito
+  excluded. Wired into `/api/projects` as `p['live_agent']`.
+- `static/index.html`: `friendlyStatus()` trusts `p.live_agent`
+  (working/asking) over `computeLiveStatus()`, and a stale client `error`
+  class no longer returns `stuck` when the server reports a live agent
+  (`c === 'error' && !la`). `friendlySummary()` falls back to
+  `p.live_agent.task` for the subtitle on closed projects.
+
 ## [2026-05-18h] — Mobile chat list: horizontal overflow + Android back
 
 Two on-device fixes to `[2026-05-18g]` (frontend-only, `static/index.html`).
