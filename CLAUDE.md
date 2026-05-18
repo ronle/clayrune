@@ -126,3 +126,75 @@ exactly why it needs the `_condense_integrity_check` heal/restore guard.
 
 **Rollback**: `scribe_enabled=false` reverts to the legacy stdout-tail
 write; `scribe_reconcile_enabled=false` disables startup reconcile.
+
+
+## Skills Curation — design + Step 1 shipped (added 2026-05-18)
+
+A self-improving skills layer on top of the existing Skills surface. Design:
+`docs/SKILLS_CURATION_DESIGN.md`. Step 1 ships as the `mc-distill` built-in
+skill (auto-installs on startup); backend Distiller / telemetry / dispatch
+hint are deferred pending committee review.
+
+**Principles (firm):**
+- **MC owns, agent proposes, human promotes.** Skills the agent invents do
+  not enter the loadout without explicit human approval (or, in opt-in
+  `auto` mode, without project-local scoping that the user can revert).
+- **Three per-project modes** (`distiller_mode`): `off` (no proposing),
+  `proposed` (writes to `data/skills/_proposed/<sid>/` for UI review), or
+  `auto` (writes directly to `<project>/.claude/skills/` with
+  `auto_authored: true`, surfaced in the monthly audit). User-controlled
+  per project; no `production` flag, no system-imposed rules — the user is
+  trusted to choose.
+- **Authored skills only.** Explicit named SKILL.md artifacts; no
+  "learned behavior" drift in MEMORY.md's curated section (out of scope —
+  blurs the curated/managed boundary and is hard to roll back).
+- **Auto-authored skills are project-local only.** Never written to
+  `~/.claude/skills/`. Global promotion is always a deliberate user
+  action.
+- **Distiller is best-effort, never load-bearing.** Failure to distill
+  never breaks a session, never breaks Scribe, never blocks completion
+  logging. Same posture as Scribe's thin/refusal guards.
+
+**Three trigger paths** (only #1 currently shipped):
+1. **Conversational push (SHIPPED).** The `mc-distill` skill empowers the
+   agent to surface a candidate proposal inline at a natural breakpoint
+   (end of task, after commit, wrap-up). Format:
+   `Noticed a pattern: <X>. Observed <N> times. Bottle? [Yes / Later / No]`.
+   Hard rules: recurrence ≥ 2, specificity (one-line name + concrete
+   observations), one-proactive-push-per-session max, never mid-task. Same
+   skill also handles the explicit `/distill` invocation path.
+2. **Silent Distiller (NOT BUILT).** Cheap-model proposer at session end,
+   parallel to Scribe — reuses `_scribe_render_transcript` and the
+   `_scribe_call` wrapper. Writes to `_proposed/<sid>/` (or, in `auto`
+   mode, directly to project skills). Catches *cross-session* recurrence
+   the in-session agent can't see.
+3. **Dispatch skill-relevance hint (NOT BUILT).** Top-K skills injected
+   into the read-floor at dispatch. v1 = keyword scoring via the existing
+   `/api/skills/search` endpoint (used by `mc-skill-broker`); v2 = bge-m3
+   semantic similarity when/if Step 7 ships.
+
+**`No` from a conversational push** writes a suppression marker to
+`_skill_stats.json` (when telemetry ships) so the silent Distiller does
+not re-propose the same pattern in the same session. `Later` is **not**
+consent — only `Yes` writes anything.
+
+**LOAD-BEARING RULE — DATA_DIR pollution (same as Memory System).**
+`data/projects/<id>/_skill_stats.json` (when telemetry ships) MUST be
+suffix-excluded in `load_projects()` — same rule as `_agent_log.json` and
+`_scribe_stats.json`.
+
+**Build order** (`docs/SKILLS_CURATION_DESIGN.md` "Recommended build order"):
+1. `mc-distill` skill — SHIPPED 2026-05-18.
+2. Skill-use telemetry (`_skill_stats.json`).
+3. Audit checklist extension in `docs/MAINTENANCE_AUDIT_PROMPT.md`.
+4. Distiller (`proposed` mode only) — `distiller.py` module, hooks into
+   the Scribe trigger.
+5. `auto` mode — after `proposed` is real and proposal quality has been
+   observed in practice.
+6. Dispatch skill hint (v1 keyword).
+7. Dispatch skill hint (v2 bge-m3) — if/when Step 7 lands.
+
+Steps 2–7 require **committee review against the design doc before any
+code lands** — same discipline as Memory System Step 6 (`MEMORY_SYSTEM_SPEC.md`
+§3.A.MID) and Leg C structured condense (CHANGELOG `[2026-05-18e]`
+committee review block).

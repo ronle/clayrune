@@ -173,16 +173,28 @@ MC restart ─▶ _startup_memory_maintenance: backfill → _reconcile_unscribed
 3. **Spec header true-up** — ✅ DONE (commit `46c1ea2`); §3.A.MID/§7 authoritative.
 4. **Push** — ✅ DONE; all memory commits on `origin/master`
    (`24a3af8`, `9683996`, `46c1ea2`, `5fefc4e`), local/remote in sync.
-5. **Skills Curation (deferred, depends on 6/7).** Hermes-equivalent
-   self-evolving skills layer is planned but **not designed yet** —
-   pending Steps 6/7. Principles locked: *MC owns, agent proposes,
-   human promotes*; Distiller runs parallel to Scribe at session end
-   (same trigger, different output); proposals land in
-   `data/skills/_proposed/<session>/` and never auto-install; evolution
-   via maintenance-audit extension, not a new loop. Step 7's bge-m3
-   retrieval is the prerequisite for "skill-relevance hint" at dispatch
-   (semantic similarity, not grep). Surface as a candidate sprint in the
-   monthly audit once Steps 6/7 ship.
+5. **Skills Curation — design drafted 2026-05-18, Step 1 SHIPPED, backend
+   pending.** Hermes-equivalent self-evolving skills layer.
+   **Design:** `docs/SKILLS_CURATION_DESIGN.md` (388 lines).
+   **Step 1 shipped:** `data/skills/builtin/mc-distill/SKILL.md` (158 lines) —
+   the manual-and-proactive proposal skill (`/distill` + agent-initiated
+   `[Yes / Later / No]` push at natural breakpoints; one proactive push per
+   session max). Auto-installs on next MC startup; available in every
+   project. Writes only to `data/skills/_proposed/<sid>/` — never auto-
+   installs, never writes to `~/.claude/skills/` or project skill dirs.
+   **Principles (firm):** *MC owns, agent proposes, human promotes*; three
+   per-project modes (`off` / `proposed` / `auto`) — user-controlled, no
+   `production` flag; authored skills only (no learned-behavior MEMORY.md
+   drift); auto-authored skills are project-local only (never global).
+   **Backend Distiller still pending** — cheap-model session-end proposer
+   running parallel to Scribe; `_skill_stats.json` telemetry; `_proposed/`
+   CRUD endpoints; audit checklist extension; dispatch skill-relevance
+   hint (v1 keyword via existing `/api/skills/search`, v2 bge-m3 when/if
+   Step 7 ships). **Committee review required before any backend code
+   lands** — focus areas: pattern fingerprint stability, UPDATE.md schema,
+   conversational-push annoyance bar, auto-mode rollback story,
+   Distiller↔conversational-push race coordination, cost cap calibration.
+   See `docs/SKILLS_CURATION_DESIGN.md` open items §1–7.
 6. **Within-session self-recall for long Mode-B sessions (TECH DEBT).** Step 6
    *writes* a long session's learning durably, but the **same persistent
    Mode-B process does not auto-reload it**: the read-floor + native

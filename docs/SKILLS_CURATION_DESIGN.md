@@ -1,9 +1,12 @@
 # Clayrune Skills Curation — Design
 
-> Status: design draft (not built, no committee review yet). Parallel
-> architecture to [`MEMORY_SYSTEM.md`](MEMORY_SYSTEM.md); reuses the Scribe
-> infrastructure wherever possible. Principles locked in MEMORY_SYSTEM.md
-> open item #5. Authored in chat 2026-05-18; awaiting human review.
+> Status: design draft. Step 1 (`mc-distill` skill — manual + conversational-
+> push triggers) **SHIPPED 2026-05-18**. Backend Distiller and subsequent
+> steps not yet built, no committee review yet. Parallel architecture to
+> [`MEMORY_SYSTEM.md`](MEMORY_SYSTEM.md); reuses the Scribe infrastructure
+> wherever possible. Principles locked in MEMORY_SYSTEM.md open item #5.
+> Authored in chat 2026-05-18; awaiting committee review before any
+> backend code lands.
 
 **Goal:** turn recurring patterns the agent demonstrates into reusable
 `SKILL.md` artifacts *without* humans writing them by hand, while keeping
@@ -61,6 +64,8 @@ self-improvement here.
 | Component | Plain English | Status | Depends on |
 |---|---|---|---|
 | **Distiller** | Cheap-model "is this worth a SKILL.md?" call, parallel to Scribe at session end. | not built | Scribe trigger (Leg A — shipped) |
+| **Conversational push** | Agent surfaces a candidate proposal inline mid/end-session via a `[Yes / Later / No]` choice. Complements silent Distiller — catches in-session patterns while context is sharp. User-gated. | **shipped** via `mc-distill` skill (2026-05-18) | Existing chat surface; no new infrastructure |
+| **Manual `/distill` invocation** | User explicitly asks the agent to propose a skill. | **shipped** via `mc-distill` skill (2026-05-18) | Existing chat surface |
 | **Proposal writer** | Atomic write to `data/skills/_proposed/<sid>/SKILL.md` (or `UPDATE.md`). | not built | Reuses `_atomic_write_text` + per-project leaf-lock pattern |
 | **Promote / reject API + UI** | `POST /api/skills/_proposed/<sid>/promote` moves to skill dir; reject deletes proposal. | not built | Existing skills CRUD endpoints |
 | **Skill-use telemetry** | Same-pass `.jsonl` scan as Scribe identifies which skills were referenced this session; writes `_skill_stats.json`. | not built | Scribe path |
@@ -179,6 +184,45 @@ manually or via audit-driven decision.
 review candidates so they're never invisible. The UI shows an `auto`
 badge in the skills list.
 
+## Lifecycle of a conversational-push proposal
+
+Distinct path from the silent Distiller — runs in the chat surface, not at
+session end. The agent notices a pattern mid- or end-session and surfaces
+it inline. Implemented today via the `mc-distill` skill.
+
+```
+agent observes pattern (≥2 recurrences, at natural breakpoint)
+    ─▶ inline message to user:
+       "Noticed a pattern: <X>. Observed <N> times. Bottle?"
+       [Yes / Later / No]
+    ─▶ user response:
+         Yes   → agent drafts SKILL.md (or UPDATE.md) inline
+                 mode='proposed': atomic write to _proposed/<sid>/
+                                  (UI shows badge → one-click promote in UI)
+                 mode='auto':     atomic write to <project>/.claude/skills/
+                                  with auto_authored: true + provenance: interactive
+         Later → no write; silent Distiller picks this up at session end
+                 if the pattern still qualifies under min_recurrence
+         No    → suppression marker added to _skill_stats.json so the silent
+                 Distiller does not re-propose this pattern in this session
+```
+
+**Hard constraints (enforced by the `mc-distill` skill):**
+
+- One proactive push per session, max. After Yes/Later/No, do not propose again.
+- Only at natural breakpoints (end of task, after commit, wrap-up).
+- Never mid-task or mid-debug.
+- Specificity bar (name the pattern, cite recurrence) — no fishing prompts.
+
+**Why this exists alongside the silent Distiller:**
+
+The conversational push catches obvious patterns *in-the-moment*, while
+context is sharp and the user can react quickly. The silent Distiller
+catches *cross-session* recurrence the in-session agent can't see — it
+only has its own session's transcript, whereas the Distiller has access
+to `_skill_stats.json` history across many sessions. They're
+complementary, not competing.
+
 ## Load-bearing rules (don't violate)
 
 - **Distiller is best-effort, never load-bearing.** Failure to distill
@@ -200,6 +244,16 @@ badge in the skills list.
   skills go through the same human review as new skills.
 - **Distiller never writes globally (`~/.claude/skills/`).** Even in
   `auto` mode. Global promotion is always a deliberate user action.
+- **Conversational push is always user-gated.** The agent never writes to
+  any skill location based on a proactive suggestion without an explicit
+  "Yes" from the user in the same turn. Silence is not consent. `Later`
+  is not consent — only `Yes`.
+- **`No` from a conversational push suppresses silent re-proposal in the
+  same session.** A suppression marker in `_skill_stats.json` is honored
+  by the silent Distiller until the session closes.
+- **One proactive push per session, max.** Enforced by the `mc-distill`
+  skill's own rules. After any Yes/Later/No, no further proactive
+  proposals in that session.
 
 ## Leveraging existing Scribe / memory infrastructure
 
@@ -219,6 +273,7 @@ solved. Explicit reuse map:
 | Read-floor injection at dispatch | `_build_agent_context` "--- RELEVANT MEMORY ---" → add "--- RELEVANT SKILLS ---" alongside |
 | On-demand pull (existing) | `mc-memory-search`, `mc-skill-broker` — no changes needed |
 | Cross-project skill discovery | Existing `/api/skills/search` keyword endpoint (becomes semantic when Step 7 ships — same plumbing, swap backend) |
+| Inline user gate (`Yes / Later / No`) | Existing chat surface — no new mechanism. AskUserQuestion-style prompt rendered inline by the `mc-distill` skill. |
 | Audit extension surface | `MAINTENANCE_AUDIT_PROMPT.md` (read-only, monthly) |
 
 **What's genuinely new code:**
@@ -278,38 +333,54 @@ with the prompt. That's a v2 polish issue, not a v1 blocker.
    selection (a clear warning that the agent will self-author skills in
    that project), but the system imposes no rules — the user is treated
    as competent to make their own safety calls.
-6. **First experiment before any of this code:** build the manual
-   `/distill` Claude Code skill — Ron (or any user) invokes it explicitly
-   at session end, the agent proposes a SKILL.md based on what just
-   happened. No automation, no telemetry, no Distiller module yet. This
-   gives a real feel for proposal quality before the full pipeline is
-   wired up, and is the cheapest possible experiment (1 SKILL.md file,
-   ~30 lines).
-7. **Committee review.** Memory system went through committee review
-   before build (`MEMORY_SYSTEM_SPEC.md` §3.A.MID is the hardened design).
-   This design has NOT been committee-reviewed. Before code lands,
-   convene a similar review focused on: pattern fingerprint stability,
-   UPDATE.md schema, auto-mode safety, cost cap calibration.
+6. **First experiment — SHIPPED 2026-05-18.** The `mc-distill` Claude Code
+   skill is now in `data/skills/builtin/mc-distill/SKILL.md` (158 lines).
+   It supports **both** triggers: explicit user invocation
+   (`/distill`, "propose a skill") AND proactive agent-initiated proposals
+   with hard rules (recurrence ≥2, natural breakpoint, specificity,
+   one-proactive-push-per-session-max). Auto-installs on next MC startup.
+   This is the cheapest possible experiment to validate proposal quality
+   before any Distiller backend code lands.
+7. **Committee review — required before any backend code lands.** Memory
+   system went through committee review before build (`MEMORY_SYSTEM_SPEC.md`
+   §3.A.MID is the hardened result). This design has NOT been committee-
+   reviewed, and the conversational-push addition expanded the surface
+   area beyond the original draft. Committee focus areas:
+   - Pattern fingerprint stability (item #1).
+   - UPDATE.md schema rigor (item #2).
+   - Conversational-push annoyance bar — when does the agent ask, what
+     constitutes a "natural breakpoint," how to prevent prompt fatigue.
+   - Auto-mode skill-quality decay — bad skills compound; rollback story.
+   - Race / coordination between conversational push `Later` and the
+     silent Distiller at session end (the suppression-marker contract).
+   - Cost cap calibration (item #3).
 
 ## Recommended build order
 
 Once Step 6 is live-validated and Step 7 ships (or is decided to stay
 deferred), suggested sequence:
 
-1. **Manual `/distill` skill** (open item #6). Validates proposal quality.
+1. **`mc-distill` skill — SHIPPED 2026-05-18.** Manual + conversational-push
+   triggers both live in the same SKILL.md. Validates proposal quality
+   before any backend code lands.
 2. **Skill-use telemetry** (`_skill_stats.json`). Cheap; builds the recurrence-
-   tracking substrate that Distiller needs anyway.
+   tracking substrate that Distiller needs anyway. Also stores the per-session
+   suppression markers used by the conversational-push `No` path.
 3. **Audit checklist extension.** Surface the data once telemetry exists,
    before any auto-write code lands.
 4. **Distiller (`proposed` mode only).** New module, hooks into Scribe
-   trigger, writes to `_proposed/`. UI for review.
-5. **`auto` mode.** Add after `proposed` is real and the proposal quality
-   has been observed in practice.
-6. **Dispatch skill hint (v1 keyword).** Independent of the Distiller; can
-   parallel-track.
+   trigger, writes to `_proposed/`. UI for review. The conversational-
+   push UX is already in the `mc-distill` skill; Distiller adds the
+   *silent cross-session* path.
+5. **`auto` mode.** Add after `proposed` is real and proposal quality has
+   been observed in practice.
+6. **Dispatch skill hint (v1 keyword).** Independent of the Distiller;
+   can parallel-track.
 7. **Dispatch skill hint v2 (bge-m3).** When Step 7 lands.
 
-Steps 1-3 are weeks-of-work each; 4 is the main lift; 5-7 are incremental.
+Step 1 is done. Steps 2-3 are days-of-work each; step 4 is the main lift
+(~600-900 lines new code per the reuse-table estimate); steps 5-7 are
+incremental.
 
 Per `MAINTENANCE_PROTOCOL.md`: this is not a sprint plan — it's a build
 *order* to follow opportunistically as adjacent feature work happens, or

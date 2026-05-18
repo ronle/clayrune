@@ -2008,6 +2008,62 @@
       font-size: 11px !important; color: var(--text-faint);
     }
 
+    /* ── WhatsApp-style chat list (replaces the card grid on mobile) ── */
+    .projects-col:has(.mc-chat-list) { padding: 0 0 16px; gap: 0; }
+    .mc-chat-list { display: flex; flex-direction: column; }
+    .mc-chat-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 16px; cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .mc-chat-row:active { background: var(--surface3); }
+    .cr-avatar {
+      position: relative; width: 50px; height: 50px; flex-shrink: 0;
+      border-radius: 50%; display: grid; place-items: center;
+      background: var(--surface3); border: 2px solid var(--border2);
+    }
+    .cr-av-emoji { font-size: 24px; line-height: 1; }
+    .cr-av-init {
+      font-size: 17px; font-weight: 800; color: var(--text-dim);
+      letter-spacing: -0.02em;
+    }
+    .cr-avatar.friendly-working { border-color: #6aa66a; }
+    .cr-avatar.friendly-asking  { border-color: var(--amber); }
+    .cr-avatar.friendly-stuck   { border-color: var(--red); }
+    /* Live presence: pulsing ring while the agent is actively working */
+    .cr-ring { display: none; }
+    .cr-avatar.friendly-working .cr-ring {
+      display: block; position: absolute; inset: -2px; border-radius: 50%;
+      border: 2px solid #6aa66a; animation: crPulse 1.6s ease-out infinite;
+    }
+    @keyframes crPulse {
+      0%   { transform: scale(1);    opacity: 0.7; }
+      100% { transform: scale(1.35); opacity: 0;   }
+    }
+    .cr-main { flex: 1; min-width: 0; }
+    .cr-top { display: flex; align-items: baseline; gap: 8px; }
+    .cr-name {
+      flex: 1; min-width: 0; font-size: 16px; font-weight: 600; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .cr-time { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
+    .cr-bot { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+    .cr-sub {
+      flex: 1; min-width: 0; font-size: 13.5px; color: var(--text-dim);
+      line-height: 1.35;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .cr-badge {
+      flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px;
+      border-radius: 999px; background: var(--accent); color: #fff;
+      font-size: 12px; font-weight: 700; display: grid; place-items: center;
+      line-height: 1;
+    }
+    .mc-chat-row.cr-unread .cr-name { font-weight: 800; }
+    .mc-chat-row.cr-unread .cr-sub { color: var(--text); font-weight: 600; }
+    .mc-chat-row.cr-unread .cr-time { color: var(--accent); font-weight: 700; }
+
     /* Bottom tab bar — 5 slots, FAB centered. Compact (~52px tall incl. FAB lift) */
     .bottom-tab-bar {
       display: grid !important; grid-template-columns: repeat(5, 1fr);
@@ -4624,9 +4680,10 @@ function renderMobileFilterPills() {
   const row = document.getElementById('mobile-filter-pills');
   if (!row) return;
   if (window.innerWidth > 960) { row.innerHTML = ''; return; }
-  const counts = { all: allProjects.length, urgent: 0, working: 0, done: 0, idle: 0 };
+  const counts = { all: allProjects.length, unread: 0, urgent: 0, working: 0, done: 0, idle: 0 };
   allProjects.forEach(p => {
     const fs = friendlyStatus(p);
+    if (unreadCount(p) > 0) counts.unread++;
     if (fs === 'asking' || fs === 'stuck') counts.urgent++;
     if (fs === 'working') counts.working++;
     if (fs === 'done') counts.done++;
@@ -4635,6 +4692,7 @@ function renderMobileFilterPills() {
   const af = activeFilter || 'all';
   const pills = [
     { id: 'urgent',    label: 'Needs you', count: counts.urgent,  cls: 'urgent' },
+    { id: 'unread',    label: 'Unread',    count: counts.unread,  cls: '' },
     { id: 'all',       label: 'All',       count: counts.all,     cls: '' },
     { id: 'active',    label: 'Working',   count: counts.working, cls: '' },
     { id: 'completed', label: 'Done',      count: counts.done,    cls: '' },
@@ -4648,7 +4706,106 @@ function renderMobileFilterPills() {
 }
 
 // Re-render on resize so mobile-only blocks appear/disappear cleanly
-window.addEventListener('resize', () => { renderMobileAppBar(); renderMobileFilterPills(); });
+// (incl. the grid↔chat-list swap when crossing the 960px boundary).
+window.addEventListener('resize', () => { renderMobileAppBar(); renderMobileFilterPills(); renderProjects(); });
+
+// ── Mobile chat list (WhatsApp-style) ───────────────────────────────────────
+// On ≤960px the card grid is replaced by a contact-list of projects:
+// avatar + name + live-status subtitle + time + unread badge, pinned items
+// (asking/stuck) on top, then by recency. Desktop is untouched.
+function isMobileChatList() { return window.innerWidth <= 960; }
+
+let projectLastSeen = {};
+try { projectLastSeen = JSON.parse(localStorage.getItem('mc_proj_seen') || '{}') || {}; }
+catch (e) { projectLastSeen = {}; }
+
+// Single client-local touch-point for read state. Structured so a later
+// move to server-side per-device tracking is a body swap, not a refactor.
+function markProjectSeen(pid) {
+  if (!pid) return;
+  projectLastSeen[pid] = Date.now();
+  try { localStorage.setItem('mc_proj_seen', JSON.stringify(projectLastSeen)); } catch (e) {}
+}
+
+// Count of actionable agent events the user hasn't seen for project p.
+// Actionable = (a) the agent is waiting on the user to continue
+// (friendlyStatus 'asking' — plan approval / question / waiting), or
+// (b) an autonomous (non-manual trigger) session produced an update.
+// Interactive turns the user drove are NOT counted (they were watching).
+// Derived on every render from polled state — deliberately NOT SSE — because
+// closed projects have no live connection (Chromium 6-slot cap closes SSE on
+// turn_complete), so an SSE-incremented counter would silently miss them.
+function unreadCount(p) {
+  if (!p) return 0;
+  const seen = projectLastSeen[p.id] || 0;
+  let n = 0;
+  // (a) standing "asking" — counts once, keyed to the project's last_updated
+  // onset so it does not inflate every poll while the user is away.
+  if (friendlyStatus(p) === 'asking') {
+    if ((Date.parse(p.last_updated || '') || 0) > seen) n += 1;
+  }
+  // (b) autonomous-session updates newer than last-seen. Hivemind workers are
+  // excluded as noise; the orchestrator finishing IS a real update.
+  agentHistory.forEach(h => {
+    if (h.projectId !== p.id) return;
+    if (!h.triggerType || h.triggerType === 'manual') return;
+    if (isHivemindWorker(h)) return;
+    if (!(h.status === 'completed' || h.status === 'idle' || h.status === 'error')) return;
+    if ((Date.parse(h.startedAt || '') || 0) > seen) n += 1;
+  });
+  return n;
+}
+
+function projectInitials(p) {
+  const s = String((p && (p.name || p.id)) || '?').trim();
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return s.slice(0, 2).toUpperCase();
+}
+
+function projectRowHTML(p) {
+  const fs = friendlyStatus(p);
+  const unread = unreadCount(p);
+  const av = p.emoji
+    ? `<span class="cr-av cr-av-emoji">${esc(p.emoji)}</span>`
+    : `<span class="cr-av cr-av-init">${esc(projectInitials(p))}</span>`;
+  const badge = unread > 0
+    ? `<span class="cr-badge">${unread > 9 ? '9+' : unread}</span>` : '';
+  return `
+  <div class="mc-chat-row friendly-${fs} ${unread ? 'cr-unread' : ''}" data-id="${esc(p.id)}">
+    <div class="cr-avatar friendly-${fs}">${av}<span class="cr-ring"></span></div>
+    <div class="cr-main">
+      <div class="cr-top">
+        <span class="cr-name">${esc(p.name || p.id)}</span>
+        <span class="cr-time">${esc(p.last_updated_relative || '')}</span>
+      </div>
+      <div class="cr-bot">
+        <span class="cr-sub">${esc(friendlySummary(p))}</span>
+        ${badge}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderMobileChatList(col) {
+  const filtered = filterProjects();
+  if (!filtered.length) { col.innerHTML = '<div class="loading">No projects match filter</div>'; return; }
+  const rank = p => {
+    const fs = friendlyStatus(p);
+    if (fs === 'asking') return 0;   // needs you → top
+    if (fs === 'stuck')  return 1;   // blocked → next
+    return 2;                        // everything else → recency below
+  };
+  const sorted = filtered.slice().sort((a, b) => {
+    const r = rank(a) - rank(b);
+    if (r !== 0) return r;
+    return (Date.parse(b.last_updated || '') || 0) - (Date.parse(a.last_updated || '') || 0);
+  });
+  col.innerHTML = `<div class="mc-chat-list">${sorted.map(projectRowHTML).join('')}</div>`;
+  col.querySelectorAll('.mc-chat-row').forEach(row => {
+    row.addEventListener('click', () => openProjectModal(row.dataset.id));
+  });
+}
 
 function renderStats() {
   const runningAgents = agentHistory.filter(h => h.status === 'running' || h.status === 'idle').length;
@@ -4679,6 +4836,7 @@ function filterProjects() {
   // surfaced via the dedicated "Incognito" sidebar entry instead.
   const base = allProjects.filter(p => !isIncognitoProject(p));
   if (activeFilter === 'all') return base;
+  if (activeFilter === 'unread') return base.filter(p => unreadCount(p) > 0);
   if (activeFilter === 'urgent')
     return base.filter(p => p.status === 'waiting' || p.status === 'blocked' || friendlyStatus(p) === 'asking' || friendlyStatus(p) === 'stuck');
   if (['active','blocked','waiting','parked','completed'].includes(activeFilter))
@@ -4687,8 +4845,9 @@ function filterProjects() {
 }
 
 function renderProjects() {
-  const filtered = filterProjects();
   const col = document.getElementById('projects-col');
+  if (isMobileChatList()) { renderMobileChatList(col); return; }
+  const filtered = filterProjects();
   if (!filtered.length) { col.innerHTML = '<div class="loading">No projects match filter</div>'; return; }
   const filteredIds = new Set(filtered.map(p => p.id));
   const slots = buildSlotArray(filteredIds);
@@ -5514,6 +5673,11 @@ if ('serviceWorker' in navigator) {
 function openProjectModal(projectId, restoreState) {
   const p = allProjects.find(x => x.id === projectId);
   if (!p) return;
+
+  // Opening a project = reading it (WhatsApp semantics): clear its unread
+  // badge and drop the bold. Re-render so the change shows on return.
+  markProjectSeen(projectId);
+  if (isMobileChatList()) renderProjects();
 
   // If already open, focus/restore it
   if (openModals.has(projectId)) {

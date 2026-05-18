@@ -4,6 +4,112 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18g] — Mobile: WhatsApp-style project chat list
+
+Frontend-only (`static/index.html`), scoped entirely to the existing
+`@media (max-width: 960px)` block + the main app script. Desktop is byte-for-byte
+unchanged (the chat list is an early-return branch in `renderProjects()` gated on
+`isMobileChatList()`).
+
+On mobile the card grid is replaced by a contact-list of projects:
+**avatar · name · live-status subtitle · time-ago · unread badge**, pinned
+section (`asking` → `stuck`) on top, everything else by `last_updated` recency.
+
+- **Avatar**: `p.emoji` if the project has one set (the existing modal emoji),
+  else two-letter initials from the project name (`projectInitials()`). Avatar
+  carries a status-colored ring; `friendly-working` adds a CSS pulse ring as
+  live "agent working" presence (no SSE — pure CSS, always live).
+- **Unread model** (the only real new state): `projectLastSeen` map in
+  `localStorage['mc_proj_seen']`; `markProjectSeen(pid)` stamps on
+  `openProjectModal()` (open = read, WhatsApp semantics). `unreadCount(p)`
+  counts **actionable** events newer than last-seen: (a) standing
+  `friendlyStatus==='asking'` counted once (keyed to `p.last_updated` onset so
+  it doesn't inflate while away), plus (b) autonomous-trigger
+  (`triggerType !== 'manual'`, hivemind workers excluded) sessions that
+  completed/idled/errored. Interactive turns the user drove are not counted.
+  Derived on every poll-`render()` — deliberately NOT SSE-incremented, because
+  closed projects have no live connection (Chromium 6-slot cap closes SSE on
+  `turn_complete`), so an SSE counter would silently miss them.
+- **Filter**: new "Unread" chip in `renderMobileFilterPills()` + `unread`
+  branch in `filterProjects()`.
+- **No server changes.** `triggerType`/`triggerId` already on `agentHistory`
+  rows; `p.last_updated` already an ISO8601 sortable string on the payload.
+
+Rollback: revert the `[2026-05-18g]` hunks, or set the mobile media query
+`max-width: 960px` → `0` to fall back to the grid (existing rollback lever).
+Store key `mc_proj_seen` is client-local and self-clearing.
+
+## [2026-05-18f] — Skills Curation design + `mc-distill` skill (Step 1 shipped)
+
+Design-and-skill entry (no backend code). Memory System open item #5 was
+"deferred, depends on Steps 6/7, not designed yet." With Step 6 live and
+Step 7 deliberately deferred, the principles locked in that item have
+been turned into a full design and the first cheapest-possible experiment
+has shipped as a built-in skill.
+
+**Design:** `docs/SKILLS_CURATION_DESIGN.md` (388 lines, parallel
+architecture to `MEMORY_SYSTEM.md`). Captures the three trigger paths
+(manual `/distill`, conversational push, silent Distiller), the three
+per-project modes (`off` / `proposed` / `auto`), the explicit reuse map
+against Scribe infrastructure (`_scribe_render_transcript`, `_scribe_call`,
+`_atomic_write_text`, per-project leaf locks, bounded semaphore,
+telemetry shape, audit infra — backend Distiller estimated at ~600–900
+lines vs. ~2000+ without the reuse), load-bearing rules, and seven open
+items including required committee review before any backend code lands.
+
+**Step 1 shipped:** `data/skills/builtin/mc-distill/SKILL.md` (158 lines).
+Auto-installs on next MC startup via `_install_builtin_skills()`. Handles
+both explicit user invocation (`/distill`, "propose a skill", "do we have
+a pattern here") AND proactive agent-initiated proposals at natural
+breakpoints. Hard rules for proactive triggering: recurrence ≥ 2 observed
+in-session, natural breakpoint reached (end of task / after commit /
+wrap-up; never mid-task or mid-debug), specificity (one-line name +
+concrete observations), max one proactive push per session. Inline
+format: `[Yes / Later / No]`. Writes only to
+`data/skills/_proposed/<sid>/SKILL.md` (or `UPDATE.md` for patches);
+never to `~/.claude/skills/` or any `<project>/.claude/skills/` directly.
+
+**Key resolved decisions during design:**
+- **No `production` flag.** User chooses `distiller_mode` per project;
+  the system imposes no rules about which modes are allowed where. Mode
+  selector UI shows a warning on `auto` selection; otherwise hands-off.
+  Treats the user as competent to make their own safety calls.
+- **Scope is authored skills only.** No "learned behavior" drift in the
+  curated MEMORY.md region — blurs curated/managed boundary, hard to
+  roll back.
+- **Auto-authored skills are project-local only.** Never global. Bad
+  auto-skill is annoying, not dangerous.
+- **Conversational push and silent Distiller are complementary, not
+  alternatives.** Push catches obvious in-session patterns; Distiller
+  catches cross-session recurrence the in-session agent can't observe.
+  `No` to a conversational push writes a suppression marker so the
+  silent Distiller doesn't re-propose the same pattern that session.
+- **Step 7 is NOT a hard prerequisite** for the dispatch skill hint —
+  v1 can ship today using the existing keyword-scoring
+  `/api/skills/search` endpoint that `mc-skill-broker` already uses;
+  Step 7 (if/when it ships) upgrades the scoring backend in place.
+
+**Files touched (all uncommitted at session end):**
+- NEW: `data/skills/builtin/mc-distill/SKILL.md` (158 lines)
+- NEW: `docs/SKILLS_CURATION_DESIGN.md` (388 lines)
+- UPDATED: `docs/MEMORY_SYSTEM.md` (open item #5 rewritten — design
+  drafted, Step 1 shipped, backend pending, committee-review-required)
+- UPDATED: `CLAUDE.md` (new "Skills Curation — design + Step 1 shipped"
+  section, 73 lines appended)
+
+**No app code touched. No restart needed for this entry itself.** The
+new built-in skill takes effect on the next MC restart (when
+`_install_builtin_skills()` installs `mc-distill` into the global skills
+dir; user edits would then be preserved across future updates per the
+checksum-based mechanism documented in CHANGELOG `[2026-05-10]`).
+
+**Next steps (decision points):**
+- Committee review against `docs/SKILLS_CURATION_DESIGN.md` before any
+  backend code (Distiller, telemetry, `_proposed/` CRUD, dispatch hint).
+- Live test: restart MC, run a real session, see whether the proactive
+  trigger fires at the right bar.
+- Build order steps 2–7 follow opportunistically after committee review.
+
 ## [2026-05-18e] — Leg C structured condense executor (default-OFF)
 
 Root-cause fix for the memory-condense fragility. The pain (the original
