@@ -5054,7 +5054,14 @@ function friendlyStatus(p) {
   if (c === 'error')          return 'stuck';
   if (p.blocked)              return 'stuck';
   switch (p.status) {
-    case 'active':    return 'working';
+    // NOTE: 'active' is a project-LIFECYCLE state ("in play", not
+    // parked/completed) — it is NOT "an agent is running right now".
+    // Almost every project sits at 'active' permanently, so mapping it to
+    // 'working' made every tile show a permanent, never-updated
+    // "IN PROGRESS" badge. Real activity is already caught above via the
+    // server-authoritative live_agent (c === 'running'/'plan'/'question').
+    // So 'active' falls through to the live-evidence tail below: 'done' if
+    // there's completed history, else 'idle' (resting, ready) — truthful.
     case 'waiting':   return 'asking';
     case 'blocked':   return 'stuck';
     case 'completed': return 'done';

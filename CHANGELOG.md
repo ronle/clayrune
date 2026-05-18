@@ -4,6 +4,31 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18k] — Stop conflating lifecycle-'active' with live 'working'
+
+Frontend-only (`static/index.html`, `friendlyStatus()`); no server change,
+no restart — page reload only. Follow-up to `[2026-05-18j]`.
+
+Symptom: every project tile showed a permanent "● IN PROGRESS / In
+progress: the current task." badge, regardless of whether any agent was
+running. Root cause (survived the `[2026-05-18j]` consolidation): the
+`switch (p.status)` in `friendlyStatus()` had `case 'active': return
+'working'`. `p.status === 'active'` is a project-**lifecycle** state ("in
+play", not parked/completed) — almost every project sits there
+permanently — so the badge was effectively hardcoded to "working" and
+never reflected real activity. This is the "inefficient badge that's
+almost never updated" the user flagged.
+
+Fix: removed the `case 'active'` arm. Genuine activity is already resolved
+*above* the switch via the server-authoritative `live_agent`
+(`c === 'running' | 'plan-approval' | 'question'` → working/asking), so a
+truly-running 'active' project still shows "working". A no-agent 'active'
+project now falls through to the live-evidence tail: `'done'` if there's
+completed history, else `'idle'` ("resting, ready") — truthful. Other
+lifecycle states (waiting/blocked/completed/parked) keep their mappings.
+Fixes the pill, `friendlySummary` line, mobile chat row, list-view row,
+and filter-pill counts in one place (single resolver).
+
 ## [2026-05-18j] — Full status-badge consolidation (single server-authoritative resolver)
 
 Completes `[2026-05-18i]`. That fix made `friendlyStatus()`/`friendlySummary()`
