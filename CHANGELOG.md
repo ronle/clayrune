@@ -4,6 +4,36 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18c] — Memory architecture: memsearch retired, layers clarified
+
+Operational/architecture decision (no app code change). **memsearch
+retired**: verified non-functional here (no plugin payload in
+`~/.claude/plugins/`, no `~/.memsearch/`, no Milvus index, one stale
+2026-05-15 capture file — now deleted; no registry entry existed in
+`~/.claude.json` to remove). It was installed thinking it could be the
+headless-agent (CR) memory layer, but headless MC-dispatched agents can't
+load Claude Code plugins at all — which is the founding reason the Scribe
+system exists — and for the only role it *could* serve (direct
+operator↔assistant recall) engram already covers it. **engram kept** —
+verified active/healthy (`mem_doctor`), it's the conflict-aware long-term
+operator-collaboration layer (and the one that corrects Scribe mistakes).
+`docs/MEMORY_SYSTEM.md` gains a **"Memory layers & audiences"** section so
+the CR-vs-direct-channel distinction is explicit and nobody mis-consolidates.
+
+Also recorded: a **Scribe-poisoning incident** — a CR session resolved a
+transient doc contradiction (original `[2026-05-18]` changelog title said
+"default-OFF" vs the trued-up state) by guessing instead of checking
+`/api/config`; the Scribe immortalized the wrong conclusion into MEMORY.md
+`_(live)_` entries + a live watermark, and later sessions re-asserted it.
+Cleaned (false entries + watermark removed via the Leg-0 helpers, curated
+region byte-preserved, one authoritative correction added). Durable lesson
+captured as the `feedback-verify-volatile-state` memory: verify volatile
+operational state at the live source; never let memory enshrine an
+unverified claim — `condense` compresses, it does not fact-check. engram
+side-note: `mem_doctor` flags 7 cloud-sync mutations missing `title`
+(local recall unaffected; cloud replication of those is blocked) — parked
+for an explicit `engram cloud upgrade doctor` decision.
+
 ## [2026-05-18b] — Step 6 live-enabled + validated end-to-end
 
 Follow-up to the entry below (the original recorded Step 6 as committed

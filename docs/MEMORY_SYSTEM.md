@@ -59,6 +59,33 @@ to self-document.
 | **Step 6 — Mid-session note-taker** | Mode-B per-turn capture (not just teardown). Append-only checkpoint entries; watermark folded into MEMORY.md; leaf-locked; semaphore-bounded. | ✅ shipped `9683996`, live-validated 2026-05-18, **currently ENABLED** (default-off in code) |
 | **Step 7 — bge-m3 retrieval** | Replace grep with server-side semantic search. | ⏸ deferred (telemetry-gated) |
 
+## Memory layers & audiences (read this before "consolidating")
+
+There are distinct memory layers serving **different audiences**. They are
+not redundant and they do not compete — confusing them leads to wrong
+"cleanup" (e.g. pointing headless agents at a plugin, or removing the layer
+that corrects the others).
+
+| Layer | Audience | Store | Status |
+|---|---|---|---|
+| **Scribe system** (Legs 0/A/B/C + Fix A/B + Step 6) | **CR / headless project agents MC dispatches** | project `MEMORY.md` (curated + managed region), CLI auto-loads it | the only memory CR has; built *because* headless agents cannot load plugins |
+| **engram** | **direct operator↔assistant sessions** (a human in Claude Code on this repo) | engram SQLite store + curated topic files in `~/.claude/projects/<enc>/memory/` | active, healthy (`mem_doctor`); conflict-aware; the long-term operator-collaboration layer |
+| **memsearch** | (was meant for CR) | — | **RETIRED 2026-05-18** — verified inert; impossible for CR (plugins don't run headless), redundant with engram for the only role it could serve |
+
+**Founding constraint:** headless MC-dispatched agents **cannot use Claude
+Code plugins** (engram/memsearch). That is the entire reason the Scribe
+system exists. Never try to wire a plugin to CR; never remove engram (it is
+the conflict-aware layer that *corrects* Scribe mistakes).
+
+**The Scribe captures conclusions, not truth.** It has no fact-check;
+`condense` only compresses, it doesn't verify. A confidently-wrong agent
+conclusion becomes durable, cross-session, self-reinforcing memory (this
+happened — a stale-doc misread poisoned MEMORY.md until cleaned 2026-05-18).
+Mitigation is behavioral, not structural: **verify volatile/operational
+state against the live source before asserting it; never let the Scribe or
+engram enshrine an unverified operational claim.** See the
+`feedback-verify-volatile-state` memory.
+
 ## Key files & anchors
 
 - **`server.py`** — Leg-0 helpers `_mem_split`/`_mem_compose`/`_mem_migrate`;
