@@ -5068,7 +5068,16 @@ function friendlyStatus(p) {
     case 'parked':    return 'idle';
   }
   if (c === 'completed')  return 'done';
-  if (c === 'idle-agent') return 'idle';
+  // 'idle-agent' = a live agent SESSION that is alive but momentarily
+  // between turns (Mode-B persistent process; server live_agent.state
+  // 'idle'). It is NOT a dormant project: the Stop button, ticking token
+  // counter, and "AGENT RUNNING" badge are all live, and the mobile chat
+  // ring is green. Mapping it to 'idle' produced a self-contradictory tile
+  // ("● IDLE" next to "AGENT RUNNING") and a desktop flicker to IDLE every
+  // time the agent paused between turns. An attached, resumable session is
+  // 'working' — only the genuine no-live-session case (final return below)
+  // is 'idle'.
+  if (c === 'idle-agent') return 'working';
   return 'idle';
 }
 

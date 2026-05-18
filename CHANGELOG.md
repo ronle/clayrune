@@ -4,6 +4,32 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18m] — Alive-between-turns agent is 'working', not 'idle'
+
+Frontend-only (`static/index.html`, `friendlyStatus()`); no server change,
+no restart — page reload only. Follow-up to `[2026-05-18l]`.
+
+Symptom: Mission Control's tile showed "● IDLE" *next to* an "AGENT
+RUNNING" badge, and its modal showed "IDLE" beside a live Stop button +
+ticking token counter (15m · 9.2k) — a self-contradiction. Desktop also
+flickered to IDLE whenever the agent paused between turns, while the
+mobile chat ring (caught mid-turn) looked correct.
+
+Root cause: `friendlyStatus()` mapped `c === 'idle-agent'` → `'idle'`.
+`idle-agent` is a Mode-B agent **session that is alive but momentarily
+between turns** (server `live_agent.state === 'idle'`) — not a dormant
+project. Every other live affordance (Stop button, token counter, "AGENT
+RUNNING" badge, mobile green ring) correctly treats it as active; only the
+status pill disagreed, because the persistent Mode-B process is `idle`
+between turns far more often than it is mid-`running`.
+
+Fix: `c === 'idle-agent'` → `'working'`. An attached, resumable session is
+working; only the genuine no-live-session case (the final `return 'idle'`)
+is idle. Stabilises the desktop pill (no more between-turns flicker),
+removes the contradictory double-badge, and makes desktop match the
+mobile behaviour the user confirmed correct — all at the single resolver,
+so tile / modal / mobile row / list row / filter counts move together.
+
 ## [2026-05-18l] — Modal header status: route through the single resolver
 
 Frontend-only (`static/index.html`, `modalContentHTML()`); no server
