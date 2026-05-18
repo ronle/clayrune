@@ -4,6 +4,39 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18o] — Repo hygiene: drop dead install scripts, unpublish internal design docs
+
+No app/server code; no restart. Public-repo surface cleanup.
+
+Two confusions removed:
+
+1. **Dead root install path.** Root `install.bat` / `install.sh` (plus
+   `start.bat` / `start.sh`, `rebuild_icon.ps1`) were the pre-rename
+   "Mission Control" from-source wizard — superseded by the hosted
+   `installer/` flow (one-click `.exe` / `clayrune.io`). Having
+   `install.sh` at root *and* `installer/install.sh` was the exact
+   funnel ambiguity we'd been fixing. **Deleted** (repo + disk). README
+   "Option C" replaced with: from source = `python server.py` + in-app
+   Settings; guided install = clayrune.io.
+
+2. **Internal design/planning/scratch docs unpublished.** `git rm
+   --cached` (kept on disk, added to `.gitignore`) for
+   `IMPROVEMENT_PLAN_V2*.md`, `*_DotNet_Diagnosis*.md`, `RESUME_HERE.md`,
+   `CLAUDE_KB.md`, and the internal `docs/` set (`MEMORY_SYSTEM*`,
+   `SKILLS_CURATION_DESIGN`, `HIVEMIND_SPEC`, `SERVER_SPLIT_PLAN`,
+   `CONDENSE_STRUCTURED_DESIGN`, `MAINTENANCE_*`, `HOSTING`,
+   `web-push-handoff`, `design_system_extracted/`, and `remote-access/`
+   except `07-licensing.md`). ~11k lines off the public repo; all files
+   remain locally so `CLAUDE.md` / agent-session references still
+   resolve. **Kept public:** `README`, `CHANGELOG`, `CLAUDE.md`,
+   `LICENSE`, `BUILD_INSTRUCTIONS.md`, `docs/USER_GUIDE.md` (Ask Claydo
+   source), `docs/remote-access/07-licensing.md` (README-linked),
+   `installer/*`, shipped `data/skills/builtin/*`.
+
+Reversible: history retains everything; `git add -f <path>` re-publishes
+any single doc. Not touched: `server.py` + `static/index.html` (carry
+unrelated pre-existing WIP + the held-back version-number feature).
+
 ## [2026-05-18n] — Thin Windows .exe installer (replaces the .bat double-click path)
 
 Installer-only change (`installer/`); no server or app code, no restart.

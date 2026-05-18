@@ -61,20 +61,12 @@ python server.py
 # Open http://localhost:5199 in your browser
 ```
 
-### Option C: Automated Setup
+First run: the in-app Settings panel walks you through the port, project
+directory, agent model, and other settings — no setup script needed.
 
-**Windows:**
-```
-install.bat
-```
-
-**macOS / Linux:**
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-The installer walks you through configuring the port, project directory, agent model, and other settings.
+> Prefer a guided, no-clone install? Use the one-click installer at
+> [clayrune.io](https://clayrune.io) (Windows `.exe` / macOS / Linux), which
+> drives the whole setup for you.
 
 ## Configuration
 
