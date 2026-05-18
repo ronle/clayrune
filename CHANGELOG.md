@@ -4,6 +4,36 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18d] — Long Mode-B session restart advisory
+
+Closes the human-driven half of the within-session self-recall gap (docs/
+MEMORY_SYSTEM.md Open item #6): a long persistent Mode-B process can compact
+away its *own* early-session context, and (unlike a fresh process) it does
+not auto-reload MEMORY.md mid-life. Step 6 has captured that learning
+durably, so the fix is just "restart it" — a fresh process reloads the
+accumulated memory + read-floor at near-zero loss.
+
+**New:** `_long_session_advisory(s)` — a soft, server-computed signal:
+Mode-B + alive (`running`/`idle`) + not housekeeping/incognito +
+`num_turns ≥ long_session_advisory_turns`. Exposed as `long_session_advisory`
+in `/api/project/<id>/agent/status`. Frontend shows a dismissible,
+**deduped-per-session** toast recommending a restart (cleared when the
+session ends). Advisory only — nothing auto-restarts.
+
+**Design notes:** keyed on **turns**, not transcript bytes — it deliberately
+fires far earlier than the existing 5 MB `_session_too_large` hard
+auto-fresh (that's a resume-perf cap; this tracks context-window fill /
+amnesia). It does NOT fork `_session_too_large` — it's a sibling helper.
+Human-in-loop only; autonomous long runs can't act on a toast, so the
+durable fix for those remains the deferred per-turn read-floor refresh
+(Open item #6, still tech debt).
+
+**Config (defaults + `_CONFIG_EDITABLE_KEYS`):**
+`long_session_advisory_enabled` (true), `long_session_advisory_turns` (25).
+**Rollback:** set `long_session_advisory_enabled=false`. Server.py changed →
+**restart required** for the server-side signal to activate (frontend picks
+up on browser reload).
+
 ## [2026-05-18c] — Memory architecture: memsearch retired, layers clarified
 
 Operational/architecture decision (no app code change). **memsearch
