@@ -4908,6 +4908,12 @@ function renderProjects() {
 // ── Tile HTML (compact grid card) ───────────────────────────────────────────
 
 function hasRunningAgent(projectId) {
+  // Server-authoritative first (fresh for ALL projects, even closed ones);
+  // fall back to client agentHistory when there's no server signal (old
+  // backend, pre-restart). la.state is working|asking|idle when an agent
+  // process is alive — all three mean "running" for the tile badge.
+  const _p = allProjects.find(x => x.id === projectId);
+  if (_p && _p.live_agent) return true;
   return agentHistory.some(h => h.projectId === projectId && (h.status === 'running' || h.status === 'idle'));
 }
 
@@ -4931,10 +4937,46 @@ function computeLiveStatus(projectId) {
     }
   }
 
-  // Check running/idle agents (don't override hivemind)
+  // Check running/idle agents (don't override hivemind).
+  //
+  // CONSOLIDATED SOURCE: p.live_agent is server-authoritative — derived
+  // from the in-memory agent_sessions map every /api/projects poll, fresh
+  // for ALL projects. agentHistory is only refreshed by fetchAgentStatus()
+  // for projects whose modal THIS client has open, so for a closed project
+  // it's frozen at cold-start (a stale errored/idle session) and used to
+  // mislabel an actively-running project as "Error/stuck". So when the
+  // server reports a live agent it WINS here, at the single resolver — not
+  // patched per-consumer downstream. agentHistory is only a supplementary
+  // detail source (the richer client-side task string / plan-vs-question
+  // sub-state) and the sole source for completed/error history, which the
+  // server's live map (running/idle only) does not retain.
   const sessions = agentHistory.filter(h => h.projectId === projectId && !isHivemindWorker(h));
   const runningSess = sessions.find(h => h.status === 'running' || h.status === 'idle');
-  if (runningSess) {
+  const _p = allProjects.find(x => x.id === projectId);
+  const la = _p && _p.live_agent;  // {state, reason, task} | null | undefined
+  if (la) {
+    // SERVER TRUTH — authoritative regardless of whether this client has
+    // refreshed agentHistory for the project.
+    const cache = runningSess ? (agentStatusCache[runningSess.sessionId] || {}) : {};
+    const isPlan = la.reason === 'plan' || cache.waitingForPlanApproval;
+    const isQuestion = la.reason === 'question' || cache.waitingForQuestion;
+    if (isPlan) {
+      currentTask = 'Awaiting plan approval';
+      currentTaskClass = 'plan-approval';
+    } else if (isQuestion) {
+      currentTask = 'Awaiting your answer';
+      currentTaskClass = 'question';
+    } else if (currentTaskClass !== 'running') {
+      // Prefer the client's own (fresher when modal-open) task string,
+      // fall back to the server-provided task so closed projects still
+      // get a meaningful line instead of a generic placeholder.
+      const task = (runningSess && runningSess.task) || la.task || 'Working...';
+      currentTask = task.length > 60 ? task.slice(0, 57) + '...' : task;
+      currentTaskClass = la.state === 'idle' ? 'idle-agent' : 'running';
+    }
+  } else if (runningSess) {
+    // No server signal (old backend, or genuinely no live agent) but this
+    // client's history — fresh because its modal is open — shows one.
     const cache = agentStatusCache[runningSess.sessionId] || {};
     if (cache.waitingForPlanApproval) {
       currentTask = 'Awaiting plan approval';
@@ -4948,7 +4990,9 @@ function computeLiveStatus(projectId) {
       currentTaskClass = runningSess.status === 'idle' ? 'idle-agent' : 'running';
     }
   } else if (currentTaskClass === 'idle') {
-    // Check recent error
+    // No live agent on the server AND none in (fresh) client history — a
+    // stale errored session can no longer mask a running project because
+    // we only reach here when la is falsy. Surface error/completed history.
     const errored = sessions.find(h => h.status === 'error');
     if (errored) {
       const task = errored.task || 'Unknown task';
@@ -4997,24 +5041,17 @@ function computeLiveStatus(projectId) {
 // user-facing states from the design handoff: working/asking/stuck/done/idle.
 function friendlyStatus(p) {
   if (!p) return 'idle';
-  // Server-authoritative live-agent state from /api/projects (polled for ALL
-  // projects, every cycle). Wins over computeLiveStatus(), whose agentHistory
-  // is only refreshed for projects whose modal THIS client has open —
-  // otherwise it falls back to a stale errored session and mislabels an
-  // actively-running project as "Error/stuck" with no live presence.
-  const la = p.live_agent;
-  if (la && la.state === 'working') return 'working';
-  if (la && la.state === 'asking')  return 'asking';
-
+  // Single resolver: computeLiveStatus() already reconciles the
+  // server-authoritative p.live_agent against the lazily-refreshed client
+  // agentHistory (server wins), so a stale errored session can no longer
+  // surface as c==='error' while an agent is live. No live_agent
+  // special-casing here — that divergence is what full consolidation removed.
   const live = computeLiveStatus(p.id) || {};
   const c = live.currentTaskClass;
   if (c === 'running')        return 'working';
   if (c === 'plan-approval')  return 'asking';
   if (c === 'question')       return 'asking';
-  // A stale client-side errored session must NOT override a server that
-  // reports a live agent on this project (the actual root cause of the
-  // false "Error on …" rows).
-  if (c === 'error' && !la)   return 'stuck';
+  if (c === 'error')          return 'stuck';
   if (p.blocked)              return 'stuck';
   switch (p.status) {
     case 'active':    return 'working';
@@ -7518,10 +7555,11 @@ function _buildAttentionList() {
     let icon = '✋';  // ✋ default for asking
     let msg = '';
     if (fs === 'asking') {
-      const sess = agentHistory.find(h => h.projectId === p.id && (h.status === 'running' || h.status === 'idle'));
-      const cache = sess ? (agentStatusCache[sess.sessionId] || {}) : {};
-      if (cache.waitingForPlanApproval) { icon = '\u{1F4CB}'; msg = 'Plan ready — needs approval'; }       // 📋
-      else if (cache.waitingForQuestion) { icon = '❓'; msg = 'Question pending — needs answer'; }    // ❓
+      // Sub-state from the consolidated resolver (server-fed via
+      // p.live_agent.reason), so a CLOSED project's item is labelled
+      // correctly without this client's lazily-refreshed agentStatusCache.
+      if (live.currentTaskClass === 'plan-approval') { icon = '\u{1F4CB}'; msg = 'Plan ready — needs approval'; }       // 📋
+      else if (live.currentTaskClass === 'question') { icon = '❓'; msg = 'Question pending — needs answer'; }    // ❓
       else { msg = 'Awaiting input to proceed'; }
     } else {
       icon = '⚠';  // ⚠

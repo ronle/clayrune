@@ -4,6 +4,47 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18j] — Full status-badge consolidation (single server-authoritative resolver)
+
+Completes `[2026-05-18i]`. That fix made `friendlyStatus()`/`friendlySummary()`
+prefer the server-authoritative `p.live_agent`, but left `computeLiveStatus()`
+— the resolver every *other* surface uses (desktop tile tech-line, project
+modal current-task, the "Agent running" badge, the "Needs you" attention
+list) — still deriving the live-agent state from the lazily-refreshed client
+`agentHistory`. Result: the same stale-`agentHistory` smell that produced the
+false "Error" rows persisted on those surfaces, and each consumer had to learn
+about `live_agent` separately (per-consumer divergence). Full consolidation
+collapses this to **one server-authoritative resolver** that every surface
+already calls.
+
+- `server.py`: `_project_live_agent()` now also returns `reason`
+  (`'plan'` / `'question'` / `None`) so a **closed** project's asking
+  sub-state is labelled correctly without this client's `agentStatusCache`
+  (which is only fresh for projects whose modal this client has open — the
+  exact staleness the helper exists to defeat).
+- `static/index.html`:
+  - `computeLiveStatus()` is now server-first: when `p.live_agent` is
+    present it wins (working / asking+reason / idle) at the single resolver;
+    `agentHistory` is demoted to a supplementary detail source (richer
+    client task string) and the sole source of completed/error *history*,
+    which the server's live map (running/idle only) doesn't retain. The
+    error/completed fallback is reached only when there is no server signal,
+    so a stale errored session can no longer mask a live agent **at the
+    source** — not patched per-consumer downstream.
+  - `friendlyStatus()`: removed the bespoke `p.live_agent` short-circuit and
+    the `c === 'error' && !la` guard — both subsumed by the resolver. One
+    code path now.
+  - `hasRunningAgent()` (drives the tile "Agent running" badge): server-aware,
+    so the badge is correct for closed projects, not just modal-open ones.
+  - `_buildAttentionList()`: plan-vs-question icon/text now read from the
+    resolver's `currentTaskClass` (server-fed) instead of the stale
+    per-session `agentStatusCache`.
+
+**Requires a server restart** to activate the `reason` field; frontend is
+regression-free pre-restart (`p.live_agent` undefined → every path degrades
+to exactly the prior `agentHistory` behavior). No new polling — rides the
+existing `/api/projects` cycle.
+
 ## [2026-05-18i] — Server-authoritative live-agent state (fixes stale "Error" rows)
 
 Fixes the WhatsApp chat list showing a project as "Error on …" with no live

@@ -1125,6 +1125,13 @@ def _project_live_agent(project_id):
     Priority: asking (needs the user) > working (a turn is running) > idle
     (process alive between turns). Housekeeping/incognito sessions are
     excluded so the public indicator respects incognito gating.
+
+    `reason` distinguishes the asking sub-state ('plan' = awaiting plan
+    approval, 'question' = awaiting an answer, else None) so the client can
+    label a CLOSED project's attention item correctly without its
+    lazily-refreshed agentStatusCache (which is only fresh for projects
+    whose modal this client has open — the same staleness this helper exists
+    to defeat).
     """
     best = None  # 0=idle, 1=working, 2=asking
     rank = {'idle': 0, 'working': 1, 'asking': 2}
@@ -1136,14 +1143,18 @@ def _project_live_agent(project_id):
         st = s.get('status')
         if st not in ('running', 'idle'):
             continue
-        if s.get('waiting_for_question') or s.get('waiting_for_plan_approval'):
-            state = 'asking'   # turn done, process idle, awaiting the user
+        reason = None
+        if s.get('waiting_for_plan_approval'):
+            state, reason = 'asking', 'plan'   # turn done, awaiting approval
+        elif s.get('waiting_for_question'):
+            state, reason = 'asking', 'question'  # awaiting an answer
         elif st == 'running':
             state = 'working'  # a turn is actively running
         else:
             state = 'idle'     # process alive, between turns, not waiting
         if best is None or rank[state] > rank[best['state']]:
-            best = {'state': state, 'task': (s.get('task') or '').strip()[:80]}
+            best = {'state': state, 'reason': reason,
+                    'task': (s.get('task') or '').strip()[:80]}
     return best
 
 
