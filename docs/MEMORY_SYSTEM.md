@@ -168,9 +168,9 @@ MC restart ─▶ _startup_memory_maintenance: backfill → _reconcile_unscribed
    `scribe_checkpoint_enabled=false` if anything looks off.
 2. **Step 7** — bge-m3 semantic retrieval, deferred until archive-size
    telemetry shows grep degrading.
-3. **Spec header true-up** — `MEMORY_SYSTEM_SPEC.md` top-of-file blurb
-   predates v1 shipping separately; §3.A.MID / §7 are authoritative.
-4. **Not pushed** — memory commits are local on `master`; `git push` unrun.
+3. **Spec header true-up** — ✅ DONE (commit `46c1ea2`); §3.A.MID/§7 authoritative.
+4. **Push** — ✅ DONE; all memory commits on `origin/master`
+   (`24a3af8`, `9683996`, `46c1ea2`, `5fefc4e`), local/remote in sync.
 5. **Skills Curation (deferred, depends on 6/7).** Hermes-equivalent
    self-evolving skills layer is planned but **not designed yet** —
    pending Steps 6/7. Principles locked: *MC owns, agent proposes,
@@ -181,3 +181,28 @@ MC restart ─▶ _startup_memory_maintenance: backfill → _reconcile_unscribed
    retrieval is the prerequisite for "skill-relevance hint" at dispatch
    (semantic similarity, not grep). Surface as a candidate sprint in the
    monthly audit once Steps 6/7 ship.
+6. **Within-session self-recall for long Mode-B sessions (TECH DEBT).** Step 6
+   *writes* a long session's learning durably, but the **same persistent
+   Mode-B process does not auto-reload it**: the read-floor + native
+   MEMORY.md load happen once at process spawn (system prompt is fixed; you
+   can't mutate a running process's `--append-system-prompt`). So a Mode-B
+   session long enough to **compact away its own early-session context** can
+   lose detail of what it learned/implemented earlier in that same session.
+   Cross-agent/next-session/crash all see it (they spawn fresh); only the
+   same long-runner doesn't.
+   - **Real fix (deferred):** *per-turn read-floor refresh* — inject updated
+     `RELEVANT MEMORY` into each Mode-B follow-up *message* (via stdin; not
+     the system prompt). Distinct unbuilt feature; build only if observation
+     shows long Mode-B sessions actually losing their own early knowledge
+     (telemetry/observation-gated, same discipline as Step 7).
+   - **Cheap interim (proposed, decision pending):** an *advisory* tier on
+     the EXISTING `_session_too_large` infra (do NOT fork it) — but keyed on
+     `num_turns`/`usage` tokens, NOT transcript bytes (the 5 MB cap is a
+     late resume-perf trigger; amnesia tracks context-window fill). Soft,
+     dismissible "this session is long — restarting reloads accumulated
+     memory fresh" badge/toast for HUMAN-driven sessions only (autonomous
+     runs can't act on it → that's what the real fix is for). Step 6 is
+     what makes "just restart it" safe now: a restart loses ~nothing
+     because the session's learning is already continuously captured to
+     MEMORY.md. Even a late alert still works (restart reloads Step-6
+     memory). Not built; awaiting Ron's build-now-vs-log decision.
