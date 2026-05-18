@@ -9668,6 +9668,7 @@ async function sendFollowup(projectId, sessionId) {
 }
 
 const _recentlyStoppedSessions = {};  // sessionId → timestamp when stopped
+const _longSessionAdvised = new Set();  // sessionIds already nudged to restart (dedupe)
 
 async function stopAgent(projectId, sessionId) {
   // Phase 2: no optimistic cache writes. Server is idempotent — pressing
@@ -9742,6 +9743,14 @@ async function fetchAgentStatus(projectId) {
       if (stoppedAt && (Date.now() - stoppedAt >= 15000)) {
         delete _recentlyStoppedSessions[sid];
       }
+      // Long Mode-B session advisory (server-computed; soft, deduped per session).
+      // It may be compacting away its own early context — restarting reloads
+      // the Step-6-captured memory fresh at near-zero loss.
+      if (s.long_session_advisory && !_longSessionAdvised.has(sid)) {
+        _longSessionAdvised.add(sid);
+        showToast(`⏳ "${String(s.task || '').slice(0, 60)}" (${pName}) has run ${s.num_turns || 0} turns — long enough it may start losing its own early context. Restarting it reloads accumulated memory fresh (mid-session capture has been saving it, so little is lost).`, 14000);
+      }
+      if (['completed', 'stopped', 'error'].includes(s.status)) _longSessionAdvised.delete(sid);
       agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;

@@ -248,6 +248,8 @@ def _load_config():
         'scribe_reconcile_cap': 5,     # max reconciled sessions/project/boot
         'scribe_checkpoint_enabled': False,  # SPEC §3.A.MID Step 6 — default OFF
         'scribe_checkpoint_kb': 0,     # mid-session cadence (KB new transcript); 0=disabled
+        'long_session_advisory_enabled': True,  # soft "restart long Mode-B session" nudge
+        'long_session_advisory_turns': 25,      # num_turns threshold for that nudge
         'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor
         'agent_channels': '',
         'agent_remote_control': False,
@@ -417,6 +419,28 @@ def _session_too_large(project_path, claude_session_id):
         except OSError:
             pass
     return False, 0
+
+
+def _long_session_advisory(s):
+    """Advisory (NOT enforced): a long-running Mode-B session may be
+    compacting away its own early-session context. Step 6 has captured that
+    learning durably to MEMORY.md, so restarting the session reloads it
+    fresh (a fresh process re-loads MEMORY.md + gets the read-floor) at
+    near-zero loss. Distinct from _session_too_large (that's the 5 MB
+    resume-perf HARD cap); this is turn-count keyed, fires far earlier, and
+    is a soft human-in-loop nudge for Mode-B sessions only.
+    SPEC docs/MEMORY_SYSTEM.md Open item #6.
+    """
+    if not CONFIG.get('long_session_advisory_enabled', True):
+        return False
+    if s.get('mode') != 'B':
+        return False  # Mode A spawns per-turn — no persistent-process amnesia
+    if s.get('housekeeping') or s.get('incognito'):
+        return False
+    if s.get('status') not in ('running', 'idle'):
+        return False  # only a live session can be usefully restarted
+    thr = int(CONFIG.get('long_session_advisory_turns', 25) or 25)
+    return int(s.get('num_turns', 0) or 0) >= thr
 
 
 def _extract_user_text(msg_field):
@@ -5994,6 +6018,7 @@ def agent_status(project_id):
                 'cost_usd': s.get('cost_usd', 0),
                 'num_turns': s.get('num_turns', 0),
                 'mode': s.get('mode', 'A'),
+                'long_session_advisory': _long_session_advisory(s),
                 'process_alive': s.get('process_alive', False) if s.get('mode') == 'B' else (s['status'] in ('running',)),
                 'hivemind_id': s.get('hivemind_id', ''),
                 'hivemind_ws_id': s.get('hivemind_ws_id', ''),
@@ -9517,8 +9542,9 @@ _CONFIG_EDITABLE_KEYS = {
     'condense_model', 'index_line_budget', 'index_line_hard_floor',
     'scribe_enabled', 'scribe_model', 'scribe_reconcile_enabled',
     'scribe_reconcile_cap', 'scribe_checkpoint_enabled',
-    'scribe_checkpoint_kb', 'read_floor_topk', 'projects_base',
-    'shared_rules_path', 'port', 'log_level',
+    'scribe_checkpoint_kb', 'read_floor_topk',
+    'long_session_advisory_enabled', 'long_session_advisory_turns',
+    'projects_base', 'shared_rules_path', 'port', 'log_level',
 }
 
 @app.route('/api/config')

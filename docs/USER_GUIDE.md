@@ -295,6 +295,15 @@ Two layers of context every agent sees:
   and the most relevant prior notes for a task are surfaced into the agent
   automatically. Tunables live in Settings (`scribe_*`, `index_line_*`); set
   `scribe_enabled=false` to turn the Scribe off.
+- **Long-session restart advisory** — a long streaming (Mode B) session can
+  eventually start forgetting its *own* early-session context (it compacts).
+  When one runs past a turn threshold you'll get a soft, non-blocking toast
+  suggesting you restart it. Restarting is safe and cheap here: mid-session
+  capture has been continuously saving that session's work to memory, so a
+  fresh start reloads it with almost nothing lost. It's advice only —
+  nothing auto-restarts. Tunable in Settings:
+  `long_session_advisory_enabled` (on/off), `long_session_advisory_turns`
+  (the threshold, default 25).
 - **Shared Rules** (`SHARED_RULES.md`) — sidebar entry → injects rules
   into every agent's system prompt across every project. Use for stuff like
   *"never commit without my approval"*, *"always run tests before
