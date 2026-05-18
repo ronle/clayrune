@@ -104,10 +104,16 @@ malformed "project" and 500s `_get_active_restart_blockers` → both restart
 endpoints. New per-session/sidecar state belongs OUTSIDE `DATA_DIR`.
 
 **Mode B caveat.** With `use_streaming_agent` (global default) the
-persistent process doesn't exit per turn, so the Scribe fires at session
-*teardown*, not per turn. Mid-session checkpointing (SPEC §3.A.MID,
-default-off, not yet built) is the planned fix; until then long idle Mode B
-sessions only capture memory when stopped/reaped.
+persistent process doesn't exit per turn, so the session-end Scribe fires at
+*teardown*, not per turn. Step 6 mid-session checkpointing (SPEC §3.A.MID) is
+the fix — **implemented & offline-verified, but ships DEFAULT-OFF**
+(`scribe_checkpoint_enabled=false`, `scribe_checkpoint_kb=0`) and is fully
+inert until both are set; behavioral (live-enabled) validation is a
+deliberate user-gated step. Until enabled, long idle Mode B sessions still
+only capture memory at stop/reap. When working on memory code: the Step-6
+`<!-- clayrune:wm:<sid> … -->` watermark markers are load-bearing — never
+strip them; `_commit_managed_entry` is the ONE leaf-locked atomic MEMORY.md
+writer (completion, checkpoint, reconcile all route through it).
 
 **Rollback**: `scribe_enabled=false` reverts to the legacy stdout-tail
 write; `scribe_reconcile_enabled=false` disables startup reconcile.

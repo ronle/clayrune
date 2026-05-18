@@ -246,6 +246,8 @@ def _load_config():
         'scribe_model': '',            # '' -> 'haiku'
         'scribe_reconcile_enabled': True,  # Fix B startup reconciliation
         'scribe_reconcile_cap': 5,     # max reconciled sessions/project/boot
+        'scribe_checkpoint_enabled': False,  # SPEC §3.A.MID Step 6 — default OFF
+        'scribe_checkpoint_kb': 0,     # mid-session cadence (KB new transcript); 0=disabled
         'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor
         'agent_channels': '',
         'agent_remote_control': False,
@@ -619,16 +621,21 @@ def _get_archive_path(project):
 _MEM_BEGIN = '<!-- clayrune:managed:begin -->'
 _MEM_END = '<!-- clayrune:managed:end -->'
 _MEM_LOG_HEADER = '## Session Log'
+# SPEC §3.A.MID fold-in contract: Step-6 watermark markers live INSIDE the
+# managed region but are NOT '- [' entries. They must survive split/compose,
+# the mechanical floor must never relocate them, and the Leg C condense prompt
+# must preserve them verbatim. One transient line per LIVE session.
+_MEM_WM_PREFIX = '<!-- clayrune:wm:'
 
 
-def _mem_split(content):
-    """Split MEMORY.md text into (curated_text, [entry_lines]).
+def _mem_split_full(content):
+    """Split MEMORY.md into (curated_text, [entry_lines], [wm_marker_lines]).
 
-    Priority: sentinel-delimited managed region; else a legacy bare
-    '## Session Log' section (pre-Leg-0 files); else no managed content.
-    Entry lines are those starting with '- [' and are taken ONLY from the
-    managed region — curated pointer lines (also '- [...]') are never
-    collected. Pure function.
+    Managed region = sentinel-delimited (or a legacy bare '## Session Log').
+    `entries` = lines starting with '- [' (curated pointer lines, also
+    '- [...]', are never collected — they're above the sentinel).
+    `wm_markers` = full lines starting with the Step-6 watermark prefix.
+    Pure function.
     """
     content = content or ''
     if _MEM_BEGIN in content and _MEM_END in content:
@@ -641,22 +648,39 @@ def _mem_split(content):
         curated = content[:i].rstrip()
         mid = content[i + len(_MEM_LOG_HEADER):]
     else:
-        return content.rstrip(), []
-    entries = [ln for ln in mid.splitlines() if ln.strip().startswith('- [')]
-    return curated, entries
+        return content.rstrip(), [], []
+    entries, wm = [], []
+    for ln in mid.splitlines():
+        s = ln.strip()
+        if s.startswith('- ['):
+            entries.append(ln)
+        elif s.startswith(_MEM_WM_PREFIX):
+            wm.append(s)
+    return curated, entries, wm
 
 
-def _mem_compose(curated, entries):
-    """Rebuild canonical MEMORY.md text from a curated region + entry lines.
+def _mem_split(content):
+    """Back-compat 2-tuple (curated, entries) — every pre-Step-6 caller uses
+    this. wm markers are dropped from the return but NOT from the file (the
+    write path uses _mem_split_full + _mem_compose(..., wm) to preserve them).
+    """
+    c, e, _w = _mem_split_full(content)
+    return c, e
 
-    Always emits exactly one sentinel-delimited managed region. Inverse of
-    _mem_split for normalized input.
+
+def _mem_compose(curated, entries, wm_markers=None):
+    """Rebuild canonical MEMORY.md from curated + entry lines (+ optional wm
+    markers). Always one sentinel-delimited managed region. With wm_markers
+    falsy, output is byte-identical to the pre-Step-6 form (existing callers
+    unaffected). wm markers are emitted after entries, before the END sentinel.
     """
     curated = (curated or '').rstrip()
-    body = '\n'.join(entries)
     block = f'{_MEM_BEGIN}\n{_MEM_LOG_HEADER}\n'
+    body = '\n'.join(entries)
     if body:
         block += body + '\n'
+    if wm_markers:
+        block += '\n'.join(wm_markers) + '\n'
     block += f'{_MEM_END}\n'
     return (curated + '\n\n' + block) if curated else block
 
@@ -668,9 +692,76 @@ def _mem_migrate(content):
     '## Session Log' sections get wrapped in sentinels. Files with no managed
     content gain an empty managed region. Curated content is preserved
     verbatim (modulo trailing whitespace); curated lines are never reordered
-    or dropped.
+    or dropped. wm markers (Step 6) are preserved.
     """
-    return _mem_compose(*_mem_split(content))
+    return _mem_compose(*_mem_split_full(content))
+
+
+# ── Step 6 watermark markers (SPEC §3.A.MID, D6 fold-in) ─────────────────────
+# One single-line comment per LIVE Mode-B session, embedded in the managed
+# region, carrying the durable checkpoint state (the only handle for the next
+# checkpoint's reduce base, since append-only entries are non-addressable).
+# Removed on clean teardown. _mem_split_full buckets these; _mem_compose
+# re-emits them; the floor never relocates them; Leg C is told to preserve
+# them verbatim.
+_MEM_WM_SUMMARY_CAP = 600  # bound the marker's line length in the auto-loaded file
+
+
+def _wm_line(rec):
+    """Build the single physical marker line for a watermark record.
+
+    rec keys: session_id, claude_session_id, transcript_path, byte_offset,
+    slice_hash, running_summary. running_summary is sanitized to stay on one
+    line and not prematurely close the HTML comment.
+    """
+    sid = str(rec.get('session_id', ''))
+    safe = dict(rec)
+    rs = str(safe.get('running_summary', '') or '')
+    rs = rs.replace('\n', ' ').replace('\r', ' ').replace('-->', '—>')
+    safe['running_summary'] = rs[:_MEM_WM_SUMMARY_CAP]
+    js = json.dumps(safe, separators=(',', ':'), ensure_ascii=False)
+    return f"{_MEM_WM_PREFIX}{sid} {js} -->"
+
+
+def _wm_parse(line):
+    """Parse a marker line back to a record dict, or None if malformed."""
+    line = (line or '').strip()
+    if not line.startswith(_MEM_WM_PREFIX) or not line.endswith(' -->'):
+        return None
+    core = line[len(_MEM_WM_PREFIX):].rsplit(' -->', 1)[0]
+    sp = core.split(' ', 1)
+    if len(sp) != 2:
+        return None
+    try:
+        rec = json.loads(sp[1])
+        return rec if isinstance(rec, dict) else None
+    except Exception:
+        return None
+
+
+def _wm_find(wm_markers, session_id):
+    """Return the parsed record for session_id from a wm_markers list, or None."""
+    for ln in wm_markers or []:
+        r = _wm_parse(ln)
+        if r and str(r.get('session_id', '')) == str(session_id):
+            return r
+    return None
+
+
+def _wm_upsert(wm_markers, rec):
+    """Return a new wm_markers list with rec's session replaced (or appended)."""
+    sid = str(rec.get('session_id', ''))
+    kept = [ln for ln in (wm_markers or [])
+            if (_wm_parse(ln) or {}).get('session_id') != sid]
+    kept.append(_wm_line(rec))
+    return kept
+
+
+def _wm_remove(wm_markers, session_id):
+    """Return a new wm_markers list without session_id's marker (teardown)."""
+    sid = str(session_id)
+    return [ln for ln in (wm_markers or [])
+            if (_wm_parse(ln) or {}).get('session_id') != sid]
 
 
 def _memory_search(project, query, topk=3):
@@ -856,6 +947,38 @@ def get_manager(project_id):
             m = ProjectAgentManager(project_id)
             _managers[project_id] = m
     return m
+
+
+# SPEC §3.A.MID committee blocker #3: a dedicated per-project LEAF lock that
+# wraps ONLY the MEMORY.md read-modify-write — never the (≤180s) scribe model
+# call, never nested under get_manager(pid).lock. Ordering is strictly
+# outer(manager RLock at the teardown finally) → inner(this leaf); the
+# checkpoint path never holds the manager lock, so it's single-direction and
+# cannot deadlock. Also fixes a latent issue in already-shipped code where two
+# parallel same-project teardowns serialized on the manager RLock across the
+# scribe call.
+_mem_write_locks = {}
+_mem_write_locks_guard = threading.Lock()
+
+
+def _get_mem_write_lock(project_id):
+    """Get/create the per-project MEMORY.md write leaf-lock."""
+    with _mem_write_locks_guard:
+        lk = _mem_write_locks.get(project_id)
+        if lk is None:
+            lk = threading.Lock()
+            _mem_write_locks[project_id] = lk
+    return lk
+
+
+def _atomic_write_text(path, text, encoding='utf-8'):
+    """Write via temp-file + os.replace so a crash mid-write can't leave a
+    torn MEMORY.md/archive (SPEC §3.A.MID atomicity). Same-dir temp so
+    os.replace is atomic on the same filesystem."""
+    path = Path(path)
+    tmp = path.with_name(f'.{path.name}.tmp{os.getpid()}')
+    tmp.write_text(text, encoding=encoding)
+    os.replace(tmp, path)
 
 
 def get_manager_for_session(session_id):
@@ -3205,6 +3328,8 @@ def _read_agent_stream_b(proc, session):
                     # Turn boundary — process stays alive
                     session['status'] = 'idle'
                     session['last_status_change_time'] = _time.time()
+                    # Step 6: mid-session note-taker (default-off; fast-gated).
+                    _maybe_checkpoint(session)
                 # Web push hook: intercept PushNotification tool_use + turn results.
                 _handle_push_signal(
                     session.get('project_id', ''),
@@ -3556,6 +3681,16 @@ def _reconcile_unscribed_sessions():
             # Don't race a live session for this project.
             if _has_running_agent(pid):
                 continue
+            # SPEC §3.A.MID Fix-B coordination: snapshot leftover Step-6 wm
+            # markers once. A marker present for a session ⇒ it was killed
+            # mid-flight while checkpointing → finalize from its running
+            # summary (no Haiku) instead of a full re-scribe.
+            try:
+                _mp = _get_memory_path(p)
+                _wm = (_mem_split_full(_mp.read_text(encoding='utf-8'))[2]
+                       if _mp.exists() else [])
+            except Exception:
+                _wm = []
             wrote = False
             done = 0
             for e in log:
@@ -3565,6 +3700,28 @@ def _reconcile_unscribed_sessions():
                     continue
                 if e.get('status') not in _SCRIBE_TERMINAL_STATUSES:
                     continue
+                _esid = e.get('session_id', '')
+                _wmrec = _wm_find(_wm, _esid) if _esid else None
+                if _wmrec and str(_wmrec.get('running_summary') or '').strip():
+                    # Killed mid-flight WITH Step-6 progress: finalize from the
+                    # running summary, drop the wm marker, NO model call.
+                    _rs = str(_wmrec['running_summary']).replace('\n', ' ').strip()[:300]
+                    _tk = (e.get('task', '') or '').strip()
+                    _ts = (e.get('ts', '') or now_iso())[:10]
+                    _fin = f"- [{_ts}] **{_tk[:80]}** _(reconciled)_ — {_rs}"
+                    try:
+                        if _commit_managed_entry(p, mem_entry=_fin,
+                                                 wm_remove_sid=_esid):
+                            _dispatch_condense(p)
+                        e['scribed'] = True
+                        wrote = True
+                        scribed_n += 1
+                        done += 1
+                        _scribe_stat(pid, 'checkpoint_finalized')
+                        continue
+                    except Exception as ex:
+                        _log(f"[scribe-reconcile] {pid} wm-finalize: {ex}")
+                        # fall through to full re-scribe
                 if not e.get('claude_session_id'):
                     continue
                 sess = {
@@ -3906,17 +4063,67 @@ def _reconcile_pending_agent_log_entries():
         _log(f"[reconcile-pending] flipped {flipped_total} orphaned in_progress entr{'y' if flipped_total == 1 else 'ies'} to 'interrupted'")
 
 
+def _commit_managed_entry(p, mem_entry=None, wm_upsert=None, wm_remove_sid=None):
+    """Leaf-locked atomic MEMORY.md commit — the ONE write path shared by the
+    completion scribe, the Step-6 checkpoint worker, and teardown. In a single
+    per-project mem-write-locked, atomic (temp+replace) operation:
+      • optionally append `mem_entry` ('- [' line) to the managed region,
+      • optionally `_wm_upsert`/`_wm_remove` this session's watermark marker,
+      • run the lossless line-keyed floor (relocates only '- [' entries;
+        wm markers never popped but DO count toward the budget),
+      • write MEMORY.md (+archive overflow) atomically.
+    No scribe call and no condense dispatch inside the lock (the slow/process
+    parts stay out). Returns whether condense should fire; caller dispatches it
+    OUTSIDE the lock. Never raises. SPEC §3.A.MID committee blocker #3.
+    """
+    project_id = p.get('id', '')
+    mem_path = _get_memory_path(p)
+    mem_path.parent.mkdir(parents=True, exist_ok=True)
+    hard_floor = int(CONFIG.get('index_line_hard_floor', 185) or 185)
+    with _get_mem_write_lock(project_id):
+        existing = (mem_path.read_text(encoding='utf-8')
+                    if mem_path.exists() else '')
+        # Leg 0: idempotent, additive migration; curated region untouched.
+        curated, mem_entries, wm_markers = _mem_split_full(_mem_migrate(existing))
+        if mem_entry:
+            mem_entries.append(mem_entry)
+        if wm_remove_sid is not None:
+            wm_markers = _wm_remove(wm_markers, wm_remove_sid)
+        if wm_upsert is not None:
+            wm_markers = _wm_upsert(wm_markers, wm_upsert)
+        overflow = []
+        while mem_entries and len(
+                _mem_compose(curated, mem_entries, wm_markers).splitlines()) > hard_floor:
+            overflow.append(mem_entries.pop(0))  # oldest → archive
+        if overflow:
+            archive_path = _get_archive_path(p)
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            archive_existing = ''
+            if archive_path.exists():
+                archive_existing = archive_path.read_text(encoding='utf-8').rstrip()
+            archive_header = '## Archived Session Log'
+            if archive_header not in archive_existing:
+                archive_existing = (archive_existing + f'\n\n{archive_header}'
+                                    if archive_existing else archive_header)
+            _atomic_write_text(
+                archive_path,
+                archive_existing + '\n' + '\n'.join(overflow) + '\n')
+        _atomic_write_text(mem_path,
+                           _mem_compose(curated, mem_entries, wm_markers))
+        return _should_condense(p, include_claude_md=True)
+
+
 def _write_session_memory(p, session, status, summary_fallback, ts_date):
-    """Shared Leg A/0/C memory write — used by BOTH the completion path and the
-    startup scribe-reconciler so they can never diverge. Scribe over the
-    full-fidelity .jsonl → brief (fallback to summary, then a guaranteed
-    breadcrumb) → migrate+append into the managed region → lossless line-keyed
-    floor → condense trigger. Returns True iff a memory entry was written.
-    Never raises (callers wrap, but this is the single source of truth).
+    """Shared Leg A/0/C memory write — completion path & startup reconciler.
+    Scribe over the full .jsonl → brief (fallback to summary, then a
+    guaranteed breadcrumb) → _commit_managed_entry (which also drops this
+    session's Step-6 wm marker = clean teardown) → condense trigger. Returns
+    True iff a memory entry was written. Never raises.
     SPEC docs/MEMORY_SYSTEM_SPEC.md §3 Leg A/0/C.
     """
     project_id = p.get('id', '')
     task = (session.get('task', '') or '').strip()
+    # Scribe model call is the slow (≤180s) part — OUTSIDE the leaf lock.
     scribed, _why = _scribe_extract(p, session)
     _scribe_stat(project_id, 'scribe_extracted' if scribed
                  else f'scribe_fell_back:{_why}')
@@ -3926,37 +4133,171 @@ def _write_session_memory(p, session, status, summary_fallback, ts_date):
              ).replace('\n', ' ').strip()
     tag = '' if status == 'completed' else f' _({status})_'
     mem_entry = f"- [{ts_date}] **{task[:80]}**{tag} — {brief}"
-    mem_path = _get_memory_path(p)
-    mem_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = (mem_path.read_text(encoding='utf-8')
-                if mem_path.exists() else '')
-    # Leg 0: idempotent, additive migration; curated region untouched.
-    curated, mem_entries = _mem_split(_mem_migrate(existing))
-    mem_entries.append(mem_entry)
-    # Step 2 mechanical floor: lossless, managed-region only, line-keyed.
-    hard_floor = int(CONFIG.get('index_line_hard_floor', 185) or 185)
-    overflow = []
-    while mem_entries and len(
-            _mem_compose(curated, mem_entries).splitlines()) > hard_floor:
-        overflow.append(mem_entries.pop(0))  # oldest → archive
-    if overflow:
-        archive_path = _get_archive_path(p)
-        archive_path.parent.mkdir(parents=True, exist_ok=True)
-        archive_existing = ''
-        if archive_path.exists():
-            archive_existing = archive_path.read_text(encoding='utf-8').rstrip()
-        archive_header = '## Archived Session Log'
-        if archive_header not in archive_existing:
-            archive_existing = (archive_existing + f'\n\n{archive_header}'
-                                if archive_existing else archive_header)
-        archive_path.write_text(
-            archive_existing + '\n' + '\n'.join(overflow) + '\n',
-            encoding='utf-8')
-    mem_path.write_text(_mem_compose(curated, mem_entries), encoding='utf-8')
-    # Leg C model tier trigger (condense is itself gated + locked).
-    if _should_condense(p, include_claude_md=True):
+    # Terminal write also removes this session's live wm marker (clean
+    # teardown — SPEC §3.A.MID Fix-B coordination), in the same atomic write.
+    do_condense = _commit_managed_entry(
+        p, mem_entry=mem_entry,
+        wm_remove_sid=session.get('session_id') or session.get('id'))
+    if do_condense:
         _dispatch_condense(p)
     return True
+
+
+# ── Step 6: mid-session checkpoint note-taker (SPEC §3.A.MID) — default-off ──
+_checkpoint_inflight = set()           # session_ids with a worker running
+_checkpoint_guard = threading.Lock()
+_checkpoint_sema = {}                  # pid -> BoundedSemaphore (fan-out cap)
+_checkpoint_sema_guard = threading.Lock()
+
+
+def _sha8(s):
+    import hashlib
+    return hashlib.sha1((s or '').encode('utf-8', 'replace')).hexdigest()[:8]
+
+
+def _get_checkpoint_sema(pid):
+    with _checkpoint_sema_guard:
+        s = _checkpoint_sema.get(pid)
+        if s is None:
+            s = threading.BoundedSemaphore(2)  # ≤2 concurrent checkpoints/project
+            _checkpoint_sema[pid] = s
+    return s
+
+
+def _checkpoint_prev_offset(p, sid):
+    """Cheap read of this session's last watermark byte_offset (0 if none)."""
+    try:
+        mp = _get_memory_path(p)
+        if not mp.exists():
+            return 0
+        _c, _e, wm = _mem_split_full(mp.read_text(encoding='utf-8'))
+        r = _wm_find(wm, sid)
+        return int(r.get('byte_offset', 0)) if r else 0
+    except Exception:
+        return 0
+
+
+def _maybe_checkpoint(session):
+    """Mode-B turn-boundary hook (clones the _auto_snapshot_notes_on_turn
+    precedent). FAST gate only — no model call here: config flags,
+    incognito/housekeeping, real-boundary, KB-delta debounce, one-in-flight
+    per session. Spawns the worker on a daemon thread. Never raises (must not
+    break the reader)."""
+    try:
+        if not CONFIG.get('scribe_checkpoint_enabled', False):
+            return
+        kb = int(CONFIG.get('scribe_checkpoint_kb', 0) or 0)
+        if kb <= 0 or not CONFIG.get('scribe_enabled', True):
+            return
+        if session.get('incognito') or session.get('housekeeping'):
+            return
+        if (session.get('waiting_for_question')
+                or session.get('waiting_for_plan_approval')):
+            return  # not a real work boundary
+        if not session.get('process_alive', True):
+            return
+        pid = session.get('project_id', '')
+        sid = session.get('session_id') or session.get('id')
+        csid = session.get('claude_session_id', '')
+        if not (pid and sid and csid):
+            return
+        p = load_project(pid)
+        if not p:
+            return
+        pp = p.get('project_path', '')
+        tf = _find_transcript_file(pp, csid)
+        if not tf:
+            return
+        try:
+            size = os.path.getsize(tf)
+        except OSError:
+            return
+        if size - _checkpoint_prev_offset(p, sid) < kb * 1024:
+            return  # not enough new transcript yet (debounce)
+        with _checkpoint_guard:
+            if sid in _checkpoint_inflight:
+                _scribe_stat(pid, 'checkpoint_coalesced')
+                return  # previous worker still running; next boundary covers more
+            _checkpoint_inflight.add(sid)
+        snap = {'pid': pid, 'sid': sid, 'csid': csid,
+                'task': (session.get('task', '') or '').strip(),
+                'tf': str(tf)}
+        threading.Thread(target=_checkpoint_worker, args=(snap,),
+                         daemon=True).start()
+    except Exception:
+        pass
+
+
+def _checkpoint_worker(snap):
+    """Render the delta since the last watermark, fold it into the running
+    summary, append a self-contained `_(live)_` entry + upsert the wm marker
+    in one leaf-locked atomic write. SPEC §3.A.MID. Never raises."""
+    pid, sid, csid, task, tf = (snap['pid'], snap['sid'], snap['csid'],
+                                snap['task'], snap['tf'])
+    sema = _get_checkpoint_sema(pid)
+    if not sema.acquire(blocking=False):
+        _scribe_stat(pid, 'checkpoint_coalesced')  # project at fan-out cap
+        with _checkpoint_guard:
+            _checkpoint_inflight.discard(sid)
+        return
+    try:
+        p = load_project(pid)
+        if not p:
+            return
+        prev_off, prev_summary = 0, ''
+        try:
+            mp = _get_memory_path(p)
+            if mp.exists():
+                _c, _e, wm = _mem_split_full(mp.read_text(encoding='utf-8'))
+                r = _wm_find(wm, sid)
+                if r:
+                    prev_summary = r.get('running_summary', '') or ''
+                    if r.get('transcript_path') == tf:
+                        prev_off = int(r.get('byte_offset', 0))
+                    else:
+                        # resume opened a new .jsonl → restart offset, KEEP
+                        # the running summary as the reduce base (no loss).
+                        _scribe_stat(pid, 'checkpoint_offset_reset')
+        except Exception:
+            prev_off, prev_summary = 0, ''
+        delta, new_off = _scribe_render_delta(tf, prev_off)
+        if not delta.strip() or new_off == prev_off:
+            return  # nothing new complete; retry next boundary (offset kept)
+        model = CONFIG.get('scribe_model', '') or 'haiku'
+        dsum, reason = _scribe_summarize_text(delta, model)
+        rec = {'session_id': sid, 'claude_session_id': csid,
+               'transcript_path': tf, 'byte_offset': new_off,
+               'slice_hash': _sha8(delta)}
+        if reason != 'extracted':
+            # Thin/refused/error delta — advance the offset (that span had
+            # nothing material) but write NO entry and keep prev summary.
+            rec['running_summary'] = prev_summary
+            if _commit_managed_entry(p, wm_upsert=rec):
+                _dispatch_condense(p)
+            _scribe_stat(pid, f'checkpoint_skipped:{reason}')
+            return
+        if prev_summary:
+            try:
+                merged = _scribe_call(
+                    model, _SCRIBE_CHECKPOINT_REDUCE,
+                    f"PREVIOUS:\n{prev_summary}\n\nNEW:\n{dsum}")
+                merged = (merged or '').strip().replace('\n', ' ').strip() or dsum
+            except Exception:
+                merged = dsum
+        else:
+            merged = dsum
+        merged = merged[:300]
+        rec['running_summary'] = merged
+        entry = f"- [{now_iso()[:10]}] **{task[:80]}** _(live)_ — {merged}"
+        if _commit_managed_entry(p, mem_entry=entry, wm_upsert=rec):
+            _dispatch_condense(p)
+        _scribe_stat(pid, 'checkpoint_extracted')
+    except Exception:
+        pass
+    finally:
+        sema.release()
+        with _checkpoint_guard:
+            _checkpoint_inflight.discard(sid)
 
 
 def _log_agent_completion(session):
@@ -4165,6 +4506,13 @@ _SCRIBE_REDUCE_PROMPT = (
     "for a project memory log: what was done, decided/learned, and any gotcha. "
     "Output ONLY that line."
 )
+_SCRIBE_CHECKPOINT_REDUCE = (
+    "PREVIOUS is the running summary of an IN-PROGRESS agent session so far; "
+    "NEW is what happened since. Produce ONE updated dense line (max 280 "
+    "chars, no newlines) that SUPERSEDES PREVIOUS by folding in NEW: what's "
+    "been done, decided/learned, and open gotchas. Output ONLY that line — "
+    "no preamble, no markdown, no quotes."
+)
 # Single-call ceiling (~chars). Above this -> chunked map-reduce.
 _SCRIBE_SINGLE_LIMIT = 350_000
 _SCRIBE_RESULT_CAP = 2000  # per tool_result bulk cap in the rendered transcript
@@ -4203,65 +4551,105 @@ def _scribe_stat(project_id, key):
         pass  # telemetry must never break completion
 
 
-def _scribe_render_transcript(path):
-    """Render the raw CLI .jsonl into a compact, full-sequence text view.
+def _scribe_render_lines(lines):
+    """Render an iterable of raw .jsonl text lines into the compact view.
 
-    Keeps EVERY message (no 300-msg cap, unlike _parse_transcript_messages),
-    but strips base64/image blocks (token-waste noise) and bulk-caps oversized
-    tool_results head+tail. Returns '' if nothing useful.
+    Shared core of _scribe_render_transcript (whole file) and
+    _scribe_render_delta (Step 6, from a byte offset). Strips base64/image
+    blocks, bulk-caps oversized tool_results, skips unparseable lines (so a
+    stray leading fragment from a non-boundary offset is harmlessly ignored —
+    the leading-partial safety net, SPEC §3.A.MID).
     """
     out = []
-    with open(path, encoding='utf-8', errors='replace') as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            m = json.loads(line)
+        except Exception:
+            continue
+        msg = m.get('message') if isinstance(m.get('message'), dict) else None
+        if not msg or not isinstance(msg.get('content'), list):
+            continue
+        mtype = m.get('type', '')
+        for b in msg['content']:
+            if not isinstance(b, dict):
                 continue
-            try:
-                m = json.loads(line)
-            except Exception:
-                continue
-            msg = m.get('message') if isinstance(m.get('message'), dict) else None
-            if not msg or not isinstance(msg.get('content'), list):
-                continue
-            mtype = m.get('type', '')
-            for b in msg['content']:
-                if not isinstance(b, dict):
+            bt = b.get('type', '')
+            if bt == 'text' and mtype == 'assistant':
+                t = (b.get('text') or '').strip()
+                if t:
+                    out.append(f"ASSISTANT: {t}")
+            elif bt == 'thinking':
+                t = (b.get('thinking') or b.get('text') or '').strip()
+                if t:
+                    out.append(f"THINKING: {t[:2000]}")
+            elif bt == 'tool_use':
+                inp = b.get('input', {})
+                try:
+                    s = json.dumps(inp, ensure_ascii=False)
+                except Exception:
+                    s = str(inp)
+                out.append(f"ACTION {b.get('name','?')}: {s[:400]}")
+            elif bt == 'tool_result':
+                c = b.get('content')
+                if isinstance(c, list):
+                    parts = []
+                    for cb in c:
+                        if isinstance(cb, dict) and cb.get('type') == 'text':
+                            parts.append(cb.get('text', ''))
+                        # image/base64 blocks intentionally dropped
+                    c = '\n'.join(parts)
+                elif not isinstance(c, str):
+                    c = json.dumps(c, ensure_ascii=False) if c else ''
+                c = (c or '').strip()
+                if not c:
                     continue
-                bt = b.get('type', '')
-                if bt == 'text' and mtype == 'assistant':
-                    t = (b.get('text') or '').strip()
-                    if t:
-                        out.append(f"ASSISTANT: {t}")
-                elif bt == 'thinking':
-                    t = (b.get('thinking') or b.get('text') or '').strip()
-                    if t:
-                        out.append(f"THINKING: {t[:2000]}")
-                elif bt == 'tool_use':
-                    inp = b.get('input', {})
-                    try:
-                        s = json.dumps(inp, ensure_ascii=False)
-                    except Exception:
-                        s = str(inp)
-                    out.append(f"ACTION {b.get('name','?')}: {s[:400]}")
-                elif bt == 'tool_result':
-                    c = b.get('content')
-                    if isinstance(c, list):
-                        parts = []
-                        for cb in c:
-                            if isinstance(cb, dict) and cb.get('type') == 'text':
-                                parts.append(cb.get('text', ''))
-                            # image/base64 blocks intentionally dropped
-                        c = '\n'.join(parts)
-                    elif not isinstance(c, str):
-                        c = json.dumps(c, ensure_ascii=False) if c else ''
-                    c = (c or '').strip()
-                    if not c:
-                        continue
-                    if len(c) > _SCRIBE_RESULT_CAP:
-                        half = _SCRIBE_RESULT_CAP // 2
-                        c = f"{c[:half]}\n…[{len(c)-_SCRIBE_RESULT_CAP} chars elided]…\n{c[-half:]}"
-                    out.append(f"RESULT: {c}")
+                if len(c) > _SCRIBE_RESULT_CAP:
+                    half = _SCRIBE_RESULT_CAP // 2
+                    c = f"{c[:half]}\n…[{len(c)-_SCRIBE_RESULT_CAP} chars elided]…\n{c[-half:]}"
+                out.append(f"RESULT: {c}")
     return '\n'.join(out)
+
+
+def _scribe_render_transcript(path):
+    """Render the whole raw CLI .jsonl into the compact, full-sequence view."""
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        return _scribe_render_lines(fh)
+
+
+def _scribe_render_delta(path, byte_offset):
+    """Step 6: render ONLY the transcript bytes after `byte_offset`.
+
+    Returns (rendered_text, new_byte_offset). new_byte_offset is the position
+    immediately past the last complete newline consumed — it ONLY ever
+    advances to a line boundary, so the next call's start is a clean line
+    start (no leading-partial drop needed; an anomalous fragment would just
+    fail json parse and be skipped by _scribe_render_lines). Trailing-partial
+    rule: never consume past the last '\\n' (the agent may be mid-write). If
+    `byte_offset` exceeds the file (rotation/truncation, SPEC S3-1) it resets
+    to 0. If no complete new line is available, returns ('', byte_offset)
+    unchanged (caller skips this checkpoint, retries next turn).
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return '', byte_offset
+    if byte_offset > size:
+        byte_offset = 0  # transcript rotated/truncated
+    try:
+        with open(path, 'rb') as fh:
+            fh.seek(byte_offset)
+            blob = fh.read()
+    except OSError:
+        return '', byte_offset
+    last_nl = blob.rfind(b'\n')
+    if last_nl < 0:
+        return '', byte_offset  # no complete line yet
+    consumed = blob[:last_nl].decode('utf-8', errors='replace')
+    new_offset = byte_offset + last_nl + 1
+    return _scribe_render_lines(consumed.split('\n')), new_offset
 
 
 def _scribe_call(model, instruction, body):
@@ -4317,60 +4705,61 @@ def _scribe_extract(project, session):
             transcript = _scribe_render_transcript(tf)
         except Exception:
             return None, 'parse_empty'
-        _stripped = transcript.strip()
-        _has_activity = any(
-            ln.startswith(_SCRIBE_ACTIVITY_PREFIXES)
-            for ln in _stripped.splitlines())
-        if not _has_activity and len(_stripped) < _SCRIBE_THIN_TEXT_CHARS:
-            # No tool/think activity and only a trivial assistant blip
-            # (aborted/no-op/instant-stop). Falling back to the stdout tail
-            # yields an honest short entry instead of a hallucinated
-            # "paste the transcript" reply. A session that ran ANY tool is
-            # substantive regardless of length and is NOT skipped here.
-            return None, 'parse_empty'
         model = CONFIG.get('scribe_model', '') or 'haiku'
-        try:
-            if len(transcript) <= _SCRIBE_SINGLE_LIMIT:
-                out = _scribe_call(model, _SCRIBE_PROMPT, transcript)
-            else:
-                # Chunk on line boundaries, map then reduce.
-                chunks, cur, n = [], [], 0
-                for ln in transcript.split('\n'):
-                    cur.append(ln)
-                    n += len(ln) + 1
-                    if n >= _SCRIBE_SINGLE_LIMIT:
-                        chunks.append('\n'.join(cur))
-                        cur, n = [], 0
-                if cur:
-                    chunks.append('\n'.join(cur))
-                partials = []
-                for ch in chunks:
-                    try:
-                        partials.append(_scribe_call(model, _SCRIBE_MAP_PROMPT, ch))
-                    except Exception:
-                        pass
-                if not partials:
-                    return None, 'model_error'
-                out = _scribe_call(
-                    model, _SCRIBE_REDUCE_PROMPT,
-                    '\n'.join(f"- {p}" for p in partials if p))
-        except subprocess.TimeoutExpired:
-            return None, 'model_error'
-        except Exception:
-            return None, 'model_error'
-        out = (out or '').strip().replace('\n', ' ').strip()
-        if not out:
-            return None, 'model_error'
-        low = out.lower()
-        if any(mk in low for mk in _SCRIBE_REFUSAL_MARKERS):
-            # Model didn't summarize — it asked for the transcript / refused.
-            # Never persist that as memory; fall back. (Defense-in-depth: the
-            # min-chars guard should already prevent the usual cause.)
-            return None, 'model_refused'
-        return out[:300], 'extracted'
+        return _scribe_summarize_text(transcript, model)
     finally:
         with _scribe_lock:
             _scribing_projects.discard(pid)
+
+
+def _scribe_summarize_text(text, model):
+    """Core: rendered-transcript text → (one_line_summary, 'extracted') or
+    (None, reason). Thin-transcript guard + single/map-reduce + refusal guard.
+    No I/O, no locks — shared by _scribe_extract (whole transcript, completion
+    path) and the Step-6 checkpoint worker (delta). Never raises.
+    """
+    _stripped = (text or '').strip()
+    _has_activity = any(
+        ln.startswith(_SCRIBE_ACTIVITY_PREFIXES)
+        for ln in _stripped.splitlines())
+    if not _has_activity and len(_stripped) < _SCRIBE_THIN_TEXT_CHARS:
+        # No tool/think activity and only a trivial blip (aborted/no-op).
+        # Caller falls back rather than persist a hallucinated reply.
+        return None, 'parse_empty'
+    try:
+        if len(_stripped) <= _SCRIBE_SINGLE_LIMIT:
+            out = _scribe_call(model, _SCRIBE_PROMPT, _stripped)
+        else:
+            chunks, cur, n = [], [], 0
+            for ln in _stripped.split('\n'):
+                cur.append(ln)
+                n += len(ln) + 1
+                if n >= _SCRIBE_SINGLE_LIMIT:
+                    chunks.append('\n'.join(cur))
+                    cur, n = [], 0
+            if cur:
+                chunks.append('\n'.join(cur))
+            partials = []
+            for ch in chunks:
+                try:
+                    partials.append(_scribe_call(model, _SCRIBE_MAP_PROMPT, ch))
+                except Exception:
+                    pass
+            if not partials:
+                return None, 'model_error'
+            out = _scribe_call(
+                model, _SCRIBE_REDUCE_PROMPT,
+                '\n'.join(f"- {p}" for p in partials if p))
+    except subprocess.TimeoutExpired:
+        return None, 'model_error'
+    except Exception:
+        return None, 'model_error'
+    out = (out or '').strip().replace('\n', ' ').strip()
+    if not out:
+        return None, 'model_error'
+    if any(mk in out.lower() for mk in _SCRIBE_REFUSAL_MARKERS):
+        return None, 'model_refused'
+    return out[:300], 'extracted'
 
 
 def _dispatch_condense(project):
@@ -4428,7 +4817,10 @@ def _dispatch_condense(project):
         "`<!-- clayrune:managed:begin -->` / `## Session Log` / "
         "`<!-- clayrune:managed:end -->` structure intact. The managed region "
         "may legitimately end up EMPTY after folding — that is fine; keep the "
-        "sentinels and header.\n"
+        "sentinels and header. CRITICAL: any line beginning "
+        "`<!-- clayrune:wm:` is a live-session watermark — PRESERVE IT "
+        "VERBATIM, do not fold/move/delete/reformat it (deleting one loses a "
+        "running session's progress and forces a re-scribe from zero).\n"
         "5. NEVER hard-delete a fact. The only permitted deletions are exact "
         "duplicates or an entry STRICTLY superseded by a newer one that wholly "
         "contains it. 'Not worth a curated slot' means DEMOTE to the archive "
@@ -9124,7 +9516,8 @@ _CONFIG_EDITABLE_KEYS = {
     'use_streaming_agent', 'condense_enabled', 'condense_threshold_kb',
     'condense_model', 'index_line_budget', 'index_line_hard_floor',
     'scribe_enabled', 'scribe_model', 'scribe_reconcile_enabled',
-    'scribe_reconcile_cap', 'read_floor_topk', 'projects_base',
+    'scribe_reconcile_cap', 'scribe_checkpoint_enabled',
+    'scribe_checkpoint_kb', 'read_floor_topk', 'projects_base',
     'shared_rules_path', 'port', 'log_level',
 }
 
