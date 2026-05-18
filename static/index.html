@@ -14150,6 +14150,14 @@ async function _renderSettings() {
     `<option value="${v}" ${cfg.agent_permission_mode === v ? 'selected' : ''}>${l}</option>`
   ).join('');
 
+  const condenseModeOptions = [
+    ['agent', 'Agent (legacy claude -p + Write)'],
+    ['structured', 'Structured (server-applied JSON plan)'],
+  ];
+  const condenseModeSel = condenseModeOptions.map(([v, l]) =>
+    `<option value="${v}" ${(cfg.condense_mode || 'agent') === v ? 'selected' : ''}>${l}</option>`
+  ).join('');
+
   function toggle(key, val) {
     return `<div class="settings-toggle ${val ? 'on' : ''}" onclick="toggleSetting(this,'${key}')"></div>`;
   }
@@ -14241,6 +14249,10 @@ async function _renderSettings() {
       <div class="settings-row">
         <div><div class="settings-label">Condense Model</div><div class="settings-hint">Model for housekeeping (blank = default)</div></div>
         ${textInput('condense_model', cfg.condense_model)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Condense Executor</div><div class="settings-hint">Structured = one non-agentic JSON call applied server-side (no Write-tool agent, no turn budget). Flip back to Agent to revert.</div></div>
+        <select class="settings-select" onchange="saveSetting('condense_mode',this.value)">${condenseModeSel}</select>
       </div>
     </div>
 

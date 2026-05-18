@@ -57,6 +57,7 @@ to self-document.
 | **Leg B — Read** | `/memory/search` ranked grep + a deterministic top-k floor injected into fresh dispatches + `mc-memory-search` skill. | ✅ shipped |
 | **Leg C — Trim** | Line-keyed lossless mechanical floor (relocate oldest→archive) + condense model tier (value-based fold/demote, never delete). Archive is permanent searchable cold storage. | ✅ shipped |
 | **Step 6 — Mid-session note-taker** | Mode-B per-turn capture (not just teardown). Append-only checkpoint entries; watermark folded into MEMORY.md; leaf-locked; semaphore-bounded. | ✅ shipped `9683996`, live-validated 2026-05-18, **currently ENABLED** (default-off in code) |
+| **Leg C structured executor** | Replace the free `claude -p`+Write condense agent with one non-agentic JSON model call applied server-side via the leaf-locked writer. Deletes the turn budget, corruption surface, heal/restore, and ERROR-session noise. | ✅ implemented 2026-05-18, **default-OFF** (`condense_mode='agent'`); design `docs/CONDENSE_STRUCTURED_DESIGN.md` |
 | **Step 7 — bge-m3 retrieval** | Replace grep with server-side semantic search. | ⏸ deferred (telemetry-gated) |
 
 ## Memory layers & audiences (read this before "consolidating")
@@ -118,6 +119,7 @@ engram enshrine an unverified operational claim.** See the
 | `index_line_hard_floor` | `185` | mechanical floor trigger (lines) |
 | `scribe_checkpoint_enabled` | `false` | Step 6 kill-switch (default-off) |
 | `scribe_checkpoint_kb` | `0` | Step 6 cadence dial (≈8 once enabled) |
+| `condense_mode` | `agent` | Leg C executor: `agent` (legacy) or `structured` (server-applied JSON plan, default-off) |
 
 ## Lifecycle of one session
 

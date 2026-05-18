@@ -4,6 +4,79 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18e] — Leg C structured condense executor (default-OFF)
+
+Root-cause fix for the memory-condense fragility. The pain (the original
+`--max-turns 5` ERROR bug, the 11-step prompt, the entire
+`_condense_integrity_check` ok/heal/restore guard, spurious `condense_*` ERROR
+sessions) all traced to ONE choice: `_dispatch_condense` shells out a free
+`claude -p` agent holding the Write tool to rewrite a load-bearing file in
+place. The necessary judgment is small and structured — per managed entry,
+`keep | demote | fold` — and needs a model's judgment, not an autonomous
+file-surgery agent.
+
+**New executor (`condense_mode='structured'`):** `_condense_plan` assembles a
+bounded read-only input (curated headings, `- [` entries each with a
+`_sha8` id, a 4 KB archive-tail for dedupe context, the line budget) and makes
+ONE non-agentic call (reuses `_scribe_call`: `--max-turns 1`, no tools, stdin,
+180 s) returning strict JSON. `_validate_condense_payload` is a **pre-write**
+gate (schema + every invariant; a reject leaves MEMORY.md untouched — no
+pre-image, no restore, no heuristic revert). `_condense_apply` applies the
+plan **rebased** under the same leaf lock the completion scribe + Step-6 use:
+decisions keyed by `_sha8(entry)`, any decision whose entry vanished meanwhile
+(concurrent Step-6/teardown) is silently skipped, unmentioned entries default
+to keep, `clayrune:wm:` watermarks pass through byte-identical, the model
+never touches the filesystem and never sees a watermark. `fold` inserts one
+pointer line under a named curated heading **and** archives the raw entry
+(fact preserved); a heading that vanished since plan-time downgrades to demote
+(never loses the fact). Mechanical line-floor remains the backstop.
+
+The model never writes files → the turn budget, corruption surface,
+heal/restore code, and ERROR-session noise are all designed out (the legacy
+`agent` path + its committed-pending stopgap remain the safe default until
+this is telemetry-validated).
+
+**Line-keyed trigger (closes the one caveat).** `_should_condense` now
+branches on `condense_mode`: structured fires on the auto-loaded MEMORY.md
+**line count vs. `index_line_budget`** (the thing structured actually
+controls), not combined bytes. This removes the recurring-no-op gap where a
+large `CLAUDE.md` (which structured v1 deliberately doesn't touch) would keep
+a byte trigger permanently hot, and makes the structured trigger + target
+agree in units (resolves design Open Question #5 for this path). The legacy
+`agent` path keeps its combined-byte trigger unchanged.
+
+**Settings:** new "Condense Executor" select under Memory & Condensation
+(Agent / Structured). **Telemetry:** `condense_structured_ok`,
+`condense_rejected:<reason>`, `condense_entries_{kept,demoted,folded}`,
+`condense_decisions_skipped_rebased`, `condense_fold_downgraded`, `model_ms`
+in condense-status.
+
+**Design:** `docs/CONDENSE_STRUCTURED_DESIGN.md` (status → v1 implemented).
+`docs/MEMORY_SYSTEM.md` component + config tables trued up. **Tests:**
+`tests/test_condense_structured.py` (9 — parse, every validate-reject branch,
+keep/demote/fold + wm-preserved, rebase-skips-vanished, fold-downgrade
+(heading-gone AND heading-ambiguous), archive-append-only,
+structured-trigger-ignores-huge-CLAUDE.md, agent-trigger-unchanged); full
+suite 41 green.
+
+**Committee review (4 seats) — RATIFY-WITH-CONDITIONS, no blockers, no
+data-loss path.** Conditions fixed here: bounded telemetry key (no raw
+exception text in `condense_rejected:`); fence-aware curated-heading
+collection + unique-match-or-demote in `_condense_apply` (never misplace a
+pointer, never lose the fact); duplicate-id intentional-collapse documented;
+new `curated_lines` status gauge for soak; trigger read-guard widened;
+CLAUDE.md "one writer" rule + `_commit_managed_entry` docstring + design-doc
+atomicity claim trued up (it is two atomic writes archive→managed = transient
+duplication never loss, identical to `_commit_managed_entry`). Conditions
+DEFERRED to the default-flip gate (ship default-off so soak surfaces them):
+trigger hysteresis and curated-index monotonic-drift watch — see
+`docs/CONDENSE_STRUCTURED_DESIGN.md` "Committee review" §6–7.
+
+**Config (defaults + `_CONFIG_EDITABLE_KEYS`):** `condense_mode` (`agent`).
+**Rollback:** set `condense_mode=agent` (Settings select, no restart once both
+paths resident). Server.py changed → **restart required** for the new path to
+be server-side selectable (frontend picks up the selector on browser reload).
+
 ## [2026-05-18d] — Long Mode-B session restart advisory
 
 Closes the human-driven half of the within-session self-recall gap (docs/
