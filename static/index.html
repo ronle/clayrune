@@ -5199,7 +5199,13 @@ function tileHTML(p, slotIndex) {
 // ── Modal HTML (full detail view) ───────────────────────────────────────────
 
 function modalContentHTML(p) {
-  const sc = `status-${p.status||'unknown'}`;
+  // Modal header status MUST come from the single consolidated resolver
+  // (same as the tile / mobile row / list row), NOT raw p.status. Otherwise
+  // a lifecycle-'active' project with no live agent shows "IN PROGRESS" in
+  // the open modal while the tile correctly shows "IDLE" — same project,
+  // same moment, two answers. Opening a modal is a VIEW action; it must
+  // never change the status badge.
+  const fs = friendlyStatus(p);
   const showDone = showDoneMap[p.id] || false;
   const backlog = p.backlog || [];
   const openItems = backlog.filter(i => i.status === 'open');
@@ -5488,7 +5494,7 @@ function modalContentHTML(p) {
         ${(() => { const cfg = getDomainConfig(p.domain||'general'); return `<span class="domain-tag" style="background:${cfg.bg};color:${cfg.color}">${esc(cfg.label||p.domain||'general')}</span>`; })()}
       </div>
       <div class="modal-status-row" style="display:flex;align-items:center;gap:10px">
-        <span class="status-pill ${sc}">${esc(vl('status_' + (p.status||'unknown')))}</span>
+        <span class="status-pill friendly-${fs}"><span class="status-dot"></span>${esc(vl(FRIENDLY_TO_VOICE[fs]))}</span>
         <span class="time-ago">${esc(p.last_updated_relative||'')}</span>
       </div>
       <div class="path-row">

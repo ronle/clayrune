@@ -4,6 +4,26 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18l] — Modal header status: route through the single resolver
+
+Frontend-only (`static/index.html`, `modalContentHTML()`); no server
+change, no restart — page reload only. Follow-up to `[2026-05-18k]`.
+
+Symptom: same project, same moment — tile showed "● IDLE" (correct) while
+its open modal header showed "IN PROGRESS". Root cause: the modal header
+status pill was driven by **raw `p.status`** (`vl('status_' + p.status)`,
+class `status-${p.status}`) — a parallel, un-consolidated code path that
+never went through `friendlyStatus()`. So `status:active` → "IN PROGRESS"
+regardless of live-agent state: the same lifecycle-vs-live conflation
+fixed in `[2026-05-18k]`, surviving in the modal.
+
+Fix: the modal header pill now uses the single consolidated resolver
+(`friendlyStatus(p)` + `FRIENDLY_TO_VOICE` + `friendly-${fs}`), identical
+to the tile / mobile row / list row. The now-unused `sc` lifecycle-class
+local was removed from `modalContentHTML`. Design principle codified in a
+comment: opening a modal is a VIEW action — it must never change the
+status badge; every surface shows one shared truth.
+
 ## [2026-05-18k] — Stop conflating lifecycle-'active' with live 'working'
 
 Frontend-only (`static/index.html`, `friendlyStatus()`); no server change,
