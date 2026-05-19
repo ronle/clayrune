@@ -23,13 +23,14 @@ Clayrune gives you a centralized dashboard to:
 
 ## Quick Start (Windows)
 
-1. **Download** `MissionControl-Windows.zip` from [Releases](https://github.com/ronle/mission-control/releases/latest)
-2. **Unzip** anywhere (e.g. your Desktop or Documents)
-3. **Double-click** `MissionControl.exe`
+1. **Download** the installer from **[clayrune.io](https://clayrune.io)** (`Clayrune-Installer.exe`)
+2. **Double-click** it and follow the prompts
 
-That's it. A native window opens with the full dashboard. On first launch the app will attempt to install the Claude CLI automatically if it's not already on your system.
+The installer sets up Claude CLI, clones Clayrune, installs dependencies,
+and drops a Desktop/Start Menu shortcut. First launch opens the dashboard at
+`http://localhost:5199`.
 
-The web interface is also accessible at `http://localhost:5199` while the app is running.
+Prefer running from source instead? See [Running from Source](#running-from-source) below.
 
 ## Prerequisites (from source only)
 
@@ -192,16 +193,14 @@ mission-control/
     projects/            Project JSON files (auto-created)
     uploads/             File attachments
   config.json            User configuration (auto-created, gitignored)
-  build.spec             PyInstaller build spec
-  build.bat              Build automation script
-  installer.iss          Inno Setup installer script
+  installer/             Hosted one-click installer (clayrune.io)
 ```
 
 - **Backend**: Python Flask server on configurable port (default 5199)
 - **Frontend**: Vanilla HTML/CSS/JS single-page app (no framework, no build step)
 - **Data**: JSON files on disk (no database required)
 - **Agent**: Spawns `claude` CLI as subprocess with streaming JSON output
-- **Desktop**: Native window via pywebview (WebView2); prebuilt exe available in Releases
+- **Desktop**: Native window via pywebview (WebView2); run `python app.py` from source
 
 ## Contributing
 

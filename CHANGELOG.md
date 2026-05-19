@@ -4,6 +4,28 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18p] — Remove the dead PyInstaller/Inno bundle path
+
+Follow-up to `[2026-05-18o]`. No app/server code; no restart.
+
+The `MissionControl-Windows.zip` / `MissionControlSetup.exe` distribution
+(PyInstaller bundle wrapped by Inno Setup) **never worked** and the README
+Quick Start was sending Windows users straight at it.
+
+- **Deleted** (repo + disk): `installer.iss`, `build.bat`, `build.spec`,
+  `pre_build_fix.py` — the entire dead bundle build chain. `dist/` was
+  already untracked + gitignored (build output, left on disk).
+- **README Quick Start (Windows)** now points at the working path: the
+  `Clayrune-Installer.exe` from clayrune.io. Project-structure listing and
+  the "prebuilt exe in Releases" line corrected.
+- **`BUILD_INSTRUCTIONS.md` → local-only** (revises the keep-public call in
+  `[2026-05-18o]`): it documented only the now-deleted bundle build, so it
+  has no public value. `git rm --cached` + gitignored; still on disk.
+- **Kept:** `app.py` — it's the from-source desktop entry point
+  (`python app.py`, README Option A), not bundle-only.
+
+Reversible via git history / `git add -f`.
+
 ## [2026-05-18o] — Repo hygiene: drop dead install scripts, unpublish internal design docs
 
 No app/server code; no restart. Public-repo surface cleanup.
