@@ -157,58 +157,91 @@ function Test-ClaudeWorks {
     }
 }
 
-# Resolve where the `claude` npm bin-shim expects its entrypoint. A partial
-# `npm install -g` (interrupted, AV, or a too-new/non-LTS Node breaking the
-# package's install step) leaves the three bin shims but NO cli.js, so
-# `claude` then crashes with MODULE_NOT_FOUND. Plain `npm install -g` over
-# the top often does NOT fix this - npm believes the package is present and
-# skips re-extraction. Only a clean uninstall + cache clean + reinstall does.
-function Get-ClaudeCliPath {
+# The npm global prefix (where the `claude` bin shims + node_modules live).
+function Get-NpmPrefix {
     $prefix = ''
     try { $prefix = (& npm config get prefix 2>$null | Select-Object -First 1).ToString().Trim() } catch {}
     if (-not $prefix) { $prefix = Join-Path $env:APPDATA 'npm' }
-    return (Join-Path $prefix 'node_modules\@anthropic-ai\claude-code\cli.js')
+    return $prefix
 }
 
-# Strong check: the shim runs cleanly AND its entrypoint file actually
-# exists. Test-ClaudeWorks alone can't see a post-install disappearance.
-function Test-ClaudeIntact {
-    if (-not (Test-ClaudeWorks)) { return $false }
-    return (Test-Path (Get-ClaudeCliPath))
+# THE root cause of the fresh-PC failures: the package ships a native
+# claude.exe. If any `claude` process is alive (commonly one Clayrune itself
+# spawned), Windows locks the .exe, so `npm install -g`'s atomic
+# extract-then-rename can't replace it -> EPERM, npm aborts the finalize and
+# leaves the bin shims but an incomplete package. The leftover
+# `@anthropic-ai/.claude-code-*` staging dir then trips the NEXT install too.
+# So before any (re)install we must (1) kill claude processes and (2) purge
+# the leftover @anthropic-ai dir. Do NOT gate health on a hardcoded internal
+# file path - the package layout changes between versions (older builds had
+# node_modules/@anthropic-ai/claude-code/cli.js; current ones do not). The
+# only version-stable health check is `claude --version` (Test-ClaudeWorks).
+
+function Stop-ClaudeProcesses {
+    # Safe here: this runs in the PowerShell bootstrap, BEFORE we ever spawn
+    # the `claude -p` install prompt - so we're not killing our own installer.
+    try {
+        Get-Process claude -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    } catch {}
+}
+
+# Clear npm leftovers that break a fresh install:
+#  - the @anthropic-ai dir npm's EPERM leaves half-written (staging
+#    `.claude-code-*` + a partial `claude-code`);
+#  - a top-level `claude.exe` at the npm prefix root. npm only ever
+#    generates claude / claude.cmd / claude.ps1 - it NEVER creates a
+#    top-level claude.exe. One sitting there is a STALE ORPHAN from an
+#    older package version that runs `node ...\cli.js` (a path the
+#    current package no longer ships). Because PATHEXT/shutil.which
+#    prefer .exe, it shadows the correct .cmd and makes Clayrune crash
+#    with MODULE_NOT_FOUND even though `claude` itself is fine. npm won't
+#    remove a file it didn't create, so we must. Best-effort.
+function Clear-ClaudeNpmLeftovers {
+    $prefix = Get-NpmPrefix
+    $dir = Join-Path $prefix 'node_modules\@anthropic-ai'
+    if (Test-Path $dir) {
+        try { Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue } catch {}
+    }
+    $orphanExe = Join-Path $prefix 'claude.exe'
+    if (Test-Path $orphanExe) {
+        try { Remove-Item -Force $orphanExe -ErrorAction SilentlyContinue } catch {}
+    }
 }
 
 # Install (or, with -Clean, hard-repair) the global Claude CLI via npm.
 function Install-ClaudeNpm {
     param([switch]$Clean)
+    Stop-ClaudeProcesses          # always: a live claude.exe is what causes EPERM
     if ($Clean) {
-        Write-Host '  Clearing the broken/partial global package first...'
+        Write-Host '  Clearing the locked/partial global package first...'
         try { npm uninstall -g '@anthropic-ai/claude-code' 2>$null } catch {}
+        Clear-ClaudeNpmLeftovers
         try { npm cache clean --force 2>$null } catch {}
     }
     npm install -g '@anthropic-ai/claude-code'
     Refresh-Path
 }
 
-# npm-install attempt with an automatic one-shot clean-reinstall fallback
-# for the partial-install case. Returns $true iff Claude ends up intact.
+# npm install with an automatic one-shot clean-reinstall fallback. Health is
+# judged ONLY by `claude --version` (Test-ClaudeWorks) - layout-agnostic.
 function Invoke-ClaudeNpmInstall {
     param([string]$Label)
-    # If a broken shim is already present, go straight to a clean repair.
-    $broken = (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Test-ClaudeIntact)
+    # A present-but-non-working `claude` => go straight to a clean repair.
+    $broken = (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Test-ClaudeWorks)
     Install-ClaudeNpm -Clean:$broken
-    if (Test-ClaudeIntact) {
+    if (Test-ClaudeWorks) {
         Write-Host "+ $Label" -ForegroundColor Green
         Write-Host ''
         return $true
     }
-    Write-Host '- install incomplete (cli.js missing) - forcing a clean reinstall...' -ForegroundColor Yellow
+    Write-Host '- install did not yield a working `claude` - forcing a clean reinstall...' -ForegroundColor Yellow
     Install-ClaudeNpm -Clean
-    if (Test-ClaudeIntact) {
+    if (Test-ClaudeWorks) {
         Write-Host "+ $Label (after clean reinstall)" -ForegroundColor Green
         Write-Host ''
         return $true
     }
-    Write-Host '- still broken after a clean reinstall' -ForegroundColor Yellow
+    Write-Host '- still not working after a clean reinstall' -ForegroundColor Yellow
     Write-Host ''
     return $false
 }
@@ -245,7 +278,7 @@ if (-not (Setup-Node)) {
 
 # -- Step 1: Ensure a working Claude CLI ------------------------------------
 
-if (Test-ClaudeIntact) {
+if (Test-ClaudeWorks) {
     $claudeVersion = (& claude --version 2>&1 | Select-Object -First 1)
     Write-Host "OK Claude CLI already installed: $claudeVersion" -ForegroundColor Green
     Write-Host ''
@@ -301,33 +334,26 @@ if (Test-ClaudeIntact) {
     }
 
     if (-not $installed) {
-        $cli = Get-ClaudeCliPath
-        $nodeMajor = Get-NodeMajor
+        $anthDir = Join-Path (Get-NpmPrefix) 'node_modules\@anthropic-ai'
         Write-Host ''
         Write-Host 'Could not install a working Claude CLI automatically.' -ForegroundColor Red
         Write-Host ''
-        if (Get-Command claude -ErrorAction SilentlyContinue) {
-            Write-Host "The 'claude' command exists but its package is incomplete:" -ForegroundColor Yellow
-            Write-Host "  missing: $cli" -ForegroundColor Yellow
-            Write-Host ''
-            Write-Host 'Fix it by hand with a clean reinstall:'
-            Write-Host '  npm uninstall -g @anthropic-ai/claude-code' -ForegroundColor Cyan
-            Write-Host '  npm cache clean --force' -ForegroundColor Cyan
-            Write-Host '  npm install -g @anthropic-ai/claude-code' -ForegroundColor Cyan
-            Write-Host ''
-        }
-        if ($nodeMajor -ge 23) {
-            Write-Host "You're on Node v$nodeMajor (a non-LTS 'Current' release). The" -ForegroundColor Yellow
-            Write-Host 'Claude CLI targets Node LTS; a too-new Node is a known cause of'  -ForegroundColor Yellow
-            Write-Host 'this partial install. Installing Node LTS usually fixes it:'      -ForegroundColor Yellow
-            Write-Host '  winget install --id OpenJS.NodeJS.LTS -e' -ForegroundColor Cyan
-            Write-Host '  (then open a NEW PowerShell and reinstall as above)'
-            Write-Host ''
-        }
-        Write-Host 'Other manual install options:'
-        Write-Host '  Anthropic:  https://docs.anthropic.com/claude-code'
+        Write-Host 'Most common cause: the Claude CLI ships a native claude.exe, and' -ForegroundColor Yellow
+        Write-Host "npm can't replace it while a claude process is running (EPERM /"  -ForegroundColor Yellow
+        Write-Host 'operation not permitted). That usually means Clayrune is open and' -ForegroundColor Yellow
+        Write-Host 'holding claude.exe. Fix by hand:' -ForegroundColor Yellow
         Write-Host ''
-        Write-Host 'After installing, verify with:  claude --version'
+        Write-Host '  1. Close Clayrune completely, then in PowerShell:'
+        Write-Host '  Get-Process claude -ErrorAction SilentlyContinue | Stop-Process -Force' -ForegroundColor Cyan
+        Write-Host "  Remove-Item -Recurse -Force '$anthDir'" -ForegroundColor Cyan
+        Write-Host '  npm install -g @anthropic-ai/claude-code' -ForegroundColor Cyan
+        Write-Host '  claude --version' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  If it still EPERMs, the locker is antivirus: add an exclusion'
+        Write-Host "  for $anthDir, or reboot (clears all file locks) and run the"
+        Write-Host '  three commands above BEFORE opening Clayrune.'
+        Write-Host ''
+        Write-Host 'Docs: https://docs.anthropic.com/claude-code'
         Write-Host 'Then re-run this installer in a NEW PowerShell window:'
         Write-Host '  iwr https://clayrune.io/install.ps1 -useb | iex' -ForegroundColor Cyan
         exit 1

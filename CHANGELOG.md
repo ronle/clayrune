@@ -4,6 +4,72 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18t] — Fix: Clayrune picks a stale orphan claude.exe (the actual root cause)
+
+The real cause of the persistent fresh-PC `Cannot find module
+'...\@anthropic-ai\claude-code\cli.js'`, proven on-box and fixed.
+
+A machine with an **old** `@anthropic-ai/claude-code` install (here: a
+failed bulk-exe attempt months ago) has a top-level `claude.exe` at the
+npm prefix root that runs `node …\cli.js`. The current package no longer
+ships `cli.js` (it uses `bin\claude.exe` + `cli-wrapper.cjs`). npm
+generates `claude` / `claude.cmd` / `claude.ps1` but **never** a top-level
+`claude.exe`, so a clean reinstall regenerates the `.cmd`/sh shims
+correctly (→ `bin\claude.exe`) yet leaves the orphan `claude.exe`
+untouched. `shutil.which()` and PATHEXT prefer `.exe`, so Clayrune's
+`_resolve_claude()` selects the orphan → MODULE_NOT_FOUND — even though
+`claude --version` works in a shell (different resolver). Node version,
+"missing cli.js", and the EPERM lock were all symptoms/red herrings;
+this is the cause. Verified: removing only the orphan flips
+`shutil.which('claude')` from `claude.EXE` → `claude.CMD` and Clayrune's
+exact resolution test then returns `2.1.144`.
+
+- `server.py _resolve_claude()`: on Windows, when `shutil.which` returns a
+  `claude.exe` that has a sibling `claude.cmd` in the same dir (the orphan
+  signature — npm never makes a top-level `claude.exe`), return the
+  npm-managed `.cmd` instead. No subprocess; a lone `claude.exe` (native
+  `~/.claude/bin` installer, no sibling `.cmd`) is left untouched. This
+  self-heals every existing affected install on the next Clayrune update —
+  no manual claude surgery required.
+- `install.ps1 Clear-ClaudeNpmLeftovers`: also deletes the prefix-root
+  `claude.exe` orphan before reinstall, so fresh installs/repairs can't
+  inherit a shadowing stale shim.
+
+Committed via hunk-isolation; `server.py` pre-existing WIP untouched.
+
+## [2026-05-18s] — Installer: correct the Claude CLI repair (supersedes [2026-05-18r])
+
+`installer/install.ps1` only. `[2026-05-18r]` mis-diagnosed this twice
+(Node-non-LTS, then "missing cli.js") and shipped a check that is wrong for
+the current package — **this entry corrects both**.
+
+On-box evidence settled it: `npm uninstall` failed with
+`EPERM: operation not permitted, unlink ...\claude.exe.old...`, and after
+killing claude + purging the leftover dir, `npm install` → `claude
+--version` = `2.1.144` **works** while
+`node_modules\@anthropic-ai\claude-code\cli.js` is **absent**.
+
+Conclusions:
+- **Real root cause:** the package ships a native `claude.exe`. A live
+  `claude` process (typically one **Clayrune itself spawned** — i.e. the
+  app being open during install) locks the exe, so npm's
+  extract-then-rename hits EPERM, aborts the finalize, and leaves bin
+  shims + a `@anthropic-ai/.claude-code-*` leftover that breaks the next
+  install too. Node version was never relevant (winget "LTS" is itself
+  24.15.0 here).
+- **`[2026-05-18r]`'s `Test-ClaudeIntact`/`Get-ClaudeCliPath` were
+  actively harmful**: they gate health on `…/claude-code/cli.js`, a path
+  the *current* package no longer uses — so a perfectly working install
+  would be declared broken and loop/fail for everyone. **Removed.**
+
+Fix: health is judged **only** by `claude --version` (`Test-ClaudeWorks`,
+layout-agnostic). Before every (re)install: `Stop-ClaudeProcesses` (kills
+the lock — safe, runs in the bootstrap before the `claude -p` handoff) and,
+on the clean path, `Clear-ClaudeNpmLeftovers` (purges the EPERM remnant
+`@anthropic-ai` dir). Failure message now names the lock/EPERM cause, the
+close-Clayrune + purge + reinstall steps, and the AV-exclusion / reboot
+fallback. Parse-checked under Windows PowerShell 5.1.
+
 ## [2026-05-18r] — Installer: detect & repair partial Claude CLI npm installs
 
 `installer/install.ps1` only. Triggered by a real fresh-PC failure: install
