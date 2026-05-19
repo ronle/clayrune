@@ -4,6 +4,30 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18q] — Human version display in Update Clayrune (deferred from [2026-05-18n])
+
+Now unblocked — committed via hunk-isolation so it carries none of the
+unrelated pre-existing WIP still live in `server.py` / `static/index.html`.
+
+Settings → Update Clayrune (and the dashboard "update available" toast)
+now show a synthetic human version — `vX.Y.Z build N` — for installed
+vs latest, instead of only an opaque "N commits behind". Derived from the
+nearest `v*` semver tag via `git describe` (base tag + commits-since +
+short SHA); SHA + commit date kept as dimmed secondary detail; `✓
+identical` shown when current.
+
+- `server.py`: `_git_version()` parser; `version` / `remote_version` /
+  `commit_date` / `remote_commit_date` added to
+  `/api/system/update/status`, the cached endpoint, and
+  `_refresh_update_cache`.
+- `static/index.html`: `refreshUpdateStatus()` leads with the version
+  line; `checkClayruneUpdateAvailable()` toast uses it too. Degrades to
+  SHAs if the new fields are absent.
+
+**Needs a server restart** for the new JSON fields (frontend is
+restart-safe until then). `docs/USER_GUIDE.md` "Update Clayrune" section
+still pending an update to describe the new display.
+
 ## [2026-05-18p] — Remove the dead PyInstaller/Inno bundle path
 
 Follow-up to `[2026-05-18o]`. No app/server code; no restart.

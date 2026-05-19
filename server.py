@@ -13603,6 +13603,36 @@ def _git(args, cwd, timeout=30):
         return -3, str(e)
 
 
+def _git_version(repo_root, committish):
+    """Synthetic build number from the nearest `v*` semver tag.
+
+    `git describe --tags --match v*` yields one of:
+      - "v1.5.1"                 → exactly on a release tag
+      - "v1.5.1-180-gc6d2fae"    → 180 commits past v1.5.1
+      - "<sha>" (--always)       → no v* tag reachable (fresh clone / shallow)
+
+    Returns {'display', 'base', 'build', 'sha'}. `display` is the
+    human string the UI shows; the rest are structured for callers that
+    want to compare without re-parsing.
+    """
+    import re
+    rc, out = _git(
+        ['describe', '--tags', '--match', 'v*', '--always', '--abbrev=7', committish],
+        repo_root,
+    )
+    if rc != 0 or not out:
+        return {'display': 'unknown', 'base': '', 'build': 0, 'sha': ''}
+    m = re.match(r'^(v[0-9][0-9.]*)-(\d+)-g([0-9a-f]+)$', out)
+    if m:
+        base, build, sha = m.group(1), int(m.group(2)), m.group(3)
+        return {'display': f'{base} build {build}', 'base': base,
+                'build': build, 'sha': sha}
+    if re.match(r'^v[0-9][0-9.]*$', out):
+        return {'display': out, 'base': out, 'build': 0, 'sha': ''}
+    # --always fallback: no reachable v* tag, `out` is a bare short SHA.
+    return {'display': f'untagged ({out})', 'base': '', 'build': 0, 'sha': out}
+
+
 @app.route('/api/system/update/status')
 def system_update_status():
     """Report whether the install dir is a git repo, current commit + branch,
@@ -13643,11 +13673,28 @@ def system_update_status():
     rc, status_out = _git(['status', '--porcelain'], repo_root)
     has_local_changes = bool(status_out)
 
+    # Remote tip SHA + commit dates, so the UI can show "installed X (date) →
+    # latest Y (date)" instead of just an opaque behind-count.
+    rc, remote_sha = _git(['rev-parse', '--short', f'origin/{current_branch}'], repo_root)
+    remote_commit = remote_sha if rc == 0 else ''
+    rc, ld = _git(['log', '-1', '--format=%cs', 'HEAD'], repo_root)
+    local_commit_date = ld if rc == 0 else ''
+    rc, rd = _git(['log', '-1', '--format=%cs', f'origin/{current_branch}'], repo_root)
+    remote_commit_date = rd if rc == 0 else ''
+
+    local_ver = _git_version(repo_root, 'HEAD')
+    remote_ver = _git_version(repo_root, f'origin/{current_branch}')
+
     return jsonify({
         'is_git_repo': True,
         'install_dir': str(repo_root),
         'branch': current_branch,
         'commit': current_commit,
+        'commit_date': local_commit_date,
+        'version': local_ver['display'],
+        'remote_commit': remote_commit,
+        'remote_commit_date': remote_commit_date,
+        'remote_version': remote_ver['display'],
         'behind': behind,
         'ahead': ahead,
         'has_local_changes': has_local_changes,
@@ -13667,6 +13714,8 @@ _UPDATE_CHECK_CACHE = {
     'is_git_repo': True,
     'branch': '',
     'commit': '',                  # local HEAD short SHA
+    'version': '',                 # synthetic build, e.g. "v1.5.1 build 180"
+    'remote_version': '',          # same for origin/<branch> at last fetch
     'remote_commit': '',           # origin/<branch> short SHA at last fetch
     'behind': 0,
     'ahead': 0,
@@ -13719,12 +13768,17 @@ def _refresh_update_cache():
     )
     recent_log = log_out if rc == 0 else ''
 
+    local_ver = _git_version(repo_root, 'HEAD')
+    remote_ver = _git_version(repo_root, f'origin/{current_branch}')
+
     with _UPDATE_CHECK_LOCK:
         _UPDATE_CHECK_CACHE.update({
             'last_check_ts': _time.time(),
             'is_git_repo': True,
             'branch': current_branch,
             'commit': current_commit,
+            'version': local_ver['display'],
+            'remote_version': remote_ver['display'],
             'remote_commit': remote_commit,
             'behind': behind,
             'ahead': ahead,

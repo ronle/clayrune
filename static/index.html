@@ -7280,10 +7280,10 @@ async function checkClayruneUpdateAvailable() {
   const remindAfter = parseInt(localStorage.getItem('mc_update_remind_after_ts') || '0', 10);
   if (remindAfter && Date.now() < remindAfter) return; // snoozed window
 
-  // Build a brief message: "<N> commit(s) behind · <newcommit>"
+  // Build a brief message: "<N> behind · <ver> → <newver>"
   const n = data.behind || 0;
-  const cur = (data.commit || '').slice(0, 7);
-  const remote = (data.remote_commit || '').slice(0, 7);
+  const cur = data.version || (data.commit || '').slice(0, 7);
+  const remote = data.remote_version || (data.remote_commit || '').slice(0, 7);
   const msg = `<strong>Clayrune update available</strong><br>` +
               `<span style="color:var(--text-faint);font-size:12px">` +
               `${n} commit${n === 1 ? '' : 's'} behind &middot; ` +
@@ -14124,20 +14124,35 @@ async function refreshUpdateStatus() {
       return;
     }
     const branchInfo = `branch ${data.branch} @ ${data.commit}`;
+    // Explicit installed-vs-latest line so the user can verify they really
+    // are current, instead of trusting an opaque behind-count. Lead with the
+    // human version (e.g. "v1.5.1 build 180"); SHA + date are secondary.
+    const isCurrent = data.remote_commit && data.commit === data.remote_commit;
+    const instVer = data.version || data.commit;
+    const latestVer = data.remote_version || data.remote_commit || '—';
+    const detail = (sha, d) =>
+      sha ? ` <span style="opacity:.6">(${esc(sha)}${d ? ' · ' + esc(d) : ''})</span>` : '';
+    const versionLine =
+      `<div style="font-size:12px;margin-bottom:4px">` +
+      `Installed <strong>${esc(instVer)}</strong>${detail(data.commit, data.commit_date)}` +
+      ` &nbsp;→&nbsp; ` +
+      `Latest <strong>${esc(latestVer)}</strong>${detail(data.remote_commit, data.remote_commit_date)}` +
+      (isCurrent ? ` &nbsp;<span style="color:var(--green-text,#22c55e)">✓ identical</span>` : '') +
+      `</div>`;
     if (data.has_local_changes) {
-      hint.textContent = `Local changes in ${branchInfo} — pull would conflict. Stash or commit first.`;
+      hint.innerHTML = versionLine + `Local changes in ${branchInfo} — pull would conflict. Stash or commit first.`;
       btn.disabled = true;
       btn.textContent = 'Blocked';
     } else if (data.behind > 0) {
-      hint.innerHTML = `<strong style="color:var(--accent)">${data.behind} commit${data.behind === 1 ? '' : 's'} behind</strong> &middot; ${branchInfo}. Click to pull + restart.`;
+      hint.innerHTML = versionLine + `<strong style="color:var(--accent)">${data.behind} commit${data.behind === 1 ? '' : 's'} behind</strong> &middot; ${branchInfo}. Click to pull + restart.`;
       btn.disabled = false;
       btn.textContent = `Update (${data.behind})`;
     } else if (data.ahead > 0) {
-      hint.textContent = `${branchInfo} — ${data.ahead} commit${data.ahead === 1 ? '' : 's'} ahead of origin (local-only changes, nothing to pull).`;
+      hint.innerHTML = versionLine + `${branchInfo} — ${data.ahead} commit${data.ahead === 1 ? '' : 's'} ahead of origin (local-only changes, nothing to pull).`;
       btn.disabled = true;
       btn.textContent = 'Up to date';
     } else {
-      hint.textContent = `Up to date &middot; ${branchInfo}.`;
+      hint.innerHTML = versionLine + `<strong style="color:var(--green-text,#22c55e)">Up to date</strong> &middot; ${branchInfo} matches origin.`;
       btn.disabled = true;
       btn.textContent = 'Up to date';
     }
