@@ -569,13 +569,19 @@ markers Claydo emits.
 
 ### Update Clayrune
 
-Currently manual (a Settings button is on the roadmap). In a terminal:
+1. Sidebar → **Settings**.
+2. Server section → **Update Clayrune**.
 
-```sh
-cd ~/Clayrune && git pull
-```
+The row shows your **installed** version vs the **latest** available, as a
+readable build number — e.g. `Installed v1.5.1 build 168 → Latest v1.5.1
+build 180` (the dimmed commit hash + date follow it). If they match it
+says **✓ identical**; otherwise it shows how many commits you're behind.
+Click the button to pull the update, then restart the server
+(**Settings → Server → Restart server**) to load the new code.
 
-Then restart the server via **Settings → Server → Restart server**.
+If the install directory isn't a git checkout, or has local changes that
+would conflict with a pull, the row says so and the button is disabled —
+update manually instead with `cd ~/Clayrune && git pull`.
 
 > *Marker*: `[clayrune:goto view="settings"]`
 
