@@ -4,6 +4,34 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-18r] — Installer: detect & repair partial Claude CLI npm installs
+
+`installer/install.ps1` only. Triggered by a real fresh-PC failure: install
+"finished" but launching `claude` crashed with
+`Cannot find module '...\@anthropic-ai\claude-code\cli.js'`.
+
+Root cause (confirmed via on-box diagnostics): a **partial global npm
+install** — npm created the three bin shims but never wrote `cli.js`
+(suspected trigger: Node v24, a non-LTS "Current" release, breaking the
+package's install step; npm prefix and AV were both ruled out). The old
+flow couldn't self-heal: `Test-ClaudeWorks` only ran `claude --version`,
+and the recovery path was a bare `npm install -g` — which npm skips when
+it believes the package is already present.
+
+- `Test-ClaudeIntact` — new strong check: shim runs cleanly **and**
+  `cli.js` exists at the resolved npm-prefix path (`Get-ClaudeCliPath`).
+  Step-1 precheck and both install methods now use it.
+- `Invoke-ClaudeNpmInstall` — npm install with an automatic one-shot
+  **clean** fallback (`npm uninstall -g` + `npm cache clean --force` +
+  reinstall) when the result is incomplete or a broken shim was already
+  present. Plain reinstall-over-the-top no longer masks a partial install.
+- Failure message now names the exact missing `cli.js` path, the clean
+  reinstall commands, and — when Node ≥ 23 — flags the non-LTS Node as the
+  likely cause with the LTS install command.
+
+No app/server code; affects only fresh installs via clayrune.io /
+`Clayrune-Installer.exe`. Parse-checked under Windows PowerShell 5.1.
+
 ## [2026-05-18q] — Human version display in Update Clayrune (deferred from [2026-05-18n])
 
 Now unblocked — committed via hunk-isolation so it carries none of the
