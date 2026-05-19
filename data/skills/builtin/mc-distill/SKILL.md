@@ -1,6 +1,6 @@
 ---
 name: mc-distill
-description: Propose a reusable SKILL.md from the current session — when a pattern, workflow, gotcha, or rule worth bottling has emerged. TRIGGER on EXPLICIT user request ("/distill", "propose a skill", "do we have a pattern here", "is this worth a skill"). ALSO TRIGGER PROACTIVELY when YOU (the agent) notice a clear repeatable pattern in this session with ≥2 observed recurrences AND a natural breakpoint has been reached (end of task, after commit, wrap-up) — propose inline to the user with a specific name, recurrence justification, and [Yes / Later / No] choice. NEVER trigger proactively mid-task, mid-debug, or for vague generic patterns. Once per session maximum for proactive triggers. Writes proposals to data/skills/_proposed/<session_id>/SKILL.md (or UPDATE.md for patches to existing skills) for manual review. NEVER auto-installs. NEVER writes to ~/.claude/skills/ or any project's .claude/skills/.
+description: Propose a reusable SKILL.md from the current session when a pattern, workflow, gotcha, or rule worth bottling has emerged. TRIGGER on explicit user request ("/distill", "propose a skill", "do we have a pattern here") OR proactively when you notice a clear repeatable pattern (≥2 recurrences) at a natural breakpoint (end of task, after commit, wrap-up). See body for hard rules, proposal format, and once-per-session-max constraint. Writes only to data/skills/_proposed/<sid>/ for manual review; never auto-installs.
 ---
 
 # Distill a SKILL.md proposal from the current session
@@ -36,7 +36,7 @@ YOU notice a pattern worth bottling and surface it without being asked.
 **User responses:**
 
 - **Yes** → run through Procedure steps 1–5 and save the proposal as normal.
-- **Later** → don't write now. The future automated Distiller (when built) will pick this up at session end via the silent path; for now, just acknowledge and move on.
+- **Later** → **v1 NOTE: until the silent Distiller backend ships (build-order Phase 4), `Later` is functionally equivalent to `No` — nothing is persisted for future pickup.** Be honest about this when the user picks Later: acknowledge the choice but tell them it won't auto-resurface, and offer to write a quick reminder note somewhere they'll see it (e.g., a backlog item). Do NOT pretend the silent Distiller will pick it up later.
 - **No** → respect the call; do not propose this pattern again in this session.
 
 ## Do NOT call this skill (either trigger) for
@@ -146,7 +146,61 @@ Tell them:
 > - Project-local: copy to `<project_path>/.claude/skills/<name>/SKILL.md`
 > - Reject: delete `data/skills/_proposed/<sid>/`"
 
-**Do not auto-install. Do not write to `~/.claude/skills/` or any `<project>/.claude/skills/` directory. Proposals live in `data/skills/_proposed/<sid>/` until the human promotes them.**
+**Do not AUTONOMOUSLY install. Proposals live in `data/skills/_proposed/<sid>/` until the human approves promotion.** If, in the same turn or a subsequent turn within the same session, the user gives explicit promote instruction, see "Promotion on explicit user instruction" below.
+
+## Promotion on explicit user instruction
+
+The "MC owns, agent proposes, human promotes" rule means the human *approves* — not that the human has to type the copy command. If the user gives an explicit promote instruction, you EXECUTE the promotion (don't just hand them a command and stop).
+
+### What counts as explicit promote instruction
+
+YES — execute:
+- "promote it globally"
+- "yes, install it project-local"
+- "ship it"
+- "approve and promote"
+- "yes, promote"
+- "go ahead, install"
+
+NO — do not promote, but acknowledge:
+- "later" / "remind me" / "I'll review" → leave proposal in `_proposed/`, do nothing
+- "no" / "reject" / "delete it" → delete `_proposed/<sid>/`, confirm
+- silence / topic change → leave proposal, do nothing
+- "save this" / "good idea" / "interesting" → ambiguous, ASK before executing
+- "promote" with no scope specified → ASK which scope, do not assume
+
+### Procedure when promote is explicit
+
+1. **Confirm scope** if not stated. Ask: "Global (`~/.claude/skills/`) or project-local (`<project>/.claude/skills/`)?"
+2. **Resolve destination path** based on scope and the skill name from the proposal's frontmatter:
+   - Global: `~/.claude/skills/<skill-name>/SKILL.md`
+   - Project-local: `<project_path>/.claude/skills/<skill-name>/SKILL.md`
+3. **Check for collision (per-provenance rules — v2).** If a skill with that name already exists at the target scope, the action depends on what kind of existing skill it is. Read the existing SKILL.md's frontmatter:
+   - **Existing skill is auto-authored (`auto_authored: true`):** lower-risk overwrite. Tell the user "An auto-authored skill with that name exists. Overwrite?" — proceed on yes.
+   - **Existing skill is manually-authored or distilled-promoted (no `auto_authored` flag, or `provenance: manual`/`interactive`/`distilled`):** high-risk overwrite. Show the user the first ~10 lines of the existing skill's frontmatter and body BEFORE asking — they need to see what they're about to destroy. Then ask "Overwrite, rename the new one, or abort?".
+   - **Existing skill is a Clayrune built-in (lives under `data/skills/builtin/` AND has an `_mc_install_marker` file in its installed location):** REJECT promotion. Built-ins are managed via source-file edit + `_install_builtin_skills()` propagation; never overwrite them through promotion. Tell the user: "That name conflicts with a built-in skill. Built-ins are managed via `data/skills/builtin/<name>/SKILL.md` — propose your changes there as a SKILL.md edit, not as a promotion."
+   - **In `auto` mode (Phase 5+, not yet shipped):** name collisions abort the auto-promotion. The proposal stays in `_proposed/<sid>/` with a collision marker, and the monthly audit surfaces it. NEVER auto-rename — that creates name drift.
+4. **Create destination directory** (`mkdir -p` equivalent), then **copy** the proposal file (and any other files in `_proposed/<sid>/` — references, scripts).
+5. **Delete the source `_proposed/<sid>/` directory.** The proposal lifecycle ends with promotion or rejection — no orphaned proposals.
+6. **Report back** with the destination path. Example: `"Promoted to ~/.claude/skills/frontend-render-hang-diagnostic/SKILL.md. CC will load it in new sessions."`
+
+### Hard rules
+
+- **One scope per promotion.** Never promote to both global and project-local in the same action.
+- **Same-session approval only.** Promote instructions from a separate previous session are not valid — the user reviewing in the current session is the gate.
+- **Never promote a proposal the user hasn't seen.** If they say "promote it" before reviewing the proposal content, offer to summarize or paste it first.
+- **UPDATE.md proposals follow the same rule.** Applying a patch to an existing skill on explicit user instruction is valid; doing it autonomously is not.
+
+### Reversing a promotion (v2)
+
+If the user explicitly asks to reverse a promotion that happened EARLIER IN THE SAME SESSION ("undo that", "revert", "actually no, reject it instead"), you MAY:
+
+1. **Confirm** the user means the promotion you just did (read back the destination path).
+2. **Delete the promoted SKILL.md** at the destination.
+3. **Restore the `_proposed/<sid>/` directory** — the proposal is once again awaiting review.
+4. **Report:** `"Reversed. Promoted skill deleted from <path>; proposal restored to _proposed/<sid>/."`
+
+Cannot reverse a promotion from a previous session — the user must do it manually or via the future Skills UI. The same-session restriction prevents the agent from being asked weeks later to "undo that thing from before" with no context.
 
 ## Tone
 

@@ -4,6 +4,94 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-19a] — Skills Curation: Phase A close + committee review (RATIFY-WITH-CONDITIONS) + v2 design
+
+Three-in-one Skills Curation milestone (no app code touched; design + skill body
++ documentation only).
+
+**Phase A close.** `mc-distill` visibility bug root-caused (description-length
+overflow: 920 chars exceeded CC's `skill_listing` budget under accumulated
+context) and fixed by shrinking source description to 519 chars (safe-zone
+between `document-commit-deploy`'s 418 and `mc-memory-search`'s 526).
+`_install_builtin_skills()` propagated the fix to the installed copy via hash-
+marker on restart. Verified across ~30 post-restart sessions in this project —
+mc-distill consistently in every `skill_listing`. End-to-end validated: the
+shipped skill produced a real, high-quality proposal (`frontend-render-hang-
+diagnostic`, 70 lines, paste-safe DOM probe + 4-way diagnostic table +
+loopback-curl-≠-real-network discriminator) which was reviewed and promoted
+globally. The proactive trigger and the v2 promotion-on-instruction path both
+work end-to-end. `data/skills/_proposed/` is empty after the promotion — the
+cleanup step was missed by the promoting agent and corrected manually.
+
+**Committee review (2026-05-19) — RATIFY-WITH-CONDITIONS.** Four-seat review
+(pattern-integrity / agent-behavior / concurrency-lifecycle /
+config-ops-rollback-cost) against the design + the shipped skill + the live
+proposal. Unanimous RATIFY-WITH-CONDITIONS, no blockers. 15 conditions
+classified into must-fix-in-design (11), must-fix-in-implementation (2),
+soak-gate (2). Full synthesis appended to `docs/SKILLS_CURATION_DESIGN.md`
+as the new `## Committee review (2026-05-19)` section. Brief at
+`docs/SKILLS_CURATION_COMMITTEE_BRIEF.md` defines the four-seat structure for
+reproducibility on future Skills Curation revisions.
+
+**Design v2 (post-committee-review).** All 11 must-fix-in-design conditions
+closed in this commit. Headline changes:
+- Fingerprint design (Cond 1): single-phrase-hash REJECTED; two-stage
+  deterministic normalization (canonical phrase → lowercase/sort/stopword-
+  strip/hash) lands in v1; embedding-based collapse via bge-m3 reserved for v3
+  if/when Step 7 ships.
+- UPDATE.md schema (Cond 2): `target_files`/`target_action`/`target_rename`
+  added; v1 ships `edit`-only, other actions rejected at writer.
+- `Later` semantics honest (Cond 3): SKILL.md disclosure that v1 `Later` ≡
+  `No` until silent Distiller (Phase 4) ships.
+- Per-provenance collision rules (Cond 4): auto-authored = quick OK;
+  manual/distilled = show 10-line preview first; Clayrune built-ins
+  REJECTED outright (managed via source-file edit only); auto-mode aborts +
+  audits, never auto-renames.
+- Reverse-promotion within session (Cond 5): SKILL.md authorizes
+  same-session undo with explicit instruction.
+- Shared lock domain (Cond 6): `_get_skill_stats_lock(project_id)` between
+  in-session push (CC process) and silent Distiller (MC process); mirrors
+  Memory System §3.A.MID post-committee resolution.
+- Push fingerprint dedupe (Cond 7): per-(project, fingerprint, day) 24h
+  suppression by fingerprint, not session_id.
+- Atomic proposal write (Cond 8): `.tmp` + rename pattern; Phase 3 audit GC
+  for stale `.tmp` >24h.
+- Cost cap (Cond 9): default 5k → **100k tokens/project/day** (single call
+  is ~10k tokens — 5k would silently disable after first session each day).
+  Mandatory `distiller_cost_cap_hit:<project>:<date>:<tokens>` structured
+  log + counter on cap fire — no silent disables.
+- Single kill-switch gate (Cond 10): `_distiller_should_proceed(project_id)`
+  sole authority for "Distiller may fire"; regression test enumerates all
+  entry points.
+- Auto-mode rollback discovery (Cond 11): `/api/skills/auto-authored?since=`
+  endpoint + UI badge required before Phase 5 can ship.
+
+Open items #7 (committee — RESOLVED v2) and #9 (visibility bug — RESOLVED
+2026-05-19) closed.
+
+**Still tracked but not closed in v2** (gates appropriate phases):
+- Must-fix-in-implementation: Cond 12 (PATCH.md `unable_to_backtest` allow-list
+  validator) → Phase 2 of engulfing-supervisor work. Cond 13
+  (`test_load_projects_excludes_underscored_sidecars` regression test) → must
+  land in same commit as `_skill_stats.json`.
+- Soak-gate: Cond 14 (proactive-bar calibration evidence) → gates Phase 5
+  `auto`-mode default-on. Cond 15 (per-provenance no-invocation thresholds in
+  audit) → gates Phase 3 audit default-on.
+
+**Files touched:**
+- `docs/SKILLS_CURATION_DESIGN.md` — v2 revision (now ~660 lines) + committee
+  synthesis appendix.
+- `docs/SKILLS_CURATION_COMMITTEE_BRIEF.md` — NEW (284 lines).
+- `docs/PHASE_A_HANDOFF.md` — NEW (178 lines).
+- `data/skills/builtin/mc-distill/SKILL.md` — description shortened from 920
+  → 519 chars (Phase A); Conds 3, 4, 5 SKILL.md changes (Phase B v2). Now 212
+  lines, was 158.
+
+**Phase 2 (backend telemetry — `_skill_stats.json` + `_distiller_should_proceed`
+gate + DATA_DIR regression test) unblocked by this commit but not started.**
+Suggested 1-2 week soak of Step 1 in organic use before starting Phase 2 — soak
+data informs Phase 2 design choices and contributes to Cond 14 evidence.
+
 ## [2026-05-18t] — Fix: Clayrune picks a stale orphan claude.exe (the actual root cause)
 
 The real cause of the persistent fresh-PC `Cannot find module
