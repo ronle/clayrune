@@ -62,6 +62,24 @@ def _resolve_claude():
     resort (will then FileNotFoundError, matching prior behavior)."""
     found = shutil.which('claude')
     if found:
+        if sys.platform == 'win32':
+            # npm generates claude / claude.cmd / claude.ps1 but NEVER a
+            # top-level claude.exe. A claude.exe sitting next to a claude.cmd
+            # in the same npm bin dir is therefore a STALE ORPHAN from an
+            # older package version whose entrypoint (cli.js) the current
+            # package no longer ships -> running it crashes with
+            # MODULE_NOT_FOUND. shutil.which()/PATHEXT prefer .exe, so when
+            # both co-exist, use the npm-managed .cmd instead. A lone
+            # claude.exe (e.g. Anthropic's native ~/.claude/bin installer,
+            # no sibling .cmd) is left untouched.
+            p = Path(found)
+            if p.suffix.lower() == '.exe':
+                sibling_cmd = p.with_suffix('.cmd')
+                try:
+                    if sibling_cmd.exists():
+                        return str(sibling_cmd)
+                except Exception:
+                    pass
         return found
     # Fallbacks for common install locations not yet on PATH (e.g. winget
     # adds claude to PATH for new shells, but the running server still has
