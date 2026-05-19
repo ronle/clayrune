@@ -157,6 +157,62 @@ function Test-ClaudeWorks {
     }
 }
 
+# Resolve where the `claude` npm bin-shim expects its entrypoint. A partial
+# `npm install -g` (interrupted, AV, or a too-new/non-LTS Node breaking the
+# package's install step) leaves the three bin shims but NO cli.js, so
+# `claude` then crashes with MODULE_NOT_FOUND. Plain `npm install -g` over
+# the top often does NOT fix this - npm believes the package is present and
+# skips re-extraction. Only a clean uninstall + cache clean + reinstall does.
+function Get-ClaudeCliPath {
+    $prefix = ''
+    try { $prefix = (& npm config get prefix 2>$null | Select-Object -First 1).ToString().Trim() } catch {}
+    if (-not $prefix) { $prefix = Join-Path $env:APPDATA 'npm' }
+    return (Join-Path $prefix 'node_modules\@anthropic-ai\claude-code\cli.js')
+}
+
+# Strong check: the shim runs cleanly AND its entrypoint file actually
+# exists. Test-ClaudeWorks alone can't see a post-install disappearance.
+function Test-ClaudeIntact {
+    if (-not (Test-ClaudeWorks)) { return $false }
+    return (Test-Path (Get-ClaudeCliPath))
+}
+
+# Install (or, with -Clean, hard-repair) the global Claude CLI via npm.
+function Install-ClaudeNpm {
+    param([switch]$Clean)
+    if ($Clean) {
+        Write-Host '  Clearing the broken/partial global package first...'
+        try { npm uninstall -g '@anthropic-ai/claude-code' 2>$null } catch {}
+        try { npm cache clean --force 2>$null } catch {}
+    }
+    npm install -g '@anthropic-ai/claude-code'
+    Refresh-Path
+}
+
+# npm-install attempt with an automatic one-shot clean-reinstall fallback
+# for the partial-install case. Returns $true iff Claude ends up intact.
+function Invoke-ClaudeNpmInstall {
+    param([string]$Label)
+    # If a broken shim is already present, go straight to a clean repair.
+    $broken = (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Test-ClaudeIntact)
+    Install-ClaudeNpm -Clean:$broken
+    if (Test-ClaudeIntact) {
+        Write-Host "+ $Label" -ForegroundColor Green
+        Write-Host ''
+        return $true
+    }
+    Write-Host '- install incomplete (cli.js missing) - forcing a clean reinstall...' -ForegroundColor Yellow
+    Install-ClaudeNpm -Clean
+    if (Test-ClaudeIntact) {
+        Write-Host "+ $Label (after clean reinstall)" -ForegroundColor Green
+        Write-Host ''
+        return $true
+    }
+    Write-Host '- still broken after a clean reinstall' -ForegroundColor Yellow
+    Write-Host ''
+    return $false
+}
+
 # Returns $true iff Claude CLI is authenticated. Costs a few tokens for users
 # who are; for users who aren't, the CLI prints the "Not logged in" sentinel
 # without calling the API. We grep for that sentinel rather than rely on exit
@@ -189,7 +245,7 @@ if (-not (Setup-Node)) {
 
 # -- Step 1: Ensure a working Claude CLI ------------------------------------
 
-if (Test-ClaudeWorks) {
+if (Test-ClaudeIntact) {
     $claudeVersion = (& claude --version 2>&1 | Select-Object -First 1)
     Write-Host "OK Claude CLI already installed: $claudeVersion" -ForegroundColor Green
     Write-Host ''
@@ -209,14 +265,10 @@ if (Test-ClaudeWorks) {
     if (-not $installed -and (Get-Command npm -ErrorAction SilentlyContinue)) {
         Write-Host 'Trying npm install -g @anthropic-ai/claude-code...'
         try {
-            npm install -g '@anthropic-ai/claude-code'
-            Refresh-Path
-            if (Test-ClaudeWorks) {
-                Write-Host '+ npm install succeeded' -ForegroundColor Green
-                Write-Host ''
+            if (Invoke-ClaudeNpmInstall -Label 'npm install succeeded') {
                 $installed = $true
             } else {
-                Write-Host "- npm completed but 'claude --version' doesn't work; trying next method..." -ForegroundColor Yellow
+                Write-Host '  trying next method...' -ForegroundColor Yellow
                 Write-Host ''
             }
         } catch {
@@ -238,15 +290,8 @@ if (Test-ClaudeWorks) {
         Refresh-Path
         if (Get-Command npm -ErrorAction SilentlyContinue) {
             try {
-                npm install -g '@anthropic-ai/claude-code'
-                Refresh-Path
-                if (Test-ClaudeWorks) {
-                    Write-Host '+ winget Node + npm install succeeded' -ForegroundColor Green
-                    Write-Host ''
+                if (Invoke-ClaudeNpmInstall -Label 'winget Node + npm install succeeded') {
                     $installed = $true
-                } else {
-                    Write-Host "- npm install completed but claude doesn't run" -ForegroundColor Yellow
-                    Write-Host ''
                 }
             } catch {
                 Write-Host "- npm install (post-winget) failed: $_" -ForegroundColor Yellow
@@ -256,12 +301,31 @@ if (Test-ClaudeWorks) {
     }
 
     if (-not $installed) {
+        $cli = Get-ClaudeCliPath
+        $nodeMajor = Get-NodeMajor
         Write-Host ''
         Write-Host 'Could not install a working Claude CLI automatically.' -ForegroundColor Red
         Write-Host ''
-        Write-Host 'Manual install options:'
+        if (Get-Command claude -ErrorAction SilentlyContinue) {
+            Write-Host "The 'claude' command exists but its package is incomplete:" -ForegroundColor Yellow
+            Write-Host "  missing: $cli" -ForegroundColor Yellow
+            Write-Host ''
+            Write-Host 'Fix it by hand with a clean reinstall:'
+            Write-Host '  npm uninstall -g @anthropic-ai/claude-code' -ForegroundColor Cyan
+            Write-Host '  npm cache clean --force' -ForegroundColor Cyan
+            Write-Host '  npm install -g @anthropic-ai/claude-code' -ForegroundColor Cyan
+            Write-Host ''
+        }
+        if ($nodeMajor -ge 23) {
+            Write-Host "You're on Node v$nodeMajor (a non-LTS 'Current' release). The" -ForegroundColor Yellow
+            Write-Host 'Claude CLI targets Node LTS; a too-new Node is a known cause of'  -ForegroundColor Yellow
+            Write-Host 'this partial install. Installing Node LTS usually fixes it:'      -ForegroundColor Yellow
+            Write-Host '  winget install --id OpenJS.NodeJS.LTS -e' -ForegroundColor Cyan
+            Write-Host '  (then open a NEW PowerShell and reinstall as above)'
+            Write-Host ''
+        }
+        Write-Host 'Other manual install options:'
         Write-Host '  Anthropic:  https://docs.anthropic.com/claude-code'
-        Write-Host '  npm:        npm install -g @anthropic-ai/claude-code' -ForegroundColor Cyan
         Write-Host ''
         Write-Host 'After installing, verify with:  claude --version'
         Write-Host 'Then re-run this installer in a NEW PowerShell window:'
