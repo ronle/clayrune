@@ -2091,6 +2091,69 @@
   /* Hide the mobile-only scaffolding outside mobile widths */
   @media (min-width: 961px) {
     .mc-app-bar, .mc-pill-row { display: none !important; }
+    .mobile-drawer, .mobile-drawer-backdrop { display: none !important; }
+  }
+  /* Hamburger + drawer base (off-canvas; mobile media block animates it in) */
+  .mc-hamburger-btn {
+    display: none; width: 36px; height: 36px; flex-shrink: 0;
+    background: transparent; border: 1.5px solid var(--text);
+    border-radius: 50%;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 4px; cursor: pointer; padding: 0;
+  }
+  .mc-hamburger-btn span {
+    display: block; width: 16px; height: 2px;
+    background: var(--text); border-radius: 1px;
+  }
+  .mobile-drawer-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    z-index: 600; opacity: 0; pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+  .mobile-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+  .mobile-drawer {
+    position: fixed; top: 0; bottom: 0; left: 0;
+    width: min(280px, 85vw);
+    background: var(--surface); border-right: 1px solid var(--border);
+    z-index: 601; transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    display: flex; flex-direction: column;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.25);
+  }
+  .mobile-drawer.open { transform: translateX(0); }
+  .mobile-drawer-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 16px 12px; border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .mobile-drawer-close {
+    margin-left: auto; background: none; border: none;
+    color: var(--text-faint); font-size: 26px; cursor: pointer;
+    padding: 0 4px; line-height: 1;
+  }
+  .mobile-drawer-close:hover { color: var(--text); }
+  .mobile-drawer-list {
+    flex: 1; overflow-y: auto; padding: 8px 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  .mobile-drawer-item {
+    display: flex; align-items: center; gap: 14px;
+    padding: 13px 18px; cursor: pointer;
+    color: var(--text); font-size: 15px; font-weight: 500;
+    border-left: 3px solid transparent;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .mobile-drawer-item:hover { background: var(--surface3); }
+  .mobile-drawer-item.active {
+    background: var(--surface3); border-left-color: var(--accent);
+    color: var(--accent); font-weight: 700;
+  }
+  .mobile-drawer-item .mdi-icon { font-size: 19px; width: 24px; text-align: center; }
+  .mobile-drawer-divider {
+    height: 1px; background: var(--border); margin: 8px 12px;
+  }
+  @media (max-width: 960px) {
+    .mc-hamburger-btn { display: inline-flex; }
   }
 
   /* ATTACHMENTS */
@@ -4542,6 +4605,9 @@
     <div class="content-main">
       <!-- Mobile app bar (≤960px, warm tone only) -->
       <div class="mc-app-bar" id="mobile-app-bar">
+        <button class="mc-hamburger-btn" id="mc-hamburger-btn" onclick="openMobileDrawer()" title="Menu" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
         <div class="mc-greet">
           <div class="mc-eyebrow" id="mc-eyebrow">Clayrune</div>
           <h1 id="mc-greeting">Hi <span aria-hidden="true">&#x1F44B;</span></h1>
@@ -4659,6 +4725,52 @@
     <span class="bti-icon">&#x1F41D;</span>Hivemind
   </div>
 </div>
+
+<!-- Mobile navigation drawer (≤960px). Hamburger top-left of the mobile app
+     bar opens it; tap-outside / Android back / tap-an-item closes it. Bottom
+     tab bar = quick access (5 user-tunable slots, later); this drawer = full
+     global nav. Both surfaces coexist; an item appearing in both is fine. -->
+<div class="mobile-drawer-backdrop" id="mobile-drawer-backdrop" onclick="closeMobileDrawer()"></div>
+<aside class="mobile-drawer" id="mobile-drawer" aria-hidden="true">
+  <div class="mobile-drawer-head">
+    <div class="logo-icon" style="width:32px;height:32px;font-size:15px">C</div>
+    <span class="logo-text" style="font-size:16px;font-weight:700">Clayrune</span>
+    <button class="mobile-drawer-close" onclick="closeMobileDrawer()" aria-label="Close menu">&times;</button>
+  </div>
+  <div class="mobile-drawer-list">
+    <div class="mobile-drawer-item" data-nav="dashboard" onclick="mobileDrawerNav('dashboard')">
+      <span class="mdi-icon">&#x25A6;</span><span class="mdi-label">Dashboard</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="skills" onclick="mobileDrawerNav('skills')">
+      <span class="mdi-icon">&#x1F9E9;</span><span class="mdi-label">Skills</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="mcp" onclick="mobileDrawerNav('mcp')">
+      <span class="mdi-icon">&#x1F50C;</span><span class="mdi-label">MCP</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="backlog" onclick="mobileDrawerNav('backlog')">
+      <span class="mdi-icon">&#x1F4CB;</span><span class="mdi-label">Backlog</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="hivemind" onclick="mobileDrawerNav('hivemind')">
+      <span class="mdi-icon">&#x1F41D;</span><span class="mdi-label">Hivemind</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="scheduler" onclick="mobileDrawerNav('scheduler')">
+      <span class="mdi-icon">&#x23F1;</span><span class="mdi-label">Scheduler</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="settings" onclick="mobileDrawerNav('settings')">
+      <span class="mdi-icon">&#x2699;</span><span class="mdi-label">Settings</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="shared-rules" onclick="mobileDrawerNav('shared-rules')">
+      <span class="mdi-icon">&#x1F4DC;</span><span class="mdi-label">Shared Rules</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="processes" onclick="mobileDrawerNav('processes')">
+      <span class="mdi-icon">&#x2630;</span><span class="mdi-label">Processes</span>
+    </div>
+    <div class="mobile-drawer-divider"></div>
+    <div class="mobile-drawer-item" onclick="mobileDrawerNav('incognito')" title="Ephemeral scratch agent — skips memory and rules">
+      <span class="mdi-icon">&#x1F576;&#xFE0F;</span><span class="mdi-label">Incognito</span>
+    </div>
+  </div>
+</aside>
 
 <script>
 // ── API base: empty for standalone Flask, full URL when running inside Tauri ──
@@ -4931,8 +5043,9 @@ function renderMobileChatList(col) {
 // On-screen affordances (X / Esc / "← All conversations") keep the stack in
 // sync by synthetically unwinding via _mcSuppressPop (mirrors the proven
 // closeModalById pattern: clear the flag, then navigate, popstate no-ops).
-let _mcModalHistoryActive = false;   // L1 sentinel present
-let _mcConvHistoryActive  = false;   // L2 sentinel present
+let _mcModalHistoryActive  = false;  // L1 sentinel present
+let _mcConvHistoryActive   = false;  // L2 sentinel present
+let _mcDrawerHistoryActive = false;  // drawer-open sentinel (higher priority)
 let _mcSuppressPop = false;          // next popstate is our own synthetic nav
 function mcPushModalHistory() {
   if (!isMobileChatList() || _mcModalHistoryActive) return;
@@ -4941,6 +5054,53 @@ function mcPushModalHistory() {
 function mcPushConvHistory() {
   if (!isMobileChatList() || _mcConvHistoryActive) return;
   try { history.pushState({ mc: 'conv' }, ''); _mcConvHistoryActive = true; } catch (e) {}
+}
+function mcPushDrawerHistory() {
+  if (_mcDrawerHistoryActive) return;
+  try { history.pushState({ mc: 'drawer' }, ''); _mcDrawerHistoryActive = true; } catch (e) {}
+}
+
+// ── Mobile navigation drawer (hamburger) ────────────────────────────────────
+// Pure DOM toggle so closeMobileDrawer can be reused by the popstate handler
+// without re-entering history.go (the popstate path has already consumed the
+// sentinel). UI-initiated close synthetically unwinds via _mcUnwindHistory(1)
+// to keep the back stack in sync, matching the modal/conv discipline.
+function _closeMobileDrawerUI() {
+  const d  = document.getElementById('mobile-drawer');
+  const bd = document.getElementById('mobile-drawer-backdrop');
+  if (d)  { d.classList.remove('open'); d.setAttribute('aria-hidden', 'true'); }
+  if (bd) bd.classList.remove('open');
+}
+function openMobileDrawer() {
+  const d  = document.getElementById('mobile-drawer');
+  const bd = document.getElementById('mobile-drawer-backdrop');
+  if (!d || !bd) return;
+  // Mirror the current top-level surface as the drawer's active row (visual
+  // continuity with the sidebar). dashboard is the default when no sidebar
+  // item is marked active.
+  const activeNav = document.querySelector('.sidebar-item.active')?.dataset.nav || 'dashboard';
+  d.querySelectorAll('.mobile-drawer-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.nav === activeNav);
+  });
+  d.classList.add('open');
+  d.setAttribute('aria-hidden', 'false');
+  bd.classList.add('open');
+  mcPushDrawerHistory();
+}
+function closeMobileDrawer() {
+  if (_mcDrawerHistoryActive) {
+    _mcDrawerHistoryActive = false;
+    _mcUnwindHistory(1);
+  }
+  _closeMobileDrawerUI();
+}
+// Tap a drawer item → close drawer, then route. Incognito has its own opener;
+// everything else goes through sidebarNav (which already knows how to close
+// any open project modal on 'dashboard').
+function mobileDrawerNav(target) {
+  closeMobileDrawer();
+  if (target === 'incognito') { openIncognito(); return; }
+  sidebarNav(target);
 }
 // Synthetically unwind `n` MC sentinels (UI-initiated close/back) so a later
 // hardware back isn't swallowed by a now-dead entry.
@@ -4951,7 +5111,14 @@ function _mcUnwindHistory(n) {
 }
 window.addEventListener('popstate', () => {
   if (_mcSuppressPop) { _mcSuppressPop = false; return; }  // our own nav
-  // Innermost level first: drilled-in conversation → conversations list.
+  // Innermost level wins. Drawer is on top of everything else when open —
+  // hardware back must close it first, before any modal/conv unwind.
+  if (_mcDrawerHistoryActive) {
+    _mcDrawerHistoryActive = false;              // sentinel consumed by back
+    _closeMobileDrawerUI();                      // DOM-only, no extra history.go
+    return;
+  }
+  // Then: drilled-in conversation → conversations list.
   if (_mcConvHistoryActive) {
     _mcConvHistoryActive = false;                // L2 entry consumed by back
     const id = Array.from(openModals.keys()).find(k =>
