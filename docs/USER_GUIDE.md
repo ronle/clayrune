@@ -80,12 +80,21 @@ The top bar shows:
 
 ### Mobile (≤ 960 px)
 
-The sidebar is replaced by a 5-slot **bottom tab bar**:
-**Home | Backlog | + FAB | Scheduler | 🐝 Hivemind**.
-Settings is reachable via the **avatar circle** in the mobile app bar at
-the top. The 3-dot menu inside any project modal contains the per-project
-tabs (Agent / Backlog / Agent Log / Plans / Activity) plus Hiveminds and
-Start Hivemind shortcuts.
+The sidebar is replaced by two complementary surfaces:
+
+- A 5-slot **bottom tab bar** for quick access:
+  **Home | Backlog | + FAB | Scheduler | 🐝 Hivemind**.
+- A **hamburger drawer** (☰ top-left of the mobile app bar) that mirrors
+  the full sidebar — Dashboard, Skills, MCP, Backlog, Hivemind, Scheduler,
+  Settings, Shared Rules, Processes, Incognito. Tap an item to navigate;
+  the drawer closes on tap-outside, the **×** button, or Android hardware
+  back. Use it whenever you need a surface that isn't pinned to the
+  bottom bar.
+
+Settings is also reachable via the **avatar circle** on the right of the
+mobile app bar — a one-tap shortcut. The 3-dot menu inside any project
+modal contains the per-project tabs (Agent / Backlog / Agent Log / Plans /
+Activity) plus Hiveminds and Start Hivemind shortcuts.
 
 ---
 

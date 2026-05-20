@@ -4,6 +4,38 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-19c] — Mobile hamburger drawer for full global nav
+
+Mobile UI (≤960 px) was missing entry points for Skills, MCP, Shared Rules,
+and Processes — none of those have a slot in the 5-item bottom tab bar and
+only Settings was reachable (via the avatar). Added a hamburger drawer that
+mirrors the full sidebar.
+
+- **Hamburger button** in `.mc-app-bar` (top-left, opposite the existing
+  avatar/Settings shortcut). Three-bar icon, matches the avatar's circular
+  outline aesthetic.
+- **Slide-in drawer** from the left with backdrop dim. Contains Dashboard,
+  Skills, MCP, Backlog, Hivemind, Scheduler, Settings, Shared Rules,
+  Processes, divider, Incognito. No Projects list — the Home tab is the
+  project browser; drawer is for global nav only.
+- **Coexists with the bottom tab bar.** Bottom bar stays as the
+  quick-access strip; items appearing in both surfaces is by design
+  (standard Material/iOS pattern). Future: let users customize which
+  surfaces pin into the bottom bar.
+- **Android hardware back** integrated as a third sentinel
+  (`_mcDrawerHistoryActive`) at higher priority than the existing
+  modal/conv sentinels — back closes the drawer first if open, then
+  unwinds modal/conv as before. UI-initiated close (× / backdrop tap /
+  item tap) synthetically pops the sentinel via `_mcUnwindHistory(1)` so
+  the next back press isn't swallowed by a dead entry. Same discipline as
+  the modal/conv handlers.
+- **Active row mirrors `.sidebar-item.active`** on every open, so the
+  highlighted drawer item matches whatever surface the user is currently
+  on (sidebarNav already keeps sidebar-item active state in sync at all
+  viewport widths).
+
+Frontend-only — no server changes. USER_GUIDE updated.
+
 ## [2026-05-19b] — Agent panel: inline images + mobile conversation drill-down + truthful status
 
 Five-in-one bundle on top of [2026-05-18 status-badge consolidation] — most of
