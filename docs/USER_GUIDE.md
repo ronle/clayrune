@@ -95,7 +95,7 @@ Click any tile to open it. Tab strip across the middle:
 
 | Tab | What's there |
 |---|---|
-| **Agent** | Dispatch input + active agent session(s) + per-session tabs strip |
+| **Agent** | Dispatch input + active agent session(s) — tab strip on desktop, drill-down list on mobile when there's >1 conversation |
 | **Backlog** | This project's task list (per-item priority, status, GitHub sync) |
 | **Agent Log** | Completed sessions (click any to view transcript or continue) |
 | **Plans** | Plan files written by `ExitPlanMode` |
@@ -145,17 +145,33 @@ In the **Agent** tab, type a task and click **Dispatch**. The agent runs
 in the background, output streams live into the modal AND into the bottom
 **Agent Console** so you can keep watching it from any other surface.
 
-- **Multiple sessions per project**: every dispatch creates a new session
-  tab in the modal's per-session strip. Tabs that are still running stay
-  visible. Sessions from automated triggers (schedules, hivemind workers)
-  disappear from the strip once they complete — they remain in the **Runs
-  panel** of their trigger and in the **Agent Log** tab.
+- **Multiple sessions per project**:
+  - **Desktop** — a horizontal tab strip across the top of the Agent panel.
+    Every dispatch adds a tab; click to switch, `×` to close. Tabs from
+    automated triggers (schedules, hivemind workers) disappear once they
+    complete — they remain in the **Runs panel** of their trigger and in
+    the **Agent Log** tab.
+  - **Mobile** (≤ 960 px) — when a project has >1 active conversation, the
+    Agent panel shows a vertical **conversation list** (WhatsApp-Communities
+    style): avatar with a status ring, conversation name, time, status
+    sub-line, and Hivemind / Incognito badges. Tap a row to drill into that
+    chat; the **← All conversations** back bar (or Android hardware back)
+    returns to the list. A single conversation opens its chat directly;
+    none → dispatch screen. The **+ New** entry in the list (or in the
+    header of an open conversation) starts a fresh conversation.
 - **Plan approval**: when an agent emits `ExitPlanMode`, the output
   collapses into a plan card with `Approve Plan` / `Collapse Plan`
   buttons. Nothing dangerous runs without your click.
 - **Stop / Continue**: stopped sessions can be revived by typing a new
   message — the agent picks up the same Claude conversation.
 - **Image upload**: paste or drop images into the input to attach them.
+- **Inline images in output**: when the agent's reply contains an absolute
+  path to an image file (`.png/.jpg/.gif/.webp/.bmp/.svg/.ico/.tiff/.avif`),
+  the image renders inline in the chat at its natural size (capped to chat
+  width). Click the image to open a zoom lightbox (`+`/`-` to zoom,
+  scroll-wheel with Ctrl, Esc to close). Only paths under a known project
+  working dir, the uploads dir, or the data root are served — anything
+  outside that allow-list is refused.
 - **Pop out**: the `Pop out ↗` button opens the active session in its own
   resizable window for focus mode.
 
