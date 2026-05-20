@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -841,7 +841,6 @@
   body.compact .tile-next { font-size: 10px; }
   body.compact .tile-footer { padding: 6px 12px 8px 14px; }
   body.compact .backlog-badge { font-size: 9px; }
-  body.compact .agent-running-badge { font-size: 8px; padding: 2px 6px; }
   body.compact .drag-ghost { transform: scale(0.88); }
   body.compact .list-row { padding: 7px 12px; }
   body.compact .list-row .lr-name { font-size: 12px; }
@@ -934,12 +933,6 @@
   .backlog-badge {
     background: var(--amber-dim); color: var(--amber-text);
     font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 600;
-  }
-  .agent-running-badge {
-    background: var(--green-dim); color: var(--green-text);
-    font-size: 9px; padding: 3px 8px; border-radius: 4px;
-    letter-spacing: 0.8px; text-transform: uppercase; font-weight: 700;
-    animation: pulse 2s infinite;
   }
   .agent-image-previews {
     display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
@@ -1981,7 +1974,6 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
     }
     .card .domain-tag { display: none; }
-    .card .agent-running-badge { display: none; } /* status chip carries the info */
 
     /* Status chip — pill with colored dot */
     .card .status-pill {
@@ -2242,6 +2234,96 @@
     background: rgba(120, 120, 140, 0.12);
   }
 
+  /* ── Multi-conversation drill-down (WhatsApp Communities style) ──────────
+     Shown in the Agent panel when a project has >1 active conversation.
+     Mirrors the mobile .mc-chat-row aesthetic but modal-scoped so it works
+     on desktop too (the .mc-chat-row rules are ≤960px media-query only). */
+  .conv-list-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px; flex-shrink: 0;
+  }
+  .conv-list-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.4px;
+    text-transform: uppercase; color: var(--text-dim); flex: 1;
+  }
+  .conv-list-count {
+    font-size: 11px; font-weight: 600; color: var(--text-faint);
+  }
+  .conv-new-btn, .conv-back-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 11px; border-radius: 6px;
+    background: none; border: 1px dashed var(--border);
+    color: var(--text-faint); font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s; flex-shrink: 0;
+  }
+  .conv-new-btn:hover, .conv-back-btn:hover {
+    border-color: var(--accent); color: var(--accent);
+  }
+  .conv-back-bar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px; flex-shrink: 0;
+  }
+  .conv-back-btn { border-style: solid; }
+  .conv-list {
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; flex-shrink: 0;
+  }
+  .conv-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.12s;
+  }
+  .conv-row:last-child { border-bottom: none; }
+  .conv-row:hover { background: var(--surface3); }
+  .conv-av {
+    position: relative; width: 42px; height: 42px; flex-shrink: 0;
+    border-radius: 50%; display: grid; place-items: center;
+    background: var(--surface3); border: 2px solid var(--border2);
+    font-size: 19px; line-height: 1;
+  }
+  .conv-av.friendly-working { border-color: #6aa66a; }
+  .conv-av.friendly-asking  { border-color: var(--amber); }
+  .conv-av.friendly-stuck   { border-color: var(--red); }
+  .conv-av.friendly-done    { border-color: #6aa66a; }
+  .conv-ring { display: none; }
+  .conv-av.friendly-working .conv-ring {
+    display: block; position: absolute; inset: -2px; border-radius: 50%;
+    border: 2px solid #6aa66a; animation: crPulse 1.6s ease-out infinite;
+  }
+  .conv-main { flex: 1; min-width: 0; }
+  .conv-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .conv-name {
+    flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .conv-time { font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
+  .conv-bot {
+    display: flex; align-items: center; gap: 8px; margin-top: 2px; min-width: 0;
+  }
+  .conv-sub {
+    flex: 1; min-width: 0; font-size: 12px; color: var(--text-dim);
+    line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .conv-sub .agent-status-dot { width: 7px; height: 7px; flex-shrink: 0; }
+  .conv-badges { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .conv-tag {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
+    background: var(--surface3); color: var(--text-faint);
+  }
+  .conv-tag.orch { background: var(--accent-dim); color: var(--accent); }
+  .conv-tag.inc  { background: rgba(120,120,140,0.18); color: var(--text-dim); }
+  .conv-row-close {
+    background: none; border: none; color: var(--text-faint);
+    cursor: pointer; font-size: 13px; padding: 2px 4px; line-height: 1;
+    opacity: 0; transition: opacity 0.15s, color 0.15s; flex-shrink: 0;
+  }
+  .conv-row:hover .conv-row-close { opacity: 1; }
+  .conv-row-close:hover { color: var(--red); }
+
   .incognito-toggle {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 10px; margin: 4px 0 8px;
@@ -2451,6 +2533,23 @@
   .agent-output .hl-bullet { color: var(--accent); font-weight: 600; }
   .agent-output .hl-num { color: #c4b5fd; }
   .agent-output .hl-url { color: #60a5fa; text-decoration: underline; text-decoration-style: dotted; }
+  /* Inline image embeds in agent output (any render context) */
+  .agent-img-wrap { display: block; margin: 8px 0; }
+  /* Path caption: only visible as a fallback if the image fails to load. */
+  .agent-img-path {
+    display: none; font-size: 0.8em; opacity: 0.6;
+    margin-bottom: 3px; color: #60a5fa; text-decoration: none;
+  }
+  .agent-img-wrap.agent-img-failed .agent-img-path { display: inline-block; }
+  .agent-img-path:hover { text-decoration: underline; }
+  /* Image shown at its natural size, only capped to the chat width so it
+     never overflows. No thumbnail shrink. Click → dedicated viewer. */
+  .agent-img {
+    display: none; max-width: 100%; height: auto;
+    border: 1px solid var(--border, #2a3147);
+    border-radius: 6px; cursor: zoom-in; background: #0d1017;
+  }
+  .agent-img.agent-img-ok { display: block; }
   .agent-output .hl-codeblock {
     display: block; background: #0d1017; border: 1px solid var(--border); border-radius: 4px;
     padding: 8px 10px; margin: 4px 0; color: #a5d6ff; overflow-x: auto;
@@ -4816,20 +4915,54 @@ function renderMobileChatList(col) {
   });
 }
 
-// ── Android hardware back → close modal, return to the chat list ─────────────
+// ── Android hardware back → step one UI level back ──────────────────────────
 // Pure History API (no native APK change): Capacitor's default back handler
-// calls window.history.back() when it can, which fires popstate. We push one
-// sentinel entry when a modal stack opens on mobile so "back" lands on us
-// (close the conversation, stay in the app) instead of exiting the app.
-let _mcModalHistoryActive = false;
+// calls window.history.back() when it can, which fires popstate. We keep up
+// to TWO sentinel entries that mirror the mobile UI depth:
+//   L1 "modal"  — a project modal is open (pushed by openProjectModal)
+//   L2 "conv"   — drilled into a specific conversation (pushed at drill-in)
+// Each hardware back pops the innermost: conversation → list → close → app.
+//
+// CRITICAL: the sentinels are pushed PROACTIVELY on the forward navigation
+// (open / drill-in), never inside the popstate handler. Android WebView
+// silently ignores history.pushState() called during a popstate event, so a
+// "re-arm on back" scheme leaves the next back with no entry to consume and
+// it falls through (the bug this replaced: 2nd back didn't close the modal).
+// On-screen affordances (X / Esc / "← All conversations") keep the stack in
+// sync by synthetically unwinding via _mcSuppressPop (mirrors the proven
+// closeModalById pattern: clear the flag, then navigate, popstate no-ops).
+let _mcModalHistoryActive = false;   // L1 sentinel present
+let _mcConvHistoryActive  = false;   // L2 sentinel present
+let _mcSuppressPop = false;          // next popstate is our own synthetic nav
 function mcPushModalHistory() {
   if (!isMobileChatList() || _mcModalHistoryActive) return;
-  try { history.pushState({ mcModal: true }, ''); _mcModalHistoryActive = true; } catch (e) {}
+  try { history.pushState({ mc: 'modal' }, ''); _mcModalHistoryActive = true; } catch (e) {}
+}
+function mcPushConvHistory() {
+  if (!isMobileChatList() || _mcConvHistoryActive) return;
+  try { history.pushState({ mc: 'conv' }, ''); _mcConvHistoryActive = true; } catch (e) {}
+}
+// Synthetically unwind `n` MC sentinels (UI-initiated close/back) so a later
+// hardware back isn't swallowed by a now-dead entry.
+function _mcUnwindHistory(n) {
+  if (n <= 0) return;
+  _mcSuppressPop = true;
+  try { history.go(-n); } catch (e) { _mcSuppressPop = false; }
 }
 window.addEventListener('popstate', () => {
-  if (!_mcModalHistoryActive) return;          // not our entry → let it through
-  _mcModalHistoryActive = false;               // entry already consumed by back
-  if (openModals.size) Array.from(openModals.keys()).forEach(id => closeModalById(id));
+  if (_mcSuppressPop) { _mcSuppressPop = false; return; }  // our own nav
+  // Innermost level first: drilled-in conversation → conversations list.
+  if (_mcConvHistoryActive) {
+    _mcConvHistoryActive = false;                // L2 entry consumed by back
+    const id = Array.from(openModals.keys()).find(k =>
+      activeAgentTab[k] || agentConvNew[k] === true);
+    if (id) backToConvList(id);                  // → list, modal stays open
+    return;
+  }
+  if (_mcModalHistoryActive) {
+    _mcModalHistoryActive = false;               // L1 entry consumed by back
+    if (openModals.size) Array.from(openModals.keys()).forEach(id => closeModalById(id));
+  }
 });
 
 function renderStats() {
@@ -4907,16 +5040,6 @@ function renderProjects() {
 
 // ── Tile HTML (compact grid card) ───────────────────────────────────────────
 
-function hasRunningAgent(projectId) {
-  // Server-authoritative first (fresh for ALL projects, even closed ones);
-  // fall back to client agentHistory when there's no server signal (old
-  // backend, pre-restart). la.state is working|asking|idle when an agent
-  // process is alive — all three mean "running" for the tile badge.
-  const _p = allProjects.find(x => x.id === projectId);
-  if (_p && _p.live_agent) return true;
-  return agentHistory.some(h => h.projectId === projectId && (h.status === 'running' || h.status === 'idle'));
-}
-
 function computeLiveStatus(projectId) {
   let currentTask = 'Idle', currentTaskClass = 'idle';
   let nextAction = '\u2014', nextActionClass = '';
@@ -4972,7 +5095,19 @@ function computeLiveStatus(projectId) {
       // get a meaningful line instead of a generic placeholder.
       const task = (runningSess && runningSess.task) || la.task || 'Working...';
       currentTask = task.length > 60 ? task.slice(0, 57) + '...' : task;
-      currentTaskClass = la.state === 'idle' ? 'idle-agent' : 'running';
+      // la.state is the /api/projects poll (coarse, lags a live turn). The
+      // client SSE is the freshest per-moment signal: turn_start sets the
+      // session cache/history status to 'running', turn_complete to 'idle'
+      // (see the SSE handler). When that fresher signal says the agent is
+      // actively mid-turn, it WINS over a lagging server 'idle' — otherwise
+      // the tile reads "Awaiting input" while the console (which reads the
+      // SSE status directly) correctly reads "In progress": the exact
+      // tile-stuck-while-running gap the user hit. We only ever promote
+      // idle→running on the fresher signal, never demote, so a closed
+      // project with no SSE still falls back to the server's authority.
+      const clientRunning = cache.status === 'running'
+        || (runningSess && runningSess.status === 'running');
+      currentTaskClass = (la.state === 'idle' && !clientRunning) ? 'idle-agent' : 'running';
     }
   } else if (runningSess) {
     // No server signal (old backend, or genuinely no live agent) but this
@@ -5068,16 +5203,18 @@ function friendlyStatus(p) {
     case 'parked':    return 'idle';
   }
   if (c === 'completed')  return 'done';
-  // 'idle-agent' = a live agent SESSION that is alive but momentarily
-  // between turns (Mode-B persistent process; server live_agent.state
-  // 'idle'). It is NOT a dormant project: the Stop button, ticking token
-  // counter, and "AGENT RUNNING" badge are all live, and the mobile chat
-  // ring is green. Mapping it to 'idle' produced a self-contradictory tile
-  // ("● IDLE" next to "AGENT RUNNING") and a desktop flicker to IDLE every
-  // time the agent paused between turns. An attached, resumable session is
-  // 'working' — only the genuine no-live-session case (final return below)
-  // is 'idle'.
-  if (c === 'idle-agent') return 'working';
+  // 'idle-agent' = a live agent SESSION alive but momentarily between turns
+  // (Mode-B persistent process; server live_agent.state 'idle'), with
+  // NOTHING pending. "Awaiting input" is reserved for the cases we actually
+  // DETECT the agent is blocked on the user — a plan or a question — and
+  // those are already caught above (c==='plan-approval'/'question', from
+  // server-authoritative la.reason). Labelling plain turn-finished idle
+  // "Awaiting input" was a fabricated claim: the agent is not necessarily
+  // waiting for anyone, it simply completed its turn. The truthful state is
+  // 'done' ("All done" / "Completed" — i.e. done with this turn, ready for
+  // more), not a false "needs you". This pill is the one authoritative
+  // indicator; the console label mirrors it (see consoleStatusLabel).
+  if (c === 'idle-agent') return 'done';
   return 'idle';
 }
 
@@ -5167,9 +5304,9 @@ function tileHTML(p, slotIndex) {
   const openItems = backlog.filter(i => i.status === 'open');
   const backlogBadge = openItems.length
     ? `<span class="backlog-badge">${openItems.length} open</span>` : '';
-  const agentBadge = hasRunningAgent(p.id)
-    ? `<span class="agent-running-badge">${esc(vl('agent_running'))}</span>` : '';
-
+  // No separate "AGENT RUNNING" badge: the single status pill below is the
+  // sole, authoritative indicator of the agent's immediate state (user
+  // directive — two contradicting badges is exactly the bug being fixed).
   const live = computeLiveStatus(p.id);
   const summaryText = esc(friendlySummary(p));
   const techLine = p.blocked
@@ -5190,7 +5327,6 @@ function tileHTML(p, slotIndex) {
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="status-pill friendly-${fs}"><span class="status-dot"></span>${esc(vl(FRIENDLY_TO_VOICE[fs]))}</span>
-        ${agentBadge}
       </div>
     </div>
     <div class="tile-body">
@@ -5791,6 +5927,18 @@ function openProjectModal(projectId, restoreState) {
   win.className = 'modal-window';
   win.dataset.modalId = projectId;
 
+  // MOBILE ONLY: land on the conversation LIST (not a previously drilled-in
+  // chat) every time a multi-conversation modal is FRESHLY opened — the list
+  // is the home view; drilling in is an explicit tap. Single conversation
+  // still auto-opens its chat (agentPanelHTML), 0 → dispatch. Runs only on a
+  // true fresh open; refreshModal() during the session does NOT reset it, so
+  // a drilled-in chat stays put while you read it. On DESKTOP the classic tab
+  // strip persists the active tab across opens (pre-drill-down behavior).
+  if (isMobileChatList()) {
+    delete activeAgentTab[projectId];
+    delete agentConvNew[projectId];
+  }
+
   const content = document.createElement('div');
   content.className = 'modal-content';
   content.innerHTML = modalContentHTML(p);
@@ -5908,13 +6056,16 @@ function closeModalById(modalId) {
     if (topId) focusModal(topId);
   }
   _saveOpenModalsSnapshot();
-  // Closed via UI (X / Esc / Home), not via hardware back: pop the sentinel
-  // we pushed so the next back press isn't swallowed by a dead entry. On the
-  // back path _mcModalHistoryActive is already false, so this is a no-op
-  // there — no double-close.
-  if (_mcModalHistoryActive && openModals.size === 0) {
+  // Closed via UI (X / Esc / Home), not via hardware back: unwind every MC
+  // sentinel we pushed (L1 + L2 if drilled in) so a later back press isn't
+  // swallowed by now-dead entries. On the hardware-back path the relevant
+  // flag is already false (popstate cleared it), so n=0 and this is a no-op
+  // — no double-close.
+  if (openModals.size === 0) {
+    const n = (_mcConvHistoryActive ? 1 : 0) + (_mcModalHistoryActive ? 1 : 0);
+    _mcConvHistoryActive = false;
     _mcModalHistoryActive = false;
-    try { history.back(); } catch (e) {}
+    _mcUnwindHistory(n);
   }
 }
 
@@ -6272,7 +6423,10 @@ function listRowHTML(p) {
   const friendlyColors = { working: 'var(--green)', asking: 'var(--amber)', stuck: 'var(--red)', done: 'var(--green)', idle: 'var(--text-faint)' };
   const friendlyBgs    = { working: 'var(--green-dim)', asking: 'var(--amber-dim)', stuck: 'var(--red-dim)', done: 'var(--green-dim)', idle: 'var(--surface3)' };
   const friendlyTexts  = { working: 'var(--green-text)', asking: 'var(--amber-text)', stuck: 'var(--red-text)', done: 'var(--green-text)', idle: 'var(--text-faint)' };
-  const isRunning = hasRunningAgent(p.id);
+  // "Running" here means actually mid-turn (live.currentTaskClass==='running'),
+  // NOT merely "a process is alive": an idle-between-turns session must not
+  // read as Running, or this column contradicts the consolidated status.
+  const isRunning = live.currentTaskClass === 'running';
   const errSess = agentHistory.find(h => h.projectId === p.id && h.status === 'error');
   let agentLabel = '\u2014', agentClass = '';
   if (isRunning) { agentLabel = 'Running'; agentClass = 'running'; }
@@ -6600,7 +6754,7 @@ function updateAgentStatusUI(sessionId, status) {
   const cached = agentStatusCache[sessionId];
   const gState = cached?.guardianState;
   const dotClass = gState === 'recovering' ? 'recovering' : gState === 'needs_attention' ? 'needs-attention' : status;
-  const labelText = gState === 'recovering' ? 'recovering' : gState === 'needs_attention' ? 'attention' : status;
+  const labelText = gState === 'recovering' ? 'recovering' : gState === 'needs_attention' ? 'attention' : consoleStatusLabel(status, cached);
   const dot = document.querySelector(`#session-metrics-${CSS.escape(sessionId)}`)?.closest('.agent-panel')?.querySelector('.agent-status-dot');
   const label = document.querySelector(`#session-metrics-${CSS.escape(sessionId)}`)?.closest('.agent-panel')?.querySelector('.agent-status-label');
   if (dot) { dot.className = `agent-status-dot ${dotClass}`; }
@@ -7417,12 +7571,18 @@ async function performUndo(e) {
 
 function attHTML(a, projectId, itemId) {
   const url = API_BASE + `/api/attachments/${a.stored_name}`;
-  const isImage = a.type === 'image';
-  const icon = a.type === 'pdf' ? '📄' : '📎';
+  // `_present` is decorated server-side by _decorate_attachments — false when
+  // the stored file no longer exists on disk. Skip the <img> entirely in that
+  // case so we don't generate console-error 404s for orphaned records; show
+  // the generic 📎 icon (same as non-image attachments) so the row stays
+  // visible and deletable.
+  const isImage = a.type === 'image' && a._present !== false;
+  const missing = a._present === false;
+  const icon = missing ? '⚠️' : (a.type === 'pdf' ? '📄' : '📎');
   const kb = a.size ? (a.size < 1024*1024 ? (a.size/1024).toFixed(0)+'KB' : (a.size/1024/1024).toFixed(1)+'MB') : '';
   const thumb = isImage
     ? `<img class="att-thumb" src="${url}" alt="${esc(a.original_name)}" onerror="this.style.display='none'">`
-    : `<div class="att-icon">${icon}</div>`;
+    : `<div class="att-icon" title="${missing ? 'File missing on disk' : ''}">${icon}</div>`;
   return `
   <div class="att-item" data-att-id="${esc(a.id)}">
     ${thumb}
@@ -7967,7 +8127,6 @@ const VOICE_LABELS = {
   status_parked:    { casual: 'Resting',       pro: 'Idle' },
   status_unknown:   { casual: 'Not sure',      pro: 'Unknown' },
   status_completed: { casual: 'All done',      pro: 'Completed' },
-  agent_running:    { casual: "On it",         pro: 'Agent Running' },
   header_dash:      { casual: 'Your team',     pro: 'Dashboard' },
 };
 
@@ -7975,6 +8134,28 @@ function vl(key) {
   const entry = VOICE_LABELS[key];
   if (!entry) return key;
   return entry[currentVoice] || entry.pro;
+}
+
+// The in-console per-session status label MUST speak the same vocabulary as
+// the project status badge AND make the same truthful distinction (see
+// friendlyStatus): "Awaiting input" is reserved for a DETECTED block — the
+// session has a plan or a question actually pending (the `session` arg's
+// waiting flags). Plain between-turns idle (turn finished, process alive,
+// nothing pending) is 'done' ("All done"/"Completed"), NOT a fabricated
+// "needs you". 'stopped' and guardian sub-states (recovering /
+// needs-attention) have no badge equivalent and stay literal.
+function consoleStatusLabel(status, session) {
+  if (status === 'idle') {
+    const waiting = session
+      && (session.waitingForPlanApproval || session.waitingForQuestion);
+    return vl(waiting ? 'status_waiting' : 'status_completed');
+  }
+  const v = {
+    running:   'status_active',
+    completed: 'status_completed',
+    error:     'status_blocked',
+  }[status];
+  return v ? vl(v) : status;
 }
 
 function setTone(tone) {
@@ -8089,6 +8270,10 @@ let agentServerLines = {};     // session_id → count of lines received from se
 let agentStatusCache = {};     // session_id → {status, task, projectId, startedAt}
 let agentHistory = [];         // [{projectId, sessionId, projectName, task, status, startedAt}]
 let activeAgentTab = {};       // project_id → session_id (which tab is active in modal)
+let agentConvNew = {};         // project_id → true when the user explicitly chose
+                               // "New conversation" from the multi-conversation
+                               // drill-down list (forces the dispatch screen
+                               // instead of the list / a drilled-in chat)
 
 // Update elapsed timers + metrics for running sessions every second
 setInterval(() => {
@@ -8225,34 +8410,82 @@ function agentPanelHTML(p) {
   // Visible tab list: hides completed schedule/hivemind-worker runs since
   // those are surfaced in the Scheduler's Runs panel + Agent Log tab.
   const sessions = getProjectTabSessions(p.id);
-  // Sort tabs chronologically so newest appears on the right (next to "+ New")
-  sessions.sort((a, b) => (a.startedAt || '').localeCompare(b.startedAt || ''));
-  const activeSessionId = activeAgentTab[p.id];
+  // Sort newest-first so the most recent conversation leads.
+  sessions.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
+
+  // ── Conversation model ──────────────────────────────────────────────────
+  // MOBILE (≤960px): WhatsApp-Communities drill-down — >1 convo shows a
+  //   vertical list (tap to open, back bar returns), 1 → direct chat,
+  //   0 → dispatch. Space-constrained, so one thing at a time.
+  // DESKTOP: classic horizontal tab strip — every conversation is a tab,
+  //   the whole modal is visible at once, no drill-down. There's room, so
+  //   forcing a list/back dance just adds clicks (the regression reported).
+  const mobileMode = isMobileChatList();
+  const multi = sessions.length > 1;
+  const wantNew = agentConvNew[p.id] === true;
+  // Drop a stale selection (session closed/ended elsewhere) so it can't
+  // blank the panel or pin us off the list.
+  if (activeAgentTab[p.id] && !sessions.some(s => s.sessionId === activeAgentTab[p.id])) {
+    delete activeAgentTab[p.id];
+  }
+  // Auto-select a tab when none is active:
+  //  • desktop → classic: most-recent running/idle (else newest) so a tab
+  //    is always open and the strip behaves like before the drill-down.
+  //  • mobile  → only the lone session (single = direct chat); multi stays
+  //    unselected so the drill-down list is the home view.
+  if (!wantNew && !activeAgentTab[p.id] && sessions.length) {
+    if (!mobileMode) {
+      const running = sessions.find(s => s.status === 'running' || s.status === 'idle');
+      activeAgentTab[p.id] = (running || sessions[0]).sessionId;
+    } else if (!multi) {
+      activeAgentTab[p.id] = sessions[0].sessionId;
+    }
+  }
+  const activeSessionId = wantNew ? null : (activeAgentTab[p.id] || null);
   const activeSession = activeSessionId ? agentStatusCache[activeSessionId] : null;
   const st = activeSession ? (activeSession.status || 'idle') : 'idle';
   const isRunning = st === 'running';
 
-  // Tab bar
-  const tabsHTML = sessions.map(h => {
-    const isActive = h.sessionId === activeSessionId;
-    const label = (h.task || '').substring(0, 30) || 'Session';
-    const isOrch = isHivemindOrchestrator(h);
-    const hmBadge = isOrch ? '<span class="hm-tab-badge" title="Hivemind orchestrator">&#x2B21;</span>' : '';
-    const isInc = h.incognito || (agentStatusCache[h.sessionId] || {}).incognito;
-    const incBadge = isInc ? '<span class="agent-tab-incognito" title="Incognito session — not saved to project memory or agent log">&#x1F576;&#xFE0F;</span>' : '';
-    return `<div class="agent-tab ${isActive ? 'active' : ''} ${isOrch ? 'hivemind-orch' : ''} ${isInc ? 'incognito' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task)}${isInc ? ' (incognito)' : ''}"${isOrch ? ` onmouseenter="showHmWorkerPopover(event,'${esc(h.sessionId)}')" onmouseleave="scheduleHideHmPopover()"` : ''}>
-      ${hmBadge}${incBadge}<span class="agent-status-dot ${h.status}"></span>
-      <span class="agent-tab-label">${esc(label)}</span>
-      <button class="agent-tab-close" onclick="event.stopPropagation();closeAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="Close tab">&#10005;</button>
-    </div>`;
-  }).join('');
+  // View chrome: mobile = drill-down list + back bar; desktop = tab strip.
+  let convListHTML = '', convBackBar = '', tabBar = '';
+  if (mobileMode) {
+    const showConvList = multi && !activeSession && !wantNew;
+    convListHTML = showConvList ? conversationListHTML(p, sessions) : '';
+    const showBackBar = (multi && activeSession) || (wantNew && sessions.length > 0);
+    const backLabel = multi ? '&#8592; All conversations' : '&#8592; Back';
+    convBackBar = showBackBar
+      ? `<div class="conv-back-bar">
+          <button class="conv-back-btn" onclick="mcBackFromConv('${esc(p.id)}')">${backLabel}</button>
+          ${multi ? `<span class="conv-list-count">${sessions.length} conversations</span>` : ''}
+        </div>`
+      : '';
+  } else {
+    const tabsHTML = sessions.map(h => {
+      const isActive = h.sessionId === activeSessionId;
+      const label = (h.task || '').substring(0, 30) || 'Session';
+      const isOrch = isHivemindOrchestrator(h);
+      const hmBadge = isOrch ? '<span class="hm-tab-badge" title="Hivemind orchestrator">&#x2B21;</span>' : '';
+      const isInc = h.incognito || (agentStatusCache[h.sessionId] || {}).incognito;
+      const incBadge = isInc ? '<span class="agent-tab-incognito" title="Incognito session — not saved to project memory or agent log">&#x1F576;&#xFE0F;</span>' : '';
+      return `<div class="agent-tab ${isActive ? 'active' : ''} ${isOrch ? 'hivemind-orch' : ''} ${isInc ? 'incognito' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task)}${isInc ? ' (incognito)' : ''}"${isOrch ? ` onmouseenter="showHmWorkerPopover(event,'${esc(h.sessionId)}')" onmouseleave="scheduleHideHmPopover()"` : ''}>
+        ${hmBadge}${incBadge}<span class="agent-status-dot ${h.status}"></span>
+        <span class="agent-tab-label">${esc(label)}</span>
+        <button class="agent-tab-close" onclick="event.stopPropagation();closeAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="Close tab">&#10005;</button>
+      </div>`;
+    }).join('');
+    tabBar = sessions.length > 0
+      ? `<div class="agent-tab-bar">${tabsHTML}<button class="agent-tab-new" onclick="newAgentTab('${esc(p.id)}')">+ New</button></div>`
+      : '';
+  }
 
-  const tabBar = sessions.length > 0
-    ? `<div class="agent-tab-bar">${tabsHTML}<button class="agent-tab-new" onclick="newAgentTab('${esc(p.id)}')">+ New</button></div>`
-    : '';
-
-  // Session picker (shown when no active tab)
-  const noActiveTab = !activeSession || !activeSessionId;
+  // Dispatch / session-picker screen.
+  //  • mobile: only with 0 conversations or an explicit "New" — NOT when the
+  //    drill-down list is showing (the list has its own "New" entry point).
+  //  • desktop: classic — whenever no tab is active (the tab strip stays
+  //    visible above it so you can switch/start from there).
+  const noActiveTab = mobileMode
+    ? ((sessions.length === 0) || wantNew)
+    : (!activeSession || !activeSessionId);
   if (noActiveTab) {
     // Auto-load agent log and set default resume on first render
     if (!agentLogCache[p.id]) {
@@ -8399,6 +8632,11 @@ function agentPanelHTML(p) {
     const stopBtn = (isRunning || st === 'idle' || st === 'error')
       ? `<button class="btn-stop" onclick="stopAgent('${esc(p.id)}','${esc(activeSessionId)}')">Stop</button>` : '';
 
+    // Same vocabulary AND same detected-wait distinction as the project
+    // badge (see consoleStatusLabel) — activeSession carries the pending
+    // plan/question flags that gate "Awaiting input".
+    const consoleStatusLabelText = consoleStatusLabel(st, activeSession);
+
     const followupPreviews = renderAgentImagePreviews('fu_' + activeSessionId);
     const guardianState = activeSession?.guardianState;
     const cbTripped = activeSession?.circuitBreakerTripped;
@@ -8468,7 +8706,7 @@ function agentPanelHTML(p) {
     tabContent = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;flex-shrink:0">
         <span class="agent-status-dot ${st}"></span>
-        <span class="agent-status-label ${st}">${st}</span>
+        <span class="agent-status-label ${st}">${esc(consoleStatusLabelText)}</span>
         ${isActiveOrch ? '<span class="hm-orch-label">&#x2B21; Hivemind</span>' : ''}
         ${stopBtn}
         <span class="token-badge" id="session-metrics-${esc(activeSessionId)}">${activeSession ? sessionMetricsHTML(activeSession) : ''}</span>
@@ -8476,6 +8714,7 @@ function agentPanelHTML(p) {
         <span id="plan-file-btn-${esc(activeSessionId)}">${planFileBtn}</span>
         <button class="btn-popout" onclick="openPlanViewer('${esc(activeSessionId)}')" title="Open output in viewer window">Pop Out &#8599;</button>
         ${orchHmId ? `<button class="btn-hm-dash" onclick="openHivemindDashboard('${esc(orchHmId)}')">Dashboard &#8599;</button>` : ''}
+        ${mobileMode ? `<button class="conv-new-btn" style="margin-left:auto" onclick="newAgentTab('${esc(p.id)}')" title="Start a new conversation">+ New</button>` : ''}
       </div>
       <div class="agent-chat">
         <div class="agent-output" id="agent-output-${esc(activeSessionId)}">${outputLines}</div>
@@ -8488,19 +8727,111 @@ function agentPanelHTML(p) {
       <div class="section-title" style="margin-bottom:0">Agent</div>
     </div>
     ${tabBar}
+    ${convBackBar}
+    ${convListHTML}
     ${tabContent}
     ${dispatchRow}
   </div>`;
 }
 
+// WhatsApp-Communities-style conversation list: shown in the Agent panel when
+// a project has >1 active conversation. Each row drills into that
+// conversation's chat; a back bar (rendered by agentPanelHTML) returns here.
+function conversationListHTML(p, sessions) {
+  const rows = sessions.map(h => conversationRowHTML(p, h)).join('');
+  return `
+    <div class="conv-list-header">
+      <span class="conv-list-title">Conversations</span>
+      <span class="conv-list-count">${sessions.length}</span>
+      <button class="conv-new-btn" onclick="newAgentTab('${esc(p.id)}')" title="Start a new conversation">+ New</button>
+    </div>
+    <div class="conv-list">${rows}</div>`;
+}
+
+// One row in the conversation drill-down list. Mirrors the consolidated
+// status vocabulary: ring/dot colour and sub-line come from the same
+// resolver the badge/console use (running→working, detected plan/question→
+// asking "Awaiting input", error→stuck, turn-done idle→done "All done").
+function conversationRowHTML(p, h) {
+  const cache = agentStatusCache[h.sessionId] || {};
+  const sst = cache.status || h.status || 'idle';
+  const waiting = cache.waitingForPlanApproval || cache.waitingForQuestion;
+  const fs = sst === 'running' ? 'working'
+    : waiting ? 'asking'
+    : sst === 'error' ? 'stuck'
+    : 'done';  // idle / completed / stopped — turn finished
+  const isOrch = isHivemindOrchestrator(h);
+  const isInc = h.incognito || cache.incognito;
+  const glyph = isOrch ? '⬡' : isInc ? '🕶️' : '💬';
+  const name = esc((h.task || '').substring(0, 70) || 'Session');
+  const when = esc(timeAgoJS(h.startedAt) || '');
+  const statusText = esc(consoleStatusLabel(sst, cache));
+  const tags = [
+    isOrch ? '<span class="conv-tag orch">Hivemind</span>' : '',
+    isInc ? '<span class="conv-tag inc">Incognito</span>' : '',
+  ].join('');
+  return `
+  <div class="conv-row" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task || '')}">
+    <div class="conv-av friendly-${fs}"><span class="conv-ring"></span>${glyph}</div>
+    <div class="conv-main">
+      <div class="conv-top">
+        <span class="conv-name">${name}</span>
+        <span class="conv-time">${when}</span>
+      </div>
+      <div class="conv-bot">
+        <span class="conv-sub"><span class="agent-status-dot ${sst}"></span>${statusText}</span>
+        <span class="conv-badges">${tags}</span>
+      </div>
+    </div>
+    <button class="conv-row-close" onclick="event.stopPropagation();closeAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="Close conversation">&#10005;</button>
+  </div>`;
+}
+
+// Return from a drilled-in conversation (or the New screen) to the list.
+// Pure UI — also called by the popstate handler (which already consumed the
+// L2 history entry). Do NOT touch history here.
+function backToConvList(projectId) {
+  delete activeAgentTab[projectId];
+  delete agentConvNew[projectId];
+  refreshModal();
+}
+
+// On-screen "← All conversations" button: same UI as backToConvList, but
+// also synthetically pops the L2 sentinel so the hardware-back stack stays
+// in sync (next hardware back then closes the modal, not double-back).
+function mcBackFromConv(projectId) {
+  if (_mcConvHistoryActive) {
+    _mcConvHistoryActive = false;
+    _mcUnwindHistory(1);
+  }
+  backToConvList(projectId);
+}
+
 function switchAgentTab(projectId, sessionId) {
+  // Drilling into a conversation exits "New" mode.
+  delete agentConvNew[projectId];
+  const wasOnList = !activeAgentTab[projectId];
   activeAgentTab[projectId] = sessionId;
+  // Forward nav into a conversation when a list level exists (>1 convo):
+  // push the L2 sentinel now so hardware-back returns to the list.
+  if (wasOnList && getProjectTabSessions(projectId).length > 1) {
+    mcPushConvHistory();
+  }
   refreshModal();
 }
 
 function newAgentTab(projectId) {
-  // Clear active tab so the panel shows just the dispatch input + session picker
+  // Clear active tab and force the dispatch screen. agentConvNew keeps it
+  // there even with sessions present (otherwise multi would fall back to
+  // the list and single would auto-reselect the lone conversation).
+  const wasOnList = !activeAgentTab[projectId] && agentConvNew[projectId] !== true;
   delete activeAgentTab[projectId];
+  agentConvNew[projectId] = true;
+  // The "New" screen is a sub-level of the list when one exists (>1 convo):
+  // push the L2 sentinel so hardware-back returns to the list, not out.
+  if (wasOnList && getProjectTabSessions(projectId).length > 1) {
+    mcPushConvHistory();
+  }
   // Reset to default (agentPanelHTML will auto-load log and set default resume)
   delete pendingResumeId[projectId];
   refreshModal();
@@ -8642,13 +8973,11 @@ function closeAgentTab(projectId, sessionId) {
   agentHistory = agentHistory.filter(h => h.sessionId !== sessionId);
   acOpenSessions.delete(sessionId);
 
-  // Switch to next available tab
-  const remaining = getProjectSessions(projectId);
-  if (remaining.length > 0) {
-    activeAgentTab[projectId] = remaining[0].sessionId;
-  } else {
-    delete activeAgentTab[projectId];
-  }
+  // Drill-down semantics: don't auto-jump into another conversation. Drop
+  // the selection and let agentPanelHTML decide — back to the list if >1
+  // remain, direct chat if exactly 1, dispatch screen if none.
+  delete activeAgentTab[projectId];
+  delete agentConvNew[projectId];
   refreshModal();
   renderAgentConsole();
 }
@@ -8694,6 +9023,7 @@ async function dispatchAgent(projectId) {
     agentStatusCache[sessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '', incognito: incognitoFlag };
     agentHistory.unshift({ projectId, sessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag });
     activeAgentTab[projectId] = sessionId;
+    delete agentConvNew[projectId];  // dispatched → drill into the new convo
 
     // Zero-gap: if resuming a known prior conversation, patch its last_user now.
     // For a fresh session, we don't know the claude_session_id yet; it will be
@@ -9041,6 +9371,48 @@ function formatAgentText(raw) {
     return `<span class="hl-h">${t}</span>`;
   }
 
+  // Inline image embeds: an absolute path to an image file becomes a
+  // thumbnail (click to enlarge). Tokenized out FIRST so the path / code
+  // / bold regexes below don't shred the produced <img> markup; swapped
+  // back in just before return. Only absolute paths (Win `X:\` / `X:/`
+  // or POSIX `/`) — relative paths can't be resolved server-side without
+  // the agent's cwd.
+  const _imgTokens = [];
+  // Two guards prevent URL-shaped strings from being matched as filesystem
+  // paths:
+  //   1. Negative lookbehind `(?<![\w:/%])` — leading drive-letter / slash
+  //      must NOT be preceded by a word char, `:`, `/`, or `%`. Stops the
+  //      regex from biting mid-URL (e.g. matching `p:/` inside `http://`).
+  //   2. Negative lookahead `(?!:\/\/)` after the drive-letter colon — forbids
+  //      `://` (URL scheme). Windows paths are `C:\` or `C:/single-slash`;
+  //      a URL like `p://...png` would otherwise match as a phantom drive.
+  // Trailing `(?![A-Za-z0-9])` keeps the extension bounded.
+  t = t.replace(
+    /(?<![\w:/%])((?:[A-Za-z]:(?!\/\/)[\\/]|\/)[^\s"'`<>|]+?\.(?:png|jpe?g|gif|webp|bmp|svg|ico|tiff?|avif))(?![A-Za-z0-9])/gi,
+    (m, p) => {
+      const rawPath = p.replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      const src = API_BASE + '/api/serve-image?path=' + encodeURIComponent(rawPath);
+      const tok = '@@CLImg' + _imgTokens.length + '@@';
+      // NOTE: `loading="lazy"` MUST NOT be set here. The img starts at
+      // `display:none` (CSS .agent-img) and only becomes `display:block`
+      // when onload adds `.agent-img-ok`. With lazy loading, the browser
+      // waits for the element to enter the viewport before starting the
+      // request — but a display:none element has no bounding box and
+      // never "intersects", so the load never starts, onload never fires,
+      // and the img stays hidden forever. Eager loading (the default)
+      // breaks the deadlock: load starts immediately, onload fires,
+      // class flips, image appears.
+      _imgTokens.push(
+        `<span class="agent-img-wrap">` +
+        `<a class="agent-img-path" href="${src}" target="_blank" rel="noopener">${p}</a>` +
+        `<img class="agent-img" src="${src}" alt="" ` +
+        `onload="this.classList.add('agent-img-ok')" ` +
+        `onerror="this.closest('.agent-img-wrap').classList.add('agent-img-failed');this.remove()" ` +
+        `onclick="_openImageViewer(this.src)"></span>`);
+      return tok;
+    });
+
   // Numbered list items: 1. item, 2. item
   t = t.replace(/^(\d+\.)\s/, '<span class="hl-num">$1</span> ');
 
@@ -9062,6 +9434,11 @@ function formatAgentText(raw) {
 
   // URLs
   t = t.replace(/(https?:\/\/[^\s<]+)/g, '<span class="hl-url">$1</span>');
+
+  // Swap image tokens back in (kept opaque through the regexes above)
+  if (_imgTokens.length) {
+    t = t.replace(/@@CLImg(\d+)@@/g, (_, i) => _imgTokens[+i] || '');
+  }
 
   return t;
 }
@@ -9453,6 +9830,63 @@ function _openMermaidViewer(source, svg) {
   const scrollWrap = overlay.querySelector('.mermaid-viewer-scroll');
   scrollWrap.addEventListener('wheel', e => {
     if (!e.ctrlKey && !e.metaKey) return;  // only zoom on Ctrl/Cmd+wheel
+    e.preventDefault();
+    scale = Math.max(0.2, Math.min(5, scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+    applyScale();
+  }, { passive: false });
+  const onKey = e => {
+    if (e.key === 'Escape') closeIt();
+    else if (e.key === '+' || e.key === '=') { scale = Math.min(scale * 1.25, 5); applyScale(); }
+    else if (e.key === '-') { scale = Math.max(scale / 1.25, 0.2); applyScale(); }
+    else if (e.key === '0') { scale = 1; applyScale(); }
+  };
+  document.addEventListener('keydown', onKey);
+}
+
+// Lightbox for inline agent-output images. Reuses the mermaid-viewer
+// overlay chrome (backdrop, toolbar, Esc/click-out close) for visual
+// consistency; click the image or +/- to zoom.
+function _openImageViewer(src) {
+  const overlay = document.createElement('div');
+  overlay.className = 'mermaid-viewer-overlay';
+  overlay.innerHTML = `
+    <div class="mermaid-viewer-content">
+      <div class="mermaid-viewer-toolbar">
+        <button class="mermaid-viewer-btn _iv-zo" title="Zoom out">&minus;</button>
+        <span class="mermaid-viewer-zoom-label">100%</span>
+        <button class="mermaid-viewer-btn _iv-zi" title="Zoom in">+</button>
+        <button class="mermaid-viewer-btn _iv-zr" title="Fit to view">&#8634;</button>
+        <a class="mermaid-viewer-btn _iv-open" href="${src}" target="_blank" rel="noopener" title="Open original">open ↗</a>
+        <button class="mermaid-viewer-btn _iv-close" title="Close (Esc)">&times;</button>
+      </div>
+      <div class="mermaid-viewer-scroll">
+        <div class="mermaid-viewer-svg"><img src="${src}" style="display:block;width:100%;height:auto" alt=""></div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const wrap = overlay.querySelector('.mermaid-viewer-svg');
+  const zoomLabel = overlay.querySelector('.mermaid-viewer-zoom-label');
+  let scale = 1;
+  const applyScale = () => {
+    wrap.style.transform = `scale(${scale})`;
+    wrap.style.transformOrigin = 'top left';
+    zoomLabel.textContent = Math.round(scale * 100) + '%';
+  };
+  const closeIt = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeIt(); });
+  overlay.querySelector('._iv-close').addEventListener('click', closeIt);
+  overlay.querySelector('._iv-zi').addEventListener('click', e => {
+    e.stopPropagation(); scale = Math.min(scale * 1.25, 5); applyScale();
+  });
+  overlay.querySelector('._iv-zo').addEventListener('click', e => {
+    e.stopPropagation(); scale = Math.max(scale / 1.25, 0.2); applyScale();
+  });
+  overlay.querySelector('._iv-zr').addEventListener('click', e => {
+    e.stopPropagation(); scale = 1; applyScale();
+  });
+  const scrollWrap = overlay.querySelector('.mermaid-viewer-scroll');
+  scrollWrap.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     scale = Math.max(0.2, Math.min(5, scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
     applyScale();
@@ -10089,11 +10523,18 @@ async function fetchAgentStatus(projectId) {
       delete activeAgentTab[projectId];
     }
 
-    // Set active tab to most recent running/idle non-worker, or first visible session
+    // Auto-select a tab when none is active. DESKTOP: always (classic tab
+    // strip — a tab should be open). MOBILE: only a single conversation
+    // (→ direct chat); with >1 the drill-down list is the home view and
+    // auto-selecting on every background sync would override
+    // openProjectModal's list-first reset and yank the user into a chat the
+    // instant the list appears (the "flashes then jumps" bug).
     if (sessions.length > 0 && !activeAgentTab[projectId]) {
       const visible = sessions.filter(s => !s.hivemind_ws_id);
-      const running = visible.find(s => s.status === 'running' || s.status === 'idle');
-      activeAgentTab[projectId] = running ? running.session_id : (visible[0] || sessions[0]).session_id;
+      if (!isMobileChatList() || visible.length <= 1) {
+        const running = visible.find(s => s.status === 'running' || s.status === 'idle');
+        activeAgentTab[projectId] = running ? running.session_id : (visible[0] || sessions[0]).session_id;
+      }
     }
     if (sessions.length > 0 || staleEntries.length > 0) {
       refreshModal();
@@ -10463,6 +10904,7 @@ async function dispatchContinue(projectId, entryId, claudeSessionId) {
     agentStatusCache[sessionId] = { status: 'running', task, projectId, startedAt: new Date().toISOString() };
     agentHistory.unshift({ projectId, sessionId, projectName: pName, task, status: 'running', startedAt: new Date().toISOString() });
     activeAgentTab[projectId] = sessionId;
+    delete agentConvNew[projectId];  // continued → drill into this conversation
 
     modalActiveTab[projectId] = 'agent';
     refreshModal();
@@ -16506,7 +16948,11 @@ function _jumpToLiveRun(projectId, sessionId) {
   openProjectModal(projectId);
   setTimeout(() => {
     if (sessionId && typeof activeAgentTab !== 'undefined') {
-      activeAgentTab[projectId] = sessionId;
+      activeAgentTab[projectId] = sessionId;  // deep-link: watch this specific run
+      delete agentConvNew[projectId];
+      // Drilled straight into a conversation: if a list level exists (>1
+      // convo) push the L2 sentinel so hardware-back returns to the list.
+      if (getProjectTabSessions(projectId).length > 1) mcPushConvHistory();
       modalActiveTab[projectId] = 'agent';
       refreshModal();
     }

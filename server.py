@@ -1270,14 +1270,43 @@ def _unregister_process(pid):
         tracked_processes.pop(pid, None)
 
 
+_ATTACHMENT_RUNTIME_FIELDS = ('_present',)
+
+
+def _decorate_attachments(project):
+    """Decorate backlog-item attachments with runtime presence flags.
+
+    Each attachment gets `_present: bool` based on whether its stored file
+    still exists on disk. Lets the SPA skip <img> requests for orphaned
+    records instead of generating console-error noise on 404. The flag is
+    stripped before save (see save_project) so it never pollutes the JSON.
+    """
+    if not isinstance(project, dict):
+        return project
+    for item in project.get('backlog', []) or []:
+        for att in item.get('attachments', []) or []:
+            try:
+                att['_present'] = (UPLOADS_DIR / att.get('stored_name', '')).is_file()
+            except Exception:
+                att['_present'] = False
+    return project
+
+
 def load_project(project_id):
     filepath = DATA_DIR / f'{project_id}.json'
     if not filepath.exists():
         return None
-    return json.loads(filepath.read_text(encoding='utf-8'))
+    return _decorate_attachments(json.loads(filepath.read_text(encoding='utf-8')))
 
 
 def save_project(project_id, data):
+    # Strip runtime-only attachment fields (e.g. `_present`) before persisting
+    # so they never leak into the JSON. See _decorate_attachments.
+    if isinstance(data, dict):
+        for item in data.get('backlog', []) or []:
+            for att in item.get('attachments', []) or []:
+                for k in _ATTACHMENT_RUNTIME_FIELDS:
+                    att.pop(k, None)
     filepath = DATA_DIR / f'{project_id}.json'
     filepath.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
 
@@ -1303,6 +1332,7 @@ def load_projects():
             p.setdefault('blocked_reason', None)
             p.setdefault('backlog', [])
             p.setdefault('project_path', '')
+            _decorate_attachments(p)
             projects.append(p)
         except Exception as e:
             _log(f"Error loading {f}: {e}")
@@ -2402,6 +2432,54 @@ def serve_attachment(stored_name):
     if not att_path.exists():
         abort(404)
     return send_file(str(att_path), as_attachment=False)
+
+
+_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp',
+               '.svg', '.ico', '.tif', '.tiff', '.avif'}
+
+
+@app.route('/api/serve-image')
+def serve_image():
+    """Serve an image file referenced in agent output.
+
+    Security model (this is a localhost dashboard, but still): the
+    realpath-resolved target MUST be an image extension AND must live
+    under a known project working dir, the uploads dir, or the data
+    root. realpath() collapses any `..` so the prefix check can't be
+    escaped. Anything else 403/404/415s.
+    """
+    raw = (request.args.get('path') or '').strip()
+    if not raw:
+        abort(400)
+    try:
+        real = os.path.realpath(raw)
+    except Exception:
+        abort(400)
+    if os.path.splitext(real)[1].lower() not in _IMAGE_EXTS:
+        abort(415)
+    if not os.path.isfile(real):
+        abort(404)
+    allowed = [str(UPLOADS_DIR), str(_DATA_ROOT)]
+    try:
+        for p in load_projects():
+            pp = (p.get('project_path') or '').strip()
+            if pp:
+                allowed.append(pp)
+    except Exception:
+        pass
+    rn = os.path.normcase(real)
+    ok = False
+    for a in allowed:
+        try:
+            ar = os.path.normcase(os.path.realpath(a))
+        except Exception:
+            continue
+        if rn == ar or rn.startswith(ar + os.sep):
+            ok = True
+            break
+    if not ok:
+        abort(403)
+    return send_file(real, as_attachment=False, max_age=3600)
 
 
 @app.route('/api/project/<project_id>/backlog/<item_id>/attachments/<att_id>', methods=['DELETE'])

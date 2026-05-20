@@ -4,6 +4,97 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-19b] — Agent panel: inline images + mobile conversation drill-down + truthful status
+
+Five-in-one bundle on top of [2026-05-18 status-badge consolidation] — most of
+the day's WIP shipped together so the agent panel reads honestly again on both
+desktop and mobile.
+
+**Inline image rendering in agent output.** Absolute paths to image files
+(`.png/.jpg/.gif/.webp/.bmp/.svg/.ico/.tiff/.avif`) in agent output now render
+inline at natural size, capped to chat width. Click → zoom lightbox (reuses
+the mermaid-viewer chrome — backdrop, +/-/Fit toolbar, Esc, scroll-wheel zoom
+with Ctrl). Backend: new `GET /api/serve-image?path=...` (`realpath`-based
+allow-list: must live under a project working dir, the uploads dir, or the
+data root; ext must be in `_IMAGE_EXTS`; 415/403/404 otherwise; 1h cache).
+Frontend: `formatAgentText` tokenizes images FIRST so subsequent code/bold/URL
+regexes can't shred the `<img>` markup, then swaps the tokens back in just
+before return. Two regex guards prevent URL-shaped strings from being matched
+as filesystem paths — negative lookbehind `(?<![\w:/%])` blocks `p://` inside
+`http://`, negative lookahead `(?!:\/\/)` blocks phantom-drive `p://`. Two
+non-obvious gotchas committed in code comments: (1) `loading="lazy"` must NOT
+be set — img starts at `display:none` and only flips to `block` `onload`, but
+a `display:none` element never intersects, so lazy + display:none = perma-
+deadlock (IntersectionObserver never fires); (2) the path regex previously
+matched `p:/` inside `http://...png` and generated phantom requests — the two
+guards above fix it.
+
+**Stale attachment 404 quieting.** Backlog attachments whose stored file no
+longer exists on disk were generating an `<img>` request → console 404 on
+every render. Added `_decorate_attachments(project)` (server.py) that stamps
+`_present: bool` on each backlog attachment by `is_file()`-checking the
+stored name. Called from both `load_project` and `load_projects`. `save_project`
+strips runtime-only fields before persisting so the flag never leaks into
+the JSON. `attHTML` (frontend) skips the `<img>` when `_present === false`
+and shows a `⚠️` icon with a "File missing on disk" tooltip — row stays
+visible and deletable.
+
+**Multi-conversation drill-down (mobile, WhatsApp-Communities style).** When
+a project has >1 active conversation on mobile (≤960px), the Agent panel
+shows a vertical list of rows (avatar + status ring + name + time + status
+sub-line + badges) instead of a horizontal tab strip. Tap to drill in;
+"← All conversations" back bar returns. Single conversation auto-opens the
+chat directly; 0 → dispatch screen. Desktop is unchanged — classic horizontal
+tab strip remains (the whole modal is visible at once, so forcing a list/back
+dance just adds clicks). New: `conversationListHTML`, `conversationRowHTML`,
+`backToConvList`, `mcBackFromConv`, `agentConvNew[projectId]` flag (forces
+the dispatch screen even with sessions present).
+
+**Two-level Android hardware-back history.** The single-sentinel scheme from
+the mobile chat ship would swallow the second back press on a drilled-in
+conversation. Replaced with two sentinels mirroring UI depth — L1 "modal"
+(pushed by `openProjectModal`) and L2 "conv" (pushed at drill-in). Hardware
+back unwinds innermost-first: conversation → list → modal close → leave app.
+`_mcSuppressPop` lets the on-screen "X / Esc / ← All conversations" buttons
+synthetically pop sentinels via `_mcUnwindHistory` so the next hardware back
+isn't swallowed by a now-dead entry. Critical gotcha (in-code comment):
+Android WebView silently drops `history.pushState()` called *inside* a
+popstate handler — sentinels MUST be pushed on the forward navigation, not
+re-armed on back, or the next back falls through.
+
+**Status truth-telling — between-turns idle = "done", not "Awaiting input".**
+Completes the consolidation that started in [2026-05-18 03c6503]. `friendlyStatus`
+now maps `idle-agent` (a session alive but between turns with NOTHING pending)
+to `done` instead of `working`. "Awaiting input" is reserved for cases we
+*actually detect* the agent is blocked on the user — a pending plan
+(`waitingForPlanApproval`) or question (`waitingForQuestion`). Labelling
+plain between-turns idle "Awaiting input" was a fabricated claim: the agent
+finished its turn, it isn't necessarily waiting for anyone. The console
+status label (new `consoleStatusLabel(status, session)`) now speaks the same
+vocabulary and makes the same detected-wait distinction, so the project
+badge and the in-modal console no longer contradict. Two cleanups: removed
+the now-redundant `.agent-running-badge` (the single status pill is the sole
+authoritative indicator), and `computeLiveStatus` promotes idle→running when
+the client SSE signal is fresher than the lagging server poll (fixes the
+"console says In progress but tile says Awaiting input mid-turn" gap).
+
+**SHARED_RULES.md addition.** Bullet-pointed lists preferred over prose blocks.
+
+**Engulfing analyst supporting artifacts.** New built-in skill
+`data/skills/builtin/engulfing-diagnostic/` (auto-installs on next MC startup
+via `_install_builtin_skills`) + `data/projects/engulfing-analyst/`
+subdirectory with `_phase0_findings.md` baseline and first dated report
+(`reports/2026-05-19.md`). The skill is read-only Postgres analysis only —
+never proposes patches, never deploys, never writes to the DB. Reads the
+most-recent report in `reports/` as the diff baseline so each weekly run
+reports deltas, not just absolutes. The `_` prefix on `_phase0_findings.md`
+is intentional — DATA_DIR exclusion rule prevents `load_projects` from
+treating it as a malformed project JSON.
+
+**Files touched:** `server.py` (~80 lines), `static/index.html` (~628 lines),
+`data/SHARED_RULES.md` (one rule), `data/skills/builtin/engulfing-diagnostic/`
+(NEW), `data/projects/engulfing-analyst/` (NEW).
+
 ## [2026-05-19a] — Skills Curation: Phase A close + committee review (RATIFY-WITH-CONDITIONS) + v2 design
 
 Three-in-one Skills Curation milestone (no app code touched; design + skill body
