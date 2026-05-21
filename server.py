@@ -280,6 +280,12 @@ def _load_config():
         'agent_log_backfill_enabled': True,
         'agent_log_backfill_max_per_project': 200,
         'agent_log_backfill_max_age_days': 60,
+        # Mobile brief replies — when on, messages POSTed with client="mobile"
+        # get a hidden directive prepended on the way to the claude stdin
+        # stream so the agent answers in Telegram-style: short, conversational,
+        # one idea per message, no headers/bullets/long code blocks. The user's
+        # chat bubble still shows the original message verbatim. Off by default.
+        'mobile_brief_replies_enabled': False,
     }
     if CONFIG_PATH.exists():
         try:
@@ -5600,6 +5606,38 @@ def _dispatch_condense(project):
     threading.Thread(target=_run, daemon=True).start()
 
 
+# Mobile brief replies — the directive is silently prepended to messages from
+# clients that POST `client="mobile"` when the global toggle is on. Only the
+# augmented message reaches claude; the user's chat bubble (log_lines + the
+# frontend's local echo) shows the original verbatim. This is the entire
+# "Telegram-mode" mechanism: no dedicated UI, no new endpoints, no per-turn
+# state — the agent simply gets a one-line nudge per user message.
+_BRIEF_REPLY_DIRECTIVE = (
+    "[the user is messaging you from a phone — reply in Telegram style: "
+    "short, conversational, one idea per message; avoid headers, bullets, "
+    "and long code blocks. They can switch to PC and ask follow-ups if they "
+    "want more detail. This instruction is hidden from the user.]"
+)
+
+
+def _apply_mobile_brief(message: str, request_data: dict) -> str:
+    """Return `message` augmented with the brief-reply directive if both the
+    server toggle (`mobile_brief_replies_enabled`) is on AND the request body
+    declared `client="mobile"`. Otherwise return `message` unchanged.
+
+    Callers MUST use the returned (augmented) string for whatever reaches
+    claude (stdin write, spawn arg, _dispatch_agent_internal task) and keep
+    the ORIGINAL `message` for anything user-visible (log_lines, telemetry).
+    """
+    if not CONFIG.get('mobile_brief_replies_enabled'):
+        return message
+    if not isinstance(request_data, dict):
+        return message
+    if request_data.get('client') != 'mobile':
+        return message
+    return f"{_BRIEF_REPLY_DIRECTIVE}\n\n{message}"
+
+
 def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                              trigger_type='manual', trigger_id='',
                              reuse_session_id=''):
@@ -5816,8 +5854,11 @@ def agent_dispatch(project_id):
         return jsonify({'error': 'task required'}), 400
     resume_id = data.get('resume_conversation_id', '').strip()
     incognito = bool(data.get('incognito'))
+    # Mobile brief replies: augmented version goes to claude. The frontend's
+    # local echo already shows the original task as the user's chat bubble.
+    claude_task = _apply_mobile_brief(task, data)
     try:
-        session_id = _dispatch_agent_internal(project_id, task, resume_id, incognito=incognito)
+        session_id = _dispatch_agent_internal(project_id, claude_task, resume_id, incognito=incognito)
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code
@@ -5894,9 +5935,11 @@ def agent_send(project_id):
             if revived:
                 return jsonify({'ok': True, 'session_id': session_id,
                                 'revived': True, 'route': 'revive'})
-        # Otherwise dispatch a fresh session
+        # Otherwise dispatch a fresh session. Augmented message goes to claude;
+        # the original is preserved for the chat bubble (the frontend echo).
         try:
-            new_session_id = _dispatch_agent_internal(project_id, message, incognito=incognito)
+            claude_message = _apply_mobile_brief(message, data)
+            new_session_id = _dispatch_agent_internal(project_id, claude_message, incognito=incognito)
         except ValueError as e:
             code = 404 if 'not found' in str(e) else 400
             return jsonify({'error': str(e)}), code
@@ -6147,6 +6190,9 @@ def agent_followup(project_id):
                     'existing': existing, 'session_id': session_id,
                     'project_id': project_id,
                     'old_proc': old_proc,
+                    # Carry the request data so the closure can decide whether
+                    # to apply the mobile-brief directive at the stdin write.
+                    'request_data': data,
                 }
                 # Fall through — spawn happens after lock release
             else:
@@ -6157,9 +6203,13 @@ def agent_followup(project_id):
                 existing['last_status_change_time'] = _time.time()
                 existing['last_output_time'] = _time.time()
 
+                # Mobile brief replies: the directive (if applicable) rides on
+                # the claude-bound payload only. log_lines above already used
+                # the unaugmented message for the user's chat bubble.
+                claude_content = _apply_mobile_brief(message, data)
                 stdin_msg = json.dumps({
                     "type": "user",
-                    "message": {"role": "user", "content": message}
+                    "message": {"role": "user", "content": claude_content}
                 }) + '\n'
 
                 def _write_stdin():
@@ -6233,10 +6283,12 @@ def agent_followup(project_id):
                 threading.Thread(target=_read_agent_stream_b,
                                  args=(proc, rb['existing']), daemon=True).start()
 
-                # Send message to stdin
+                # Send message to stdin. Mobile-brief directive applied here so
+                # rb['message'] keeps the original for telemetry / log_lines.
+                claude_content = _apply_mobile_brief(rb['message'], rb.get('request_data') or {})
                 stdin_msg = json.dumps({
                     "type": "user",
-                    "message": {"role": "user", "content": rb['message']}
+                    "message": {"role": "user", "content": claude_content}
                 }) + '\n'
                 lock = rb['existing']['stdin_lock']
                 with lock:
@@ -6275,7 +6327,10 @@ def agent_followup(project_id):
                     resume_flags = ['-r', claude_sid]
             else:
                 resume_flags = ['--continue']
-            cmd = [_resolve_claude(), *resume_flags, '-p', followup_msg, *_build_claude_flags(p)]
+            # Mobile-brief applied here so log_lines + telemetry use the
+            # unaugmented message; only the claude -p arg gets the directive.
+            claude_followup_msg = _apply_mobile_brief(followup_msg, data)
+            cmd = [_resolve_claude(), *resume_flags, '-p', claude_followup_msg, *_build_claude_flags(p)]
             if not resume_flags:
                 cmd.extend(['--append-system-prompt', context])
             proc = subprocess.Popen(
@@ -6486,22 +6541,26 @@ def agent_interrupt(project_id):
                                  args=(proc, session), daemon=True).start()
 
                 # Send the new message
+                # Mobile-brief applied only to the claude-bound payload —
+                # log_lines + telemetry above keep the unaugmented message.
+                claude_content = _apply_mobile_brief(respawn_msg, data)
                 stdin_msg = json.dumps({
                     "type": "user",
-                    "message": {"role": "user", "content": respawn_msg}
+                    "message": {"role": "user", "content": claude_content}
                 }) + '\n'
                 with session['stdin_lock']:
                     proc.stdin.write(stdin_msg)
                     proc.stdin.flush()
             else:
                 # Mode A
+                claude_respawn_msg = _apply_mobile_brief(respawn_msg, data)
                 if resume_flags:
-                    cmd = [_resolve_claude(), *resume_flags, '-p', respawn_msg,
+                    cmd = [_resolve_claude(), *resume_flags, '-p', claude_respawn_msg,
                            *_build_claude_flags(p)]
                 else:
                     if not context:
                         context = _build_agent_context(p)
-                    cmd = [_resolve_claude(), '-p', respawn_msg, *_build_claude_flags(p),
+                    cmd = [_resolve_claude(), '-p', claude_respawn_msg, *_build_claude_flags(p),
                            '--append-system-prompt', context]
 
                 proc = subprocess.Popen(
@@ -10243,6 +10302,7 @@ _CONFIG_EDITABLE_KEYS = {
     'scribe_checkpoint_kb', 'read_floor_topk',
     'long_session_advisory_enabled', 'long_session_advisory_turns',
     'projects_base', 'shared_rules_path', 'port', 'log_level',
+    'mobile_brief_replies_enabled',
 }
 
 @app.route('/api/config')

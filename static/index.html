@@ -1550,12 +1550,15 @@
   .settings-toggle-wrap { display: flex; align-items: center; gap: 8px; }
   .settings-toggle {
     position: relative; width: 36px; height: 20px; background: var(--surface3);
-    border-radius: 10px; cursor: pointer; transition: background 0.2s;
+    border: 1px solid var(--border2);
+    border-radius: 10px; cursor: pointer; transition: background 0.2s, border-color 0.2s;
+    flex-shrink: 0;
   }
-  .settings-toggle.on { background: var(--accent); }
+  .settings-toggle.on { background: var(--accent); border-color: var(--accent); }
   .settings-toggle::after {
-    content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    content: ''; position: absolute; top: 1px; left: 1px; width: 16px; height: 16px;
     background: #fff; border-radius: 50%; transition: transform 0.2s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.25);
   }
   .settings-toggle.on::after { transform: translateX(16px); }
 
@@ -2546,6 +2549,87 @@
   .agent-output .agent-echo-queued::after {
     content: '  ⏳ queued — will send when current response completes';
     font-size: 10px; font-weight: 400; font-style: italic; color: var(--yellow, #e5c07b);
+  }
+
+  /* ── Mobile chat-bubble mode for agent output (≤960px) ─────────────
+     Restyles the existing per-line divs into iMessage/WhatsApp-style
+     bubbles so the conversation feels like text-msgs, not a data dump.
+     Render pipeline is unchanged — purely a visual layer. To revert,
+     delete this @media block. */
+  @media (max-width: 960px) {
+    .agent-output {
+      display: flex; flex-direction: column;
+      gap: 6px;
+      padding: 12px 10px 14px;
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      font-size: 13px; line-height: 1.45;
+      white-space: normal;
+      background: var(--bg);
+    }
+    /* Agent narration — left-aligned bubble. Background sits one tier above
+       --bg + a soft border so it reads clearly against both the dark page
+       (where --surface2 alone was almost flush with --bg) and the warm cream
+       page (where the bubble was barely distinguishable from the canvas). */
+    .agent-output .agent-line {
+      align-self: flex-start;
+      background: var(--surface3);
+      color: var(--text);
+      border: 1px solid var(--border2);
+      padding: 8px 12px;
+      border-radius: 14px 14px 14px 4px;
+      max-width: 84%;
+      word-break: break-word;
+      white-space: pre-wrap;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 12.5px;
+    }
+    .agent-output .agent-line:empty { display: none; }
+    /* User input / followup — right-aligned accent bubble */
+    .agent-output .agent-line-prompt {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 14px 14px 4px 14px;
+      border-left: none;
+      margin: 0;
+      padding: 9px 13px;
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      max-width: 84%;
+    }
+    .agent-output .agent-echo-queued {
+      opacity: 0.7;
+    }
+    /* Tool / status / error / queued / followup — small centered chips
+       (they shouldn't dominate visually in a chat view) */
+    .agent-output .agent-line-tool,
+    .agent-output .agent-line-status,
+    .agent-output .agent-line-error,
+    .agent-output .agent-line-queued,
+    .agent-output .agent-line-followup {
+      align-self: center;
+      background: transparent;
+      font-size: 11px;
+      padding: 2px 8px;
+      text-align: center;
+      max-width: 92%;
+      border: none;
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    }
+    /* Wide blocks stretch full width so they remain readable */
+    .agent-output .hl-table,
+    .agent-output .hl-table-pre,
+    .agent-output .plan-show-btn,
+    .agent-output .plan-hidden-block,
+    .agent-output .agent-question,
+    .agent-output .mermaid-placeholder {
+      align-self: stretch; max-width: 100%;
+    }
+    /* Code blocks inside a bubble — keep monospace, allow horizontal scroll */
+    .agent-output .agent-line .hl-codeblock {
+      display: block; overflow-x: auto;
+    }
   }
 
   /* AskUserQuestion interactive form */
@@ -6985,7 +7069,7 @@ function refreshModalById(modalId) {
     }
   });
 
-  // Preserve existing agent output DOM to avoid expensive re-render
+  // Preserve existing agent output DOM to avoid expensive re-render.
   const sid = activeAgentTab[entry.projectId];
   const curTab = modalActiveTab[entry.projectId] || 'agent';
   let savedOutput = null, savedOutputScroll = 0, savedChatHeight = null;
@@ -8442,6 +8526,16 @@ let agentConvNew = {};         // project_id → true when the user explicitly c
                                // drill-down list (forces the dispatch screen
                                // instead of the list / a drilled-in chat)
 
+// Tag agent-bound POST bodies with client="mobile" when the viewport is
+// phone-sized. The backend then decides — based on mobile_brief_replies_enabled
+// — whether to prepend a Telegram-style directive to the message that gets
+// piped to claude stdin. The original message still goes into log_lines so
+// the user's chat bubble shows what they typed.
+function _maybeTagMobileClient(body) {
+  if (window.innerWidth <= 960) body.client = 'mobile';
+  return body;
+}
+
 // Update elapsed timers + metrics for running sessions every second
 setInterval(() => {
   for (const [sid, cached] of Object.entries(agentStatusCache)) {
@@ -8778,7 +8872,7 @@ function agentPanelHTML(p) {
           const html = cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued') || cls.includes('agent-line-prompt')
             ? esc(line) : formatAgentText(line);
           const div = `<div class="${cls}">${html}</div>`;
-          // Tool lines reset plan block accumulator
+          // Tool lines and user prompts reset plan-block accumulator
           if (cls.includes('agent-line-tool') || cls.includes('agent-line-prompt')) {
             result += planBlock + div;
             planBlock = ''; planRawLines = [];
@@ -9171,6 +9265,7 @@ async function dispatchAgent(projectId) {
   const body = { task: fullTask };
   if (resumeId) body.resume_conversation_id = resumeId;
   if (getIncognitoFor(projectId)) body.incognito = true;
+  _maybeTagMobileClient(body);
 
   try {
     const res = await fetch(API_BASE + `/api/project/${projectId}/agent/dispatch`, {
@@ -10072,7 +10167,14 @@ function appendAgentLine(sessionId, text) {
   if (!el) return;
   const freshMount = !el.dataset.scrollInitialized;
   const wasPinned = freshMount || _isAgentOutputPinned(el, sessionId);
-  el.style.display = 'block';
+  // NOTE: do NOT set `el.style.display = 'block'` here. That inline style
+  // wins over CSS and clobbers the mobile `@media (max-width: 960px)` rule
+  // that sets `.agent-output { display: flex }` for chat-bubble layout —
+  // with display:block, `align-self: flex-end` on `.agent-line-prompt` is a
+  // no-op and user prompts render left-aligned with agent narration. The
+  // `.agent-output:empty { display: none }` rule (CSS) is what we'd be
+  // overriding, but appendChild below makes the element non-empty in the
+  // same task, so the :empty rule stops matching before paint.
 
   // Split multi-line text blocks into individual lines
   // But keep user prompts (> ) as a single block so styling covers all lines
@@ -10253,7 +10355,7 @@ function approvePlan(projectId, sessionId) {
   fetch(API_BASE + `/api/project/${projectId}/agent/followup`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ message: 'Plan approved, please continue.', session_id: sessionId })
+    body: JSON.stringify(_maybeTagMobileClient({ message: 'Plan approved, please continue.', session_id: sessionId }))
   }).catch(e => console.error('Plan approval failed:', e));
 }
 
@@ -10391,7 +10493,7 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
     fetch(API_BASE + `/api/project/${projectId}/agent/followup`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ message, session_id: sessionId })
+      body: JSON.stringify(_maybeTagMobileClient({ message, session_id: sessionId }))
     }).catch(() => {});
   }
 }
@@ -10485,6 +10587,7 @@ async function sendFollowup(projectId, sessionId) {
   // e.g. revive of a purged session that has no log entry).
   const sendBody = { message: fullMessage, session_id: sessionId };
   if (getIncognitoFor(projectId)) sendBody.incognito = true;
+  _maybeTagMobileClient(sendBody);
   fetch(API_BASE + `/api/project/${projectId}/agent/send`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -10621,7 +10724,11 @@ async function fetchAgentStatus(projectId) {
       // Long Mode-B session advisory (server-computed; soft, deduped per session).
       // It may be compacting away its own early context — restarting reloads
       // the Step-6-captured memory fresh at near-zero loss.
-      if (s.long_session_advisory && !_longSessionAdvised.has(sid)) {
+      // Suppressed on mobile (≤960px): the 14s top-right toast lands on top of
+      // the conversation drill-down rows and chat input on a phone-sized
+      // viewport, blocking taps. The advisory's audience is the active desktop
+      // operator anyway — on mobile you're typically just checking in.
+      if (s.long_session_advisory && !_longSessionAdvised.has(sid) && window.innerWidth > 960) {
         _longSessionAdvised.add(sid);
         showToast(`⏳ "${String(s.task || '').slice(0, 60)}" (${pName}) has run ${s.num_turns || 0} turns — long enough it may start losing its own early context. Restarting it reloads accumulated memory fresh (mid-session capture has been saving it, so little is lost).`, 14000);
       }
@@ -11060,7 +11167,7 @@ async function dispatchContinue(projectId, entryId, claudeSessionId) {
     const res = await fetch(API_BASE + `/api/project/${projectId}/agent/dispatch`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ task, resume_conversation_id: claudeSessionId })
+      body: JSON.stringify(_maybeTagMobileClient({ task, resume_conversation_id: claudeSessionId }))
     });
     const data = await res.json();
     if (!data.ok) { alert(data.error || 'Continue failed'); return; }
@@ -15220,6 +15327,13 @@ async function _renderSettings() {
           <option value="enter" ${enterKeyMode==='enter'?'selected':''}>Enter sends</option>
         </select>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Mobile brief replies</div>
+          <div class="settings-hint">When you message from a phone (≤960px viewport or the APK), the agent answers Telegram-style: short, conversational, one idea per message. Same agent — just a hint added to the dispatch so the reply matches the medium. Switch to PC and your next message gets the full-length treatment again.</div>
+        </div>
+        ${toggle('mobile_brief_replies_enabled', cfg.mobile_brief_replies_enabled)}
+      </div>
     </div>
 
     <div class="settings-section">
@@ -16400,6 +16514,10 @@ async function saveSetting(key, value) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [key]: value }),
     });
+    // Mirror into the in-memory config so anything reading _globalConfig
+    // (e.g. the mobile-brief-replies gate that tags outgoing messages with
+    // client="mobile") picks up the new value without a page reload.
+    try { _globalConfig[key] = value; } catch (_) {}
     showToast('Setting saved');
   } catch(e) {
     showToast('Failed to save setting', 4000);
@@ -20471,6 +20589,15 @@ if ('serviceWorker' in navigator) {
 })();
 
 fetchProjects().then(async () => {
+  // Hydrate _globalConfig once on boot. fetchProjects() doesn't touch it
+  // (and the 30s poll uses fetchProjects, not refreshSilent), so without
+  // this the cache stays {} until the first mutation or SSE-driven
+  // refreshSilent — which means feature gates that read _globalConfig
+  // (e.g. mobile_brief_replies_enabled) never engage on a cold mobile boot.
+  try {
+    const cfgRes = await fetch(API_BASE + '/api/config');
+    if (cfgRes.ok) _globalConfig = await cfgRes.json();
+  } catch (e) { /* non-fatal — feature gates fall back to off */ }
   // Restore previously-open project modals (refresh persistence).
   // Skip on mobile: modals are full-screen there and bottom-tab nav assumes a clean slate.
   if (!_isMobileDevice && window.innerWidth > 960) {
