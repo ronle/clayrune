@@ -2529,6 +2529,14 @@
     min-width: 0;
   }
   .agent-chat-input .agent-image-previews { margin-bottom: 6px; }
+  /* Paperclip attachment input — the file picker itself is always hidden;
+     the visible button (.btn-attach-mobile) triggers it. Desktop already has
+     drag-and-drop + paste, so the visible button is mobile-only — shown via
+     the @media (max-width: 960px) block below. */
+  .agent-attach-input { display: none; }
+  .btn-attach-mobile {
+    display: none; /* shown on mobile via @media block */
+  }
   .agent-output::-webkit-scrollbar { width: 5px; }
   .agent-output::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
   .agent-output .agent-line { padding: 1px 0; }
@@ -2629,6 +2637,27 @@
     /* Code blocks inside a bubble — keep monospace, allow horizontal scroll */
     .agent-output .agent-line .hl-codeblock {
       display: block; overflow-x: auto;
+    }
+    /* Paperclip attachment button — visible only on mobile. Sits left of the
+       Send button. Tapping it opens the native file picker, which on Android
+       and iOS surfaces Camera / Photos / Files as separate sources. */
+    .btn-attach-mobile {
+      display: inline-flex;
+      align-items: center; justify-content: center;
+      flex-shrink: 0;
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      width: 38px; height: 38px;
+      font-size: 18px; line-height: 1;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .btn-attach-mobile:active {
+      background: var(--surface3);
+      color: var(--text);
+      border-color: var(--accent);
     }
   }
 
@@ -8797,6 +8826,10 @@ function agentPanelHTML(p) {
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'),'${esc(p.id)}')"
       onpaste="handleAgentPaste(event,'${esc(p.id)}')"
     ></textarea>
+    <input type="file" multiple id="agent-attach-input-${esc(p.id)}" class="agent-attach-input"
+      onchange="handleAgentAttachPick(event,'${esc(p.id)}')">
+    <button class="btn-attach-mobile" type="button" title="Attach files or take a photo"
+      onclick="triggerAgentAttach('${esc(p.id)}')">&#128206;</button>
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
   ${incognitoChip}
@@ -8929,6 +8962,10 @@ function agentPanelHTML(p) {
               onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'),'${esc(p.id)}')"
               onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
             ></textarea>
+            <input type="file" multiple id="agent-attach-input-fu_${esc(activeSessionId)}" class="agent-attach-input"
+              onchange="handleAgentAttachPick(event,'fu_${esc(activeSessionId)}')">
+            <button class="btn-attach-mobile" type="button" title="Attach files or take a photo"
+              onclick="triggerAgentAttach('fu_${esc(activeSessionId)}')">&#128206;</button>
             <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
           </div>
         </div>` : '';
@@ -11256,6 +11293,39 @@ function handleAgentDrop(e, key) {
     });
   }
   agentPendingImages[key] = list;
+  refreshModal();
+}
+
+// Mobile attachment picker — paperclip button next to Send. Drag-and-drop
+// isn't a thing on touch keyboards, so on mobile the user needs an explicit
+// affordance to attach a file or take a photo. We funnel the picked files
+// through the SAME `agentPendingImages[key]` array that handleAgentDrop /
+// handleAgentPaste use, so the existing dispatch + send pipelines pick them
+// up unchanged. No `accept` / no `capture` attribute on the input → on
+// Android/iOS the native picker shows Camera + Photos + Files as separate
+// sources, which is what Ron asked for.
+function triggerAgentAttach(key) {
+  const input = document.getElementById(`agent-attach-input-${key}`);
+  if (input) input.click();
+}
+
+function handleAgentAttachPick(e, key) {
+  const files = Array.from(e.target.files || []);
+  if (files.length === 0) return;
+  const list = agentPendingImages[key] || [];
+  for (const file of files) {
+    const isImage = file.type.startsWith('image/');
+    list.push({
+      file,
+      objectUrl: isImage ? URL.createObjectURL(file) : null,
+      serverPath: null,
+      isDocument: !isImage,
+      fileName: file.name,
+    });
+  }
+  agentPendingImages[key] = list;
+  // Clear the input value so picking the same file twice still fires `change`.
+  try { e.target.value = ''; } catch (_) {}
   refreshModal();
 }
 
