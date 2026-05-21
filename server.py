@@ -6467,7 +6467,11 @@ def agent_interrupt(project_id):
         session['_interrupting'] = True
 
         # Stop the current process
-        session['log_lines'].append('[Agent interrupted by user]')
+        # Shown in the chat as a system-style line when the user interrupts a
+        # running turn with a new message. Friendlier than "Agent interrupted
+        # by user" — the user already knows they interrupted; this is the
+        # acknowledgement bubble.
+        session['log_lines'].append('[Got your message]')
         session.pop('pending_followups', None)
         session.pop('_dispatching_followup', None)
         session['waiting_for_plan_approval'] = False
