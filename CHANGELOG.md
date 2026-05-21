@@ -4,6 +4,53 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-21] — Voice input on the Android APK
+
+Mic-to-text in the chat input on the Clayrune Android app. Tap the 🎤
+button → Android's system mic dialog appears → talk → dialog closes and
+the recognized text drops into the textarea. You still hit Send. The
+companion native-side changes (plugin, permission) live in the separate
+`clayrune-mobile` repo.
+
+### How it works
+
+- **Plugin**: `@capacitor-community/speech-recognition` (in the
+  `clayrune-mobile` repo) wraps Android's built-in `SpeechRecognizer`
+  (Google's recognizer — accurate, sub-second, no API key).
+- **UI** (`static/index.html`):
+  - `.btn-mic` — styled mic button; pulsing red ring while recording.
+  - `micAvailable()` gates rendering to **native Capacitor only** —
+    desktop / mobile-browser sessions never see the button (no plugin
+    there).
+  - `micBtnHTML(textareaId)` injected next to the attach button in both
+    the dispatch row (`agent-task-<pid>`) and the followup row
+    (`agent-followup-<sid>`).
+  - `toggleAgentMic` / `_startAgentMic` / `_stopAgentMic`: request perms,
+    invoke `SR.start({ popup: true, partialResults: false })`, append the
+    returned match to the textarea (preserving any pre-typed text).
+  - `_micToast(msg)` surfaces every failure path as a visible toast —
+    needed for diagnosing on a phone with no devtools.
+
+### Hard-won gotchas (don't relitigate)
+
+- **Inline streaming mode (`popup: false`, `partialResults: true`) is
+  broken upstream.** When `partialResults: true` the plugin resolves
+  `start()` immediately, so any later `onError` rejects an
+  already-resolved call → swallowed, no toast, button stuck red. Plus
+  Android's `SpeechRecognizer` instance goes sticky between sessions
+  (first call works, second silently hangs). `popup: true` (the system
+  RecognizerIntent dialog) sidesteps both — Google's framework owns the
+  lifecycle. Tradeoff: a system dialog instead of inline streaming.
+- **`language: 'en-US'` works universally.** `navigator.language`
+  (`en-IL` / `he-IL`) throws ERROR_LANGUAGE_NOT_SUPPORTED (code 12),
+  which the plugin's `getErrorText` doesn't cover, so it surfaces as the
+  misleading "Didn't understand, please try again" fallback.
+
+### Rollback
+
+Delete the `.btn-mic` CSS, the mic JS block (search `micAvailable` /
+`btn-mic`), and the two `micBtnHTML(...)` call sites in `static/index.html`.
+
 ## [2026-05-19c] — Mobile hamburger drawer for full global nav
 
 Mobile UI (≤960 px) was missing entry points for Skills, MCP, Shared Rules,

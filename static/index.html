@@ -2537,6 +2537,36 @@
   .btn-attach-mobile {
     display: none; /* shown on mobile via @media block */
   }
+  /* Voice-input mic button — only rendered inside the Clayrune Android APK
+     (micAvailable() gates the HTML), so it's always visible when present. */
+  .btn-mic {
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    flex-shrink: 0;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    width: 32px; height: 32px;
+    font-size: 16px; line-height: 1;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, box-shadow 0.2s;
+  }
+  .btn-mic:hover {
+    background: var(--surface3);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .btn-mic.recording {
+    color: #fff;
+    background: #e85a4a;
+    border-color: #e85a4a;
+    animation: btn-mic-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes btn-mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(232,90,74,0.55); }
+    50% { box-shadow: 0 0 0 6px rgba(232,90,74,0); }
+  }
   .agent-output::-webkit-scrollbar { width: 5px; }
   .agent-output::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
   .agent-output .agent-line { padding: 1px 0; }
@@ -8830,6 +8860,7 @@ function agentPanelHTML(p) {
       onchange="handleAgentAttachPick(event,'${esc(p.id)}')">
     <button class="btn-attach-mobile" type="button" title="Attach files or take a photo"
       onclick="triggerAgentAttach('${esc(p.id)}')">&#128206;</button>
+    ${micBtnHTML(`agent-task-${esc(p.id)}`)}
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
   ${incognitoChip}
@@ -8972,6 +9003,7 @@ function agentPanelHTML(p) {
               onchange="handleAgentAttachPick(event,'fu_${esc(activeSessionId)}')">
             <button class="btn-attach-mobile" type="button" title="Attach files or take a photo"
               onclick="triggerAgentAttach('fu_${esc(activeSessionId)}')">&#128206;</button>
+            ${micBtnHTML(`agent-followup-${esc(activeSessionId)}`)}
             <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
           </div>
         </div>` : '';
@@ -11358,6 +11390,114 @@ function handleAgentDrop(e, key) {
 function triggerAgentAttach(key) {
   const input = document.getElementById(`agent-attach-input-${key}`);
   if (input) input.click();
+}
+
+// ── Mic / voice transcription (Capacitor native shell only) ────────────────
+// The @capacitor-community/speech-recognition plugin is only present in the
+// Clayrune Android APK build. Browsers (desktop / mobile Chrome) don't have
+// it, so micAvailable() returns false there and the button never renders.
+function micAvailable() {
+  try {
+    return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function'
+      && window.Capacitor.isNativePlatform()
+      && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition);
+  } catch (_) { return false; }
+}
+function micBtnHTML(textareaId) {
+  if (!micAvailable()) return '';
+  return `<button class="btn-mic" type="button" id="btn-mic-${textareaId}"
+    title="Voice input"
+    onclick="toggleAgentMic('${textareaId}')">&#127908;</button>`;
+}
+// Per-textarea recording state. `gen` is a monotonic counter that lets stale
+// listeners from a previous session (e.g. after a modal rebuild) recognize
+// they no longer belong to the current run and bail out.
+const _micState = {};
+let _micGen = 0;
+function _micUiOff(textareaId) {
+  const btn = document.getElementById(`btn-mic-${textareaId}`);
+  if (btn) btn.classList.remove('recording');
+}
+function _micToast(msg) {
+  try { showToast('[mic] ' + msg, 3500); } catch (_) {}
+}
+function toggleAgentMic(textareaId) {
+  // Synchronous dispatcher — never awaits. Avoids a click being "swallowed"
+  // by a pending native call (e.g. SR.stop hanging) so the button is always
+  // responsive even if a prior session is in a stuck native state.
+  const st = _micState[textareaId];
+  if (st && st.active) { _stopAgentMic(textareaId); return; }
+  _startAgentMic(textareaId);
+}
+async function _startAgentMic(textareaId) {
+  // Always nuke any prior state first — if a previous session got wedged
+  // (native recognizer stuck, modal rebuilt mid-record) this starts clean.
+  _hardResetMic(textareaId);
+  const SR = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
+  const ta = document.getElementById(textareaId);
+  if (!SR) { _micToast('plugin missing'); return; }
+  if (!ta) { _micToast('textarea not found: ' + textareaId); return; }
+  const gen = ++_micGen;
+  _micState[textareaId] = { active: true, gen, base: '', sep: '' };
+  const btn = document.getElementById(`btn-mic-${textareaId}`);
+  if (btn) btn.classList.add('recording');
+  try {
+    const av = await SR.available().catch((e) => { _micToast('available() threw: ' + (e && e.message || e)); return { available: false }; });
+    if (!av || av.available === false) { _micToast('SR not available on device'); _hardResetMic(textareaId); return; }
+    let perm = await SR.checkPermissions().catch((e) => { _micToast('checkPerm err: ' + (e && e.message || e)); return null; });
+    if (!perm || perm.speechRecognition !== 'granted') {
+      const req = await SR.requestPermissions().catch((e) => { _micToast('reqPerm err: ' + (e && e.message || e)); return null; });
+      if (!req || req.speechRecognition !== 'granted') { _micToast('perm denied (' + (req && req.speechRecognition || '?') + ')'); _hardResetMic(textareaId); return; }
+    }
+    // State may have been reset by another tap while permissions resolved.
+    if (!_micState[textareaId] || _micState[textareaId].gen !== gen) return;
+    _micState[textareaId].base = ta.value || '';
+    _micState[textareaId].sep = _micState[textareaId].base && !/\s$/.test(_micState[textareaId].base) ? ' ' : '';
+    _micToast('opening mic…');
+    // Hard-coded en-US: the device locale (he-IL, en-IL, …) often isn't an
+    // installed recognizer language pack and throws ERROR_LANGUAGE_NOT_SUPPORTED
+    // immediately; en-US is universally available on Google's recognizer.
+    //
+    // popup: true uses Android's system RecognizerIntent fullscreen dialog.
+    // Google's framework manages the whole lifecycle (mic prompt, silence
+    // detection, retry, error UX) so repeat invocations Just Work. The inline
+    // mode (popup:false, partialResults:true) is broken in the upstream
+    // plugin: start() resolves immediately so error rejects are swallowed,
+    // AND the SpeechRecognizer instance gets sticky between sessions (first
+    // call works, second silently hangs). The dialog sidesteps both.
+    SR.start({ language: 'en-US', maxResults: 2, partialResults: false, popup: true })
+      .then((result) => {
+        const cur = _micState[textareaId];
+        const live = document.getElementById(textareaId);
+        if (cur && cur.gen === gen && live) {
+          const matches = (result && (result.matches || result.value)) || [];
+          if (matches.length) {
+            live.value = cur.base + cur.sep + String(matches[0] || '');
+            try { live.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+            _micToast('got: ' + String(matches[0] || '').slice(0, 40));
+          } else {
+            _micToast('no transcription');
+          }
+        }
+        _hardResetMic(textareaId);
+      })
+      .catch((e) => { _micToast('error: ' + (e && e.message || e)); _hardResetMic(textareaId); });
+  } catch (e) {
+    _micToast('mic outer fail: ' + (e && e.message || e));
+    _hardResetMic(textareaId);
+  }
+}
+function _stopAgentMic(textareaId) {
+  // Tear down JS state + UI SYNCHRONOUSLY so the button is unstuck even if
+  // the native stop() hangs or throws. Then fire the native stop in the
+  // background; we don't await it.
+  const SR = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
+  _hardResetMic(textareaId);
+  if (SR) { try { Promise.resolve(SR.stop()).catch(() => {}); } catch (_) {} }
+}
+function _hardResetMic(textareaId) {
+  delete _micState[textareaId];
+  _micUiOff(textareaId);
 }
 
 function handleAgentAttachPick(e, key) {

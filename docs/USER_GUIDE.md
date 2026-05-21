@@ -174,6 +174,11 @@ in the background, output streams live into the modal AND into the bottom
 - **Stop / Continue**: stopped sessions can be revived by typing a new
   message — the agent picks up the same Claude conversation.
 - **Image upload**: paste or drop images into the input to attach them.
+- **Voice input** (Android app only): a 🎤 button next to the attach
+  button. Tap it, Android's mic dialog opens, speak, and the recognized
+  text drops into the input — then send as usual. Only appears in the
+  Clayrune Android app (it uses a native speech plugin); the desktop and
+  browser builds don't show it.
 - **Inline images in output**: when the agent's reply contains an absolute
   path to an image file (`.png/.jpg/.gif/.webp/.bmp/.svg/.ico/.tiff/.avif`),
   the image renders inline in the chat at its natural size (capped to chat
