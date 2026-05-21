@@ -8902,8 +8902,14 @@ function agentPanelHTML(p) {
         } else {
           flushTable();
           const cls = agentLineCls(line);
-          const html = cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued') || cls.includes('agent-line-prompt')
-            ? esc(line) : formatAgentText(line);
+          // Prompts get the image-aware escaper so an attached "[Screenshot:
+          // C:\path\file.jpg]" renders as a thumbnail instead of literal text.
+          // Tool / error / status / queued lines stay on plain esc — we don't
+          // want path-like substrings in tool traces to render images.
+          const html = cls.includes('agent-line-prompt')
+            ? escPromptWithImages(line)
+            : (cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued')
+                ? esc(line) : formatAgentText(line));
           const div = `<div class="${cls}">${html}</div>`;
           // Tool lines and user prompts reset plan-block accumulator
           if (cls.includes('agent-line-tool') || cls.includes('agent-line-prompt')) {
@@ -9655,6 +9661,47 @@ function connectAgentStream(projectId, sessionId) {
   };
 }
 
+// Escape user-prompt text but inline any absolute image paths as the SAME
+// thumbnail+lightbox markup that formatAgentText produces for agent output.
+// Used for `agent-line-prompt` bubbles so a "[Screenshot: C:\path\file.jpg]"
+// prompt renders the image instead of just the path string. We intentionally
+// skip the rest of formatAgentText (markdown headers, bullets, code, etc.)
+// for prompts — those would re-render the user's own markup in surprising
+// ways. Image rendering only.
+function escPromptWithImages(raw) {
+  // Strip the `[Screenshot: <path>]` / `[Attachment: <path>]` wrapper that
+  // `buildTaskWithImages` adds when the user attaches an image — once we
+  // render a thumbnail the wrapper text is redundant clutter. Non-image
+  // attachments (PDFs, .txt, etc.) keep the wrapper since they don't render.
+  const stripped = raw.replace(
+    /\[(?:Screenshot|Attachment):\s+((?:[A-Za-z]:[\\\/]|\/)[^\s"'`<>|\[\]]+?\.(?:png|jpe?g|gif|webp|bmp|svg|ico|tiff?|avif))\s*\]/gi,
+    '$1');
+  let t = esc(stripped);
+  const _imgTokens = [];
+  // Same path detection regex as formatAgentText — keep the two in sync.
+  t = t.replace(
+    /(?<![\w:/%])((?:[A-Za-z]:(?!\/\/)[\\/]|\/)[^\s"'`<>|]+?\.(?:png|jpe?g|gif|webp|bmp|svg|ico|tiff?|avif))(?![A-Za-z0-9])/gi,
+    (m, p) => {
+      const rawPath = p.replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      const src = API_BASE + '/api/serve-image?path=' + encodeURIComponent(rawPath);
+      const tok = '@@CLImg' + _imgTokens.length + '@@';
+      _imgTokens.push(
+        `<span class="agent-img-wrap">` +
+        `<a class="agent-img-path" href="${src}" target="_blank" rel="noopener">${p}</a>` +
+        `<img class="agent-img" src="${src}" alt="" ` +
+        `onload="this.classList.add('agent-img-ok')" ` +
+        `onerror="this.closest('.agent-img-wrap').classList.add('agent-img-failed');this.remove()" ` +
+        `onclick="_openImageViewer(this.src)"></span>`);
+      return tok;
+    });
+  // Swap tokens back in.
+  for (let i = 0; i < _imgTokens.length; i++) {
+    t = t.replace('@@CLImg' + i + '@@', _imgTokens[i]);
+  }
+  return t;
+}
+
 // ── Rich text formatting for agent output ────────────────────────────────────
 function formatAgentText(raw) {
   // Already escaped by esc() before calling — we operate on safe HTML
@@ -10267,8 +10314,12 @@ function appendAgentLine(sessionId, text) {
   if (cls.includes('agent-line-tool') && !text.includes('ExitPlanMode') && !text.includes('EnterPlanMode')) {
     exitPlanModeCount[sessionId] = 0;
   }
-  // Use rich formatting for regular text lines, plain for special lines
-  if (cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued') || cls.includes('agent-line-prompt')) {
+  // Use rich formatting for regular text lines. Prompts get the image-aware
+  // escaper so an attached image path renders as a thumbnail. Other special
+  // lines (tool / error / status / queued) stay on plain textContent.
+  if (cls.includes('agent-line-prompt')) {
+    div.innerHTML = escPromptWithImages(text);
+  } else if (cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued')) {
     div.textContent = text;
   } else {
     div.innerHTML = formatAgentText(text);
@@ -12303,8 +12354,12 @@ function renderAgentConsole() {
         } else {
           flushTable();
           const cls = agentLineCls(l);
-          const html = cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued') || cls.includes('agent-line-prompt')
-            ? esc(l) : formatAgentText(l);
+          // Same prompt-vs-special split as agentPanelHTML — prompts get image
+          // thumbnails inlined; tool/error/etc. stay on plain esc.
+          const html = cls.includes('agent-line-prompt')
+            ? escPromptWithImages(l)
+            : (cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued')
+                ? esc(l) : formatAgentText(l));
           result += `<div class="${cls}">${html}</div>`;
         }
       }
@@ -13006,8 +13061,11 @@ function openPlanViewer(sessionId) {
     } else {
       flushTable();
       const cls = agentLineCls(line);
-      const html = cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued') || cls.includes('agent-line-prompt')
-        ? esc(line) : formatAgentText(line);
+      // Same prompt-vs-special split as the other render paths.
+      const html = cls.includes('agent-line-prompt')
+        ? escPromptWithImages(line)
+        : (cls.includes('agent-line-tool') || cls.includes('agent-line-error') || cls.includes('agent-line-followup') || cls.includes('agent-line-queued')
+            ? esc(line) : formatAgentText(line));
       bodyHTML += `<div class="${cls}">${html}</div>`;
     }
   }
