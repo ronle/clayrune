@@ -7632,11 +7632,48 @@ def hivemind_create():
     # Initialize empty synthesis
     _hm_write_synthesis(hivemind_id, f"# {manifest['title']} — Synthesis\n\nNo findings yet.\n")
 
-    # Auto-dispatch orchestrator for goal decomposition (if workstreams not provided)
-    if not data.get('workstreams'):
+    # If the caller supplied workstreams inline, materialize them now. The
+    # endpoint previously CHECKED `data.get('workstreams')` (to gate the
+    # auto-decompose) but never actually iterated and persisted them — every
+    # caller had to make a second POST per workstream after create. Fixed.
+    created_workstreams = []
+    inline_ws = data.get('workstreams') or []
+    if inline_ws:
+        for ws_in in inline_ws:
+            if not isinstance(ws_in, dict):
+                continue
+            title = (ws_in.get('title') or '').strip()
+            if not title:
+                continue  # skip malformed entries rather than fail the whole create
+            ws_id = ws_in.get('id') or ('ws_' + str(uuid.uuid4())[:6])
+            ws = {
+                'id': ws_id,
+                'title': title,
+                'description': (ws_in.get('description') or '').strip(),
+                'status': 'pending',
+                'dependencies': ws_in.get('dependencies') or [],
+                'priority': ws_in.get('priority', 5),
+                'model': ws_in.get('model', ''),
+                'created_at': now_iso(),
+                'completed_at': None,
+                'findings_count': 0,
+                'sessions_used': 0,
+                'retry_count': 0,
+                'current_agent_session_id': None,
+                'last_agent_session_id': None,
+            }
+            _hm_save_workstream(hivemind_id, ws_id, ws)
+            created_workstreams.append(ws)
+        if created_workstreams:
+            manifest['updated_at'] = now_iso()
+            _hm_save_manifest(hivemind_id, manifest)
+
+    # Auto-dispatch orchestrator for goal decomposition only when the caller
+    # did NOT provide workstreams inline. Inline = caller already decomposed.
+    if not inline_ws:
         _hm_dispatch_orchestrator(hivemind_id, 'decompose')
 
-    return jsonify({'ok': True, 'hivemind': manifest})
+    return jsonify({'ok': True, 'hivemind': manifest, 'workstreams': created_workstreams})
 
 
 @app.route('/api/hivemind/list')
