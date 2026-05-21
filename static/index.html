@@ -2530,12 +2530,29 @@
   }
   .agent-chat-input .agent-image-previews { margin-bottom: 6px; }
   /* Paperclip attachment input — the file picker itself is always hidden;
-     the visible button (.btn-attach-mobile) triggers it. Desktop already has
-     drag-and-drop + paste, so the visible button is mobile-only — shown via
-     the @media (max-width: 960px) block below. */
+     the visible button (.btn-attach) triggers it. Shown on both desktop and
+     mobile: desktop already has drag-and-drop + paste, but an explicit
+     button is a useful third option (especially for taking a fresh photo
+     when MC runs through a browser on a tablet, or for users who'd rather
+     click than drag). The mobile @media block tweaks size + colors. */
   .agent-attach-input { display: none; }
-  .btn-attach-mobile {
-    display: none; /* shown on mobile via @media block */
+  .btn-attach {
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    flex-shrink: 0;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    width: 32px; height: 32px;
+    font-size: 16px; line-height: 1;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .btn-attach:hover {
+    background: var(--surface3);
+    color: var(--text);
+    border-color: var(--accent);
   }
   .agent-output::-webkit-scrollbar { width: 5px; }
   .agent-output::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
@@ -2638,27 +2655,31 @@
     .agent-output .agent-line .hl-codeblock {
       display: block; overflow-x: auto;
     }
-    /* Paperclip attachment button — visible only on mobile. Sits left of the
-       Send button. Tapping it opens the native file picker, which on Android
-       and iOS surfaces Camera / Photos / Files as separate sources. */
-    .btn-attach-mobile {
-      display: inline-flex;
-      align-items: center; justify-content: center;
-      flex-shrink: 0;
-      background: transparent;
-      color: var(--text-dim);
-      border: 1px solid var(--border2);
-      border-radius: 8px;
+    /* Paperclip attachment button — slightly larger on mobile for thumb
+       comfort. Base styles inherited from the desktop rule above. On
+       Android / iOS the native picker surfaces Camera / Photos / Files
+       as separate sources. */
+    .btn-attach {
       width: 38px; height: 38px;
-      font-size: 18px; line-height: 1;
-      cursor: pointer;
-      transition: background 0.12s, color 0.12s, border-color 0.12s;
+      border-radius: 8px;
+      font-size: 18px;
     }
-    .btn-attach-mobile:active {
+    .btn-attach:active {
       background: var(--surface3);
       color: var(--text);
       border-color: var(--accent);
     }
+    /* Inline image attachments — cap at thumbnail size on mobile so chat
+       bubbles don't get dominated by a single screenshot. Tap → full-size
+       lightbox via the existing onclick handler. Applies to both user-prompt
+       and agent-narration bubbles. */
+    .agent-output .agent-img {
+      max-width: 180px;
+      max-height: 140px;
+      object-fit: cover;
+      cursor: zoom-in;
+    }
+    .agent-output .agent-img-wrap { margin: 4px 0; }
   }
 
   /* AskUserQuestion interactive form */
@@ -2718,10 +2739,14 @@
   }
   .agent-img-wrap.agent-img-failed .agent-img-path { display: inline-block; }
   .agent-img-path:hover { text-decoration: underline; }
-  /* Image shown at its natural size, only capped to the chat width so it
-     never overflows. No thumbnail shrink. Click → dedicated viewer. */
+  /* Image shown as a thumbnail in chat — desktop and mobile. Click → full
+     viewer (`_openImageViewer`). Previous behavior was natural-size capped
+     at chat width, which dominated the conversation; thumbnails keep the
+     chat scannable and the lightbox still gives the full image one tap away. */
   .agent-img {
-    display: none; max-width: 100%; height: auto;
+    display: none;
+    max-width: 240px; max-height: 180px;
+    object-fit: cover;
     border: 1px solid var(--border, #2a3147);
     border-radius: 6px; cursor: zoom-in; background: #0d1017;
   }
@@ -4891,6 +4916,23 @@ const API_BASE = window.__TAURI_INTERNALS__ ? 'http://localhost:5199' : '';
 
 let allProjects = [];
 let _globalConfig = {};  // cached global config — used to resolve effective per-project mode
+let _agentProviders = null;  // [{name, display_name, installed, capabilities, ...}] — loaded once
+async function _ensureAgentProviders() {
+  if (_agentProviders !== null) return _agentProviders;
+  try {
+    const r = await fetch(API_BASE + '/api/agent/providers');
+    if (r.ok) {
+      const d = await r.json();
+      _agentProviders = d.providers || [];
+    } else {
+      _agentProviders = [];
+    }
+  } catch(e) { _agentProviders = []; }
+  return _agentProviders;
+}
+// Prime on load so the per-project menu can render the dropdown without an
+// extra round-trip. Errors are benign — menu degrades to claude-only.
+_ensureAgentProviders();
 const _isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const _orderKey = _isMobileDevice ? 'projectOrder_mobile' : 'projectOrder';
@@ -5845,6 +5887,32 @@ function modalContentHTML(p) {
             <button class="modal-menu-sub-item${p.agent_model==='claude-haiku-4-5-20251001'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-haiku-4-5-20251001')">
               <span class="modal-menu-sub-dot" style="background:var(--blue)"></span> Haiku 4.5</button>
           </div>
+          ${(() => {
+            const provs = _agentProviders || [];
+            // Only show the provider chooser when more than one runtime is
+            // registered. With just claude available it'd be noise.
+            if (provs.length <= 1) return '';
+            const current = (p.provider || 'claude').toLowerCase();
+            const cur = provs.find(x => x.name === current) || provs.find(x => x.name === 'claude') || provs[0];
+            const label = cur ? esc(cur.display_name) : 'Claude Code';
+            const items = provs.map(rt => {
+              const installed = !!rt.installed;
+              const disabled = !installed && rt.name !== 'claude';
+              const onclick = disabled
+                ? `showToast('${esc(rt.display_name)} not installed — ${esc(rt.install_hint || 'see docs')}')`
+                : `setProjectProvider('${esc(p.id)}','${esc(rt.name)}')`;
+              const dotColor = !installed ? 'var(--text-faint)' : (rt.name === 'claude' ? 'var(--green)' : 'var(--accent)');
+              const note = installed ? '' : ' <span style="color:var(--text-faint);font-size:10px">(not installed)</span>';
+              return `<button class="modal-menu-sub-item${current === rt.name ? ' active' : ''}" onclick="${onclick}">
+                <span class="modal-menu-sub-dot" style="background:${dotColor}"></span> ${esc(rt.display_name)}${note}</button>`;
+            }).join('');
+            return `<button class="modal-menu-item" onclick="toggleModalMenuSub(event,'prov-sub-${esc(p.id)}')">
+              <span class="menu-icon">&#x1F50C;</span> Agent Provider <span style="margin-left:4px;color:var(--accent);font-size:11px">${label}</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            </button>
+            <div class="modal-menu-sub" id="prov-sub-${esc(p.id)}">
+              ${items}
+            </div>`;
+          })()}
           <button class="modal-menu-item" onclick="toggleProjectRemoteControl('${esc(p.id)}',${!p.agent_remote_control})">
             <span class="menu-icon">&#x1F4F1;</span> Remote Control ${p.agent_remote_control ? '<span style="margin-left:auto;color:var(--green);font-size:11px">ON</span>' : '<span style="margin-left:auto;color:var(--text-faint);font-size:11px">OFF</span>'}
           </button>
@@ -6417,6 +6485,24 @@ async function setProjectModel(projectId, model) {
     });
     await refreshSilent();
   } catch(e) {}
+}
+
+async function setProjectProvider(projectId, provider) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.modal-menu-sub.open').forEach(d => d.classList.remove('open'));
+  try {
+    const r = await fetch(API_BASE + `/api/project/${projectId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ provider: provider })
+    });
+    if (r.ok) {
+      showToast('Provider set to ' + provider);
+    } else {
+      showToast('Failed to set provider');
+    }
+    await refreshSilent();
+  } catch(e) { showToast('Error: ' + e); }
 }
 
 async function toggleProjectRemoteControl(projectId, enabled) {
@@ -8828,7 +8914,7 @@ function agentPanelHTML(p) {
     ></textarea>
     <input type="file" multiple id="agent-attach-input-${esc(p.id)}" class="agent-attach-input"
       onchange="handleAgentAttachPick(event,'${esc(p.id)}')">
-    <button class="btn-attach-mobile" type="button" title="Attach files or take a photo"
+    <button class="btn-attach" type="button" title="Attach files or take a photo"
       onclick="triggerAgentAttach('${esc(p.id)}')">&#128206;</button>
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
@@ -8970,7 +9056,7 @@ function agentPanelHTML(p) {
             ></textarea>
             <input type="file" multiple id="agent-attach-input-fu_${esc(activeSessionId)}" class="agent-attach-input"
               onchange="handleAgentAttachPick(event,'fu_${esc(activeSessionId)}')">
-            <button class="btn-attach-mobile" type="button" title="Attach files or take a photo"
+            <button class="btn-attach" type="button" title="Attach files or take a photo"
               onclick="triggerAgentAttach('fu_${esc(activeSessionId)}')">&#128206;</button>
             <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
           </div>
@@ -11715,10 +11801,23 @@ function startHivemindChat(projectId) {
   modalActiveTab[projectId] = 'agent';
   delete activeAgentTab[projectId];
   delete pendingResumeId[projectId];
+  // Force the dispatch screen (the +New row). Without this, mobile lands on
+  // the existing session: with one conversation the auto-select picks it,
+  // with many the drill-down list shows — either way the `agent-task-...`
+  // textarea we target below doesn't exist and dispatchAgent never fires.
+  // Desktop also benefits — the dispatch row is what holds the textarea we
+  // pre-fill.
+  agentConvNew[projectId] = true;
   refreshModal();
   setTimeout(() => {
     const input = document.getElementById('agent-task-' + projectId);
-    if (!input) return;
+    if (!input) {
+      // Belt-and-braces: if the textarea still isn't there (e.g. the modal
+      // is in some other tab state), surface a hint instead of silently
+      // doing nothing — the old behavior would just look "broken".
+      showToast('Could not open the new-conversation form. Tap +New manually then send your hivemind prompt.', 6000);
+      return;
+    }
     input.value = 'I want to start a new Hivemind multi-agent analysis on this project. ' +
       'Before creating it, ask me clarifying questions about the goal, scope, priorities, ' +
       'and any constraints. Then create the hivemind when you have enough context.';
