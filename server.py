@@ -18,6 +18,7 @@ import skills as _skills
 import mcp as _mcp
 import mcp_installer as _mcpinst
 import marketing_preview as _marketing_preview  # P1-1 Tier 1a (blueprint)
+import agent_runtime as _agent_runtime  # Multi-provider abstraction
 
 
 def _resolve_dirs():
@@ -1837,6 +1838,7 @@ def update_project(project_id):
         existing['activity_log'] = log[:20]
 
     save_project(project_id, existing)
+
     return jsonify({'ok': True, 'id': project_id})
 
 
@@ -2703,6 +2705,62 @@ def _mark_claude_auth_ok():
         _claude_auth_state['last_probe_at'] = _time.time()
 
 
+# ── Multi-provider agent runtime — discovery endpoint ───────────────────────
+
+
+@app.route('/api/agent/providers')
+def agent_providers():
+    """List all registered agent runtimes (claude + alternatives) with their
+    install / capability state. The project-settings UI reads this to build
+    the per-project provider dropdown.
+
+    Returns: [{name, display_name, installed, version, install_hint,
+               capabilities: {...}, default: bool}]
+    """
+    out = []
+    default_name = _agent_runtime.default_runtime_name()
+    for rt in _agent_runtime.available_runtimes():
+        try:
+            h = rt.health_check()
+        except Exception as e:
+            h = _agent_runtime.HealthStatus(
+                installed=False, binary_path=None, version=None,
+                auth_state=_agent_runtime.AuthState(status='unknown', last_checked=''),
+                install_hint='', diagnostic=str(e),
+            )
+        try:
+            caps = rt.capabilities()
+            caps_dict = {
+                'supports_mode_a': caps.supports_mode_a,
+                'supports_mode_b': caps.supports_mode_b,
+                'mode_b_kind': caps.mode_b_kind,
+                'default_mode': caps.default_mode,
+                'supports_session_resume': caps.supports_session_resume,
+                'supports_mcp': caps.supports_mcp,
+                'supports_skills': caps.supports_skills,
+                'supports_plan_mode': caps.supports_plan_mode,
+                'supports_ask_user_question': caps.supports_ask_user_question,
+                'supports_streaming_text': caps.supports_streaming_text,
+                'context_injection': caps.context_injection,
+                'context_file_name': caps.context_file_name,
+                'oneshot_supported': caps.oneshot_supported,
+            }
+        except Exception:
+            caps_dict = {}
+        out.append({
+            'name': rt.name,
+            'display_name': rt.display_name,
+            'installed': h.installed,
+            'binary_path': str(h.binary_path) if h.binary_path else None,
+            'version': h.version,
+            'install_hint': h.install_hint,
+            'auth_status': h.auth_state.status if h.auth_state else 'unknown',
+            'capabilities': caps_dict,
+            'default': (rt.name == default_name),
+        })
+    return jsonify({'providers': out, 'default': default_name})
+
+
 @app.route('/api/claude/auth-status')
 def claude_auth_status():
     """Return the latest known Claude CLI auth state. Cheap — no subprocess."""
@@ -2792,6 +2850,26 @@ def claude_auth_probe():
 
 # ── Agent endpoints ──────────────────────────────────────────────────────────
 
+def _clayrune_api_reference() -> str:
+    """Return the pre-authored Clayrune API reference for agent system prompts.
+
+    Sourced from `data/agent_reference/CLAYRUNE_API.md`. Injected once per
+    session by `_build_agent_context()` and `_hm_build_worker_context()` so
+    agents don't have to curl-probe endpoints at runtime. Anthropic's prompt
+    cache covers the cost after the first turn.
+
+    Returns an empty string if the file is missing — failure here must never
+    break a session (mirrors the AGENT_RULES.md / SHARED_RULES.md posture).
+    """
+    try:
+        path = _APP_DIR / 'data' / 'agent_reference' / 'CLAYRUNE_API.md'
+        if path.exists():
+            return path.read_text(encoding='utf-8')
+    except Exception:
+        pass
+    return ''
+
+
 def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
     """Universal Clayrune-aware behaviors that apply to EVERY agent —
     regular project agents, hivemind workers, future agent types.
@@ -2855,7 +2933,24 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         f"API discovery: When you need a Clayrune feature you haven't used "
         f"before, do NOT guess endpoint names (e.g. /api/cron, /api/jobs). "
         f"Grep server.py for `@app.route` to enumerate the real endpoints, "
-        f"or curl http://localhost:{port}/ and inspect the served HTML.",
+        f"or curl http://localhost:{port}/ and inspect the served HTML. "
+        f"For the curated, current shape of the API, see the "
+        f"'--- CLAYRUNE API REFERENCE ---' block in your system prompt.",
+
+        # User-facing answers: when the user asks how to manage MCP/Skills/etc.,
+        # they mean inside Clayrune, NOT via the upstream Claude CLI.
+        "Management surfaces — you are running inside Clayrune, not bare Claude "
+        "Code. MCP servers, Skills, Scheduler, Settings, and project Memory are "
+        "all owned and managed by Clayrune via its UI (sidebar entries: MCP, "
+        "Skills, Scheduler, Settings; Memory via the project modal). Underlying "
+        "files: `~/.claude.json` (mcpServers), per-project `<project>/.mcp.json`, "
+        "`~/.claude/skills/` and `<project>/.claude/skills/`, "
+        "`~/.claude/settings.json`. When the user asks how to add, edit, or "
+        "remove any of these, point them at the Clayrune UI surface — do NOT "
+        "tell them to run `claude mcp add`, `claude skill ...`, or hand-edit the "
+        "underlying JSON. If asked 'how do I X', assume X is a Clayrune action "
+        "first; only fall back to upstream Claude CLI advice if Clayrune "
+        "genuinely doesn't surface it.",
 
         # Leg B priming — name the skill so it's reached for at the right moment.
         f"Project memory: when you hit an unknown about this project's history, "
@@ -2966,6 +3061,14 @@ def _build_agent_context(project, incognito=False, task=''):
         f"Before creating, ask the user clarifying questions about scope, priorities, and constraints.",
     ])
     parts.append("--- SYSTEM ---\n" + "\n".join(awareness))
+
+    # Pre-authored Clayrune API reference — agents inside Clayrune used to
+    # curl-probe endpoints every session. Injecting the curated reference
+    # once eliminates that turn-cost; Anthropic's prompt cache makes it free
+    # after the first turn.
+    api_ref = _clayrune_api_reference()
+    if api_ref:
+        parts.append("--- CLAYRUNE API REFERENCE ---\n" + api_ref)
 
     # Leg B.3 — deterministic read floor (no model; ranked grep). The agent
     # already auto-loads the curated index; this surfaces relevant topic-file /
@@ -5638,6 +5741,104 @@ def _apply_mobile_brief(message: str, request_data: dict) -> str:
     return f"{_BRIEF_REPLY_DIRECTIVE}\n\n{message}"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-provider dispatch (non-claude providers go through this)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _dispatch_via_runtime(p, task, *, provider_name,
+                          incognito=False, trigger_type='manual',
+                          trigger_id='', reuse_session_id=''):
+    """Dispatch a session through the AgentRuntime abstraction (non-claude).
+
+    The runtime owns: binary resolution, subprocess.Popen, reader thread,
+    output parsing. MC keeps owning the agent_sessions dict — the runtime
+    writes into it (proc, log_lines, status, ...) using the same shape the
+    claude path uses, so the rest of MC (status badge, SSE generator, stop
+    button, agent_log) keeps working without per-provider branching.
+    """
+    try:
+        runtime = _agent_runtime.get_runtime(provider_name)
+    except KeyError:
+        raise ValueError(f"unknown provider: {provider_name!r}")
+
+    pp = p.get('project_path', '')
+    project_id = p.get('id', '')
+
+    mgr = get_manager(project_id)
+    mgr.ensure_guardian()
+
+    with mgr.lock:
+        if reuse_session_id and reuse_session_id not in agent_sessions:
+            session_id = reuse_session_id
+        else:
+            session_id = uuid.uuid4().hex[:12]
+
+        # Pre-create the session dict so SSE clients can attach instantly
+        session = {
+            'status': 'running',
+            'task': task,
+            'log_lines': [],
+            'started_at': now_iso(),
+            'session_id': session_id,
+            'project_id': project_id,
+            'mode': 'A',
+            'process_alive': True,
+            'last_output_time': _time.time(),
+            'last_status_change_time': _time.time(),
+            'guardian_state': None,
+            'recovery_attempts': 0,
+            'last_recovery_time': 0,
+            'pending_recovery_message': None,
+            'circuit_breaker_tripped': False,
+            '_dispatch_time': _time.time(),
+            'incognito': bool(incognito),
+            'trigger_type': trigger_type,
+            'trigger_id': trigger_id,
+            'provider': provider_name,
+        }
+        agent_sessions[session_id] = session
+        mgr.session_ids.add(session_id)
+
+    # Build system_prompt blob (MEMORY/AGENT_RULES). Skip when incognito.
+    system_prompt = ''
+    try:
+        if not incognito:
+            system_prompt = _build_agent_context(p, incognito=False, task=task)
+    except Exception as e:
+        _log(f"[runtime-dispatch] context build failed: {e}")
+
+    try:
+        handle = runtime.dispatch(
+            project_path=pp,
+            task=task,
+            system_prompt=system_prompt,
+            resume_id='',
+            mode='A',
+            model=p.get('agent_model', '') or CONFIG.get('agent_model', ''),
+            incognito=incognito,
+            mc_session_id=session_id,
+            session_dict=session,
+            project_id=project_id,
+            register_process=_register_process,
+        )
+    except Exception as e:
+        session['status'] = 'error'
+        session['log_lines'].append(f"[{provider_name} dispatch failed: {e}]")
+        session['process_alive'] = False
+        session['last_status_change_time'] = _time.time()
+        raise
+
+    if trigger_type and trigger_type != 'manual':
+        try:
+            _log_agent_dispatch_pending(session)
+        except Exception:
+            pass
+
+    _log_agent_activity(project_id, f"Agent dispatched (provider={provider_name}): {task[:100]}")
+    return session_id
+
+
 def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                              trigger_type='manual', trigger_id='',
                              reuse_session_id=''):
@@ -5675,6 +5876,22 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     pp = p.get('project_path', '')
     if not pp or not Path(pp).is_dir():
         raise ValueError('project_path not set or invalid')
+
+    # ── Multi-provider routing ──────────────────────────────────────────────
+    # If the project explicitly selects a non-claude provider, dispatch
+    # through the AgentRuntime abstraction instead of the legacy claude path.
+    # Default behavior (provider unset OR provider='claude') is unchanged.
+    provider_name = (p.get('provider') or 'claude').lower()
+    if provider_name != 'claude':
+        try:
+            return _dispatch_via_runtime(p, task, provider_name=provider_name,
+                                         incognito=incognito,
+                                         trigger_type=trigger_type,
+                                         trigger_id=trigger_id,
+                                         reuse_session_id=reuse_session_id)
+        except Exception as e:
+            _log(f"[dispatch] runtime '{provider_name}' failed, no fallback: {e}")
+            raise
 
     use_streaming = p.get('use_streaming_agent', CONFIG.get('use_streaming_agent', False))
 
@@ -5916,6 +6133,20 @@ def agent_send(project_id):
         else:
             decision = 'followup'
 
+        # Pre-persist the user's prompt to log_lines INSIDE this same lock so
+        # it survives even if the downstream handler races with a status
+        # change and bails out (lost-prompt race: between this decision and
+        # agent_interrupt/agent_followup acquiring their own lock, the agent
+        # can transition to 'completed', which agent_interrupt rejects with
+        # 400 — without this safety net, the prompt is silently dropped).
+        # The handlers honor `_send_already_logged` and skip their own
+        # append. fresh_or_revive paths log via their own mechanisms and are
+        # not affected.
+        if session and decision in ('interrupt', 'followup'):
+            user_label = CONFIG.get('user_name') or 'User'
+            session['log_lines'].append(f"\n> {user_label}: {message}\n")
+            session['_send_already_logged'] = True
+
     # Route to the appropriate handler. Each does its own lock acquisition
     # for the actual mutation; the decision above is just to pick the path.
     # The existing handlers read `request.get_json()` themselves; they get
@@ -5923,6 +6154,23 @@ def agent_send(project_id):
     # route taken (useful for debugging; FE doesn't act on it).
     if decision == 'interrupt':
         resp = agent_interrupt(project_id)
+        # Race recovery: if the agent transitioned to a state interrupt
+        # rejects (e.g., 'completed' between decision and handler entry),
+        # fall back to followup so the user's message actually gets
+        # processed. The prompt is already pre-persisted, so this is purely
+        # about routing the live agent, not about data preservation.
+        if resp.status_code == 400:
+            try:
+                body = resp.get_json(silent=True) or {}
+                if isinstance(body, dict) and body.get('error') == 'agent not active':
+                    # Re-mark as already-logged so followup doesn't double-log
+                    # (the pop in agent_interrupt only ran if it reached the
+                    # log_lines line; on early-bail at the status check, the
+                    # flag is still set).
+                    resp = agent_followup(project_id)
+                    decision = 'interrupt_to_followup'
+            except Exception:
+                pass
     elif decision == 'followup':
         resp = agent_followup(project_id)
     else:  # fresh_or_revive
@@ -5936,7 +6184,9 @@ def agent_send(project_id):
                 return jsonify({'ok': True, 'session_id': session_id,
                                 'revived': True, 'route': 'revive'})
         # Otherwise dispatch a fresh session. Augmented message goes to claude;
-        # the original is preserved for the chat bubble (the frontend echo).
+        # the original is preserved for the chat bubble (the frontend echo +
+        # any log_lines pre-persist above — currently none on this path since
+        # there is no prior session yet).
         try:
             claude_message = _apply_mobile_brief(message, data)
             new_session_id = _dispatch_agent_internal(project_id, claude_message, incognito=incognito)
@@ -6114,6 +6364,35 @@ def agent_followup(project_id):
         # reconnecting SSE client still sees the form — see the SSE generator.)
         existing.pop('pending_questions', None)
 
+        # ── Multi-provider followup ─────────────────────────────────────────
+        # Non-claude providers route through the runtime; their write_followup
+        # owns process kill + respawn. We just append the user line and hand off.
+        session_provider = (existing.get('provider') or 'claude').lower()
+        if session_provider != 'claude':
+            user_label = CONFIG.get('user_name') or 'User'
+            if not existing.pop('_send_already_logged', False):
+                existing['log_lines'].append(f"\n> {user_label}: {message}\n")
+            existing['status'] = 'running'
+            existing['last_status_change_time'] = _time.time()
+            existing['last_output_time'] = _time.time()
+            try:
+                runtime = _agent_runtime.get_runtime(session_provider)
+                handle = _agent_runtime.SessionHandle(
+                    mc_session_id=session_id,
+                    provider=session_provider,
+                    mode=existing.get('mode', 'A'),
+                    project_path=pp,
+                    project_id=project_id,
+                    session_dict=existing,
+                )
+                runtime.write_followup(handle, message)
+            except Exception as e:
+                existing['log_lines'].append(f"[{session_provider} followup error: {e}]")
+                existing['status'] = 'error'
+                existing['last_status_change_time'] = _time.time()
+            _log_agent_activity(project_id, f"Agent follow-up (provider={session_provider}): {message[:100]}")
+            return jsonify({'ok': True, 'session_id': session_id})
+
         if existing.get('mode') == 'B':
             # Mode B: verify process is actually alive before trusting the flag
             if existing.get('process_alive'):
@@ -6169,7 +6448,8 @@ def agent_followup(project_id):
                         _log(f"[followup] {project_id}: respawning Mode B with -r {claude_sid[:12]}")
 
                 user_label = CONFIG.get('user_name') or 'User'
-                existing['log_lines'].append(f"\n> {user_label}: {message}\n")
+                if not existing.pop('_send_already_logged', False):
+                    existing['log_lines'].append(f"\n> {user_label}: {message}\n")
                 existing['status'] = 'running'
                 existing['last_status_change_time'] = _time.time()
                 existing['last_output_time'] = _time.time()
@@ -6198,7 +6478,8 @@ def agent_followup(project_id):
             else:
                 # Process alive — write message directly to stdin
                 user_label = CONFIG.get('user_name') or 'User'
-                existing['log_lines'].append(f"\n> {user_label}: {message}\n")
+                if not existing.pop('_send_already_logged', False):
+                    existing['log_lines'].append(f"\n> {user_label}: {message}\n")
                 existing['status'] = 'running'
                 existing['last_status_change_time'] = _time.time()
                 existing['last_output_time'] = _time.time()
@@ -6249,7 +6530,8 @@ def agent_followup(project_id):
             existing['last_output_time'] = _time.time()
             existing['pending_recovery_message'] = message
             user_label = CONFIG.get('user_name') or 'User'
-            existing['log_lines'].append(f"\n> {user_label}: {message}\n")
+            if not existing.pop('_send_already_logged', False):
+                existing['log_lines'].append(f"\n> {user_label}: {message}\n")
             claude_sid = existing.get('claude_session_id')
 
     # Mode B respawn — spawn outside the lock to avoid blocking stop/other ops
@@ -6456,6 +6738,35 @@ def agent_interrupt(project_id):
         if session['status'] not in ('running', 'idle', 'error'):
             return jsonify({'error': 'agent not active'}), 400
 
+        # ── Multi-provider interrupt ──────────────────────────────────────
+        # Non-claude providers: kill via runtime.interrupt(), then re-dispatch
+        # the new message via runtime.write_followup() — the runtime owns
+        # both halves of the respawn dance.
+        session_provider = (session.get('provider') or 'claude').lower()
+        if session_provider != 'claude':
+            user_label = CONFIG.get('user_name') or 'User'
+            if not session.pop('_send_already_logged', False):
+                session['log_lines'].append('[Got your message]')
+                session['log_lines'].append(f"\n> {user_label}: {message}\n")
+            session.pop('pending_followups', None)
+            try:
+                runtime = _agent_runtime.get_runtime(session_provider)
+                handle = _agent_runtime.SessionHandle(
+                    mc_session_id=session_id,
+                    provider=session_provider,
+                    mode=session.get('mode', 'A'),
+                    project_path=pp,
+                    project_id=project_id,
+                    session_dict=session,
+                )
+                runtime.write_followup(handle, message)
+            except Exception as e:
+                session['log_lines'].append(f"[{session_provider} interrupt error: {e}]")
+                session['status'] = 'error'
+                session['last_status_change_time'] = _time.time()
+            _log_agent_activity(project_id, f"Agent interrupt (provider={session_provider}): {message[:80]}")
+            return jsonify({'ok': True, 'session_id': session_id})
+
         old_proc = session['proc']
         claude_sid = session.get('claude_session_id')
 
@@ -6486,7 +6797,8 @@ def agent_interrupt(project_id):
 
         # Immediately set status to running for the new prompt
         user_label = CONFIG.get('user_name') or 'User'
-        session['log_lines'].append(f"\n> {user_label}: {message}\n")
+        if not session.pop('_send_already_logged', False):
+            session['log_lines'].append(f"\n> {user_label}: {message}\n")
         session['status'] = 'running'
         session['last_status_change_time'] = _time.time()
         session['last_output_time'] = _time.time()
@@ -8027,6 +8339,11 @@ def _hm_build_worker_context(hivemind_id, ws_id):
     # Universal Clayrune awareness — same source of truth as regular agents.
     # See _clayrune_universal_capabilities().
     parts.extend(_clayrune_universal_capabilities(port=port))
+
+    # Pre-authored Clayrune API reference (same one regular agents get).
+    api_ref = _clayrune_api_reference()
+    if api_ref:
+        parts.append("--- CLAYRUNE API REFERENCE ---\n" + api_ref)
 
     return "\n\n".join(parts)
 
@@ -10007,6 +10324,60 @@ def _install_builtin_skills():
             _log(f"[skills] preserved user-modified builtins: {preserved}")
     except Exception as e:
         _log(f"[skills] builtin install failed: {e}")
+
+
+def _install_builtin_mcps():
+    """Install/update built-in MCP servers bundled with MC.
+
+    Mirrors `_install_builtin_skills`. Two passes:
+
+    1. Global builtins → seeded into ~/.claude.json once. Marker sidecar
+       lives in `data/mc_builtin_mcps_global.json` (NOT under data/projects/
+       so `load_projects()` ignores it — see CLAUDE.md DATA_DIR pollution rule).
+    2. Project builtins → seeded into each existing project's
+       `<project_path>/.mcp.json` (filesystem MCP bound to project_path).
+       Acts as the backfill for projects that pre-date this feature; new
+       projects also get it via `update_project()` is_new=True (see hook).
+
+    Safe to run on every boot: checksum-aware and preserves user modifications.
+    """
+    try:
+        builtin_root = _APP_DIR / 'data' / 'mcp' / 'builtin'
+        if not builtin_root.exists():
+            return
+        # Global pass.
+        marker_dir = _APP_DIR / 'data'
+        gres = _mcp.install_global_builtins(builtin_root, marker_dir)
+        installed = gres.get('installed') or []
+        updated = gres.get('updated') or []
+        preserved = gres.get('preserved') or []
+        if installed or updated:
+            _log(f"[mcp] global installed={installed} updated={updated}")
+        if preserved:
+            _log(f"[mcp] global preserved user-modified: {preserved}")
+
+        # Per-project backfill.
+        try:
+            projects = load_projects()
+        except Exception:
+            projects = []
+        for p in projects:
+            pp = (p.get('project_path') or '').strip()
+            if not pp:
+                continue
+            try:
+                pres = _mcp.install_project_builtins(builtin_root, pp)
+                pinst = pres.get('installed') or []
+                pupd = pres.get('updated') or []
+                pprev = pres.get('preserved') or []
+                if pinst or pupd:
+                    _log(f"[mcp] project {p.get('id')!r} installed={pinst} updated={pupd}")
+                if pprev:
+                    _log(f"[mcp] project {p.get('id')!r} preserved user-modified: {pprev}")
+            except Exception as e:
+                _log(f"[mcp] project {p.get('id')!r} builtin install failed: {e}")
+    except Exception as e:
+        _log(f"[mcp] builtin install failed: {e}")
 
 
 # ── MCP server endpoints ────────────────────────────────────────────────────
@@ -14096,6 +14467,9 @@ if __name__ == '__main__':
     # Install built-in skills bundled with MC into ~/.claude/skills/.
     # Checksum-aware: user edits to managed skills are preserved.
     _install_builtin_skills()
+    # Install/backfill built-in MCP servers (filesystem per-project,
+    # sequential-thinking global). Same checksum-preservation pattern.
+    _install_builtin_mcps()
     # Sweep stale Git-import staging dirs (>24h old) so they don't accumulate.
     try:
         n = _skills.cleanup_stale_staging(max_age_hours=24)

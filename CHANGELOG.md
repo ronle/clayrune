@@ -4,6 +4,153 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-21] — Multi-provider agent runtime (prototype, branch `feat/multi-provider-agents`)
+
+**Status:** Prototype on `feat/multi-provider-agents` — DO NOT MERGE TO MASTER
+until smoke-tested per §Test plan below.
+
+First cut of the AgentRuntime abstraction (`agent_runtime.py`) that lets MC
+drive any agent CLI through one interface. Claude remains the default; one
+alternative provider (Gemini CLI) is wired end-to-end as proof-of-concept.
+
+### What works
+
+- **`agent_runtime.py` is functional** (was a stub). Exposes the `AgentRuntime`
+  ABC, `SessionHandle`, `AgentEvent`, `ProviderCapabilities`, `HealthStatus`,
+  `AuthState`, `OneshotResult`, and a registry (`register_runtime` /
+  `get_runtime` / `available_runtimes` / `installed_runtimes` /
+  `runtime_for_project`). Both `ClaudeRuntime` and `GeminiRuntime` auto-register
+  at import time. See `docs/MULTI_PROVIDER_DESIGN.md` for the full design.
+- **ClaudeRuntime** is a thin delegator. It does NOT yet take over the existing
+  claude code path — when a project's `provider` is unset OR `claude`, the
+  legacy `_dispatch_agent_internal` / `_read_agent_stream*` / `agent_followup`
+  / `agent_interrupt` paths run unchanged. The runtime exposes a fallback
+  `health_check()` (probes `claude` on PATH) so the provider-listing endpoint
+  works without server.py needing to register hooks for this prototype.
+- **GeminiRuntime** is a self-contained driver for Google's `gemini` CLI:
+  - `resolve_binary()` finds `gemini` on PATH or in npm-global locations.
+  - `health_check()` runs `gemini --version` and reports `installed`,
+    `version`, and `auth_state` (best-effort — checks `GEMINI_API_KEY`).
+  - `dispatch()` spawns `gemini --prompt <text>` with the project as cwd,
+    mints a reader thread, and writes events into the MC session dict
+    (`log_lines`, `status`, `proc`, ...) using the same shape claude
+    sessions use.
+  - The reader parses `--output-format stream-json` envelopes when present
+    and falls back to plain-text lines.
+  - `write_followup()` kills the prior process and spawns a fresh one with
+    a short transcript-tail prepended for continuity (Mode A only — Gemini
+    has no native persistent stream-json mode).
+  - `interrupt()` / `stop()` kill the subprocess and emit a synthetic
+    `[interrupted]` line in the log.
+  - `oneshot()` runs a non-streaming `gemini --prompt` for Scribe-style
+    cheap calls (returns plain stdout).
+- **server.py routing** (`_dispatch_agent_internal`): a new branch near the
+  top checks the project's `provider` field. If non-claude, it routes to a
+  new `_dispatch_via_runtime` helper that uses the AgentRuntime; otherwise
+  the legacy claude path runs untouched. Mirror branches were added to
+  `agent_followup` and `agent_interrupt` so they hand off to
+  `runtime.write_followup()` / pseudo-respawn on non-claude sessions.
+  `agent_stop` works as-is — it kills `session['proc']` regardless of
+  provider.
+- **New endpoint** `GET /api/agent/providers` returns the registered
+  runtimes with `installed`, `version`, `install_hint`, `capabilities`,
+  and which is the default. The UI uses this to populate the per-project
+  provider dropdown.
+- **UI** (`static/index.html`): the project-modal three-dot menu shows a
+  new "Agent Provider" submenu (only when ≥2 runtimes are registered;
+  with claude only, it's hidden). The dropdown is built from
+  `/api/agent/providers`; not-installed providers are visible but
+  clicking them shows a toast with the install hint instead of switching.
+  `setProjectProvider(projectId, provider)` POSTs `{provider: ...}` to
+  `/api/project/<id>` — the existing update endpoint accepts arbitrary
+  fields so no schema change was needed.
+- **Per-project provider with global default.** A project without an
+  explicit `provider` field is treated as `claude` everywhere
+  (`(p.get('provider') or 'claude').lower()`). `agent_runtime.default_runtime_name()`
+  is the global default.
+
+### What does NOT work / known limitations
+
+- **Skills / MCP / Memory hooks are gated by construction**, not yet by an
+  explicit `runtime.capabilities()` check at the integration points. For
+  Gemini this is fine because the non-claude dispatch path simply never
+  builds `--mcp-config` / `--append-system-prompt` flags. But if MC adds
+  new claude-specific call sites later, they should consult capabilities
+  rather than assuming claude.
+- **MEMORY.md auto-loading.** For Gemini the system_prompt (MEMORY +
+  AGENT_RULES) is **prepended to the task body**, not written to
+  `GEMINI.md` as the design doc recommends. Functional, but the context
+  text doesn't survive across the per-turn prompt the way `CLAUDE.md`
+  does for claude. Follow-up: implement `runtime.context_file_path()`
+  writes at dispatch time.
+- **Session resume.** Gemini sessions cannot truly resume — `write_followup`
+  re-spawns fresh with a short transcript-tail as context. Cross-turn
+  continuity is approximate.
+- **Scribe / condense / hivemind / mcp_installer security scan** still
+  shell out to `_resolve_claude()` directly. The prototype scope is the
+  user-facing dispatch loop; housekeeping call sites stay claude-only
+  in v1 (consistent with the design doc's PR-1 scope).
+- **Auth UI.** No `/api/agent/<provider>/auth-*` endpoints yet. Gemini
+  auth (API key / oauth) is the user's responsibility — set
+  `GEMINI_API_KEY` or run `gemini auth login` once in a terminal.
+- **agent_log entries** are not written for non-claude sessions (the
+  log-completion path lives inside the claude reader thread). The session
+  still appears in MC's UI and history; it just won't show up in the
+  per-trigger run history.
+- **`claude_session_id` is absent on non-claude sessions** — that field
+  is claude-specific. UI fallbacks (`session_id` instead) keep working.
+
+### How to test (smoke plan)
+
+Set up:
+1. Check out `feat/multi-provider-agents`. Restart MC.
+2. Confirm `GET /api/agent/providers` lists both `claude` and `gemini`.
+3. Install Gemini CLI if missing: `npm install -g @google/gemini-cli`,
+   then set `GEMINI_API_KEY` or run `gemini` once in a terminal to auth.
+
+Existing claude users unchanged:
+4. Pick any existing claude project. Confirm the project-modal menu still
+   shows "Agent Model" and (if multiple runtimes registered) a new "Agent
+   Provider" submenu with **Claude Code** selected and active dot green.
+5. Dispatch a task: `What's 2+2?`. Verify it streams and completes as
+   today. Verify `git diff master server.py` shows the legacy claude path
+   was untouched apart from the early branch.
+
+Gemini end-to-end:
+6. Create a NEW project pointing at any folder. Open its menu → Agent
+   Provider → Gemini CLI. Verify the toast confirms the switch.
+7. Dispatch: `List three small files in this folder and describe them.`
+   Verify the session goes `running` → text streams into the log →
+   `completed`.
+8. Followup: send another message. Verify the prior turn's text appears
+   in the new prompt context (look for `[Prior turn excerpt for context only]`
+   prepend on inspection — the model should respond as if continuing).
+9. Interrupt: while a turn is running, send a different message via the
+   interrupt button. Verify the old process is killed and a new one
+   spawns with the new message.
+10. Stop: while running, click Stop. Verify status flips to `stopped`
+    and the process is killed.
+
+Rollback:
+- Either: `git checkout master` (this branch is throwaway-able).
+- Or: per-project — open the project menu and switch the provider back
+  to **Claude Code**. Existing sessions on the prior provider keep
+  running; new dispatches will use claude.
+- Or: globally — delete the `provider` key from every project JSON in
+  `data/projects/*.json`; default falls back to claude.
+
+### Files changed
+
+- `agent_runtime.py` — rewritten from stub to functional module (~640 lines).
+- `server.py` — import, new `_dispatch_via_runtime()`, provider branches in
+  `_dispatch_agent_internal` / `agent_followup` / `agent_interrupt`, new
+  `/api/agent/providers` endpoint (~140 lines added).
+- `static/index.html` — provider cache + `setProjectProvider()` + project-
+  modal submenu (~50 lines added).
+- `docs/MULTI_PROVIDER_DESIGN.md` — already shipped by ws_architect; the
+  prototype implements its PR-1 scope.
+- `CHANGELOG.md` — this entry.
+
 ## [2026-05-19c] — Mobile hamburger drawer for full global nav
 
 Mobile UI (≤960 px) was missing entry points for Skills, MCP, Shared Rules,
