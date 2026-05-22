@@ -740,9 +740,44 @@ def test_capabilities_gemini():
     assert caps.supports_mode_b is False
     assert caps.emits_cost is False
     assert caps.emits_num_turns is False
-    assert caps.image_input is False
+    # Stage 1 (full-parity): Gemini is multimodal and reads attachments via the
+    # [Screenshot:/Attachment:] markers in the task text (with_attachment_hint).
+    assert caps.image_input is True
     assert caps.context_window is None
     assert caps.context_injection == 'prepend'
+
+
+# ── Stage 1 full-parity: provider-agnostic attachment hint ───────────────────
+
+
+def test_with_attachment_hint():
+    """The shared attachment hint is prepended only when the text carries
+    [Screenshot:/Attachment:] markers, and is inherited by every runtime."""
+    from agent_runtime import GeminiRuntime
+    rt = GeminiRuntime()
+    # No markers → unchanged (zero prompt overhead on ordinary turns).
+    plain = "Refactor the auth module."
+    assert rt.with_attachment_hint(plain) == plain
+    # Screenshot marker → instruction prepended, original text preserved.
+    withimg = "Look at this\n\n[Screenshot: /uploads/agent_ab12.png]"
+    out = rt.with_attachment_hint(withimg)
+    assert out.startswith(rt.ATTACHMENT_INSTRUCTION)
+    assert withimg in out
+    # Attachment marker also triggers it.
+    assert rt.with_attachment_hint(
+        "see [Attachment: /tmp/x.pdf]").startswith(rt.ATTACHMENT_INSTRUCTION)
+    # Empty / falsy input is safe.
+    assert rt.with_attachment_hint('') == ''
+
+
+def test_attachment_hint_inherited_by_all_runtimes():
+    """with_attachment_hint lives on the AgentRuntime base — every provider
+    inherits it, so attachment parity generalises without per-runtime code."""
+    from agent_runtime import available_runtimes
+    marked = "do it [Screenshot: /uploads/x.png]"
+    for rt in available_runtimes():
+        assert rt.with_attachment_hint(marked).startswith(rt.ATTACHMENT_INSTRUCTION)
+        assert rt.with_attachment_hint("no markers here") == "no markers here"
 
 
 # ── CapabilityFlags new fields present on all runtimes ───────────────────────

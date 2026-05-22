@@ -171,6 +171,31 @@ class AgentRuntime(ABC):
     name: str = ''
     display_name: str = ''
 
+    # ── Attachments (provider-agnostic) ───────────────────────────────────────
+    # The frontend embeds attachment paths into the task/message text as
+    # [Screenshot: <path>] / [Attachment: <path>] markers (buildTaskWithImages
+    # in index.html), so the path data already reaches every provider. Claude
+    # Code recognises and opens these natively; other CLIs need to be told.
+    # with_attachment_hint() prepends a one-paragraph instruction whenever such
+    # a marker is present, so attachments work for any provider whose agent has
+    # file-read tools. No-op when the text carries no markers — zero prompt
+    # overhead on ordinary turns. Shared here so every runtime inherits it.
+    _ATTACHMENT_MARKER_RE = re.compile(r'\[(?:Screenshot|Attachment):\s*[^\]\n]+\]')
+    ATTACHMENT_INSTRUCTION = (
+        "ATTACHMENTS: the message below contains one or more "
+        "[Screenshot: <path>] / [Attachment: <path>] markers. Each <path> is a "
+        "real local file the user just attached. Before answering, open each "
+        "one with your file-read tools so you can see its contents — image "
+        "files are readable as visual input."
+    )
+
+    def with_attachment_hint(self, text: str) -> str:
+        """Prepend ATTACHMENT_INSTRUCTION to `text` when it carries attachment
+        markers; return `text` unchanged otherwise."""
+        if text and self._ATTACHMENT_MARKER_RE.search(text):
+            return f"{self.ATTACHMENT_INSTRUCTION}\n\n{text}"
+        return text
+
     @abstractmethod
     def resolve_binary(self) -> Optional[Path]:
         """Return the absolute path to the provider's CLI binary, or a fallback
@@ -1407,7 +1432,11 @@ class GeminiRuntime(AgentRuntime):
             emits_rate_limit=False,
             emits_cost=False,
             emits_num_turns=False,
-            image_input=False,
+            # Gemini is multimodal and its CLI reads image files via the
+            # standard file tools. Attachments reach it as [Screenshot:/
+            # Attachment:] markers in the task text (with_attachment_hint),
+            # so the attach/paste/drop UI is honestly enabled.
+            image_input=True,
             context_window=None,
             context_injection='prepend',
             context_file_name='GEMINI.md',
@@ -1536,9 +1565,10 @@ class GeminiRuntime(AgentRuntime):
         # _slim_system_prompt). The slimmed text is also what gets stashed as
         # `_system_prompt`, so per-turn respawns reuse the trimmed version.
         slim_prompt = self._slim_system_prompt(system_prompt)
-        full_prompt = task
+        task_text = self.with_attachment_hint(task)
+        full_prompt = task_text
         if slim_prompt:
-            full_prompt = f"{slim_prompt}\n\n---\n\n{task}"
+            full_prompt = f"{slim_prompt}\n\n---\n\n{task_text}"
 
         cmd = self.build_command(model=model)
         env = os.environ.copy()
@@ -1755,7 +1785,7 @@ class GeminiRuntime(AgentRuntime):
         if old_proc and old_proc.poll() is None:
             _kill_pid(old_proc.pid)
 
-        full_prompt = _compose_respawn_prompt(session, message)
+        full_prompt = _compose_respawn_prompt(session, self.with_attachment_hint(message))
 
         bin_path = self.resolve_binary()
         if not bin_path:
