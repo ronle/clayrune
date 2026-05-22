@@ -163,6 +163,65 @@ class SessionHandle:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MC Tool Protocol — provider-agnostic emulated tools
+# ─────────────────────────────────────────────────────────────────────────────
+# Claude Code ships AskUserQuestion / ExitPlanMode / TodoWrite as native tools;
+# other CLIs don't. Rather than disable those features, MC injects a text-based
+# tool-call convention into the system prompt: the model emits a fenced
+# ```mc:<tool>``` block and ends its turn, and the runtime parses that block out
+# of the output stream into the SAME session-dict state Claude's native tools
+# produce. Everything downstream (the SSE `question` event, renderAgentQuestion,
+# the plan UI) is then identical regardless of provider.
+#
+# v1 implements mc:question (AskUserQuestion). plan / todo are recognised by the
+# scanner and wired in a later stage.
+
+MC_TOOL_PROTOCOL_PROMPT = """\
+# Mission Control — extra abilities
+
+You are running inside Mission Control, which gives you one ability your CLI
+does not provide natively: asking the user a structured multiple-choice
+question.
+
+When — and only when — you need the user to choose between concrete options,
+output a fenced block in exactly this form and then STOP (end your turn):
+
+```mc:question
+{"questions": [{"header": "Topic", "question": "Which option?", "options": [{"label": "Option A", "description": "what this means"}, {"label": "Option B", "description": "what this means"}], "multiSelect": false}]}
+```
+
+Rules:
+- The body between the fences must be valid JSON.
+- `header` is a short (<=12 char) tag, `question` is the full text, each option
+  has a `label` and a one-line `description`; `multiSelect` is optional.
+- Emit the block on its own and stop — Mission Control shows the user an
+  interactive form and sends their choice back as your next message.
+- Use this only for genuine either/or decisions. For open-ended input, just ask
+  in plain text instead.
+"""
+
+_MC_TOOL_BLOCK_RE = re.compile(
+    r'```[ \t]*mc:(question|plan|todo)[ \t]*\r?\n(.*?)\r?\n?```',
+    re.DOTALL | re.IGNORECASE)
+
+
+def parse_mc_tool_blocks(text: str) -> List[tuple]:
+    """Return [(tool_type, body), ...] for every well-formed mc: block in text."""
+    if not text or 'mc:' not in text:
+        return []
+    return [(m.group(1).lower(), m.group(2))
+            for m in _MC_TOOL_BLOCK_RE.finditer(text)]
+
+
+def strip_mc_tool_blocks(text: str) -> str:
+    """Remove mc: tool blocks from text — keeps the raw protocol JSON out of the
+    chat transcript once the block has been acted on."""
+    if not text or 'mc:' not in text:
+        return text
+    return _MC_TOOL_BLOCK_RE.sub('', text)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AgentRuntime ABC
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -195,6 +254,55 @@ class AgentRuntime(ABC):
         if text and self._ATTACHMENT_MARKER_RE.search(text):
             return f"{self.ATTACHMENT_INSTRUCTION}\n\n{text}"
         return text
+
+    # ── MC Tool Protocol (provider-agnostic emulated tools) ───────────────────
+    def with_mc_tool_protocol(self, system_prompt: str) -> str:
+        """Append the MC Tool Protocol instructions to a system prompt so a
+        provider without native tools can still ask the user questions.
+        Returns just the protocol when `system_prompt` is empty (incognito).
+        Idempotent — safe to call on an already-augmented prompt."""
+        if not system_prompt:
+            return MC_TOOL_PROTOCOL_PROMPT
+        if MC_TOOL_PROTOCOL_PROMPT in system_prompt:
+            return system_prompt
+        return f"{system_prompt}\n\n{MC_TOOL_PROTOCOL_PROMPT}"
+
+    def apply_mc_tool_blocks(self, session: Dict[str, Any],
+                             turn_text: str) -> Dict[str, bool]:
+        """Scan a completed turn's text for MC Tool Protocol blocks and apply
+        their effects to the session dict. Best-effort: a malformed block is
+        logged and skipped, never raised.
+
+        Returns {'blocks_found': bool, 'paused': bool}. `paused` is True when a
+        block (a question) means the turn should hold in 'idle' awaiting the
+        user's reply rather than completing.
+        """
+        found = False
+        paused = False
+        for tool_type, body in parse_mc_tool_blocks(turn_text):
+            found = True
+            if tool_type == 'question':
+                try:
+                    data = json.loads(body)
+                    questions = (data.get('questions')
+                                 if isinstance(data, dict) else data)
+                    if isinstance(questions, dict):
+                        questions = [questions]
+                    if not isinstance(questions, list) or not questions:
+                        raise ValueError('no questions[]')
+                    session.setdefault('pending_questions', []).append({
+                        'questions': questions,
+                        'question_id': uuid.uuid4().hex,
+                    })
+                    session['waiting_for_question'] = True
+                    paused = True
+                except Exception as e:
+                    session.setdefault('log_lines', []).append(
+                        f'[mc:question ignored — malformed block: {e}]')
+            # 'plan' / 'todo' are recognised by the scanner; wired in a
+            # later stage. Until then they are stripped from the chat and
+            # otherwise ignored (found=True so the raw JSON is not shown).
+        return {'blocks_found': found, 'paused': paused}
 
     @abstractmethod
     def resolve_binary(self) -> Optional[Path]:
@@ -1426,7 +1534,10 @@ class GeminiRuntime(AgentRuntime):
             supports_mcp=True,
             supports_skills=False,
             supports_plan_mode=False,
-            supports_ask_user_question=False,
+            # AskUserQuestion is emulated via the MC Tool Protocol (the
+            # ```mc:question``` block) — see with_mc_tool_protocol /
+            # apply_mc_tool_blocks. Honestly true: Gemini can ask the user.
+            supports_ask_user_question=True,
             supports_streaming_text=True,
             emits_usage=False,
             emits_rate_limit=False,
@@ -1561,14 +1672,14 @@ class GeminiRuntime(AgentRuntime):
         mcp_sync = _sync_mcp_to_gemini_safe(project_path)
 
         mc_sid = mc_session_id or uuid.uuid4().hex[:12]
-        # Slim the Claude-Code-shaped prompt down for Gemini (see
-        # _slim_system_prompt). The slimmed text is also what gets stashed as
-        # `_system_prompt`, so per-turn respawns reuse the trimmed version.
-        slim_prompt = self._slim_system_prompt(system_prompt)
+        # Slim the Claude-shaped prompt for Gemini, then append the MC Tool
+        # Protocol so Gemini can ask structured questions. The result is also
+        # what gets stashed as `_system_prompt`, so per-turn respawns (and thus
+        # followups) keep both the trimmed context and the protocol.
+        slim_prompt = self.with_mc_tool_protocol(
+            self._slim_system_prompt(system_prompt))
         task_text = self.with_attachment_hint(task)
-        full_prompt = task_text
-        if slim_prompt:
-            full_prompt = f"{slim_prompt}\n\n---\n\n{task_text}"
+        full_prompt = f"{slim_prompt}\n\n---\n\n{task_text}"
 
         cmd = self.build_command(model=model)
         env = os.environ.copy()
@@ -1690,6 +1801,12 @@ class GeminiRuntime(AgentRuntime):
         session = handle.session_dict
         cbs = handle.meta.get('callbacks', {})
 
+        # This turn's assistant text, accumulated for the MC Tool Protocol scan
+        # at turn end. `assist_idxs` tracks which log_lines entries hold that
+        # text so an mc: block can be stripped from the visible chat.
+        turn_text_parts: List[str] = []
+        assist_idxs: List[int] = []
+
         def _cb(name: str, ev: AgentEvent) -> None:
             fn = cbs.get(name)
             if fn:
@@ -1721,7 +1838,10 @@ class GeminiRuntime(AgentRuntime):
 
                 ev = self.parse_event(line, handle.mc_session_id)
                 if ev and ev.type == EventType.ASSISTANT_TEXT:
-                    session['log_lines'].append(ev.payload.get('text', line))
+                    _txt = ev.payload.get('text', line)
+                    session['log_lines'].append(_txt)
+                    assist_idxs.append(len(session['log_lines']) - 1)
+                    turn_text_parts.append(_txt)
                     session['last_output_time'] = _time.time()
                     _cb('on_assistant_text', ev)
                 elif ev and ev.type == EventType.TOOL_USE:
@@ -1749,11 +1869,33 @@ class GeminiRuntime(AgentRuntime):
                 rc = proc.wait()
             except Exception:
                 rc = -1
+            # MC Tool Protocol: scan this turn's text for mc: blocks (e.g. an
+            # emulated AskUserQuestion) and apply them before deciding status.
+            # A question pauses the turn in 'idle' awaiting the user's reply.
+            mc_res = {'blocks_found': False, 'paused': False}
+            try:
+                turn_text = '\n'.join(turn_text_parts)
+                mc_res = self.apply_mc_tool_blocks(session, turn_text)
+                if mc_res['blocks_found']:
+                    cleaned = strip_mc_tool_blocks(turn_text).strip()
+                    ll = session.get('log_lines') or []
+                    for i, idx in enumerate(assist_idxs):
+                        if 0 <= idx < len(ll):
+                            ll[idx] = cleaned if i == 0 else ''
+                if mc_res['paused']:
+                    session['log_lines'].append(
+                        '[Waiting for your answer — choose above to continue]')
+            except Exception as e:
+                session.setdefault('log_lines', []).append(
+                    f'[mc-tool scan error: {e}]')
             if session.get('proc') is proc:
                 if session.get('status') == 'running':
-                    session['status'] = 'completed' if rc == 0 else 'error'
+                    if mc_res['paused']:
+                        session['status'] = 'idle'
+                    else:
+                        session['status'] = 'completed' if rc == 0 else 'error'
                     session['last_status_change_time'] = _time.time()
-                    if rc != 0:
+                    if not mc_res['paused'] and rc != 0:
                         session['log_lines'].append(f"[gemini exited with code {rc}]")
                         try:
                             # Include the dropped non-JSON stderr tail —
@@ -1785,6 +1927,11 @@ class GeminiRuntime(AgentRuntime):
         if old_proc and old_proc.poll() is None:
             _kill_pid(old_proc.pid)
 
+        # Followup turns: the server may have refreshed _system_prompt with a
+        # raw (Claude-shaped) context blob — re-slim it and re-attach the MC
+        # Tool Protocol so per-turn respawns keep both. Both ops are idempotent.
+        session['_system_prompt'] = self.with_mc_tool_protocol(
+            self._slim_system_prompt(session.get('_system_prompt') or ''))
         full_prompt = _compose_respawn_prompt(session, self.with_attachment_hint(message))
 
         bin_path = self.resolve_binary()
