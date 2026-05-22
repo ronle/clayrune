@@ -4,6 +4,145 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-22] — System-status popover renders above project cards
+
+The header system-status popover (rate limit, agent providers, install
+health) was painting *behind* the project-card grid — unreadable. Root
+cause: the popover `<div>` lived nested inside the header subtree, which
+traps it in a stacking context that the card grid paints over. A
+high `z-index` (9000) can't escape that — and the prior `position:fixed`
+blur fix didn't help either, since `fixed` escapes the *containing block*
+but not the *stacking context*.
+
+Fix: moved `#sys-status-popover` to be a direct child of `<body>`, a
+sibling of `#modal-layer` — the same proven pattern modals use. It is
+still positioned at runtime by `_positionSysStatusPopover()`. Now
+reliably paints above the dashboard.
+
+Also sharpened `_positionSysStatusPopover()`: it now snaps to the
+*device* pixel grid (`× dpr → round → ÷ dpr`) instead of CSS pixels. On
+Windows at 125%/150% display scaling an integer CSS px still maps to a
+fractional device px, leaving the composited panel slightly soft. Device
+snapping makes the text crisp at any scale.
+
+### AskUserQuestion rendered as plain text in Gemini-configured projects
+
+A Claude agent's `AskUserQuestion` showed up as a grey
+`[Agent question: … — answer via follow-up message]` line (often
+duplicated on every SSE reconnect) instead of the interactive option
+card — whenever the *project* was configured with a non-Claude provider.
+
+Root cause: the `question` SSE handler gated the interactive form on the
+**project's** configured provider (`_capsForProject`). But the running
+**session** is what emits the event — a Claude session in a
+Gemini-configured project would wrongly fall back to text. And the
+fallback path (`appendAgentLine`) doesn't dedupe, so SSE reconnects
+stacked copies.
+
+Fix: a `question` event only ever fires when an agent actually emitted a
+structured `AskUserQuestion` (providers lacking the tool have the
+instruction stripped from their prompt and never reach this path), and
+the form's answer round-trips as a provider-agnostic follow-up message.
+So the gate was both wrong and unnecessary — removed it; the handler now
+always calls `renderAgentQuestion()`, which dedupes by `question_id`.
+
+### Project ⋯-menu "Default Provider" picker could stay hidden
+
+The per-project provider picker (⋯ menu → Default Provider) is gated on
+`_agentProviders.length > 1`. That list is fetched once on load — but the
+fetch is fire-and-forget, and the modal ⋯-menu HTML is built once when the
+modal opens. If the modal opened before the fetch resolved (common on a
+mobile cold-boot), the picker was built with an empty list and stayed
+hidden until the modal was closed and reopened. A failed fetch was also
+cached as `[]` forever, hiding it permanently.
+
+Fix: `_ensureAgentProviders()` no longer caches a failed fetch (leaves
+the list `null` so the next call retries). And the ⋯-menu builder, when
+the list isn't loaded yet, kicks the fetch and calls `refreshModal()`
+when it lands — so the picker appears on its own instead of needing a
+modal reopen.
+
+### Removed the long-session advisory toast
+
+The "⏳ … has run N turns — may be losing early context" toast is gone.
+It was well-intentioned (a nudge to restart so a long session reloads
+its Step-6 memory fresh) but in practice a 14-second nag. The server
+still computes `long_session_advisory`; nothing renders it now. If the
+nudge is wanted back, it belongs as an inline, dismissable session-panel
+hint — not a toast.
+
+## [2026-05-21b] — Voice input on the Android APK
+
+Mic-to-text in the chat input on the Clayrune Android app. Tap the 🎤
+button → Android's system mic dialog appears → talk → dialog closes and
+the recognized text drops into the textarea. You still hit Send.
+
+### Hard-won gotchas (don't relitigate)
+
+- **Inline streaming mode (`popup: false`, `partialResults: true`) is
+  broken in the upstream plugin.** Two bugs combine to make it unusable:
+  (1) when `partialResults: true`, the plugin resolves `start()`
+  immediately, then any subsequent `onError` does `call.reject(...)` on
+  an already-resolved call → SWALLOWED, no toast, button stuck red;
+  (2) Android's `SpeechRecognizer` instance gets sticky between sessions
+  — first call works, second silently hangs (Promise never resolves AND
+  never rejects). Tried watchdog timers; couldn't get reliable
+  back-to-back recordings.
+- **`popup: true` (the system RecognizerIntent fullscreen dialog) is
+  bulletproof.** Google's system UI handles the entire lifecycle: mic
+  prompt, silence detection, retry, error UX. Repeat invocations Just
+  Work. Tradeoff: a system dialog instead of inline streaming — worth
+  it.
+- **`language: 'en-US'` works universally on the Google recognizer.**
+  Using `navigator.language` (e.g. `en-IL` / `he-IL`) throws
+  ERROR_LANGUAGE_NOT_SUPPORTED (code 12) which the plugin's
+  `getErrorText` switch doesn't cover → surfaces as the misleading
+  "Didn't understand, please try again" fallback. Stay on `en-US`
+  unless we ship Hebrew packs.
+- **Errors that look like "Didn't understand, please try again" are the
+  plugin's fallback for unknown error codes**, not actual no-match. Real
+  no-match maps to "No match". If you see this string, it's an Android
+  error code the plugin doesn't have a case for (10, 11, 12, 13, 14).
+
+### How it works
+
+- **Plugin**: `@capacitor-community/speech-recognition@^7.0.1` added to
+  `E:\clayrune-mobile\package.json`. Wraps Android's built-in
+  `SpeechRecognizer` (Google's cloud recognizer when available — accurate,
+  sub-second). No API key, no extra service.
+- **Permission**: `android.permission.RECORD_AUDIO` + the
+  `RecognitionService` `<queries>` block added to
+  `android/app/src/main/AndroidManifest.xml`. The plugin handles the
+  runtime prompt on first use.
+- **UI** (`static/index.html`):
+  - `.btn-mic` styled to match `.btn-attach`.
+  - `micAvailable()` gates rendering to **native Capacitor only** —
+    desktop / mobile-browser sessions never see the button.
+  - `micBtnHTML(textareaId)` injected next to the attach button in both
+    the dispatch row (`agent-task-<pid>`) and the followup row
+    (`agent-followup-<sid>`).
+  - `toggleAgentMic` / `_startAgentMic` / `_stopAgentMic`: request perms,
+    invoke `SR.start({ popup: true, partialResults: false })`, append
+    the returned match to the textarea (preserving any pre-typed text).
+  - `_micToast(msg)` surfaces every failure path as a visible toast —
+    invaluable for diagnosing what's going wrong on a phone with no
+    devtools. Costs nothing in the success path.
+- **Language**: hard-coded `en-US`. See gotchas below.
+
+### Where the APK is
+
+`E:\clayrune-mobile\android\app\build\outputs\apk\debug\app-debug.apk`
+(5.9 MB). Install via `adb install -r <path>` or sideload.
+
+### Rollback
+
+- Remove `@capacitor-community/speech-recognition` from `package.json`,
+  `npm i`, `npx cap sync android`, rebuild.
+- Drop the `RECORD_AUDIO` permission + `<queries>` from
+  `AndroidManifest.xml`.
+- Delete the mic CSS/JS/HTML blocks in `static/index.html` (search
+  `btn-mic` and `micAvailable`).
+
 ## [2026-05-21] — Multi-provider agent runtime (prototype, branch `feat/multi-provider-agents`)
 
 **Status:** Prototype on `feat/multi-provider-agents` — DO NOT MERGE TO MASTER

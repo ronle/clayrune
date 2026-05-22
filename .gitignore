@@ -148,3 +148,17 @@ docs/remote-access/RESUME_HERE.md
 docs/remote-access/SETUP_CHECKLIST.md
 docs/remote-access/error_codes.md
 BUILD_INSTRUCTIONS.md
+
+# ── Multi-provider runtime — local/runtime artifacts ───────────────────────
+# provider_env.json holds per-provider API keys / env-var overrides — secrets,
+# never commit. The rest are runtime-generated: the API reference is rebuilt by
+# tools/regen-api-reference.py, the MCP caches are materialized at boot, and
+# _jscheck_tmp.js is a scratch copy of index.html's JS used for syntax checks.
+data/provider_env.json
+data/agent_reference/
+data/mcp/
+data/mc_builtin_mcps_global.json
+data/projects/_mc_open_backlog.txt
+.mcp.json
+.clayrune_builtin_mcps.json
+_jscheck_tmp.js

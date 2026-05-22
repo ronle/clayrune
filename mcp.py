@@ -379,3 +379,381 @@ def delete_server(
         return {'ok': True, 'scope': 'project', 'name': name}
 
     raise ValueError(f'unknown scope: {scope}')
+
+
+# ── Built-in MCPs (analogous to skills.install_builtins) ─────────────────────
+#
+# Sources live under `data/mcp/builtin/<name>.json` with shape:
+#   {
+#     "name": "filesystem",
+#     "scope": "global" | "project",
+#     "transport": "stdio" | "http" | "sse",
+#     "description": "human-readable, not propagated to CC",
+#     "config": { ... CC-compatible config; may include ${PROJECT_PATH} ... }
+#   }
+#
+# Install/update semantics mirror skills.install_builtins (checksum-preserved
+# user edits via a sidecar marker). Two install entry points:
+#
+#   install_global_builtins(builtin_root)
+#       — seeds scope=global builtins into ~/.claude.json. Marker:
+#         data/mc_builtin_mcps_global.json  (a sibling of project records, NOT
+#         inside data/projects/ — see CLAUDE.md "DATA_DIR pollution" rule).
+#
+#   install_project_builtins(builtin_root, project_path, data_root=None)
+#       — seeds scope=project builtins into <project_path>/.mcp.json with
+#         ${PROJECT_PATH} substituted. Marker:
+#         <project_path>/.clayrune_builtin_mcps.json (lives alongside .mcp.json
+#         in the user's working dir; NOT in MC's data dir).
+#
+# Both functions are best-effort: any IO or JSON failure on one builtin must
+# not block the rest. Mirrors the install_builtins() posture for skills.
+
+import hashlib as _hashlib
+
+
+_GLOBAL_BUILTIN_MARKER_NAME = 'mc_builtin_mcps_global.json'
+_PROJECT_BUILTIN_MARKER_NAME = '.clayrune_builtin_mcps.json'
+
+
+def _config_hash(cfg: dict[str, Any]) -> str:
+    """Canonical hash for a server config — used by the builtin install layer.
+
+    Stable across Python runs: sorted keys, no whitespace variation.
+    """
+    blob = json.dumps(cfg, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+    return _hashlib.sha256(blob.encode('utf-8')).hexdigest()
+
+
+def _substitute_placeholders(obj: Any, mapping: dict[str, str]) -> Any:
+    """Recursively replace ${KEY} placeholders in strings via `mapping`."""
+    if isinstance(obj, str):
+        out = obj
+        for k, v in mapping.items():
+            out = out.replace('${' + k + '}', v)
+        return out
+    if isinstance(obj, list):
+        return [_substitute_placeholders(x, mapping) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _substitute_placeholders(v, mapping) for k, v in obj.items()}
+    return obj
+
+
+def _read_builtin_sources(builtin_root: Path) -> list[dict[str, Any]]:
+    """Load all builtin source JSONs. Skips malformed files silently."""
+    if not builtin_root.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for f in sorted(builtin_root.iterdir()):
+        if not f.is_file() or f.suffix.lower() != '.json':
+            continue
+        try:
+            data = json.loads(f.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = data.get('name')
+        scope = data.get('scope')
+        transport = data.get('transport')
+        cfg = data.get('config')
+        if not (isinstance(name, str) and isinstance(scope, str)
+                and isinstance(transport, str) and isinstance(cfg, dict)):
+            continue
+        if scope not in ('global', 'project'):
+            continue
+        if validate_name(name):
+            continue
+        out.append({
+            'name': name,
+            'scope': scope,
+            'transport': transport,
+            'config': cfg,
+        })
+    return out
+
+
+def _load_marker(marker_path: Path) -> dict[str, str]:
+    if not marker_path.exists():
+        return {}
+    try:
+        data = json.loads(marker_path.read_text(encoding='utf-8'))
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_marker(marker_path: Path, marker: dict[str, str]) -> None:
+    _atomic_write_json(marker_path, marker)
+
+
+def _apply_one_builtin(
+    *,
+    name: str,
+    transport: str,
+    rendered_cfg: dict[str, Any],
+    src_hash: str,
+    current_cfg: dict[str, Any] | None,
+    marker: dict[str, str],
+    write_fn,
+) -> str:
+    """Apply one builtin against a target scope. Returns status string:
+    'installed' | 'updated' | 'preserved' | 'skipped' | 'error'.
+
+    `write_fn(name, normalized_config)` performs the actual write into the
+    target (global or project) and is invoked only when installing/updating.
+    """
+    try:
+        normalized = normalize_config(transport, rendered_cfg)
+    except Exception:
+        return 'error'
+
+    if current_cfg is None:
+        # Not installed yet — install.
+        write_fn(name, normalized)
+        marker[name] = src_hash
+        return 'installed'
+
+    marker_hash = marker.get(name)
+    if not marker_hash:
+        # User-owned (or pre-marker install) — never touch.
+        return 'skipped'
+
+    current_hash = _config_hash(current_cfg)
+    if current_hash != marker_hash:
+        # User modified after MC installed — preserve.
+        return 'preserved'
+
+    if marker_hash == src_hash:
+        # In sync with source already.
+        return 'skipped'
+
+    # Safe to update — current matches our last install, source has changed.
+    write_fn(name, normalized)
+    marker[name] = src_hash
+    return 'updated'
+
+
+def install_global_builtins(
+    builtin_root: Path,
+    marker_dir: Path,
+) -> dict[str, list[str]]:
+    """Install/update scope=global builtins into ~/.claude.json.
+
+    `marker_dir` is where the sidecar `mc_builtin_mcps_global.json` lives —
+    pass the MC data root (NOT data/projects/) to keep it out of project loading.
+    """
+    result = {'installed': [], 'updated': [], 'preserved': [], 'skipped': [], 'error': []}
+    sources = [s for s in _read_builtin_sources(builtin_root) if s['scope'] == 'global']
+    if not sources:
+        return result
+
+    marker_path = marker_dir / _GLOBAL_BUILTIN_MARKER_NAME
+    marker = _load_marker(marker_path)
+    current_servers = _read_global_servers()
+
+    def _write(name: str, cfg: dict[str, Any]) -> None:
+        def _mutate(servers: dict[str, Any]) -> None:
+            servers[name] = cfg
+        _write_global_servers(_mutate)
+
+    changed = False
+    for src in sources:
+        name = src['name']
+        rendered = _substitute_placeholders(src['config'], {})
+        try:
+            src_hash = _config_hash(normalize_config(src['transport'], rendered))
+        except Exception:
+            result['error'].append(name)
+            continue
+
+        status = _apply_one_builtin(
+            name=name,
+            transport=src['transport'],
+            rendered_cfg=rendered,
+            src_hash=src_hash,
+            current_cfg=current_servers.get(name) if isinstance(current_servers.get(name), dict) else None,
+            marker=marker,
+            write_fn=_write,
+        )
+        if status in ('installed', 'updated'):
+            changed = True
+        result[status].append(name)
+
+    if changed:
+        _save_marker(marker_path, marker)
+    return result
+
+
+def install_project_builtins(
+    builtin_root: Path,
+    project_path: str,
+) -> dict[str, list[str]]:
+    """Install/update scope=project builtins into <project_path>/.mcp.json.
+
+    Substitutes ${PROJECT_PATH} → the absolute project_path. Marker sidecar
+    lives in the project dir as `.clayrune_builtin_mcps.json`.
+    """
+    result = {'installed': [], 'updated': [], 'preserved': [], 'skipped': [], 'error': []}
+    if not project_path:
+        return result
+    proj_root = Path(project_path)
+    if not proj_root.exists():
+        return result
+
+    sources = [s for s in _read_builtin_sources(builtin_root) if s['scope'] == 'project']
+    if not sources:
+        return result
+
+    marker_path = proj_root / _PROJECT_BUILTIN_MARKER_NAME
+    marker = _load_marker(marker_path)
+    current_servers = _read_project_servers(project_path)
+
+    def _write(name: str, cfg: dict[str, Any]) -> None:
+        def _mutate(servers: dict[str, Any]) -> None:
+            servers[name] = cfg
+        _write_project_servers(project_path, _mutate)
+
+    substitution = {'PROJECT_PATH': str(proj_root.resolve()).replace('\\', '/')}
+    changed = False
+    for src in sources:
+        name = src['name']
+        rendered = _substitute_placeholders(src['config'], substitution)
+        try:
+            src_hash = _config_hash(normalize_config(src['transport'], rendered))
+        except Exception:
+            result['error'].append(name)
+            continue
+
+        status = _apply_one_builtin(
+            name=name,
+            transport=src['transport'],
+            rendered_cfg=rendered,
+            src_hash=src_hash,
+            current_cfg=current_servers.get(name) if isinstance(current_servers.get(name), dict) else None,
+            marker=marker,
+            write_fn=_write,
+        )
+        if status in ('installed', 'updated'):
+            changed = True
+        result[status].append(name)
+
+    if changed:
+        _save_marker(marker_path, marker)
+    return result
+
+
+# ── Gemini settings sync ─────────────────────────────────────────────────────
+#
+# Mirror MC-managed MCP servers into `~/.gemini/settings.json mcpServers` so
+# gemini-cli sees the same MCP toolchain claude-code does. Safety rules:
+#
+#   1. Atomic write, lock-serialized — same `_atomic_write_json` used for
+#      claude.json.
+#   2. Only touches the `mcpServers` key and the `__mc_managed_mcp_servers`
+#      sidecar marker. Every other key in settings.json (selectedAuthType,
+#      theme, user-defined preferences, ...) is preserved verbatim.
+#   3. User-owned entries are NEVER overwritten. If the user has independently
+#      configured a server named `filesystem` in gemini, and MC also has one,
+#      the user's wins and ours is skipped — recorded in the return value so
+#      the caller can show a hint.
+#   4. Stale MC-managed entries (in the sidecar list but no longer present in
+#      MC's MCP config) are removed on the next sync.
+
+GLOBAL_GEMINI_JSON = _home() / '.gemini' / 'settings.json'
+_gemini_write_lock = threading.Lock()
+_MC_MANAGED_MARKER_KEY = '__mc_managed_mcp_servers'
+
+
+def _to_gemini_config(transport: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Translate a CC-flavored MCP config dict to gemini's settings.json schema.
+
+    stdio is identical (command/args/env). HTTP and SSE use different keys:
+    gemini wants `httpUrl` / `sseUrl` at the top level rather than CC's
+    {type: http|sse, url: ...} shape.
+    """
+    transport = (transport or '').strip().lower()
+    if transport == 'http':
+        out: dict[str, Any] = {'httpUrl': cfg.get('url') or ''}
+        if cfg.get('headers'):
+            out['headers'] = dict(cfg['headers'])
+        return out
+    if transport == 'sse':
+        out = {'sseUrl': cfg.get('url') or ''}
+        if cfg.get('headers'):
+            out['headers'] = dict(cfg['headers'])
+        return out
+    # stdio (gemini default)
+    out = {'command': cfg.get('command') or ''}
+    if cfg.get('args'):
+        out['args'] = list(cfg['args'])
+    if cfg.get('env'):
+        out['env'] = dict(cfg['env'])
+    if cfg.get('cwd'):
+        out['cwd'] = cfg['cwd']
+    return out
+
+
+def collect_effective_servers_for_project(
+    project_path: str | None,
+) -> dict[str, dict[str, Any]]:
+    """Return {name: gemini-shaped config} for all MC-managed MCP servers
+    visible to this project. Project entries shadow global entries by name
+    (project wins) — same precedence as CC."""
+    out: dict[str, dict[str, Any]] = {}
+    for name, cfg in _read_global_servers().items():
+        if isinstance(cfg, dict):
+            out[name] = _to_gemini_config(_infer_transport(cfg), cfg)
+    if project_path:
+        for name, cfg in _read_project_servers(project_path).items():
+            if isinstance(cfg, dict):
+                out[name] = _to_gemini_config(_infer_transport(cfg), cfg)
+    return out
+
+
+def sync_to_gemini(project_path: str | None) -> dict[str, Any]:
+    """Merge MC-managed MCP servers into ~/.gemini/settings.json.
+
+    Returns: {added: [names...], skipped: [names...], removed: [names...]}
+      added   — names MC just wrote (refresh or first-time install)
+      skipped — MC-managed names that collided with user-owned entries
+                (user's stays, ours dropped)
+      removed — names MC previously managed but are no longer in MC config
+                (cleaned up on this sync)
+    """
+    mc_servers = collect_effective_servers_for_project(project_path)
+    added: list[str] = []
+    skipped: list[str] = []
+    removed: list[str] = []
+
+    with _gemini_write_lock:
+        data = _read_json_or_empty(GLOBAL_GEMINI_JSON)
+        servers_raw = data.get('mcpServers')
+        servers = dict(servers_raw) if isinstance(servers_raw, dict) else {}
+        prev_managed_raw = data.get(_MC_MANAGED_MARKER_KEY)
+        prev_managed = list(prev_managed_raw) if isinstance(prev_managed_raw, list) else []
+
+        # 1. Drop previously-MC-managed entries (clears stale).
+        for name in prev_managed:
+            if name in servers:
+                servers.pop(name, None)
+                if name not in mc_servers:
+                    removed.append(name)
+
+        # 2. Add fresh — but step around user-owned entries with same name.
+        for name, cfg in mc_servers.items():
+            if name in servers and name not in prev_managed:
+                # User-owned (configured directly in gemini). Don't touch.
+                skipped.append(name)
+                continue
+            servers[name] = cfg
+            added.append(name)
+
+        # 3. Persist. Only mcpServers + sidecar marker change.
+        data['mcpServers'] = servers
+        data[_MC_MANAGED_MARKER_KEY] = added
+        _atomic_write_json(GLOBAL_GEMINI_JSON, data)
+
+    return {'added': added, 'skipped': skipped, 'removed': removed}
