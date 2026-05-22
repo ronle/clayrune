@@ -1990,13 +1990,16 @@ class GeminiRuntime(AgentRuntime):
         if old_proc and old_proc.poll() is None:
             _kill_pid(old_proc.pid)
 
-        # Followup turns: the server may have refreshed _system_prompt with a
-        # raw (Claude-shaped) context blob — re-slim it and re-attach the MC
-        # Tool Protocol so per-turn respawns keep both. Both ops are idempotent.
-        session['_system_prompt'] = self.with_mc_tool_protocol(
-            self._slim_system_prompt(session.get('_system_prompt') or ''))
-        full_prompt = _compose_respawn_prompt(session, self.with_attachment_hint(message))
-
+        # Stage 5 — native session resume. `gemini --resume latest` re-opens
+        # the project's most-recent saved session and carries the ENTIRE prior
+        # conversation server-side (verified: a non-interactive `-p` run saves
+        # a session, and resuming it recalls turn-1 context). So a followup
+        # sends only the new message — not the 16 KB MEMORY.md + rules +
+        # context blob the old respawn path re-pasted every turn. That blob
+        # was the token-burn culprit: Gemini has no prompt cache, so every
+        # re-paste was billed in full. The MC Tool Protocol is re-sent (it is
+        # tiny, ~1 KB) so the agent never loses the ability to ask questions
+        # deep into a long conversation.
         bin_path = self.resolve_binary()
         if not bin_path:
             session['log_lines'].append("[gemini binary missing — cannot continue]")
@@ -2004,10 +2007,13 @@ class GeminiRuntime(AgentRuntime):
             session['last_status_change_time'] = _time.time()
             return
 
+        full_prompt = (f"{MC_TOOL_PROTOCOL_PROMPT}\n\n---\n\n"
+                       f"{self.with_attachment_hint(message)}")
+
         mcp_sync = _sync_mcp_to_gemini_safe(handle.project_path)
         _log_mcp_sync_result(session['log_lines'], mcp_sync)
 
-        cmd = self.build_command()
+        cmd = self.build_command() + ['--resume', 'latest']
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,

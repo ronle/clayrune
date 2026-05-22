@@ -340,6 +340,51 @@ class TestGeminiRuntimeSmoke:
         assert isinstance(cmd, list)
         assert len(cmd) > 0
 
+    def test_followup_resumes_and_sends_only_new_message(self, tmp_path):
+        """Stage 5: a Gemini followup resumes the saved session
+        (`--resume latest`) and sends only the new message — it must NOT
+        re-paste the heavy stashed context (the per-turn token burn)."""
+        rt = ar.get_runtime('gemini')
+        popen_calls = []
+        sent_prompts = []
+
+        class FakeProc:
+            pid = 99998
+            stdout = MagicMock()
+            def poll(self):
+                return None
+
+        def fake_popen(cmd, **kwargs):
+            popen_calls.append(cmd)
+            return FakeProc()
+
+        session_dict = {
+            'session_id': 'fu_001', 'status': 'idle', 'log_lines': [],
+            'project_id': 'test_proj',
+            '_system_prompt': 'HEAVY STASHED CONTEXT ' * 500,
+        }
+        handle = ar.SessionHandle(
+            mc_session_id='fu_001', provider='gemini', mode='A',
+            project_path=str(tmp_path), project_id='test_proj',
+            session_dict=session_dict,
+        )
+
+        with patch('subprocess.Popen', side_effect=fake_popen), \
+             patch.object(threading.Thread, 'start', lambda self: None), \
+             patch.object(rt, '_write_prompt_async',
+                          side_effect=lambda proc, prompt, sid: sent_prompts.append(prompt)):
+            rt.write_followup(handle, 'Just the new question?')
+
+        assert popen_calls, "write_followup must spawn a process"
+        cmd = popen_calls[0]
+        assert '--resume' in cmd and 'latest' in cmd, \
+            "followup must resume the saved Gemini session"
+        assert sent_prompts, "a followup prompt must be sent"
+        prompt = sent_prompts[0]
+        assert 'Just the new question?' in prompt
+        assert 'HEAVY STASHED CONTEXT' not in prompt, \
+            "followup must not re-paste the stashed context — that is the token burn"
+
     def test_gemini_is_registered(self):
         rt = ar.get_runtime('gemini')
         assert rt is not None
