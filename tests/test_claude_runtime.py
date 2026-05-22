@@ -857,6 +857,28 @@ def test_apply_mc_tool_blocks_no_blocks():
     assert 'pending_questions' not in session
 
 
+def test_apply_mc_tool_blocks_todo():
+    """An mc:todo block routes through the registered sync hook (the same one
+    Claude's native TodoWrite uses) and does not pause the turn."""
+    from agent_runtime import GeminiRuntime, register_mc_tool_hooks, _MC_TOOL_HOOKS
+    rt = GeminiRuntime()
+    calls = []
+    register_mc_tool_hooks(
+        sync_todos=lambda pid, sk, todos: (calls.append((pid, sk, todos))
+                                           or len(todos)))
+    try:
+        session = {'log_lines': [], 'project_id': 'proj1', 'session_id': 'sess1'}
+        turn = ('```mc:todo\n'
+                '{"todos": [{"content": "Do X", "status": "pending"}]}\n```')
+        res = rt.apply_mc_tool_blocks(session, turn)
+        assert res == {'blocks_found': True, 'paused': False}
+        assert calls == [('proj1', 'sess1',
+                          [{'content': 'Do X', 'status': 'pending'}])]
+        assert any('synced' in line for line in session['log_lines'])
+    finally:
+        _MC_TOOL_HOOKS.pop('sync_todos', None)
+
+
 # ── CapabilityFlags new fields present on all runtimes ───────────────────────
 
 
