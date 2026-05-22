@@ -37,3 +37,15 @@ def test_import_server_without_flask_run(tmp_data_dir):
         assert hasattr(server, attr)
     # All filesystem setup landed under the temp data dir, not the repo.
     assert str(tmp_data_dir) in str(server._DATA_ROOT)
+
+
+def test_skills_catalog_block_claude_is_empty(tmp_data_dir):
+    """Stage 3 full-parity: the skill catalog is injected only for non-Claude
+    providers — the Claude context path must stay byte-identical, so the block
+    is empty for a Claude (or unset == Claude) project."""
+    import importlib
+
+    server = importlib.import_module("server")
+    importlib.reload(server)
+    assert server._skills_catalog_block({'id': 'p', 'provider': 'claude'}) == ''
+    assert server._skills_catalog_block({'id': 'p'}) == ''
