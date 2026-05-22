@@ -836,6 +836,23 @@ def test_apply_mc_tool_blocks_question():
     assert pq[0]['questions'][0]['question'] == 'Postgres or SQLite?'
 
 
+def test_apply_mc_tool_blocks_question_tolerates_control_chars():
+    """A question block whose JSON body carries a raw newline inside a string
+    value (a streaming/model artefact) still parses — json.loads strict=False.
+    Regression for the Gemini delta-join corruption seen 2026-05-22."""
+    from agent_runtime import GeminiRuntime
+    rt = GeminiRuntime()
+    session = {'log_lines': []}
+    turn = ('```mc:question\n'
+            '{"questions": [{"header": "X", "question": "A or B?", '
+            '"options": [{"label": "A", "description": "first\noption"}]}]}\n```')
+    res = rt.apply_mc_tool_blocks(session, turn)
+    assert res['blocks_found'] is True
+    assert res['paused'] is True
+    opt = session['pending_questions'][0]['questions'][0]['options'][0]
+    assert opt['description']  # the control char did not break the parse
+
+
 def test_apply_mc_tool_blocks_malformed_is_safe():
     """A malformed block is logged and skipped — never raised, never pauses."""
     from agent_runtime import GeminiRuntime
