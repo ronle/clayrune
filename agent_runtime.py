@@ -1720,7 +1720,13 @@ class GeminiRuntime(AgentRuntime):
         slim_prompt = self.with_mc_tool_protocol(
             self._slim_system_prompt(system_prompt))
         task_text = self.with_attachment_hint(task)
-        full_prompt = f"{slim_prompt}\n\n---\n\n{task_text}"
+        # Label the boundary explicitly. Everything above is reference setup;
+        # the part below is the ONLY thing to act on. Without this a weaker
+        # model treats the whole context blob as a briefing and invents work.
+        full_prompt = (f"{slim_prompt}\n\n"
+                       f"=== THE USER'S MESSAGE — respond to THIS, and only "
+                       f"this; everything above is reference setup ===\n\n"
+                       f"{task_text}")
 
         cmd = self.build_command(model=model)
         env = os.environ.copy()
