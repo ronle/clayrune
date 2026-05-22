@@ -2999,6 +2999,38 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
     ]
 
 
+def _skills_catalog_block(project):
+    """Skill catalog for non-Claude agents (full-parity Stage 3).
+
+    Claude Code auto-discovers skills from ~/.claude/skills/ and the project's
+    .claude/skills/; other provider CLIs don't. So MC injects the catalog —
+    each skill's name, description and SKILL.md path — into the system prompt.
+    The agent reads the full SKILL.md with its own file tools when a task
+    matches. Returns '' for Claude (native discovery) or when there are no
+    skills. Best-effort: any failure yields '' — skills are never load-bearing.
+    """
+    if (project.get('provider') or 'claude').lower() == 'claude':
+        return ''
+    try:
+        skills = _skills.list_skills(project.get('project_path') or None,
+                                     project.get('id'))
+    except Exception:
+        return ''
+    visible = [s for s in skills
+               if s.get('scope') != 'archive'
+               and not s.get('shadowed_by_project')]
+    if not visible:
+        return ''
+    lines = []
+    for s in visible:
+        desc = (s.get('description') or '').strip().replace('\n', ' ')
+        lines.append(f"- {s.get('name')}: {desc}\n  SKILL.md: {s.get('path')}")
+    return ("--- AVAILABLE SKILLS ---\n"
+            "Reusable skills are available to you. When the current task "
+            "matches a skill's description, read its SKILL.md with your "
+            "file tools and follow it.\n" + "\n".join(lines))
+
+
 def _build_agent_context(project, incognito=False, task=''):
     """Build system prompt context for the agent.
 
@@ -3099,6 +3131,12 @@ def _build_agent_context(project, incognito=False, task=''):
         f"Before creating, ask the user clarifying questions about scope, priorities, and constraints.",
     ])
     parts.append("--- SYSTEM ---\n" + "\n".join(awareness))
+
+    # Stage 3 full-parity: non-Claude agents don't auto-discover skills —
+    # inject the catalog so they can read + follow the relevant SKILL.md.
+    _skills_block = _skills_catalog_block(project)
+    if _skills_block:
+        parts.append(_skills_block)
 
     # Pre-authored Clayrune API reference — agents inside Clayrune used to
     # curl-probe endpoints every session. Injecting the curated reference

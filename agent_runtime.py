@@ -1574,7 +1574,10 @@ class GeminiRuntime(AgentRuntime):
             supports_session_resume=True,
             # mcpServers config section confirmed in gemini docs + capability matrix
             supports_mcp=True,
-            supports_skills=False,
+            # Skills are injected into the system prompt as a catalog the agent
+            # reads on demand (server.py _skills_catalog_block) — full-parity
+            # Stage 3, no native ~/.claude/skills discovery needed.
+            supports_skills=True,
             supports_plan_mode=False,
             # AskUserQuestion is emulated via the MC Tool Protocol (the
             # ```mc:question``` block) — see with_mc_tool_protocol /
