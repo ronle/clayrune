@@ -223,7 +223,7 @@ def _load_config():
         'scribe_reconcile_cap': 5,     # max reconciled sessions/project/boot
         'scribe_checkpoint_enabled': False,  # SPEC §3.A.MID Step 6 — default OFF
         'scribe_checkpoint_kb': 0,     # mid-session cadence (KB new transcript); 0=disabled
-        'long_session_advisory_enabled': True,  # soft "restart long Mode-B session" nudge
+        'long_session_advisory_enabled': False,  # soft "restart long Mode-B session" nudge
         'long_session_advisory_turns': 25,      # num_turns threshold for that nudge
         'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor
         'agent_channels': '',
