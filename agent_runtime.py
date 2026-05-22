@@ -198,6 +198,15 @@ Rules:
   interactive form and sends their choice back as your next message.
 - Use this only for genuine either/or decisions. For open-ended input, just ask
   in plain text instead.
+
+You may also mirror your working task list into Mission Control's backlog by
+emitting (this does NOT end your turn — keep working after it):
+
+```mc:todo
+{"todos": [{"content": "Short task description", "status": "pending"}]}
+```
+
+`status` is one of: pending, in_progress, completed.
 """
 
 _MC_TOOL_BLOCK_RE = re.compile(
@@ -219,6 +228,20 @@ def strip_mc_tool_blocks(text: str) -> str:
     if not text or 'mc:' not in text:
         return text
     return _MC_TOOL_BLOCK_RE.sub('', text)
+
+
+# MC Tool Protocol side-effect hooks. mc:todo backlog sync lives in server.py
+# (_sync_todowrite_to_backlog) which agent_runtime.py cannot import — server.py
+# registers it here at startup, same pattern as _CLAUDE_HOOKS.
+_MC_TOOL_HOOKS: Dict[str, Callable] = {}
+
+
+def register_mc_tool_hooks(*, sync_todos: Optional[Callable] = None) -> None:
+    """server.py calls this at startup to wire MC Tool Protocol side effects
+    that need server-side logic. Every hook is optional — a missing hook just
+    means that emulated tool no-ops (logged), never errors."""
+    if sync_todos is not None:
+        _MC_TOOL_HOOKS['sync_todos'] = sync_todos
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -299,9 +322,28 @@ class AgentRuntime(ABC):
                 except Exception as e:
                     session.setdefault('log_lines', []).append(
                         f'[mc:question ignored — malformed block: {e}]')
-            # 'plan' / 'todo' are recognised by the scanner; wired in a
-            # later stage. Until then they are stripped from the chat and
-            # otherwise ignored (found=True so the raw JSON is not shown).
+            elif tool_type == 'todo':
+                try:
+                    data = json.loads(body)
+                    todos = data.get('todos') if isinstance(data, dict) else data
+                    if not isinstance(todos, list):
+                        raise ValueError('no todos[]')
+                    hook = _MC_TOOL_HOOKS.get('sync_todos')
+                    if hook and todos:
+                        n = hook(session.get('project_id'),
+                                 session.get('session_id'), todos)
+                        if n:
+                            session.setdefault('log_lines', []).append(
+                                f'[backlog: synced {n} item(s) from mc:todo]')
+                except Exception as e:
+                    session.setdefault('log_lines', []).append(
+                        f'[mc:todo ignored — malformed block: {e}]')
+            # 'plan' is recognised by the scanner but intentionally not wired:
+            # MC runs agents headless, where plan-mode approval hangs — the
+            # Claude system prompt itself tells agents not to use plan mode
+            # (server.py _agent_capability_lines). Emulating it would add a
+            # feature the product steers away from. The block is still stripped
+            # from the chat so stray plan JSON never reaches the user.
         return {'blocks_found': found, 'paused': paused}
 
     @abstractmethod

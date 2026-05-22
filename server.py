@@ -14840,6 +14840,9 @@ def _register_claude_runtime_hooks():
             kw.get('stdin_text', '') or '',
         )) if kw.get('prompt') else None,
     )
+    # MC Tool Protocol side effects that need server-side logic — wires
+    # emulated mc:todo to the same backlog sync Claude's native TodoWrite uses.
+    _agent_runtime.register_mc_tool_hooks(sync_todos=_sync_todowrite_to_backlog)
 
 
 if __name__ == '__main__':
