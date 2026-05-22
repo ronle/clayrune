@@ -1904,14 +1904,19 @@ class GeminiRuntime(AgentRuntime):
                 elif ev and ev.type == EventType.TOOL_USE:
                     blocks = ev.payload.get('blocks', [])
                     name = blocks[0].get('name', '') if blocks else ''
+                    # Canonical `[tool: ...]` prefix — the frontend keys
+                    # tool-line styling, the show/hide "Tool call lines"
+                    # toggle and the activity ticker off that exact prefix.
+                    # A provider-specific prefix bypasses all three (e.g. the
+                    # toggle could not hide Gemini's tool lines).
                     session['log_lines'].append(
-                        f"[gemini tool: {name}]" if name else "[gemini tool call]")
+                        f"[tool: {name}]" if name else "[tool: call]")
                     session['last_output_time'] = _time.time()
                 elif ev and ev.type == EventType.TOOL_RESULT:
                     nm = ev.payload.get('name') or 'tool'
                     st = ev.payload.get('status') or ''
                     session['log_lines'].append(
-                        f"[gemini tool result: {nm}{(' — ' + st) if st else ''}]")
+                        f"[tool: {nm} result{(' — ' + st) if st else ''}]")
                     session['last_output_time'] = _time.time()
                 elif ev and ev.type == EventType.TURN_END:
                     _cb('on_turn_end', ev)
