@@ -49,3 +49,6 @@ def test_skills_catalog_block_claude_is_empty(tmp_data_dir):
     importlib.reload(server)
     assert server._skills_catalog_block({'id': 'p', 'provider': 'claude'}) == ''
     assert server._skills_catalog_block({'id': 'p'}) == ''
+    # Same invariant for the Stage 4 memory block.
+    assert server._memory_block_for_agent({'id': 'p', 'provider': 'claude'}) == ''
+    assert server._memory_block_for_agent({'id': 'p'}) == ''

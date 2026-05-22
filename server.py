@@ -3031,6 +3031,35 @@ def _skills_catalog_block(project):
             "file tools and follow it.\n" + "\n".join(lines))
 
 
+def _memory_block_for_agent(project):
+    """MEMORY.md content for non-Claude agents (full-parity Stage 4).
+
+    Claude Code auto-loads ~/.claude/projects/<path>/memory/MEMORY.md natively;
+    other provider CLIs don't. So MC injects the curated memory index into the
+    system prompt — without it a non-Claude agent has zero cross-session
+    memory. Returns '' for Claude (native load — context byte-identical) or
+    when there is no memory file. Capped so a large index can't blow the
+    prompt. Best-effort: any failure yields ''.
+    """
+    if (project.get('provider') or 'claude').lower() == 'claude':
+        return ''
+    try:
+        mp = _get_memory_path(project)
+        if not mp or not Path(mp).exists():
+            return ''
+        text = Path(mp).read_text(encoding='utf-8', errors='replace').strip()
+    except Exception:
+        return ''
+    if not text:
+        return ''
+    cap = 16000
+    if len(text) > cap:
+        text = text[:cap] + '\n…[truncated — search the full memory file for more]'
+    return ("--- PROJECT MEMORY (MEMORY.md) ---\n"
+            "Your accumulated cross-session memory for this project — treat it "
+            "as background context. Do not hand-edit the file.\n" + text)
+
+
 def _build_agent_context(project, incognito=False, task=''):
     """Build system prompt context for the agent.
 
@@ -3137,6 +3166,12 @@ def _build_agent_context(project, incognito=False, task=''):
     _skills_block = _skills_catalog_block(project)
     if _skills_block:
         parts.append(_skills_block)
+
+    # Stage 4 full-parity: non-Claude agents don't auto-load MEMORY.md —
+    # inject the curated memory index so they have cross-session context.
+    _mem_block = _memory_block_for_agent(project)
+    if _mem_block:
+        parts.append(_mem_block)
 
     # Pre-authored Clayrune API reference — agents inside Clayrune used to
     # curl-probe endpoints every session. Injecting the curated reference
