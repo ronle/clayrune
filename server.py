@@ -49,65 +49,16 @@ if sys.platform == 'win32':
 
 
 # ── Claude CLI binary resolution ────────────────────────────────────────────
-# On Windows, npm-installed Claude CLI is `claude.cmd` (a .cmd shim) — there's
-# no `claude.exe`. Python's subprocess.Popen(['claude', ...]) only looks for
-# .exe by default (CreateProcess ignores PATHEXT), so it FileNotFoundErrors
-# even when `claude` works fine in cmd / powershell. shutil.which respects
-# PATHEXT and returns the full path to the .cmd shim, which subprocess CAN
-# execute (Windows recognizes .cmd extension and dispatches via cmd.exe).
-#
-# Re-resolved on each call (cheap) so a Claude install AFTER server startup
+# Delegates to ClaudeRuntime.resolve_binary_str() — single source of truth.
+# The full resolution logic lives in agent_runtime.ClaudeRuntime.resolve_binary()
+# and handles the Windows .exe-vs-.cmd orphan case + common fallback paths.
+# Re-resolved on each call (cheap) so a Claude install after server startup
 # is picked up without restart.
 def _resolve_claude():
     """Return absolute path to the claude executable, or 'claude' as last
-    resort (will then FileNotFoundError, matching prior behavior)."""
-    found = shutil.which('claude')
-    if found:
-        if sys.platform == 'win32':
-            # npm generates claude / claude.cmd / claude.ps1 but NEVER a
-            # top-level claude.exe. A claude.exe sitting next to a claude.cmd
-            # in the same npm bin dir is therefore a STALE ORPHAN from an
-            # older package version whose entrypoint (cli.js) the current
-            # package no longer ships -> running it crashes with
-            # MODULE_NOT_FOUND. shutil.which()/PATHEXT prefer .exe, so when
-            # both co-exist, use the npm-managed .cmd instead. A lone
-            # claude.exe (e.g. Anthropic's native ~/.claude/bin installer,
-            # no sibling .cmd) is left untouched.
-            p = Path(found)
-            if p.suffix.lower() == '.exe':
-                sibling_cmd = p.with_suffix('.cmd')
-                try:
-                    if sibling_cmd.exists():
-                        return str(sibling_cmd)
-                except Exception:
-                    pass
-        return found
-    # Fallbacks for common install locations not yet on PATH (e.g. winget
-    # adds claude to PATH for new shells, but the running server still has
-    # the pre-install PATH).
-    if sys.platform == 'win32':
-        candidates = [
-            Path(os.environ.get('APPDATA', '')) / 'npm' / 'claude.cmd',
-            Path(os.environ.get('USERPROFILE', '')) / '.claude' / 'bin' / 'claude.cmd',
-            Path(os.environ.get('USERPROFILE', '')) / '.claude' / 'bin' / 'claude.exe',
-            Path(os.environ.get('USERPROFILE', '')) / 'AppData' / 'Roaming' / 'npm' / 'claude.cmd',
-        ]
-    else:
-        home = Path(os.environ.get('HOME', str(Path.home())))
-        candidates = [
-            home / '.claude' / 'bin' / 'claude',
-            home / '.local' / 'bin' / 'claude',
-            home / '.npm-global' / 'bin' / 'claude',
-            Path('/usr/local/bin/claude'),
-            Path('/opt/homebrew/bin/claude'),
-        ]
-    for c in candidates:
-        try:
-            if c.exists():
-                return str(c)
-        except Exception:
-            pass
-    return 'claude'
+    resort (will then FileNotFoundError, matching prior behavior).
+    Delegates to ClaudeRuntime.resolve_binary_str() — single source of truth."""
+    return _agent_runtime.get_runtime('claude').resolve_binary_str()
 
 
 def _claude(*args):
@@ -430,13 +381,12 @@ def _encode_project_path(project_path):
 
 
 def _session_transcript_path(project_path, claude_session_id):
-    """Return the .jsonl transcript path for a Claude session."""
-    if not claude_session_id:
-        return None
-    encoded = _encode_project_path(project_path)
-    if not encoded:
-        return None
-    return CLAUDE_HOME / encoded / f'{claude_session_id}.jsonl'
+    """Return the .jsonl transcript path for a Claude session (no existence check).
+    Delegates to ClaudeRuntime._build_transcript_path() — path construction lives
+    in the runtime so non-claude providers automatically return None.
+    """
+    return _agent_runtime.get_runtime('claude')._build_transcript_path(
+        project_path, claude_session_id)
 
 
 def _session_too_large(project_path, claude_session_id):
@@ -490,95 +440,20 @@ def _extract_user_text(msg_field):
 
 
 def _recent_claude_transcripts(project_path, limit=5):
-    """Scan ~/.claude/projects/<encoded>/*.jsonl for a project.
+    """Scan the Claude transcript directory for a project.
 
     Returns [{session_id, mtime, first_user, last_user, turns, size}] sorted by mtime desc.
-    Covers both `_`→`-` encodings, dedups by filename.
+    Delegates to ClaudeRuntime.list_sessions() — scanning logic lives in the runtime.
     """
-    encoded = _encode_project_path(project_path)
-    if not encoded:
-        return []
-    candidates = [CLAUDE_HOME / encoded]
-    encoded_alt = encoded.replace('_', '-')
-    if encoded_alt != encoded:
-        candidates.append(CLAUDE_HOME / encoded_alt)
-
-    seen = set()
-    files = []
-    for d in candidates:
-        if not d.exists():
-            continue
-        try:
-            for f in d.glob('*.jsonl'):
-                if f.name in seen:
-                    continue
-                seen.add(f.name)
-                try:
-                    files.append((f, f.stat().st_mtime))
-                except OSError:
-                    continue
-        except OSError:
-            continue
-    files.sort(key=lambda x: x[1], reverse=True)
-    files = files[:limit]
-
-    results = []
-    for f, mtime in files:
-        first_user = ''
-        last_user = ''
-        turns = 0
-        try:
-            with open(f, 'r', encoding='utf-8', errors='replace') as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except Exception:
-                        continue
-                    if obj.get('type') != 'user':
-                        continue
-                    text = _extract_user_text(obj.get('message', {}))
-                    if not text:
-                        continue
-                    turns += 1
-                    if not first_user:
-                        first_user = text
-                    last_user = text
-        except Exception:
-            pass
-        try:
-            size = f.stat().st_size
-        except OSError:
-            size = 0
-        results.append({
-            'session_id': f.stem,
-            'mtime': mtime,
-            'first_user': first_user[:300],
-            'last_user': last_user[:300],
-            'turns': turns,
-            'size': size,
-        })
-    return results
+    return _agent_runtime.get_runtime('claude').list_sessions(project_path, limit=limit)
 
 
 def _find_transcript_file(project_path, claude_session_id):
-    """Locate the Claude Code transcript JSONL for a given csid, or None."""
-    if not claude_session_id:
-        return None
-    encoded = _encode_project_path(project_path)
-    if not encoded:
-        return None
-    candidates = [CLAUDE_HOME / encoded]
-    encoded_alt = encoded.replace('_', '-')
-    if encoded_alt != encoded:
-        candidates.append(CLAUDE_HOME / encoded_alt)
-    for d in candidates:
-        f = d / f'{claude_session_id}.jsonl'
-        if f.exists():
-            return f
-    return None
+    """Locate the Claude Code transcript JSONL for a given csid, or None.
+    Delegates to ClaudeRuntime.transcript_path() — path logic lives in the runtime.
+    """
+    return _agent_runtime.get_runtime('claude').transcript_path(
+        project_path, claude_session_id)
 
 
 def _parse_transcript_messages(f, max_messages=300):
@@ -586,44 +461,9 @@ def _parse_transcript_messages(f, max_messages=300):
 
     role: 'user' | 'assistant' | 'tool_call'
     Returns at most max_messages entries; longer transcripts are truncated.
+    Delegates to ClaudeRuntime.parse_transcript_file() — parsing logic lives in the runtime.
     """
-    messages = []
-    try:
-        with open(f, 'r', encoding='utf-8', errors='replace') as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except Exception:
-                    continue
-                t = obj.get('type', '')
-                ts = obj.get('timestamp', '')
-                if t == 'user':
-                    text = _extract_user_text(obj.get('message', {}))
-                    if text:
-                        messages.append({'role': 'user', 'text': text[:5000], 'timestamp': ts})
-                elif t == 'assistant':
-                    content = obj.get('message', {}).get('content', [])
-                    if isinstance(content, list):
-                        for block in content:
-                            if not isinstance(block, dict):
-                                continue
-                            btype = block.get('type', '')
-                            if btype == 'text':
-                                txt = str(block.get('text', '')).strip()
-                                if txt:
-                                    messages.append({'role': 'assistant', 'text': txt[:5000], 'timestamp': ts})
-                            elif btype == 'tool_use':
-                                messages.append({'role': 'tool_call',
-                                                 'tool': block.get('name', ''),
-                                                 'timestamp': ts})
-                if len(messages) >= max_messages:
-                    break
-    except Exception as e:
-        return [{'role': 'error', 'text': f'Failed to parse transcript: {e}'}]
-    return messages
+    return _agent_runtime.get_runtime('claude').parse_transcript_file(f, max_messages=max_messages)
 
 
 def _native_memory_path(project_path):
@@ -909,30 +749,20 @@ def _save_schedules(schedules):
 
 
 def _build_claude_flags(project=None, streaming=False):
-    """Build common Claude CLI flags from config, with optional per-project overrides."""
-    flags = ['--print', '--verbose', '--output-format', 'stream-json',
-             '--dangerously-skip-permissions']
-    if streaming:
-        flags.extend(['--input-format', 'stream-json'])
-    # Per-project model takes priority over global config
-    model = (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '')
-    if model:
-        flags.extend(['--model', model])
-    max_turns = CONFIG.get('agent_max_turns', 0)
-    if max_turns and int(max_turns) > 0:
-        flags.extend(['--max-turns', str(int(max_turns))])
-    perm_mode = CONFIG.get('agent_permission_mode', '')
-    if perm_mode:
-        flags.extend(['--permission-mode', perm_mode])
-    # Channels (e.g. "plugin:telegram@claude-plugins-official")
-    channels = (project or {}).get('agent_channels', '') or CONFIG.get('agent_channels', '')
-    if channels:
-        flags.extend(['--channels', channels])
-    # Remote control
-    rc = (project or {}).get('agent_remote_control', False) or CONFIG.get('agent_remote_control', False)
-    if rc:
-        flags.append('--remote-control')
-    return flags
+    """Build common Claude CLI flags from config, with optional per-project overrides.
+    Delegates to ClaudeRuntime.build_command()[1:] — single source of truth.
+    Returns flags only (no binary prefix), matching the legacy contract."""
+    return _agent_runtime.get_runtime('claude').build_command(
+        model=(project or {}).get('agent_model', '') or CONFIG.get('agent_model', ''),
+        max_turns=CONFIG.get('agent_max_turns', 0),
+        streaming=streaming,
+        perm_mode=CONFIG.get('agent_permission_mode', ''),
+        channels=(project or {}).get('agent_channels', '') or CONFIG.get('agent_channels', ''),
+        remote_control=bool(
+            (project or {}).get('agent_remote_control', False) or
+            CONFIG.get('agent_remote_control', False)
+        ),
+    )[1:]  # strip binary — _build_claude_flags() contract is flags-only
 
 
 # ── Agent session tracking ───────────────────────────────────────────────────
@@ -2741,6 +2571,12 @@ def agent_providers():
                 'supports_plan_mode': caps.supports_plan_mode,
                 'supports_ask_user_question': caps.supports_ask_user_question,
                 'supports_streaming_text': caps.supports_streaming_text,
+                'emits_usage': caps.emits_usage,
+                'emits_cost': caps.emits_cost,
+                'emits_num_turns': caps.emits_num_turns,
+                'emits_rate_limit': caps.emits_rate_limit,
+                'image_input': caps.image_input,
+                'context_window': caps.context_window,
                 'context_injection': caps.context_injection,
                 'context_file_name': caps.context_file_name,
                 'oneshot_supported': caps.oneshot_supported,
@@ -2761,59 +2597,133 @@ def agent_providers():
     return jsonify({'providers': out, 'default': default_name})
 
 
-@app.route('/api/claude/auth-status')
-def claude_auth_status():
-    """Return the latest known Claude CLI auth state. Cheap — no subprocess."""
-    with _claude_auth_lock:
-        return jsonify(dict(_claude_auth_state))
+# ── Provider env-var storage (Gemini API key etc.) ──────────────────────────
+
+PROVIDER_ENV_PATH = _DATA_ROOT / 'data' / 'provider_env.json'
+_provider_env_lock = threading.Lock()
 
 
-@app.route('/api/claude/login-launch', methods=['POST'])
-def claude_login_launch():
-    """Open the `claude` CLI in a NEW OS terminal window so the user can sign
-    in. Has to be a real TTY — MC's in-app terminal pop-out is a piped
-    subprocess, and claude's `/login` slash command refuses to run without an
-    interactive console ("/login isn't available in this environment")."""
-    claude_bin = _resolve_claude()
+def _load_provider_env_file() -> Dict[str, Dict[str, str]]:
+    if not PROVIDER_ENV_PATH.exists():
+        return {}
     try:
-        if sys.platform == 'win32':
-            # CREATE_NEW_CONSOLE gives `claude` its own conhost window with a
-            # real input handle, which is what its OAuth flow needs. `cmd /k`
-            # keeps the window open after claude exits so the user sees any
-            # final messages and can copy the auth-code prompt.
-            subprocess.Popen(
-                f'start "" cmd /k "\"{claude_bin}\""',
-                shell=True,
-                creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0),
-            )
-        elif sys.platform == 'darwin':
-            # Tell Terminal.app to open a new window running claude. Quoting
-            # the path so it survives spaces.
-            script = f'tell application "Terminal" to do script "{claude_bin}"'
-            subprocess.Popen(['osascript', '-e', script])
-        else:
-            # Linux: try a chain of common emulators.
-            for emu in ('x-terminal-emulator', 'gnome-terminal', 'konsole',
-                        'xfce4-terminal', 'xterm'):
-                if shutil.which(emu):
-                    subprocess.Popen([emu, '-e', claude_bin])
-                    break
-            else:
-                return jsonify({
-                    'error': 'No terminal emulator found. Run `claude` '
-                             'manually in a terminal to sign in.',
-                }), 500
-        return jsonify({'ok': True})
+        return json.loads(PROVIDER_ENV_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
+def _save_provider_env_file(data: Dict[str, Dict[str, str]]) -> None:
+    PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PROVIDER_ENV_PATH.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _hydrate_provider_env_into_os() -> None:
+    """Inject persisted provider env vars into os.environ so child agent
+    processes inherit them. Shell-set vars win — we only fill blanks."""
+    for _provider, kv in (_load_provider_env_file() or {}).items():
+        if not isinstance(kv, dict):
+            continue
+        for k, v in kv.items():
+            if k and v is not None and k not in os.environ:
+                os.environ[k] = str(v)
+
+
+_hydrate_provider_env_into_os()
+
+
+@app.route('/api/agent/provider/<name>/auth')
+def agent_provider_auth_status(name):
+    """Re-probe one provider's install + auth state. Cheaper than the full
+    /api/agent/providers list when the user just clicked Refresh on one row."""
+    try:
+        rt = _agent_runtime.get_runtime(name)
+    except KeyError:
+        return jsonify({'error': f'unknown provider {name}'}), 404
+    try:
+        h = rt.health_check()
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    return jsonify({
+        'name': name,
+        'installed': h.installed,
+        'version': h.version,
+        'binary_path': str(h.binary_path) if h.binary_path else None,
+        'auth_status': h.auth_state.status if h.auth_state else 'unknown',
+        'auth_method': h.auth_state.method if h.auth_state else None,
+        'auth_error_text': h.auth_state.error_text if h.auth_state else None,
+        'install_hint': h.install_hint,
+    })
 
 
-@app.route('/api/claude/auth-probe', methods=['POST'])
-def claude_auth_probe():
-    """Actively probe Claude CLI auth by running `claude -p ok --max-turns 1`.
-    Costs a few tokens when authenticated; prints the not-logged-in sentinel
-    locally when not. Only invoked when the user clicks 'Re-check' in the
-    banner — not on an interval."""
+@app.route('/api/agent/provider/<name>/env', methods=['POST'])
+def agent_provider_set_env(name):
+    """Save and inject one env var for a provider. Body: {key, value}.
+
+    Value is persisted to data/provider_env.json AND written to os.environ
+    so the next agent dispatch picks it up without an MC restart. The key
+    must look like a normal env-var name (paranoid filter — no PATH writes
+    via this surface)."""
+    if name not in _agent_runtime._RUNTIMES:
+        return jsonify({'error': f'unknown provider {name}'}), 404
+    body = request.get_json(force=True, silent=True) or {}
+    key = (body.get('key') or '').strip()
+    value = body.get('value')
+    if not key or value is None:
+        return jsonify({'error': 'key and value required'}), 400
+    if not key.replace('_', '').isalnum() or not key[0].isalpha():
+        return jsonify({'error': 'invalid env var name'}), 400
+    # Allowlist: only credentials-flavored names. Stops the surface from
+    # being used to clobber PATH / HOME / USERPROFILE / etc.
+    SAFE_SUFFIXES = ('_API_KEY', '_TOKEN', '_KEY', '_SECRET',
+                     '_PROFILE', '_REGION', '_CREDENTIALS', '_ENDPOINT')
+    if not any(key.upper().endswith(s) for s in SAFE_SUFFIXES):
+        return jsonify({
+            'error': 'env var name not allowed — must end in _API_KEY, '
+                     '_TOKEN, _KEY, _SECRET, _PROFILE, _REGION, '
+                     '_CREDENTIALS, or _ENDPOINT',
+        }), 400
+
+    val_str = str(value)
+    with _provider_env_lock:
+        data = _load_provider_env_file()
+        data.setdefault(name, {})[key] = val_str
+        _save_provider_env_file(data)
+    if val_str:
+        os.environ[key] = val_str
+    else:
+        # Empty value = clear the override (let shell env take over).
+        os.environ.pop(key, None)
+    return jsonify({'ok': True, 'key': key})
+
+
+@app.route('/api/agent/provider/<name>/login-launch', methods=['POST'])
+def agent_provider_login_launch(name):
+    """Open the provider's CLI in a NEW OS terminal so the user can complete
+    interactive login (OAuth flow for gemini, etc.). Same pattern as
+    /api/claude/login-launch — needs a real TTY, not a piped subprocess.
+
+    Preserved for backward compat; prefer /api/agent/<provider>/auth-login.
+    """
+    try:
+        rt = _agent_runtime.get_runtime(name)
+    except KeyError:
+        return jsonify({'error': f'unknown provider {name}'}), 404
+    bin_path = rt.resolve_binary()
+    if not bin_path:
+        return jsonify({'error': f'{name} CLI is not installed'}), 400
+    err = _launch_terminal_for_binary(str(bin_path))
+    if err:
+        return jsonify({'error': err}), 500
+    return jsonify({'ok': True})
+
+
+def _run_claude_auth_probe() -> dict:
+    """Run `claude -p ok` to actively probe auth and update _claude_auth_state.
+
+    Extracted so both the legacy shim and the new generic /api/agent/claude/auth-probe
+    share the same implementation. Returns a snapshot of _claude_auth_state.
+    """
     try:
         cmd = [_resolve_claude(), '-p', 'ok', '--max-turns', '1']
         result = subprocess.run(
@@ -2828,9 +2738,6 @@ def claude_auth_probe():
         elif result.returncode == 0:
             _mark_claude_auth_ok()
         else:
-            # Non-zero exit without a known sentinel — leave state alone so a
-            # transient API hiccup doesn't clobber a previously-known-good
-            # auth status. Just record the probe attempt.
             with _claude_auth_lock:
                 _claude_auth_state['last_probe_at'] = _time.time()
     except subprocess.TimeoutExpired:
@@ -2838,14 +2745,145 @@ def claude_auth_probe():
             _claude_auth_state['last_probe_at'] = _time.time()
     except FileNotFoundError:
         _mark_claude_auth_error('cli_not_found', 'claude CLI not on PATH')
-    except Exception as e:
+    except Exception:
         with _claude_auth_lock:
             _claude_auth_state['last_probe_at'] = _time.time()
-            snapshot = dict(_claude_auth_state)
-        snapshot['probe_error'] = str(e)
-        return jsonify(snapshot), 500
+    with _claude_auth_lock:
+        return dict(_claude_auth_state)
+
+
+def _launch_terminal_for_binary(bin_str: str) -> Optional[str]:
+    """Open `bin_str` in a new OS terminal for interactive auth flows.
+
+    Returns None on success or an error string on failure. Callers return 500
+    when this is non-None. A real TTY is required because provider CLIs like
+    claude use /login which refuses to run inside a piped subprocess.
+    """
+    try:
+        if sys.platform == 'win32':
+            subprocess.Popen(
+                f'start "" cmd /k "\"{bin_str}\""',
+                shell=True,
+                creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0),
+            )
+        elif sys.platform == 'darwin':
+            script = f'tell application "Terminal" to do script "{bin_str}"'
+            subprocess.Popen(['osascript', '-e', script])
+        else:
+            for emu in ('x-terminal-emulator', 'gnome-terminal', 'konsole',
+                        'xfce4-terminal', 'xterm'):
+                if shutil.which(emu):
+                    subprocess.Popen([emu, '-e', bin_str])
+                    break
+            else:
+                return (f'No terminal emulator found. Run `{bin_str}` '
+                        'manually in a terminal to sign in.')
+        return None
+    except Exception as e:
+        return str(e)
+
+
+# Wire claude auth hooks into AgentRuntime so generic routes share the same
+# in-memory state. Must be at module level after _claude_auth_state and
+# _run_claude_auth_probe are defined, before any request can be served.
+_agent_runtime._CLAUDE_HOOKS['auth_status'] = lambda: dict(_claude_auth_state)
+_agent_runtime._CLAUDE_HOOKS['auth_probe'] = _run_claude_auth_probe
+
+
+# ── Generic /api/agent/<provider>/auth-* routes ──────────────────────────────
+
+
+@app.route('/api/agent/<provider>/auth-status')
+def agent_auth_status(provider):
+    """Cheap cached auth state for any provider (no subprocess).
+
+    For 'claude' the response shape is {ok, reason, last_error_text, detected_at,
+    last_probe_at} — byte-identical to the legacy /api/claude/auth-status shim.
+    Other providers return {ok, status, method, error_text, last_checked}.
+    """
+    try:
+        rt = _agent_runtime.get_runtime(provider)
+    except KeyError:
+        return jsonify({'error': f'unknown provider: {provider}'}), 404
+    return jsonify(rt.auth_status())
+
+
+@app.route('/api/agent/<provider>/auth-probe', methods=['POST'])
+def agent_auth_probe(provider):
+    """Actively probe auth state for any provider. May spawn a subprocess.
+
+    For 'claude' the payload is identical to the legacy /api/claude/auth-probe shim.
+    """
+    try:
+        rt = _agent_runtime.get_runtime(provider)
+    except KeyError:
+        return jsonify({'error': f'unknown provider: {provider}'}), 404
+    try:
+        return jsonify(rt.auth_probe())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/agent/<provider>/auth-login', methods=['POST'])
+def agent_auth_login(provider):
+    """Open the provider CLI in a new OS terminal for interactive login.
+
+    Requires a real TTY — MC's in-app terminal pop-out is a piped subprocess
+    and most provider CLIs refuse interactive auth flows without a console.
+    Equivalent to the legacy /api/claude/login-launch shim.
+    """
+    try:
+        rt = _agent_runtime.get_runtime(provider)
+    except KeyError:
+        return jsonify({'error': f'unknown provider: {provider}'}), 404
+    bin_path = rt.resolve_binary()
+    if not bin_path:
+        return jsonify({'error': f'{provider} CLI is not installed'}), 400
+    err = _launch_terminal_for_binary(str(bin_path))
+    if err:
+        return jsonify({'error': err}), 500
+    return jsonify({'ok': True})
+
+
+@app.route('/api/agent/<provider>/auth-logout', methods=['POST'])
+def agent_auth_logout(provider):
+    """Revoke / clear stored credentials for a provider."""
+    try:
+        rt = _agent_runtime.get_runtime(provider)
+    except KeyError:
+        return jsonify({'error': f'unknown provider: {provider}'}), 404
+    try:
+        return jsonify(rt.auth_logout())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Legacy /api/claude/auth-* shims ──────────────────────────────────────────
+# Kept indefinitely so Tauri launcher, mobile APK, and dashboards built before
+# ws_007 updates the UI keep working with zero behavioral change.
+
+
+@app.route('/api/claude/auth-status')
+def claude_auth_status():
+    """Backward-compat shim → /api/agent/claude/auth-status."""
     with _claude_auth_lock:
         return jsonify(dict(_claude_auth_state))
+
+
+@app.route('/api/claude/login-launch', methods=['POST'])
+def claude_login_launch():
+    """Backward-compat shim → /api/agent/claude/auth-login."""
+    return agent_auth_login('claude')
+
+
+@app.route('/api/claude/auth-probe', methods=['POST'])
+def claude_auth_probe():
+    """Backward-compat shim → /api/agent/claude/auth-probe.
+
+    Actively probes Claude CLI auth by running `claude -p ok --max-turns 1`.
+    Only invoked when the user clicks 'Re-check' in the banner.
+    """
+    return agent_auth_probe('claude')
 
 
 # ── Agent endpoints ──────────────────────────────────────────────────────────
@@ -3410,6 +3448,7 @@ def _read_agent_stream(proc, session):
                 # `system/init` and `rate_limit_event` messages (every claude
                 # session emits these). No-op for any other message type.
                 _capture_system_init(msg)
+                _LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
                 if msg_type == 'assistant' and 'message' in msg:
                     for block in msg['message'].get('content', []):
                         if block.get('type') == 'text':
@@ -3566,6 +3605,7 @@ def _read_agent_stream_b(proc, session):
                     _note_claude_sid(session, msg['session_id'])
                 # See Mode A reader: refresh the system-status cache.
                 _capture_system_init(msg)
+                _LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
                 if msg_type == 'assistant' and 'message' in msg:
                     for block in msg['message'].get('content', []):
                         if block.get('type') == 'text':
@@ -3831,6 +3871,60 @@ def _save_agent_log(project_id, log):
     filepath.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
+def _migrate_agent_log_provider_field():
+    """One-time idempotent migration: stamp provider='claude' on legacy agent_log entries.
+
+    Entries written before the multi-provider branch existed have no 'provider' key.
+    /api/usage and run-history endpoints default-read them as 'claude', but explicit
+    presence makes queries unambiguous.  Safe to re-run (skips rows that already have
+    the field).  Called once at startup inside _startup_memory_maintenance().
+    """
+    stamped = 0
+    for f in DATA_DIR.glob('*_agent_log.json'):
+        try:
+            log = json.loads(f.read_text(encoding='utf-8'))
+            dirty = False
+            for entry in log:
+                if 'provider' not in entry:
+                    entry['provider'] = 'claude'
+                    dirty = True
+                    stamped += 1
+            if dirty:
+                f.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            continue
+    if stamped:
+        _log(f"[provider-migrate] stamped provider='claude' on {stamped} legacy agent_log row(s)")
+
+
+def _session_usage_payload(session: dict) -> dict:
+    """Build the usage/cost/turns slice of an SSE payload, gated on provider capabilities.
+
+    Providers that don't emit cost or turns (e.g. Gemini) must NOT fabricate zeros —
+    the frontend reads absence of the key as "this provider doesn't support it" and
+    hides the corresponding counter rather than showing 0.
+
+    Always includes 'usage' when emits_usage is True (it is the authoritative token
+    counter).  cost_usd and num_turns are only included when their respective
+    capability flags are set.
+    """
+    provider = (session.get('provider') or 'claude').lower()
+    try:
+        caps = _agent_runtime.get_runtime(provider).capabilities()
+    except Exception:
+        # Fallback: treat as Claude (full telemetry) so we never silently drop data.
+        caps = _agent_runtime.get_runtime('claude').capabilities()
+
+    out: dict = {}
+    if caps.emits_usage:
+        out['usage'] = session.get('usage', {})
+    if caps.emits_cost:
+        out['cost_usd'] = session.get('cost_usd', 0)
+    if caps.emits_num_turns:
+        out['num_turns'] = session.get('num_turns', 0)
+    return out
+
+
 def _backfill_agent_log_from_transcripts(project_id, project):
     """Synthesize agent_log entries for Claude transcripts that have no matching log row.
 
@@ -4054,6 +4148,10 @@ def _startup_memory_maintenance():
     """Background startup chain: backfill agent_log from transcripts, THEN
     reconcile unscribed sessions (order matters — reconcile needs the
     synthesized orphan rows backfill creates). Off the app.run() path."""
+    try:
+        _migrate_agent_log_provider_field()
+    except Exception as e:
+        _log(f"[provider-migrate] failed: {e}")
     try:
         _backfill_all_agent_logs()
     except Exception as e:
@@ -4710,6 +4808,9 @@ def _log_agent_completion(session):
         # trigger_id: schedule_id, hivemind_id, or workstream_id depending on type
         'trigger_type': session.get('trigger_type', 'manual'),
         'trigger_id': session.get('trigger_id', ''),
+        # Provider that ran this session ('claude', 'gemini', ...). Absent on
+        # pre-multi-provider entries; treat missing as 'claude' when reading.
+        'provider': session.get('provider', 'claude'),
         # Fix B marker: whether this session's memory was captured. Presence of
         # this key on ANY entry means the log was written by Fix-B-aware code
         # (used by the reconciler to distinguish first-boot baseline).
@@ -5023,25 +5124,19 @@ def _scribe_call(model, instruction, body):
     """One blocking `claude -p` call (prompt via stdin to dodge arg limits).
 
     Returns the model's text output, or raises on failure/timeout.
+    Delegates to ClaudeRuntime.oneshot() — single source of truth.
+    Callers that catch subprocess.TimeoutExpired should also catch RuntimeError
+    since oneshot() normalises all failures to a None return which we raise here.
     """
-    cmd = [_resolve_claude(), '-p', '--model', model, '--max-turns', '1',
-           '--dangerously-skip-permissions']
-    r = subprocess.run(
-        cmd,
-        input=f"{instruction}\n\n---TRANSCRIPT---\n{body}",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+    result = _agent_runtime.get_runtime('claude').oneshot(
+        prompt=instruction,
+        model=model,
+        stdin_text=body,
         cwd=str(Path.home()),
-        text=True,
-        encoding='utf-8',
-        errors='replace',
-        timeout=180,
-        creationflags=_POPEN_FLAGS,
-        startupinfo=_STARTUPINFO,
     )
-    if r.returncode != 0:
-        raise RuntimeError(f"scribe claude exited {r.returncode}")
-    return (r.stdout or '').strip()
+    if result is None:
+        raise RuntimeError("scribe claude call failed (non-zero exit or timeout)")
+    return result.text
 
 
 def _scribe_extract(project, session):
@@ -5841,7 +5936,7 @@ def _dispatch_via_runtime(p, task, *, provider_name,
 
 def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                              trigger_type='manual', trigger_id='',
-                             reuse_session_id=''):
+                             reuse_session_id='', provider_override=''):
     """Core dispatch logic shared by HTTP endpoint and scheduler.
 
     Returns session_id on success, raises ValueError on error.
@@ -5878,10 +5973,13 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
         raise ValueError('project_path not set or invalid')
 
     # ── Multi-provider routing ──────────────────────────────────────────────
-    # If the project explicitly selects a non-claude provider, dispatch
-    # through the AgentRuntime abstraction instead of the legacy claude path.
-    # Default behavior (provider unset OR provider='claude') is unchanged.
-    provider_name = (p.get('provider') or 'claude').lower()
+    # If the conversation selects a non-claude provider, dispatch through the
+    # AgentRuntime abstraction instead of the legacy claude path. Provider is
+    # bound per-conversation: `provider_override` (chosen in the new-chat
+    # composer) wins, then the project's default seed, then the global default.
+    # Default behavior (all unset OR claude) is unchanged.
+    provider_name = (provider_override or p.get('provider')
+                     or CONFIG.get('default_provider') or 'claude').lower()
     if provider_name != 'claude':
         try:
             return _dispatch_via_runtime(p, task, provider_name=provider_name,
@@ -5908,6 +6006,28 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             task = (f"[Continuing from a previous conversation (session {resume_id}) that grew too large "
                     f"to resume ({size_mb:.0f} MB). Start fresh but continue the user's request below.]\n\n{task}")
             resume_id = ''
+
+    # Resume → pre-load the prior conversation into log_lines so the chat
+    # displays the full history when the user taps Continue, not just the new
+    # prompt. Same renderer the read-only /reconstruct endpoint uses, so the
+    # live and read-only views are byte-identical. Cap at 300 messages —
+    # enough for any practical session, bounded so a runaway transcript can't
+    # spike memory. Skipped when resume_id was reset above (transcript-too-large
+    # path) since we're starting fresh and the prior history isn't relevant.
+    #
+    # IMPORTANT: also append the new task as a user line so the continuation
+    # prompt shows up in the chat. Without this, the frontend pulls the
+    # server's log_lines (transcript only) which overwrites its local
+    # `[prefix]` seed — and the user's new prompt disappears from the view.
+    _seed_log_lines = []
+    if resume_id:
+        try:
+            user_label = CONFIG.get('user_name') or 'User'
+            _seed_log_lines = _transcript_buffer_lines(
+                pp, resume_id, user_label, max_messages=300)
+            _seed_log_lines.append(f"\n> {user_label}: {task}\n")
+        except Exception as e:
+            _log(f"[dispatch] transcript preload failed for {resume_id[:12]}: {e}")
 
     mgr = get_manager(project_id)
     mgr.ensure_guardian()
@@ -5957,7 +6077,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'proc': proc,
                 'status': 'running',
                 'task': task,
-                'log_lines': [],
+                'log_lines': list(_seed_log_lines),
                 'started_at': now_iso(),
                 'session_id': session_id,
                 'project_id': project_id,
@@ -6012,7 +6132,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'proc': proc,
                 'status': 'running',
                 'task': task,
-                'log_lines': [],
+                'log_lines': list(_seed_log_lines),
                 'started_at': now_iso(),
                 'session_id': session_id,
                 'project_id': project_id,
@@ -6071,11 +6191,14 @@ def agent_dispatch(project_id):
         return jsonify({'error': 'task required'}), 400
     resume_id = data.get('resume_conversation_id', '').strip()
     incognito = bool(data.get('incognito'))
-    # Mobile brief replies: augmented version goes to claude. The frontend's
+    provider_override = (data.get('provider') or '').strip().lower()
+    # Mobile brief replies: augmented version goes to the agent. The frontend's
     # local echo already shows the original task as the user's chat bubble.
     claude_task = _apply_mobile_brief(task, data)
     try:
-        session_id = _dispatch_agent_internal(project_id, claude_task, resume_id, incognito=incognito)
+        session_id = _dispatch_agent_internal(project_id, claude_task, resume_id,
+                                              incognito=incognito,
+                                              provider_override=provider_override)
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code
@@ -6189,7 +6312,9 @@ def agent_send(project_id):
         # there is no prior session yet).
         try:
             claude_message = _apply_mobile_brief(message, data)
-            new_session_id = _dispatch_agent_internal(project_id, claude_message, incognito=incognito)
+            new_session_id = _dispatch_agent_internal(
+                project_id, claude_message, incognito=incognito,
+                provider_override=(data.get('provider') or '').strip().lower())
         except ValueError as e:
             code = 404 if 'not found' in str(e) else 400
             return jsonify({'error': str(e)}), code
@@ -6275,7 +6400,7 @@ def agent_stream(project_id):
             if is_mode_b:
                 if status == 'idle' and not idle_sent:
                     # Turn finished but process is still alive
-                    yield f"data: {json.dumps({'type': 'turn_complete', 'status': 'idle', 'usage': session.get('usage', {}), 'cost_usd': session.get('cost_usd', 0), 'num_turns': session.get('num_turns', 0)})}\n\n"
+                    yield f"data: {json.dumps({'type': 'turn_complete', 'status': 'idle', **_session_usage_payload(session)})}\n\n"
                     idle_sent = True
                 elif status == 'running':
                     idle_sent = False  # reset for next turn
@@ -6283,19 +6408,19 @@ def agent_stream(project_id):
                     if session.get('guardian_state') == 'recovering':
                         pass  # Wait for guardian recovery to complete
                     else:
-                        yield f"data: {json.dumps({'type': 'status', 'status': status, 'usage': session.get('usage', {}), 'cost_usd': session.get('cost_usd', 0), 'num_turns': session.get('num_turns', 0)})}\n\n"
+                        yield f"data: {json.dumps({'type': 'status', 'status': status, **_session_usage_payload(session)})}\n\n"
                         break
             else:
                 # Mode A: close stream on terminal states immediately;
                 # for non-terminal non-running, wait only if followups pending
                 if status == 'stopped':
-                    yield f"data: {json.dumps({'type': 'status', 'status': status, 'usage': session.get('usage', {}), 'cost_usd': session.get('cost_usd', 0), 'num_turns': session.get('num_turns', 0)})}\n\n"
+                    yield f"data: {json.dumps({'type': 'status', 'status': status, **_session_usage_payload(session)})}\n\n"
                     break
                 elif status != 'running':
                     if session.get('guardian_state') == 'recovering':
                         pass  # Wait for guardian recovery to complete
                     elif not session.get('pending_followups') and not session.get('_dispatching_followup'):
-                        yield f"data: {json.dumps({'type': 'status', 'status': status, 'usage': session.get('usage', {}), 'cost_usd': session.get('cost_usd', 0), 'num_turns': session.get('num_turns', 0)})}\n\n"
+                        yield f"data: {json.dumps({'type': 'status', 'status': status, **_session_usage_payload(session)})}\n\n"
                         break
 
             # Emit guardian state changes
@@ -6375,6 +6500,16 @@ def agent_followup(project_id):
             existing['status'] = 'running'
             existing['last_status_change_time'] = _time.time()
             existing['last_output_time'] = _time.time()
+            # Refresh the stashed system context so MEMORY / AGENT_RULES edits
+            # made mid-conversation ride along on the next per-turn respawn.
+            # The runtime re-injects existing['_system_prompt'] every followup
+            # (see _compose_respawn_prompt in agent_runtime.py).
+            if not existing.get('incognito'):
+                try:
+                    existing['_system_prompt'] = _build_agent_context(
+                        p, incognito=False, task=message)
+                except Exception as e:
+                    _log(f"[followup] context refresh failed: {e}")
             try:
                 runtime = _agent_runtime.get_runtime(session_provider)
                 handle = _agent_runtime.SessionHandle(
@@ -6749,6 +6884,13 @@ def agent_interrupt(project_id):
                 session['log_lines'].append('[Got your message]')
                 session['log_lines'].append(f"\n> {user_label}: {message}\n")
             session.pop('pending_followups', None)
+            # Refresh stashed context (see the followup path for rationale).
+            if not session.get('incognito'):
+                try:
+                    session['_system_prompt'] = _build_agent_context(
+                        p, incognito=False, task=message)
+                except Exception as e:
+                    _log(f"[interrupt] context refresh failed: {e}")
             try:
                 runtime = _agent_runtime.get_runtime(session_provider)
                 handle = _agent_runtime.SessionHandle(
@@ -8348,6 +8490,136 @@ def _hm_build_worker_context(hivemind_id, ws_id):
     return "\n\n".join(parts)
 
 
+def _hm_spawn_worker_session(manifest, ws, p, hivemind_id, ws_id):
+    """Spawn a hivemind worker session. Returns session_id.
+
+    Routes through the AgentRuntime for non-claude projects; uses the claude
+    direct-spawn path otherwise (byte-identical argv). Claude is the default
+    provider for hivemind workers (the bus/tool protocol is claude-native).
+
+    Worker context is injected via --append-system-prompt for claude; prepended
+    to the task for other providers (context_injection='prepend').
+    """
+    project_id = p.get('id', '')
+    pp = p.get('project_path', '')
+    worker_context = _hm_build_worker_context(hivemind_id, ws_id)
+    model = (ws.get('model', '') or
+             manifest.get('config', {}).get('worker_model', '') or
+             CONFIG.get('agent_model', ''))
+    task = (
+        f"You are a Hivemind worker for workstream: {ws.get('title', ws_id)}.\n"
+        f"Brief: {ws.get('description', '')}\n\n"
+        f"Begin your analysis. Follow the two-phase protocol described in your system prompt."
+    )
+    session_id = f'hm_{uuid.uuid4().hex[:8]}'
+    provider_name = (p.get('provider') or CONFIG.get('default_provider') or 'claude').lower()
+
+    if provider_name != 'claude':
+        # Non-claude: route through the runtime. Worker context prepended to
+        # task since non-claude runtimes use context_injection='prepend'.
+        try:
+            rt = _agent_runtime.get_runtime(provider_name)
+        except KeyError:
+            _log(f"[hm-spawn] unknown provider {provider_name!r}, falling back to claude")
+            rt = None
+
+        if rt is not None:
+            task_with_ctx = f"{worker_context}\n\n---\n\n{task}"
+            pre_session = {
+                'status': 'running',
+                'task': task,
+                'log_lines': [],
+                'started_at': now_iso(),
+                'session_id': session_id,
+                'project_id': project_id,
+                'mode': 'A',
+                'housekeeping': True,
+                'hivemind_id': hivemind_id,
+                'hivemind_ws_id': ws_id,
+                'trigger_type': 'hivemind_worker',
+                'trigger_id': ws_id,
+                'provider': provider_name,
+                'process_alive': True,
+                'last_output_time': _time.time(),
+                'last_status_change_time': _time.time(),
+                'guardian_state': None,
+                'recovery_attempts': 0,
+                'last_recovery_time': 0,
+                'pending_recovery_message': None,
+                'circuit_breaker_tripped': False,
+                '_dispatch_time': _time.time(),
+            }
+            mgr = get_manager(project_id)
+            mgr.ensure_guardian()
+            with mgr.lock:
+                agent_sessions[session_id] = pre_session
+                mgr.session_ids.add(session_id)
+            rt.dispatch(
+                project_path=pp,
+                task=task_with_ctx,
+                system_prompt='',
+                mode='A',
+                model=model,
+                mc_session_id=session_id,
+                session_dict=pre_session,
+                project_id=project_id,
+                register_process=_register_process,
+            )
+            return session_id
+
+    # Claude path (byte-identical) — _resolve_claude() delegates to ClaudeRuntime.
+    max_turns = (manifest.get('config', {}).get('worker_max_turns', 0) or
+                 CONFIG.get('agent_max_turns', 0))
+    cmd = [_resolve_claude(), '-p', task, '--print', '--verbose',
+           '--output-format', 'stream-json',
+           '--dangerously-skip-permissions',
+           '--append-system-prompt', worker_context]
+    if model:
+        cmd.extend(['--model', model])
+    if max_turns and int(max_turns) > 0:
+        cmd.extend(['--max-turns', str(int(max_turns))])
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=pp,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        creationflags=_POPEN_FLAGS,
+        startupinfo=_STARTUPINFO,
+    )
+    threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
+    _register_process(proc, f'Hivemind Worker ({ws.get("title", ws_id)[:30]})',
+                      'hivemind_worker', session_id, project_id, task[:80])
+
+    session = {
+        'proc': proc,
+        'status': 'running',
+        'task': task,
+        'log_lines': [],
+        'started_at': now_iso(),
+        'session_id': session_id,
+        'project_id': project_id,
+        'mode': 'A',
+        'housekeeping': True,
+        'hivemind_id': hivemind_id,
+        'hivemind_ws_id': ws_id,
+        'trigger_type': 'hivemind_worker',
+        'trigger_id': ws_id,
+    }
+    mgr = get_manager(project_id)
+    mgr.ensure_guardian()
+    with mgr.lock:
+        agent_sessions[session_id] = session
+        mgr.session_ids.add(session_id)
+
+    threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True).start()
+    return session_id
+
+
 @app.route('/api/hivemind/<hivemind_id>/workstreams/<ws_id>/spawn', methods=['POST'])
 def hivemind_workstream_spawn(hivemind_id, ws_id):
     """Spawn a worker agent for a specific workstream."""
@@ -8367,71 +8639,9 @@ def hivemind_workstream_spawn(hivemind_id, ws_id):
     if not pp or not Path(pp).is_dir():
         return jsonify({'error': 'project_path not set'}), 400
 
-    # Build worker context
-    worker_context = _hm_build_worker_context(hivemind_id, ws_id)
-
-    # Determine model: workstream override > manifest config > global config
-    model = ws.get('model', '') or manifest.get('config', {}).get('worker_model', '') or CONFIG.get('agent_model', '')
-
-    task = (
-        f"You are a Hivemind worker for workstream: {ws.get('title', ws_id)}.\n"
-        f"Brief: {ws.get('description', '')}\n\n"
-        f"Begin your analysis. Follow the two-phase protocol described in your system prompt."
-    )
-
-    # Build command — Mode A (spawn-per-turn) for workers
-    cmd = [_resolve_claude(), '-p', task, '--print', '--verbose', '--output-format', 'stream-json',
-           '--dangerously-skip-permissions', '--append-system-prompt', worker_context]
-    if model:
-        cmd.extend(['--model', model])
-    max_turns = manifest.get('config', {}).get('worker_max_turns', 0) or CONFIG.get('agent_max_turns', 0)
-    if max_turns and int(max_turns) > 0:
-        cmd.extend(['--max-turns', str(int(max_turns))])
-
-    session_id = f'hm_{uuid.uuid4().hex[:8]}'
-
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=pp,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            creationflags=_POPEN_FLAGS,
-            startupinfo=_STARTUPINFO,
-        )
-        threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
-        _register_process(proc, f'Hivemind Worker ({ws.get("title", ws_id)[:30]})', 'hivemind_worker',
-                          session_id, project_id, task[:80])
+        session_id = _hm_spawn_worker_session(manifest, ws, p, hivemind_id, ws_id)
 
-        session = {
-            'proc': proc,
-            'status': 'running',
-            'task': task,
-            'log_lines': [],
-            'started_at': now_iso(),
-            'session_id': session_id,
-            'project_id': project_id,
-            'mode': 'A',
-            'housekeeping': True,  # prevent MEMORY.md writes — hivemind workers use bus only
-            'hivemind_id': hivemind_id,
-            'hivemind_ws_id': ws_id,
-            'trigger_type': 'hivemind_worker',
-            'trigger_id': ws_id,
-        }
-        mgr = get_manager(project_id)
-        mgr.ensure_guardian()
-        with mgr.lock:
-            agent_sessions[session_id] = session
-            mgr.session_ids.add(session_id)
-
-        t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
-        t.start()
-
-        # Update workstream status
         ws['status'] = 'active'
         ws['current_agent_session_id'] = session_id
         ws['sessions_used'] = ws.get('sessions_used', 0) + 1
@@ -8708,65 +8918,12 @@ def _hm_auto_spawn_workers(hivemind_id):
         if not pp or not Path(pp).is_dir():
             continue
 
-        worker_context = _hm_build_worker_context(hivemind_id, ws_id)
-        model = ws.get('model', '') or manifest.get('config', {}).get('worker_model', '') or CONFIG.get('agent_model', '')
-
-        task = (
-            f"You are a Hivemind worker for workstream: {ws.get('title', ws_id)}.\n"
-            f"Brief: {ws.get('description', '')}\n\n"
-            f"Begin your analysis. Follow the two-phase protocol described in your system prompt."
-        )
-
-        cmd = [_resolve_claude(), '-p', task, '--print', '--verbose', '--output-format', 'stream-json',
-               '--dangerously-skip-permissions', '--append-system-prompt', worker_context]
-        if model:
-            cmd.extend(['--model', model])
-
-        session_id = f'hm_{uuid.uuid4().hex[:8]}'
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                cwd=pp,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                creationflags=_POPEN_FLAGS,
-                startupinfo=_STARTUPINFO,
-            )
-            threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
-            _register_process(proc, f'Hivemind Worker ({ws.get("title", ws_id)[:30]})', 'hivemind_worker',
-                              session_id, project_id, task[:80])
-
-            session = {
-                'proc': proc,
-                'status': 'running',
-                'task': task,
-                'log_lines': [],
-                'started_at': now_iso(),
-                'session_id': session_id,
-                'project_id': project_id,
-                'mode': 'A',
-                'housekeeping': True,
-                'hivemind_id': hivemind_id,
-                'hivemind_ws_id': ws_id,
-            }
-            mgr = get_manager(project_id)
-            mgr.ensure_guardian()
-            with mgr.lock:
-                agent_sessions[session_id] = session
-                mgr.session_ids.add(session_id)
-
-            t = threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True)
-            t.start()
-
+            session_id = _hm_spawn_worker_session(manifest, ws, p, hivemind_id, ws_id)
             ws['status'] = 'active'
             ws['current_agent_session_id'] = session_id
             ws['sessions_used'] = ws.get('sessions_used', 0) + 1
             _hm_save_workstream(hivemind_id, ws_id, ws)
-
             _hm_push_sse(hivemind_id, {
                 'type': 'hivemind_worker_spawned',
                 'hivemind_id': hivemind_id,
@@ -8774,9 +8931,8 @@ def _hm_auto_spawn_workers(hivemind_id):
                 'session_id': session_id,
             })
             _log_agent_activity(project_id, f"Hivemind auto-spawned worker for {ws.get('title', ws_id)}")
-
         except Exception as e:
-            _log(f"[hivemind] Failed to spawn worker for {ws_id}: {e}")
+            _log(f"[hivemind] Failed to auto-spawn worker for {ws_id}: {e}")
 
 
 # ── Hivemind API: Message Bus ────────────────────────────────────────────────
@@ -9677,34 +9833,99 @@ def api_usage():
     """Aggregate token usage across all agent log files and running sessions.
 
     Optional query param ?since=<ISO timestamp> to filter entries after a cutoff.
+
+    Response shape (multi-provider aware):
+      {
+        by_provider: {
+          claude: {input_tokens, output_tokens, total_tokens, cost_usd, num_turns, sessions},
+          gemini: {...},
+          ...
+        },
+        total: {input_tokens, output_tokens, total_tokens, cost_usd, sessions},
+        # Legacy flat fields kept for backward compat:
+        input_tokens, output_tokens, total_tokens, cost_usd, total_sessions
+      }
+
+    Providers that don't emit cost (emits_cost=False) will have cost_usd=null in
+    their by_provider bucket to distinguish "zero cost" from "not applicable".
     """
     since = request.args.get('since', '')
-    total_input = 0
-    total_output = 0
-    total_cost = 0.0
-    total_sessions = 0
+
+    def _empty_bucket():
+        return {'input_tokens': 0, 'output_tokens': 0, 'cost_usd': 0.0, 'sessions': 0}
+
+    by_provider: dict = {}
+
+    def _accumulate(bucket_key, usage_dict, cost, _has_cost):
+        b = by_provider.setdefault(bucket_key, _empty_bucket())
+        b['input_tokens'] += usage_dict.get('input_tokens', 0)
+        b['output_tokens'] += usage_dict.get('output_tokens', 0)
+        if _has_cost:
+            b['cost_usd'] = (b['cost_usd'] or 0.0) + (cost or 0.0)
+        else:
+            # Mark as None only if we've never seen a cost for this provider.
+            if b.get('cost_usd') == 0.0 and cost is None:
+                b['cost_usd'] = None
+        b['sessions'] += 1
+
+    def _provider_emits_cost(provider_name):
+        try:
+            return _agent_runtime.get_runtime(provider_name).capabilities().emits_cost
+        except Exception:
+            return True  # conservative: don't discard data on unknown provider
+
     for f in DATA_DIR.glob('*_agent_log.json'):
         try:
             log = json.loads(f.read_text(encoding='utf-8'))
             for entry in log:
                 if since and entry.get('ts', '') < since:
                     continue
-                usage = entry.get('usage', {})
-                total_input += usage.get('input_tokens', 0)
-                total_output += usage.get('output_tokens', 0)
-                total_cost += entry.get('cost_usd', 0) or 0
-                total_sessions += 1
+                p = (entry.get('provider') or 'claude').lower()
+                usage = entry.get('usage') or {}
+                cost = entry.get('cost_usd')
+                _accumulate(p, usage, cost, _provider_emits_cost(p))
         except Exception:
             continue
+
     # Include running sessions that haven't been logged yet
     for s in agent_sessions.values():
         if since and s.get('started_at', '') < since:
             continue
-        usage = s.get('usage', {})
-        total_input += usage.get('input_tokens', 0)
-        total_output += usage.get('output_tokens', 0)
-        total_cost += s.get('cost_usd', 0) or 0
+        p = (s.get('provider') or 'claude').lower()
+        usage = s.get('usage') or {}
+        cost = s.get('cost_usd')
+        _accumulate(p, usage, cost, _provider_emits_cost(p))
+
+    # Build per-provider output with total_tokens computed
+    by_provider_out = {}
+    for pname, b in by_provider.items():
+        by_provider_out[pname] = {
+            'input_tokens': b['input_tokens'],
+            'output_tokens': b['output_tokens'],
+            'total_tokens': b['input_tokens'] + b['output_tokens'],
+            'cost_usd': round(b['cost_usd'], 4) if b['cost_usd'] is not None else None,
+            'sessions': b['sessions'],
+        }
+
+    # Grand total (sum across all providers; cost_usd sums only providers that emit it)
+    total_input = sum(b['input_tokens'] for b in by_provider.values())
+    total_output = sum(b['output_tokens'] for b in by_provider.values())
+    total_cost = sum(
+        (b['cost_usd'] or 0.0) for b in by_provider.values()
+        if b['cost_usd'] is not None
+    )
+    total_sessions = sum(b['sessions'] for b in by_provider.values())
+
     return jsonify({
+        'by_provider': by_provider_out,
+        'total': {
+            'input_tokens': total_input,
+            'output_tokens': total_output,
+            'total_tokens': total_input + total_output,
+            'cost_usd': round(total_cost, 4),
+            'sessions': total_sessions,
+        },
+        # Legacy flat fields — identical to current response for claude-only deployments.
         'input_tokens': total_input,
         'output_tokens': total_output,
         'total_tokens': total_input + total_output,
@@ -14459,7 +14680,170 @@ def system_restart():
     return jsonify({'ok': True, 'restarting': True}), 202
 
 
+# ── AgentRuntime hook registration ──────────────────────────────────────────
+# Wire ClaudeRuntime delegates back into server.py so external callers (future
+# workstreams, tests) can use get_runtime('claude').dispatch() etc. and have
+# them run the real claude path. Adapters bridge the SessionHandle API ↔
+# server.py internal API (session_id + agent_sessions). Design §9.1 scope.
+
+
+def _claude_health_check_hook():
+    """Bridge: ClaudeRuntime.health_check() → server.py auth state."""
+    from agent_runtime import HealthStatus, AuthState
+    import time as _t
+    with _claude_auth_lock:
+        state = dict(_claude_auth_state)
+    installed = bool(_resolve_claude() != 'claude' or shutil.which('claude'))
+    status = state.get('state', 'unknown')
+    return HealthStatus(
+        installed=installed,
+        binary_path=None,
+        version=None,
+        auth_state=AuthState(
+            status=status,
+            method=state.get('method'),
+            last_checked=str(state.get('last_probe_at', _t.time())),
+            error_text=state.get('reason'),
+        ),
+        install_hint='npm install -g @anthropic-ai/claude-code',
+    )
+
+
+def _claude_dispatch_hook(**kwargs):
+    """Bridge: ClaudeRuntime.dispatch(**kwargs) → _dispatch_agent_internal().
+
+    Accepts the kwargs signature used by _dispatch_via_runtime() so that
+    get_runtime('claude').dispatch() works for both external callers and
+    internal sessions that want to target claude explicitly. Returns a
+    SessionHandle wrapping the existing agent_sessions entry.
+    """
+    project_id = kwargs.get('project_id', '')
+    task = kwargs.get('task', '')
+    resume_id = kwargs.get('resume_id') or ''
+    incognito = bool(kwargs.get('incognito', False))
+    trigger_type = kwargs.get('trigger_type') or 'manual'
+    trigger_id = kwargs.get('trigger_id') or ''
+    mc_session_id = kwargs.get('mc_session_id') or ''
+
+    session_id = _dispatch_agent_internal(
+        project_id, task,
+        resume_id=resume_id,
+        incognito=incognito,
+        trigger_type=trigger_type,
+        trigger_id=trigger_id,
+        reuse_session_id=mc_session_id,
+    )
+    session = agent_sessions.get(session_id, {})
+    p = load_project(project_id) or {}
+
+    return _agent_runtime.SessionHandle(
+        mc_session_id=session_id,
+        provider='claude',
+        mode=session.get('mode', 'A'),
+        project_path=p.get('project_path', kwargs.get('project_path', '')),
+        project_id=project_id,
+        session_dict=session,
+        started_at=session.get('started_at', ''),
+        capabilities=_agent_runtime.get_runtime('claude').capabilities(),
+    )
+
+
+def _claude_followup_hook(handle, message, attachments=None):
+    """Bridge: ClaudeRuntime.write_followup(handle, message) → followup logic.
+
+    Looks up the existing session and writes the message via the standard
+    stdin path (Mode B) or queues a new process (Mode A).
+    """
+    session_id = handle.mc_session_id
+    project_id = handle.project_id
+    existing = agent_sessions.get(session_id)
+    if not existing:
+        raise RuntimeError(f"_claude_followup_hook: session {session_id!r} not found")
+
+    p = load_project(project_id) or {}
+    pp = handle.project_path or p.get('project_path', '')
+
+    if existing.get('mode') == 'B' and existing.get('process_alive'):
+        proc = existing.get('proc')
+        if proc and proc.poll() is None:
+            stdin_msg = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": message}
+            }) + '\n'
+            lock = existing.get('stdin_lock')
+            if lock:
+                with lock:
+                    proc.stdin.write(stdin_msg)
+                    proc.stdin.flush()
+            else:
+                proc.stdin.write(stdin_msg)
+                proc.stdin.flush()
+            return
+    # Fall through: spawn new claude process (Mode A or dead Mode B)
+    claude_sid = existing.get('claude_session_id')
+    resume_flags = ['-r', claude_sid] if claude_sid else ['--continue']
+    cmd = [_resolve_claude(), *resume_flags, '-p', message, *_build_claude_flags(p)]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, cwd=pp,
+            text=True, encoding='utf-8', errors='replace',
+            creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
+        )
+        existing['proc'] = proc
+        existing['status'] = 'running'
+        existing['last_status_change_time'] = _time.time()
+        threading.Thread(target=_read_agent_stream, args=(proc, existing), daemon=True).start()
+    except Exception as e:
+        existing['log_lines'].append(f'[hook followup failed: {e}]')
+        existing['status'] = 'error'
+        existing['last_status_change_time'] = _time.time()
+
+
+def _claude_interrupt_hook(handle):
+    """Bridge: ClaudeRuntime.interrupt(handle) → kill the claude process."""
+    session = agent_sessions.get(handle.mc_session_id)
+    if not session:
+        return
+    proc = session.get('proc')
+    if proc:
+        try:
+            if proc.poll() is None:
+                _kill_pid(proc.pid, tree=True)
+                proc.kill()
+        except Exception:
+            pass
+    session['status'] = 'stopped'
+    session['last_status_change_time'] = _time.time()
+    session['process_alive'] = False
+    session['log_lines'].append('[interrupted via runtime hook]')
+
+
+def _claude_stop_hook(handle):
+    """Bridge: ClaudeRuntime.stop(handle) → graceful stop (same as interrupt for claude)."""
+    _claude_interrupt_hook(handle)
+
+
+def _register_claude_runtime_hooks():
+    """Wire ClaudeRuntime delegates to server.py implementations. Called at startup."""
+    _agent_runtime.register_claude_hooks(
+        resolve_binary=_resolve_claude,
+        health_check=_claude_health_check_hook,
+        dispatch=_claude_dispatch_hook,
+        followup=_claude_followup_hook,
+        stop=_claude_stop_hook,
+        interrupt=_claude_interrupt_hook,
+        oneshot=lambda **kw: _agent_runtime.OneshotResult(text=_scribe_call(
+            kw.get('model', 'haiku'),
+            kw.get('prompt', ''),
+            kw.get('stdin_text', '') or '',
+        )) if kw.get('prompt') else None,
+    )
+
+
 if __name__ == '__main__':
+    _register_claude_runtime_hooks()
     _check_port_conflict()
     _start_scheduler()
     _start_hivemind_orchestrator()

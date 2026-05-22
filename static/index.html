@@ -506,7 +506,7 @@
   .sys-status-pill.bad .ssp-dot { background: var(--red, #e35858); }
   .sys-status-pill .ssp-label { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.3px; }
   .sys-status-popover {
-    position: absolute; top: 100%; right: 0; margin-top: 8px;
+    position: fixed; top: 52px; right: 16px; margin-top: 0;
     width: 360px; max-width: calc(100vw - 32px);
     max-height: calc(100vh - 80px); overflow-y: auto;
     background: var(--surface); border: 1px solid var(--border);
@@ -570,6 +570,10 @@
   .sys-status-popover .ssp-empty {
     color: var(--text-faint); font-style: italic; font-size: 11px;
     padding: 8px 0;
+  }
+  .sys-status-popover .ssp-hint-line {
+    color: var(--text-faint); font-size: 10px; line-height: 1.45;
+    padding: 4px 0 2px;
   }
   .sys-status-popover .ssp-link {
     color: var(--accent, var(--text)); text-decoration: none;
@@ -2418,6 +2422,26 @@
   }
   .incognito-toggle .inc-mark { font-size: 12px; line-height: 1; }
 
+  /* New-chat composer controls: provider picker + incognito chip on one row */
+  .composer-controls-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .composer-provider-row {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin: 4px 0 8px;
+  }
+  .composer-provider-label {
+    font-size: 11px; font-weight: 600; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .composer-provider-select {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: 'Inter', sans-serif; font-size: 11px;
+    font-weight: 500; padding: 3px 8px; border-radius: 999px;
+    cursor: pointer; outline: none; transition: border-color 0.15s;
+  }
+  .composer-provider-select:hover { border-color: var(--text-dim); }
+
   .agent-input-row { display: flex; gap: 8px; margin-bottom: 10px; }
   .agent-task-input {
     flex: 1; background: var(--bg); border: 1px solid var(--border);
@@ -2553,6 +2577,34 @@
     background: var(--surface3);
     color: var(--text);
     border-color: var(--accent);
+  }
+  .btn-mic {
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    flex-shrink: 0;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    width: 32px; height: 32px;
+    font-size: 16px; line-height: 1;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, box-shadow 0.2s;
+  }
+  .btn-mic:hover {
+    background: var(--surface3);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .btn-mic.recording {
+    color: #fff;
+    background: #e85a4a;
+    border-color: #e85a4a;
+    animation: btn-mic-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes btn-mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(232,90,74,0.55); }
+    50% { box-shadow: 0 0 0 6px rgba(232,90,74,0); }
   }
   .agent-output::-webkit-scrollbar { width: 5px; }
   .agent-output::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
@@ -3611,6 +3663,22 @@
     color: var(--text-faint); margin-top: 2px;
   }
   .agent-log-usage .alu-cost { color: var(--green-text); }
+
+  /* ── Provider badge — shows provider name for non-claude sessions ── */
+  .provider-badge {
+    display: inline-flex; align-items: center;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+    padding: 1px 6px; border-radius: 8px;
+    background: var(--surface3); color: var(--accent);
+    text-transform: lowercase; white-space: nowrap; flex-shrink: 0;
+  }
+  .provider-badge.prov-claude  { color: var(--accent); background: var(--accent-dim); }
+  .provider-badge.prov-gemini  { color: #4285f4; background: rgba(66,133,244,.15); }
+  .provider-badge.prov-codex   { color: #10b981; background: rgba(16,185,129,.12); }
+  .provider-badge.prov-opencode{ color: #8b5cf6; background: rgba(139,92,246,.12); }
+  .provider-badge.prov-goose   { color: #f59e0b; background: rgba(245,158,11,.12); }
+  .provider-badge.prov-aider   { color: #ef4444; background: rgba(239,68,68,.12); }
+  .provider-badge.prov-kiro    { color: #06b6d4; background: rgba(6,182,212,.12); }
 
   .shared-rules-editor {
     padding: 0 24px 16px; display: flex; flex-direction: column;
@@ -4712,7 +4780,6 @@
       <div class="sys-status-pill" id="sys-status-pill" onclick="toggleSysStatusPopover(event)" title="Claude system status (click for details)">
         <div class="ssp-dot"></div>
         <span class="ssp-label" id="sys-status-pill-label">—</span>
-        <div class="sys-status-popover" id="sys-status-popover" onclick="event.stopPropagation()"></div>
       </div>
       <button class="tile-modals-btn" id="tile-modals-btn" onclick="toggleTileModalsPopover(event)" title="Tile open modals">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -4804,6 +4871,10 @@
 
 <!-- Overlays (outside main-area for fixed positioning) -->
 <div class="modal-layer" id="modal-layer"></div>
+<!-- System-status popover — body-level (not nested in the header) so it escapes
+     the header subtree's stacking context and reliably paints above the project
+     cards. Positioned at runtime by _positionSysStatusPopover(). -->
+<div class="sys-status-popover" id="sys-status-popover" onclick="event.stopPropagation()"></div>
 <div class="minimized-tray" id="minimized-tray"></div>
 <div id="toast-container"></div>
 <div id="hm-worker-popover" class="hm-worker-popover hidden" onmouseenter="cancelHideHmPopover()" onmouseleave="scheduleHideHmPopover()"></div>
@@ -4924,15 +4995,51 @@ async function _ensureAgentProviders() {
     if (r.ok) {
       const d = await r.json();
       _agentProviders = d.providers || [];
-    } else {
-      _agentProviders = [];
     }
-  } catch(e) { _agentProviders = []; }
-  return _agentProviders;
+    // On a non-ok response, leave _agentProviders null so a later call
+    // retries instead of caching an empty list forever — that would
+    // permanently hide the provider picker after one failed fetch
+    // (e.g. a mobile cold-boot before the network/tunnel is ready).
+  } catch(e) { /* leave _agentProviders null → retry on next call */ }
+  return _agentProviders || [];
 }
 // Prime on load so the per-project menu can render the dropdown without an
 // extra round-trip. Errors are benign — menu degrades to claude-only.
 _ensureAgentProviders();
+
+// ── Provider capability helpers ──────────────────────────────────────────────
+// All return safe defaults matching Claude's behavior, so claude-only deployments
+// are pixel-identical to pre-multi-provider. Only non-claude providers suppress UI.
+
+const _CLAUDE_DEFAULT_CAPS = {
+  supports_mode_a: true, supports_mode_b: true, mode_b_kind: 'native',
+  default_mode: 'B', supports_session_resume: true, supports_mcp: true,
+  supports_skills: true, supports_plan_mode: true, supports_ask_user_question: true,
+  supports_streaming_text: true, emits_usage: true, emits_cost: true,
+  emits_num_turns: true, emits_rate_limit: true, image_input: true,
+  context_window: null, context_injection: 'flag', context_file_name: 'CLAUDE.md',
+  oneshot_supported: true,
+};
+
+function _getProviderCaps(providerName) {
+  if (!providerName || providerName === 'claude') return _CLAUDE_DEFAULT_CAPS;
+  const found = (_agentProviders || []).find(p => p.name === providerName);
+  if (!found) return _CLAUDE_DEFAULT_CAPS;  // unknown provider → safe default
+  return Object.assign({}, _CLAUDE_DEFAULT_CAPS, found.capabilities || {});
+}
+
+function _capsForProject(p) {
+  const name = (p && p.provider) || 'claude';
+  return _getProviderCaps(name);
+}
+
+function _providerBadge(name) {
+  if (!name || name === 'claude') return '';
+  const found = (_agentProviders || []).find(p => p.name === name);
+  const label = found ? found.display_name : name;
+  const cls = 'provider-badge prov-' + name.replace(/[^a-z]/gi, '').toLowerCase();
+  return `<span class="${cls}" title="Provider: ${esc(label)}">${esc(name)}</span>`;
+}
 const _isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const _orderKey = _isMobileDevice ? 'projectOrder_mobile' : 'projectOrder';
@@ -5658,6 +5765,7 @@ function tileHTML(p, slotIndex) {
     </div>
     <div class="tile-footer">
       ${backlogBadge}
+      ${_providerBadge(p.provider)}
       <span class="time-ago">${esc(p.last_updated_relative||'')}</span>
     </div>
   </div>`;
@@ -5888,7 +5996,14 @@ function modalContentHTML(p) {
               <span class="modal-menu-sub-dot" style="background:var(--blue)"></span> Haiku 4.5</button>
           </div>
           ${(() => {
-            const provs = _agentProviders || [];
+            // Providers not fetched yet — kick a load and refresh this modal
+            // when it lands, so the picker isn't permanently hidden just for
+            // losing the race with the first modal open (common on mobile).
+            if (_agentProviders === null) {
+              _ensureAgentProviders().then(pl => { if ((pl || []).length > 1) refreshModal(); });
+              return '';
+            }
+            const provs = _agentProviders;
             // Only show the provider chooser when more than one runtime is
             // registered. With just claude available it'd be noise.
             if (provs.length <= 1) return '';
@@ -5907,9 +6022,10 @@ function modalContentHTML(p) {
                 <span class="modal-menu-sub-dot" style="background:${dotColor}"></span> ${esc(rt.display_name)}${note}</button>`;
             }).join('');
             return `<button class="modal-menu-item" onclick="toggleModalMenuSub(event,'prov-sub-${esc(p.id)}')">
-              <span class="menu-icon">&#x1F50C;</span> Agent Provider <span style="margin-left:4px;color:var(--accent);font-size:11px">${label}</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+              <span class="menu-icon">&#x1F50C;</span> Default Provider <span style="margin-left:4px;color:var(--accent);font-size:11px">${label}</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
             </button>
             <div class="modal-menu-sub" id="prov-sub-${esc(p.id)}">
+              <div style="padding:4px 12px 6px;color:var(--text-faint);font-size:10px;line-height:1.4">Seeds the picker for new conversations. Each chat keeps the provider it started with — switch per-chat in the composer.</div>
               ${items}
             </div>`;
           })()}
@@ -8591,13 +8707,14 @@ function formatElapsed(startedAt) {
   return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
 }
 
-function sessionMetricsHTML(session) {
+function sessionMetricsHTML(session, caps) {
   if (!session) return '';
+  // Fall back to claude defaults when no caps provided (safe for existing callers)
+  const c = caps || _getProviderCaps(session.provider || 'claude');
   const usage = session.usage || {};
   const inp = usage.input_tokens || 0;
   const out = usage.output_tokens || 0;
   const cache_read = usage.cache_read_input_tokens || 0;
-  const cache_create = usage.cache_creation_input_tokens || 0;
   const total = inp + out;
   const turns = session.num_turns || 0;
   const cost = formatCost(session.cost_usd);
@@ -8607,21 +8724,21 @@ function sessionMetricsHTML(session) {
     const elapsed = formatElapsed(session.startedAt);
     const parts = [];
     if (elapsed) parts.push(`&#x23F1; ${elapsed}`);
-    if (total) {
+    if (c.emits_usage && total) {
       let tokenDetail = `${formatTokens(total)} tokens`;
       if (cache_read) tokenDetail += ` (${formatTokens(cache_read)} cached)`;
       parts.push(tokenDetail);
     }
-    if (turns) parts.push(`${turns} turn${turns !== 1 ? 's' : ''}`);
-    if (cost) parts.push(`<span class="tb-cost">${cost}</span>`);
+    if (c.emits_num_turns && turns) parts.push(`${turns} turn${turns !== 1 ? 's' : ''}`);
+    if (c.emits_cost && cost) parts.push(`<span class="tb-cost">${cost}</span>`);
     return parts.join(' &middot; ');
   }
   // Completed/stopped/error
-  if (total) {
+  if (c.emits_usage && total) {
     const parts = [`${formatTokens(total)} tokens`];
     if (cache_read) parts[0] += ` (${formatTokens(cache_read)} cached)`;
-    if (turns) parts.push(`${turns} turn${turns !== 1 ? 's' : ''}`);
-    if (cost) parts.push(`<span class="tb-cost">${cost}</span>`);
+    if (c.emits_num_turns && turns) parts.push(`${turns} turn${turns !== 1 ? 's' : ''}`);
+    if (c.emits_cost && cost) parts.push(`<span class="tb-cost">${cost}</span>`);
     return parts.join(' &middot; ');
   }
   return '';
@@ -8656,7 +8773,10 @@ setInterval(() => {
   for (const [sid, cached] of Object.entries(agentStatusCache)) {
     if (cached.status !== 'running' && cached.status !== 'idle') continue;
     const el = document.getElementById(`session-metrics-${sid}`);
-    if (el) el.innerHTML = sessionMetricsHTML(cached);
+    if (!el) continue;
+    const _tickProj = allProjects.find(p => p.id === cached.projectId);
+    const _tickCaps = _tickProj ? _capsForProject(_tickProj) : _CLAUDE_DEFAULT_CAPS;
+    if (_tickCaps.emits_usage) el.innerHTML = sessionMetricsHTML(cached, _tickCaps);
   }
 }, 1000);
 let agentPendingImages = {};   // key (projectId or sessionId) → [{file, objectUrl, serverPath}]
@@ -8667,6 +8787,39 @@ let planFileTitle = {};        // session_id → extracted first heading from pl
 let exitPlanModeCount = {};    // session_id → number of consecutive ExitPlanMode calls
 let pendingResumeId = {};      // project_id → claude_session_id to resume (null = fresh)
 let incognitoToggle = {};      // project_id → bool — when true, next dispatch is incognito (skips MEMORY/RULES/log)
+let pendingDispatchProvider = {};  // project_id → provider chosen in the new-chat composer (per-conversation, not per-project)
+
+// Provider is bound per-conversation. The new-chat composer picks it; the
+// project's `provider` field (set via three-dot menu) is only the default seed.
+function _composerProvider(p) {
+  if (!p) return 'claude';
+  return pendingDispatchProvider[p.id]
+      || p.provider
+      || (_globalConfig && _globalConfig.default_provider)
+      || 'claude';
+}
+
+// Provider dropdown for the +New composer. Returns '' (no picker) when only
+// claude is available — claude-only deployments stay pixel-identical.
+function _composerProviderPicker(p) {
+  const provs = (_agentProviders || []).filter(x => x.installed);
+  if (provs.length <= 1) return '';
+  const cur = _composerProvider(p);
+  const opts = provs.map(x =>
+    `<option value="${esc(x.name)}" ${x.name === cur ? 'selected' : ''}>${esc(x.display_name)}</option>`
+  ).join('');
+  return `<div class="composer-provider-row">
+    <span class="composer-provider-label">Agent</span>
+    <select class="composer-provider-select" onchange="setComposerProvider('${esc(p.id)}',this.value)">${opts}</select>
+  </div>`;
+}
+
+function setComposerProvider(projectId, provider) {
+  pendingDispatchProvider[projectId] = provider;
+  // Caps changed (resume / image-input / etc.) — re-render so the composer
+  // reflects the chosen provider's affordances.
+  refreshModal();
+}
 
 function getIncognitoFor(projectId) {
   // Global incognito project is always incognito; user can't turn it off.
@@ -8752,9 +8905,13 @@ function showHmWorkerPopover(event, sessionId) {
     const rows = workers.map(w => {
       const wsId = w.hivemindWsId || (agentStatusCache[w.sessionId] || {}).hivemindWsId || '';
       const wsTitle = wsTitleMap[wsId] || wsId;
+      const wProv = w.provider || (agentStatusCache[w.sessionId] || {}).provider || 'claude';
+      const wModel = w.model || (agentStatusCache[w.sessionId] || {}).model || '';
       return `<div class="hm-pop-worker" onclick="if(typeof openHivemindDashboard==='function'){openHivemindDashboard('${esc(hmId)}','${esc(wsId)}');}">
         <span class="agent-status-dot ${w.status}"></span>
         <span class="hm-pop-ws-title">${esc(wsTitle)}</span>
+        ${_providerBadge(wProv)}
+        ${wModel ? `<span class="hm-pop-ws-meta">${esc(wModel)}</span>` : ''}
         <span class="hm-pop-ws-status">${esc(w.status)}</span>
       </div>`;
     }).join('');
@@ -8782,7 +8939,6 @@ function agentPanelHTML(p) {
       <div class="agent-disabled">Set project_path to enable agent dispatch</div>
     </div>`;
   }
-
   // Visible tab list: hides completed schedule/hivemind-worker runs since
   // those are surfaced in the Scheduler's Runs panel + Agent Log tab.
   const sessions = getProjectTabSessions(p.id);
@@ -8874,10 +9030,16 @@ function agentPanelHTML(p) {
       loadConversations(p.id);
     }
   }
-  const picker = noActiveTab ? sessionPickerHTML(p.id) : '';
+  // Provider capability gate — all defaults match claude (safe for existing
+  // callers). An active session is bound to the provider it began with; the
+  // +New screen reflects the provider chosen in the composer dropdown.
+  const _pcaps = activeSession
+    ? _getProviderCaps(activeSession.provider || p.provider || 'claude')
+    : _getProviderCaps(_composerProvider(p));
+  const picker = (noActiveTab && _pcaps.supports_session_resume) ? sessionPickerHTML(p.id) : '';
 
-  // Resume indicator (shown when a prior session is selected)
-  const resumeId = pendingResumeId[p.id] || null;
+  // Resume indicator (shown when a prior session is selected AND provider supports resume)
+  const resumeId = (_pcaps.supports_session_resume && pendingResumeId[p.id]) || null;
   const resumeIndicator = (noActiveTab && resumeId) ? (() => {
     const convos = conversationsCache[p.id] || [];
     const convo = convos.find(c => c.claude_session_id === resumeId);
@@ -8902,23 +9064,28 @@ function agentPanelHTML(p) {
       <span class="inc-mark">&#x1F576;&#xFE0F;</span>
       <span class="inc-label">Incognito${incForced ? '' : (incOn ? ' on' : '')}</span>
     </div>` : '';
+  const _dispatchPlaceholder = incOn ? 'Incognito — ephemeral, not saved to project memory...' : 'Describe a task for the agent... (paste or drop files here)';
+  const _attachBtn = _pcaps.image_input ? `
+    <input type="file" multiple id="agent-attach-input-${esc(p.id)}" class="agent-attach-input"
+      onchange="handleAgentAttachPick(event,'${esc(p.id)}')">
+    <button class="btn-attach" type="button" title="Attach files or take a photo"
+      onclick="triggerAgentAttach('${esc(p.id)}')">&#128206;</button>` : '';
+  const _dispatchMicBtn = micBtnHTML(`agent-task-${esc(p.id)}`);
   const dispatchRow = noActiveTab ? `${picker}${resumeIndicator}<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
     ondragenter="handleAgentDragOver(event,this)"
     ondragleave="handleAgentDragLeave(event,this)"
-    ondrop="handleAgentDrop(event,'${esc(p.id)}')">
+    ondrop="${_pcaps.image_input ? `handleAgentDrop(event,'${esc(p.id)}')` : 'event.preventDefault()'}">
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
-      placeholder="${incOn ? 'Incognito — ephemeral, not saved to project memory...' : 'Describe a task for the agent... (paste or drop files here)'}"
+      placeholder="${_dispatchPlaceholder}"
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'),'${esc(p.id)}')"
-      onpaste="handleAgentPaste(event,'${esc(p.id)}')"
+      onpaste="${_pcaps.image_input ? `handleAgentPaste(event,'${esc(p.id)}')` : ''}"
     ></textarea>
-    <input type="file" multiple id="agent-attach-input-${esc(p.id)}" class="agent-attach-input"
-      onchange="handleAgentAttachPick(event,'${esc(p.id)}')">
-    <button class="btn-attach" type="button" title="Attach files or take a photo"
-      onclick="triggerAgentAttach('${esc(p.id)}')">&#128206;</button>
+    ${_attachBtn}
+    ${_dispatchMicBtn}
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
-  ${incognitoChip}
+  <div class="composer-controls-row">${_composerProviderPicker(p)}${incognitoChip}</div>
   ${dispatchPreviews}` : '';
 
   // Active tab content
@@ -9041,6 +9208,12 @@ function agentPanelHTML(p) {
               <button class="btn-fresh" onclick="guardianReset('${esc(p.id)}','${esc(activeSessionId)}','dismiss')">Dismiss</button>
             </div>`
           : '';
+    const _fuAttachBtn = _pcaps.image_input ? `
+            <input type="file" multiple id="agent-attach-input-fu_${esc(activeSessionId)}" class="agent-attach-input"
+              onchange="handleAgentAttachPick(event,'fu_${esc(activeSessionId)}')">
+            <button class="btn-attach" type="button" title="Attach files or take a photo"
+              onclick="triggerAgentAttach('fu_${esc(activeSessionId)}')">&#128206;</button>` : '';
+    const _fuMicBtn = micBtnHTML(`agent-followup-${esc(activeSessionId)}`);
     const chatInput = (st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle' || st === 'error')
       ? `${guardianBanner}<div class="agent-chat-input">
           ${followupPreviews}
@@ -9048,21 +9221,19 @@ function agentPanelHTML(p) {
               ondragover="handleAgentDragOver(event,this)"
               ondragenter="handleAgentDragOver(event,this)"
               ondragleave="handleAgentDragLeave(event,this)"
-              ondrop="handleAgentDrop(event,'fu_${esc(activeSessionId)}')">
+              ondrop="${_pcaps.image_input ? `handleAgentDrop(event,'fu_${esc(activeSessionId)}')` : 'event.preventDefault()'}">
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
               placeholder="${st === 'error' ? 'Type to continue from where it stopped...' : st === 'stopped' ? 'Type to resume conversation...' : st === 'running' ? 'Interrupt and redirect agent... (Enter to send)' : 'Send follow-up... (paste or drop files here)'}"
               onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'),'${esc(p.id)}')"
-              onpaste="handleAgentPaste(event,'fu_${esc(activeSessionId)}')"
+              onpaste="${_pcaps.image_input ? `handleAgentPaste(event,'fu_${esc(activeSessionId)}')` : ''}"
             ></textarea>
-            <input type="file" multiple id="agent-attach-input-fu_${esc(activeSessionId)}" class="agent-attach-input"
-              onchange="handleAgentAttachPick(event,'fu_${esc(activeSessionId)}')">
-            <button class="btn-attach" type="button" title="Attach files or take a photo"
-              onclick="triggerAgentAttach('fu_${esc(activeSessionId)}')">&#128206;</button>
+            ${_fuAttachBtn}
+            ${_fuMicBtn}
             <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
           </div>
         </div>` : '';
 
-    const planFileBtn = activeSession && activeSession.planFile
+    const planFileBtn = (_pcaps.supports_plan_mode && activeSession && activeSession.planFile)
       ? (() => {
           const fname = activeSession.planFile.split(/[/\\]/).pop();
           const label = planFileTitle[activeSessionId] || planFileLabel(activeSession.task || fname);
@@ -9099,9 +9270,9 @@ function agentPanelHTML(p) {
         <span class="agent-status-label ${st}">${esc(consoleStatusLabelText)}</span>
         ${isActiveOrch ? '<span class="hm-orch-label">&#x2B21; Hivemind</span>' : ''}
         ${stopBtn}
-        <span class="token-badge" id="session-metrics-${esc(activeSessionId)}">${activeSession ? sessionMetricsHTML(activeSession) : ''}</span>
+        ${_pcaps.emits_usage ? `<span class="token-badge" id="session-metrics-${esc(activeSessionId)}">${activeSession ? sessionMetricsHTML(activeSession, _pcaps) : ''}</span>` : ''}
         <span class="agent-activity" id="agent-activity-${esc(activeSessionId)}"></span>
-        <span id="plan-file-btn-${esc(activeSessionId)}">${planFileBtn}</span>
+        ${_pcaps.supports_plan_mode ? `<span id="plan-file-btn-${esc(activeSessionId)}">${planFileBtn}</span>` : ''}
         <button class="btn-popout" onclick="openPlanViewer('${esc(activeSessionId)}')" title="Open output in viewer window">Pop Out &#8599;</button>
         ${orchHmId ? `<button class="btn-hm-dash" onclick="openHivemindDashboard('${esc(orchHmId)}')">Dashboard &#8599;</button>` : ''}
         ${mobileMode ? `<button class="conv-new-btn" style="margin-left:auto" onclick="newAgentTab('${esc(p.id)}')" title="Start a new conversation">+ New</button>` : ''}
@@ -9156,9 +9327,11 @@ function conversationRowHTML(p, h) {
   const name = esc((h.task || '').substring(0, 70) || 'Session');
   const when = esc(timeAgoJS(h.startedAt) || '');
   const statusText = esc(consoleStatusLabel(sst, cache));
+  const convProv = h.provider || cache.provider || p.provider || 'claude';
   const tags = [
     isOrch ? '<span class="conv-tag orch">Hivemind</span>' : '',
     isInc ? '<span class="conv-tag inc">Incognito</span>' : '',
+    _providerBadge(convProv),
   ].join('');
   return `
   <div class="conv-row" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task || '')}">
@@ -9394,6 +9567,11 @@ async function dispatchAgent(projectId) {
   const body = { task: fullTask };
   if (resumeId) body.resume_conversation_id = resumeId;
   if (getIncognitoFor(projectId)) body.incognito = true;
+  // Per-conversation provider — the composer dropdown is authoritative. The
+  // project's `provider` field is only the default seed for this picker.
+  const _projForProv = allProjects.find(x => x.id === projectId);
+  const _chosenProvider = _composerProvider(_projForProv);
+  body.provider = _chosenProvider;
   _maybeTagMobileClient(body);
 
   try {
@@ -9411,8 +9589,8 @@ async function dispatchAgent(projectId) {
     const prefix = resumeId ? `> [resuming prior session] ${displayTask}` : `> ${displayTask}`;
     agentOutputBuffers[sessionId] = [prefix];
     const incognitoFlag = !!body.incognito;
-    agentStatusCache[sessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '', incognito: incognitoFlag };
-    agentHistory.unshift({ projectId, sessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag });
+    agentStatusCache[sessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '', incognito: incognitoFlag, provider: _chosenProvider };
+    agentHistory.unshift({ projectId, sessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag, provider: _chosenProvider });
     activeAgentTab[projectId] = sessionId;
     delete agentConvNew[projectId];  // dispatched → drill into the new convo
 
@@ -9426,6 +9604,14 @@ async function dispatchAgent(projectId) {
     refreshModal();
     renderAgentConsole();
     connectAgentStream(projectId, sessionId);
+    // Resume → the server preloaded log_lines from the prior .jsonl transcript
+    // so the chat shows the full history, not just the new prompt. Pull that
+    // server-side buffer in now so the user sees the prior conversation
+    // immediately instead of waiting for the next status poll.
+    if (resumeId) {
+      try { await fetchAgentStatus(projectId); } catch (_) {}
+      refreshModal();
+    }
   } catch(e) {
     alert('Failed to dispatch: ' + e.message);
   }
@@ -9593,6 +9779,15 @@ function connectAgentStream(projectId, sessionId) {
         if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForQuestion = true;
         const _hQ = agentHistory.find(h => h.sessionId === sessionId);
         if (_hQ) _hQ.waitingForQuestion = true;
+        // A `question` event only ever fires when an agent actually emitted a
+        // structured AskUserQuestion. Providers that lack the tool (Gemini etc.)
+        // have the instruction stripped from their prompt and never reach here,
+        // so the event itself proves the question is renderable. Gating on the
+        // *project's* configured provider was wrong — a Claude session running
+        // in a Gemini-configured project would wrongly fall back to plain text.
+        // The form's answer round-trips as a normal follow-up message, which is
+        // provider-agnostic. Render it directly; renderAgentQuestion dedupes by
+        // question_id so SSE reconnects don't stack duplicate cards.
         renderAgentQuestion(sessionId, projectId, msg.questions, msg.question_id || '');
         refreshModal();
       } else if (msg.type === 'turn_start') {
@@ -10413,8 +10608,11 @@ function appendAgentLine(sessionId, text) {
   el.appendChild(div);
   if (wasPinned) _scheduleAgentPinScroll(sessionId, el, freshMount);
 
-  // Plan detection: [tool: ExitPlanMode] signals end of plan
-  if (text.trim() === '[tool: ExitPlanMode]') {
+  // Plan detection: [tool: ExitPlanMode] signals end of plan (claude + supports_plan_mode only)
+  const _pdCached = agentStatusCache[sessionId];
+  const _pdProj = _pdCached ? allProjects.find(p => p.id === _pdCached.projectId) : null;
+  const _pdCaps = _pdProj ? _capsForProject(_pdProj) : _CLAUDE_DEFAULT_CAPS;
+  if (_pdCaps.supports_plan_mode && text.trim() === '[tool: ExitPlanMode]') {
     exitPlanModeCount[sessionId] = (exitPlanModeCount[sessionId] || 0) + 1;
     // Store plan content for viewer but keep text visible for first occurrence
     planViewerContent[sessionId] = planViewerContent[sessionId] || [];
@@ -10820,7 +11018,6 @@ async function sendFollowup(projectId, sessionId) {
 }
 
 const _recentlyStoppedSessions = {};  // sessionId → timestamp when stopped
-const _longSessionAdvised = new Set();  // sessionIds already nudged to restart (dedupe)
 
 async function stopAgent(projectId, sessionId) {
   // Phase 2: no optimistic cache writes. Server is idempotent — pressing
@@ -10895,18 +11092,12 @@ async function fetchAgentStatus(projectId) {
       if (stoppedAt && (Date.now() - stoppedAt >= 15000)) {
         delete _recentlyStoppedSessions[sid];
       }
-      // Long Mode-B session advisory (server-computed; soft, deduped per session).
-      // It may be compacting away its own early context — restarting reloads
-      // the Step-6-captured memory fresh at near-zero loss.
-      // Suppressed on mobile (≤960px): the 14s top-right toast lands on top of
-      // the conversation drill-down rows and chat input on a phone-sized
-      // viewport, blocking taps. The advisory's audience is the active desktop
-      // operator anyway — on mobile you're typically just checking in.
-      if (s.long_session_advisory && !_longSessionAdvised.has(sid) && window.innerWidth > 960) {
-        _longSessionAdvised.add(sid);
-        showToast(`⏳ "${String(s.task || '').slice(0, 60)}" (${pName}) has run ${s.num_turns || 0} turns — long enough it may start losing its own early context. Restarting it reloads accumulated memory fresh (mid-session capture has been saving it, so little is lost).`, 14000);
-      }
-      if (['completed', 'stopped', 'error'].includes(s.status)) _longSessionAdvised.delete(sid);
+      // Long Mode-B session advisory toast — REMOVED 2026-05-22. It was
+      // well-intentioned (nudging a restart so a long session reloads its
+      // Step-6-captured memory fresh) but in practice just an annoying 14s
+      // nag. The server still computes `s.long_session_advisory`; nothing
+      // consumes it now. To bring the nudge back, render it somewhere
+      // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
       agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
@@ -11008,17 +11199,38 @@ function agentLogPanelHTML(p) {
     : entries.map(e => {
       const csid = e.claude_session_id || '';
       const eid = e.session_id || csid;
+      const eprov = e.provider || p.provider || 'claude';
+      const ecaps = _getProviderCaps(eprov);
+      // Usage stats: gate by provider capability
+      const usageStr = (() => {
+        if (!ecaps.emits_usage) return '';
+        const u = e.usage || {};
+        const t = (u.input_tokens||0)+(u.output_tokens||0);
+        const cr = u.cache_read_input_tokens||0;
+        let s = t ? ` &middot; ${formatTokens(t)} tokens` : '';
+        if (cr) s += ` (${formatTokens(cr)} cached)`;
+        if (ecaps.emits_num_turns && e.num_turns) s += ` &middot; ${e.num_turns} turn${e.num_turns!==1?'s':''}`;
+        return s;
+      })();
+      const costStr = ecaps.emits_cost && e.cost_usd ? ` &middot; <span class="alu-cost">${formatCost(e.cost_usd)}</span>` : '';
+      // Session ID display: provider-neutral label
+      const sessionLabel = eprov === 'claude' ? 'claude -r' : `${eprov} session`;
+      // Continue button: only show for providers that support session resume
+      const continueBtn = (csid && ecaps.supports_session_resume)
+        ? `<button class="agent-log-continue-btn" onclick="toggleContinueInput('${esc(p.id)}','${esc(eid)}','${esc(csid)}')">Continue</button>`
+        : '';
       return `
       <div class="agent-log-entry status-${e.status || 'completed'}">
         <div class="agent-log-task">
           <span class="agent-status-dot ${e.status || 'completed'}"></span>
+          ${_providerBadge(eprov)}
           ${esc((e.task || '').substring(0, 100))}
-          ${csid ? `<button class="agent-log-continue-btn" onclick="toggleContinueInput('${esc(p.id)}','${esc(eid)}','${esc(csid)}')">Continue</button>` : ''}
+          ${continueBtn}
         </div>
         <div class="agent-log-summary">${esc(e.summary || '')}</div>
-        <div class="agent-log-ts">${esc(e.ts_relative || e.ts || '')} &middot; started ${esc(e.started_relative || e.started_at || '')}${(() => { const u = e.usage || {}; const t = (u.input_tokens||0)+(u.output_tokens||0); const cr = u.cache_read_input_tokens||0; let s = t ? ` &middot; ${formatTokens(t)} tokens` : ''; if (cr) s += ` (${formatTokens(cr)} cached)`; if (e.num_turns) s += ` &middot; ${e.num_turns} turn${e.num_turns!==1?'s':''}`; return s; })()}${e.cost_usd ? ` &middot; <span class="alu-cost">${formatCost(e.cost_usd)}</span>` : ''}</div>
-        ${csid ? `<div class="agent-log-session-id">claude -r <code title="Click to copy">${esc(csid)}</code><span class="copy-sid" onclick="navigator.clipboard.writeText('${esc(csid)}');this.textContent='copied!';setTimeout(()=>this.textContent='copy',1200)" title="Copy session ID">copy</span></div>` : ''}
-        ${csid ? `<div class="agent-log-continue-input${continueInputOpen[eid] ? ' open' : ''}" id="continue-input-${esc(eid)}">
+        <div class="agent-log-ts">${esc(e.ts_relative || e.ts || '')} &middot; started ${esc(e.started_relative || e.started_at || '')}${usageStr}${costStr}</div>
+        ${csid ? `<div class="agent-log-session-id">${sessionLabel} <code title="Click to copy">${esc(csid)}</code><span class="copy-sid" onclick="navigator.clipboard.writeText('${esc(csid)}');this.textContent='copied!';setTimeout(()=>this.textContent='copy',1200)" title="Copy session ID">copy</span></div>` : ''}
+        ${(csid && ecaps.supports_session_resume) ? `<div class="agent-log-continue-input${continueInputOpen[eid] ? ' open' : ''}" id="continue-input-${esc(eid)}">
           <textarea id="continue-msg-${esc(eid)}" rows="2" placeholder="What should the agent continue with?" onkeydown="handleInputEnter(event,()=>dispatchContinue('${esc(p.id)}','${esc(eid)}','${esc(csid)}'),'${esc(p.id)}')"></textarea>
           <button class="btn-send" onclick="dispatchContinue('${esc(p.id)}','${esc(eid)}','${esc(csid)}')">Send</button>
         </div>` : ''}
@@ -11446,6 +11658,137 @@ function triggerAgentAttach(key) {
   if (input) input.click();
 }
 
+// ── Mic / voice transcription (Capacitor native shell only) ────────────────
+// The @capacitor-community/speech-recognition plugin is only present in the
+// Clayrune Android APK build. Browsers (desktop / mobile Chrome) don't have
+// it, so micAvailable() returns false there and the button never renders.
+function micAvailable() {
+  try {
+    return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function'
+      && window.Capacitor.isNativePlatform()
+      && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition);
+  } catch (_) { return false; }
+}
+function micBtnHTML(textareaId) {
+  if (!micAvailable()) return '';
+  return `<button class="btn-mic" type="button" id="btn-mic-${textareaId}"
+    title="Voice input (tap to start, tap again to stop)"
+    onclick="toggleAgentMic('${textareaId}')">&#127908;</button>`;
+}
+// Per-textarea recording state. `gen` is a monotonic counter that lets stale
+// listeners from a previous session (e.g. after a modal rebuild) recognize
+// they no longer belong to the current run and bail out.
+const _micState = {};
+let _micGen = 0;
+function _micUiOff(textareaId) {
+  const btn = document.getElementById(`btn-mic-${textareaId}`);
+  if (btn) btn.classList.remove('recording');
+}
+function toggleAgentMic(textareaId) {
+  // Synchronous dispatcher — never awaits. Avoids click being "swallowed"
+  // by a pending native call (e.g. SR.stop hanging) so the button is always
+  // responsive even if a prior session is in a stuck native state.
+  const st = _micState[textareaId];
+  if (st && st.active) { _stopAgentMic(textareaId); return; }
+  _startAgentMic(textareaId);
+}
+function _micToast(msg) {
+  try { showToast('[mic] ' + msg, 3500); } catch (_) {}
+}
+async function _startAgentMic(textareaId) {
+  // Always nuke any prior state first. If a previous session got wedged
+  // (native recognizer stuck, modal rebuilt while recording, etc.) this
+  // ensures the new attempt starts clean.
+  _hardResetMic(textareaId);
+  const SR = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
+  const ta = document.getElementById(textareaId);
+  if (!SR) { _micToast('plugin missing'); return; }
+  if (!ta) { _micToast('textarea not found: ' + textareaId); return; }
+  const gen = ++_micGen;
+  _micState[textareaId] = { active: true, gen, base: '', sep: '', partial: null, state: null };
+  const btn = document.getElementById(`btn-mic-${textareaId}`);
+  if (btn) btn.classList.add('recording');
+  try {
+    const av = await SR.available().catch((e) => { _micToast('available() threw: ' + (e && e.message || e)); return { available: false }; });
+    if (!av || av.available === false) { _micToast('SR not available on device'); _hardResetMic(textareaId); return; }
+    let perm = await SR.checkPermissions().catch((e) => { _micToast('checkPerm err: ' + (e && e.message || e)); return null; });
+    if (!perm || perm.speechRecognition !== 'granted') {
+      const req = await SR.requestPermissions().catch((e) => { _micToast('reqPerm err: ' + (e && e.message || e)); return null; });
+      if (!req || req.speechRecognition !== 'granted') { _micToast('perm denied (' + (req && req.speechRecognition || '?') + ')'); _hardResetMic(textareaId); return; }
+    }
+    // State may have been reset by another tap while permissions resolved.
+    if (!_micState[textareaId] || _micState[textareaId].gen !== gen) return;
+    _micState[textareaId].base = ta.value || '';
+    _micState[textareaId].sep = _micState[textareaId].base && !/\s$/.test(_micState[textareaId].base) ? ' ' : '';
+    try {
+      _micState[textareaId].partial = await SR.addListener('partialResults', (data) => {
+        const cur = _micState[textareaId];
+        if (!cur || cur.gen !== gen) return;
+        const live = document.getElementById(textareaId);
+        if (!live) return;
+        const matches = (data && (data.matches || data.value)) || [];
+        if (!matches.length) return;
+        live.value = cur.base + cur.sep + String(matches[0] || '');
+        try { live.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+      });
+      _micState[textareaId].state = await SR.addListener('listeningState', (data) => {
+        const cur = _micState[textareaId];
+        if (!cur || cur.gen !== gen) return;
+        if (data && data.status === 'stopped') _hardResetMic(textareaId);
+      });
+    } catch (e) { console.warn('mic listener attach failed', e); }
+    // Hard-coded en-US: device-locale (he-IL, en-IL etc.) often isn't an
+    // installed recognizer language pack, throws ERROR_LANGUAGE_NOT_SUPPORTED
+    // immediately. en-US is universally available on Google's recognizer.
+    _micToast('opening mic…');
+    // popup: true uses Android's system RecognizerIntent fullscreen dialog.
+    // Pros: bulletproof — Google handles the entire lifecycle (mic prompt,
+    // partials, silence detection, retry), no state stickiness between
+    // sessions, no silent hangs. The plugin returns the result via the
+    // activity callback. Cons: fullscreen dialog instead of inline
+    // streaming. Tradeoff worth it until the upstream plugin is patched.
+    SR.start({ language: 'en-US', maxResults: 2, partialResults: false, popup: true })
+      .then((result) => {
+        const cur = _micState[textareaId];
+        const live = document.getElementById(textareaId);
+        if (cur && cur.gen === gen && live) {
+          const matches = (result && (result.matches || result.value)) || [];
+          if (matches.length) {
+            live.value = cur.base + cur.sep + String(matches[0] || '');
+            try { live.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+            _micToast('got: ' + String(matches[0] || '').slice(0, 40));
+          } else {
+            _micToast('no transcription');
+          }
+        }
+        _hardResetMic(textareaId);
+      })
+      .catch((e) => { _micToast('error: ' + (e && e.message || e)); _hardResetMic(textareaId); });
+  } catch (e) {
+    _micToast('mic outer fail: ' + (e && e.message || e));
+    _hardResetMic(textareaId);
+  }
+}
+function _stopAgentMic(textareaId) {
+  // Tear down JS state + UI SYNCHRONOUSLY so the button is unstuck even if
+  // the native stop() hangs or throws. Then fire the native stop in the
+  // background; we don't await it.
+  const SR = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
+  _hardResetMic(textareaId);
+  if (SR) { try { Promise.resolve(SR.stop()).catch(() => {}); } catch (_) {} }
+}
+function _hardResetMic(textareaId) {
+  const st = _micState[textareaId];
+  if (st) {
+    try { st.partial && st.partial.remove && st.partial.remove(); } catch (_) {}
+    try { st.state && st.state.remove && st.state.remove(); } catch (_) {}
+    try { st.softStop && clearTimeout(st.softStop); } catch (_) {}
+    try { st.forceReset && clearTimeout(st.forceReset); } catch (_) {}
+  }
+  delete _micState[textareaId];
+  _micUiOff(textareaId);
+}
+
 function handleAgentAttachPick(e, key) {
   const files = Array.from(e.target.files || []);
   if (files.length === 0) return;
@@ -11717,6 +12060,8 @@ function hivemindCardHTML(projectId, hm, expanded) {
       <span class="hm-ws-meta">
         <span>${w.findings_count || 0} findings</span>
         <span>${esc(w.status)}</span>
+        ${w.provider ? _providerBadge(w.provider) : ''}
+        ${w.model ? `<span>${esc(w.model)}</span>` : ''}
       </span>
     </div>
   `).join('');
@@ -11972,6 +12317,7 @@ function buildHmOverviewHTML(hivemindId, manifest, workstreams, fullData) {
             <span>P${w.priority || 5}</span>
             <span>${w.findings_count || 0} findings</span>
             <span>${esc(w.status)}</span>
+            ${w.provider ? _providerBadge(w.provider) : ''}
             ${w.model ? `<span>${esc(w.model)}</span>` : ''}
           </span>
         </div>
@@ -14037,6 +14383,27 @@ function _ssShortenModel(m) {
   return String(m).replace(/^claude-/, '').replace(/-\d{8}$/, '');
 }
 
+// Per-provider install/auth health — makes every registered agent provider
+// visible in the Status popup, not just claude. Returns '' for claude-only
+// deployments (nothing extra to show).
+function _renderProviderHealthRows() {
+  const provs = _agentProviders || [];
+  if (provs.length <= 1) return '';
+  const rows = provs.map(pr => {
+    const installed = !!pr.installed;
+    const authOk = pr.auth_status === 'ok';
+    const color = !installed ? 'var(--text-faint)'
+                : authOk     ? 'var(--green)'
+                :              'var(--amber)';
+    const state = !installed ? 'not installed'
+                : authOk     ? 'ready'
+                : (pr.auth_status === 'not_logged_in' ? 'not signed in' : 'installed');
+    const ver = pr.version ? ' · v' + esc(pr.version) : '';
+    return `<div class="ssp-row"><span class="ssp-k">${esc(pr.display_name)}</span><span class="ssp-v" style="color:${color}">${state}${ver}</span></div>`;
+  }).join('');
+  return `<div class="ssp-section-head" style="margin-top:10px">Agent providers</div>${rows}`;
+}
+
 function _renderStatusTab(s, rl, h) {
   const colorClass = h.color === 'ok' ? 'green' : (h.color === 'warn' ? 'amber' : (h.color === 'bad' ? 'red' : ''));
   const resetWhen = rl.resetsAt ? new Date(rl.resetsAt * 1000).toLocaleTimeString() : '';
@@ -14044,13 +14411,20 @@ function _renderStatusTab(s, rl, h) {
   const authDisplay = (s.apiKeySource && s.apiKeySource !== 'none')
     ? s.apiKeySource
     : 'OAuth / keychain';
+  // Rate-limit / overage / model telemetry below is Claude-Code-specific —
+  // the cache is fed only by claude stream readers. Other providers don't
+  // expose equivalent account telemetry, so the section is headed honestly
+  // and every provider's install/auth health is listed separately below.
+  const multiProvider = (_agentProviders || []).length > 1;
   return `
+    ${multiProvider ? '<div class="ssp-section-head">Claude Code</div>' : ''}
     <div class="ssp-row"><span class="ssp-k">Rate limit</span><span class="ssp-v ${colorClass}">${empty ? '—' : (h.message + (resetWhen ? ' · resets ' + resetWhen : ''))}</span></div>
     <div class="ssp-row"><span class="ssp-k">Window</span><span class="ssp-v">${esc((rl.rateLimitType || '').replace('_', '-') || '—')}</span></div>
     <div class="ssp-row"><span class="ssp-k">Overage</span><span class="ssp-v">${rl.isUsingOverage ? 'using overage' : esc(rl.overageStatus || '—')}</span></div>
     <div class="ssp-row"><span class="ssp-k">Model</span><span class="ssp-v">${esc(s.model || '—')}</span></div>
-    <div class="ssp-row"><span class="ssp-k">CLI version</span><span class="ssp-v">${esc(s.claude_code_version || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Agent version</span><span class="ssp-v">${esc(s.claude_code_version || '—')}</span></div>
     <div class="ssp-row"><span class="ssp-k">Auth</span><span class="ssp-v">${esc(authDisplay)}</span></div>
+    ${_renderProviderHealthRows()}
   `;
 }
 
@@ -14060,6 +14434,7 @@ function _renderConfigTab(s) {
     ? '—'
     : (memPaths.length === 1 ? memPaths[0] : memPaths.length + ' paths');
   const fastDisplay = (s.fast_mode_state && s.fast_mode_state !== 'off') ? s.fast_mode_state : 'off';
+  const sspCaps = _getProviderCaps(s.provider || 'claude');
   return `
     <div class="ssp-row"><span class="ssp-k">Permission mode</span><span class="ssp-v">${esc(s.permissionMode || '—')}</span></div>
     <div class="ssp-row"><span class="ssp-k">Output style</span><span class="ssp-v">${esc(s.output_style || '—')}</span></div>
@@ -14068,7 +14443,7 @@ function _renderConfigTab(s) {
     <div class="ssp-row"><span class="ssp-k">Working dir</span><span class="ssp-v" title="${esc(s.cwd || '')}">${esc(s.cwd || '—')}</span></div>
     <div class="ssp-row"><span class="ssp-k">Memory</span><span class="ssp-v" title="${esc(memPaths.join('\n'))}">${esc(memDisplay)}</span></div>
     <div class="ssp-row"><span class="ssp-k">Tools</span><span class="ssp-v">${s.tools_count || 0}</span></div>
-    <div class="ssp-row"><span class="ssp-k">Skills</span><span class="ssp-v">${s.skills_count || 0}</span></div>
+    ${sspCaps.supports_skills ? `<div class="ssp-row"><span class="ssp-k">Skills</span><span class="ssp-v">${s.skills_count || 0}</span></div>` : ''}
     <div class="ssp-row"><span class="ssp-k">Agents</span><span class="ssp-v">${s.agents_count || 0}</span></div>
     <div class="ssp-row"><span class="ssp-k">Plugins</span><span class="ssp-v">${s.plugins_count || 0}</span></div>
     <div class="ssp-row"><span class="ssp-k">Slash commands</span><span class="ssp-v">${s.slash_commands_count || 0}</span></div>
@@ -14080,7 +14455,7 @@ function _renderMcpTab(s) {
   const mcpConnected = mcp.filter(m => (m.status || '').toLowerCase() === 'connected').length;
   const mcpTotal = mcp.length;
   if (mcpTotal === 0) {
-    return '<div class="ssp-empty">No MCP servers configured for this Claude Code install.</div>';
+    return '<div class="ssp-empty">No MCP servers configured for the active agent session.</div>';
   }
   const summary = `${mcpConnected}/${mcpTotal} connected`;
   return `
@@ -14093,21 +14468,37 @@ function _renderMcpTab(s) {
 }
 
 function _renderMcActivitySection() {
-  // MC-scoped totals (was the standalone header pill). Reads `mcUsageCache`
-  // which `fetchGlobalUsage()` populates against /api/usage with the current
-  // `tokenCounterMode` filter. Range selector buttons re-trigger that fetch.
+  // MC-scoped totals. Reads `mcUsageCache` from /api/usage (multi-provider).
   const u = mcUsageCache;
-  const tokens = u ? formatTokens(u.total_tokens || 0) : '—';
-  const costStr = u ? formatCost(u.cost_usd || 0) : '';
-  const sessions = u ? (u.total_sessions || 0) : 0;
+  const total = u ? (u.total || {}) : {};
+  const tokens = u ? formatTokens(total.total_tokens || u.total_tokens || 0) : '—';
+  const costNum = u ? (total.cost_usd !== undefined ? total.cost_usd : u.cost_usd) : null;
+  const costStr = costNum != null ? formatCost(costNum) : '';
+  const sessions = u ? (total.sessions || u.total_sessions || 0) : 0;
   const rangeBtns = TOKEN_MODES.map(m => `
     <button class="ssp-range-btn ${tokenCounterMode === m.id ? 'active' : ''}" onclick="setTokenMode('${esc(m.id)}')">${esc(m.label)}</button>
   `).join('');
+
+  // Per-provider breakdown (shown when >1 provider has activity)
+  const byProv = u ? (u.by_provider || {}) : {};
+  const provEntries = Object.entries(byProv).filter(([, b]) => (b.sessions || 0) > 0);
+  const multiProvider = provEntries.length > 1;
+  const provBreakdown = multiProvider ? `
+    <div class="ssp-section-head" style="margin-top:8px">By provider</div>
+    ${provEntries.map(([pname, b]) => {
+      const pTok = formatTokens(b.total_tokens || 0);
+      const pCost = b.cost_usd != null ? formatCost(b.cost_usd) : '';
+      const provBadge = _providerBadge(pname) || `<span class="provider-badge prov-${esc(pname)}">${esc(pname)}</span>`;
+      return `<div class="ssp-row">${provBadge}<span class="ssp-v">${pTok} tok${pCost ? ' · ' + esc(pCost) : ''} · ${b.sessions || 0} sess</span></div>`;
+    }).join('')}
+  ` : '';
+
   return `
     <div class="ssp-section-head">Clayrune activity</div>
     <div class="ssp-range-row">${rangeBtns}</div>
     <div class="ssp-bignum">${tokens} tok<span class="ssp-bignum-cost">${costStr ? esc(costStr) : ''}</span></div>
     <div class="ssp-bignum-sub">${sessions.toLocaleString()} agent ${sessions === 1 ? 'session' : 'sessions'} in this range</div>
+    ${provBreakdown}
   `;
 }
 
@@ -14122,11 +14513,11 @@ function _renderUsageTab() {
   // canonical numbers.
   const mcSection = _renderMcActivitySection();
   const u = systemUsageCache;
-  if (_sysUsageFetching && !u) return mcSection + '<div class="ssp-empty">Loading Claude Code usage…</div>';
-  if (!u) return mcSection + '<div class="ssp-empty">Claude Code usage not loaded yet.</div>';
+  if (_sysUsageFetching && !u) return mcSection + '<div class="ssp-empty">Loading agent usage stats…</div>';
+  if (!u) return mcSection + '<div class="ssp-empty">Agent usage stats not loaded yet.</div>';
   if (u.available === false) {
     return mcSection + `
-      <div class="ssp-empty">Claude Code stats-cache not found (${esc(u.reason || 'unknown')}).</div>
+      <div class="ssp-empty">Usage stats not available (${esc(u.reason || 'provider may not support stats-cache')}).</div>
       <a class="ssp-link" href="https://claude.ai/settings/usage" target="_blank" rel="noopener">Open canonical usage page →</a>
     `;
   }
@@ -14156,22 +14547,31 @@ function _renderUsageTab() {
         </div>
       `).join('');
 
+  // Everything below is Claude-Code-specific: it comes from claude's
+  // machine-wide stats-cache.json + Anthropic rate-limit events. Other
+  // providers don't expose an equivalent — the per-provider cross-agent
+  // numbers live in the "Clayrune activity" block above (mcSection).
+  const claudeMultiNote = (_agentProviders || []).length > 1
+    ? '<div class="ssp-hint-line">Covers all Claude Code usage on this machine — not just Mission Control. Other providers don\'t publish a stats cache; see Clayrune activity above for cross-provider totals.</div>'
+    : '';
   return mcSection + `
-    <div class="ssp-section-head">Current rate-limit window</div>
+    <div class="ssp-section-head">Claude Code · machine-wide</div>
+    ${claudeMultiNote}
+    <div class="ssp-section-head" style="margin-top:6px">Current rate-limit window</div>
     <div class="ssp-row"><span class="ssp-k">Type</span><span class="ssp-v">${esc((rl.rateLimitType || '').replace('_', '-') || '—')}</span></div>
     <div class="ssp-row"><span class="ssp-k">Resets</span><span class="ssp-v">${esc(resetWhen || '—')}</span></div>
     <div class="ssp-row"><span class="ssp-k">Status</span><span class="ssp-v">${esc(rl.status || '—')}</span></div>
 
-    <div class="ssp-section-head">Today · tokens by model · all Claude Code</div>
+    <div class="ssp-section-head">Today · tokens by model</div>
     ${renderModelRows(today)}
 
-    <div class="ssp-section-head">Last 7 days · tokens by model · all Claude Code</div>
+    <div class="ssp-section-head">Last 7 days · tokens by model</div>
     ${renderModelRows(week)}
 
-    <div class="ssp-section-head">All-time top models · all Claude Code</div>
+    <div class="ssp-section-head">All-time top models</div>
     ${topHTML}
 
-    <div class="ssp-section-head">Totals · all Claude Code</div>
+    <div class="ssp-section-head">Totals</div>
     <div class="ssp-row"><span class="ssp-k">Sessions</span><span class="ssp-v">${(u.total_sessions || 0).toLocaleString()}</span></div>
     <div class="ssp-row"><span class="ssp-k">Messages</span><span class="ssp-v">${(u.total_messages || 0).toLocaleString()}</span></div>
     <div class="ssp-row"><span class="ssp-k">Cache last computed</span><span class="ssp-v">${esc(u.last_computed_date || '—')}</span></div>
@@ -14190,20 +14590,22 @@ function renderSysStatusPanel() {
   const rl = s.rate_limit_info || {};
   const h = _ssRateLimitHealth(rl);
   const tab = _sysStatusActiveTab;
+  const sspProvCaps = _getProviderCaps(s.provider || 'claude');
   let body = '';
   if (tab === 'config') body = _renderConfigTab(s);
   else if (tab === 'mcp') body = _renderMcpTab(s);
   else if (tab === 'usage') body = _renderUsageTab();
   else body = _renderStatusTab(s, rl, h);
 
-  const tabBtn = (id, label) =>
-    `<button class="ssp-tab ${tab === id ? 'active' : ''}" onclick="_sysStatusSwitchTab('${id}', event)">${label}</button>`;
+  const tabBtn = (id, label, show = true) => show
+    ? `<button class="ssp-tab ${tab === id ? 'active' : ''}" onclick="_sysStatusSwitchTab('${id}', event)">${label}</button>`
+    : '';
 
   return `
     <div class="ssp-tabs">
       ${tabBtn('status', 'Status')}
       ${tabBtn('config', 'Config')}
-      ${tabBtn('mcp', 'MCP')}
+      ${tabBtn('mcp', 'MCP', sspProvCaps.supports_mcp)}
       ${tabBtn('usage', 'Usage')}
     </div>
     <div class="ssp-tab-panel">${body}</div>
@@ -14240,6 +14642,27 @@ function renderSysStatusPopover() {
   pop.innerHTML = renderSysStatusPanel();
 }
 
+// Pixel-snap the popover. The pill is sized by fractional-width mono text
+// (label is 10.5px), so its right edge lands on a sub-pixel x; a fixed panel
+// at a fractional coordinate renders blurry. Snapping must be to the *device*
+// pixel grid, not CSS pixels: on Windows at 125%/150% scaling an integer CSS
+// px (Math.round) still maps to a fractional device px. snap() rounds in
+// device space (× dpr → round → ÷ dpr) so the composited panel rasterizes
+// crisp at any display scale.
+function _positionSysStatusPopover() {
+  const pill = document.getElementById('sys-status-pill');
+  const pop = document.getElementById('sys-status-popover');
+  if (!pill || !pop) return;
+  const r = pill.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const snap = (v) => Math.round(v * dpr) / dpr;
+  pop.style.position = 'fixed';
+  pop.style.top = snap(r.bottom + 8) + 'px';
+  pop.style.right = snap(window.innerWidth - r.right) + 'px';
+  pop.style.left = 'auto';
+  pop.style.marginTop = '0';
+}
+
 function toggleSysStatusPopover(ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
   const pop = document.getElementById('sys-status-popover');
@@ -14248,6 +14671,7 @@ function toggleSysStatusPopover(ev) {
   if (_sysStatusPopoverOpen) {
     renderSysStatusPopover();
     pop.classList.add('open');
+    _positionSysStatusPopover();
     // Refresh cache when popover opens so the user sees current data.
     fetchSystemStatus();
     // Lazy-fetch usage if the Usage tab is the persisted active one.
@@ -14283,8 +14707,16 @@ async function refreshSystemStatus(ev) {
 
 function _rerenderSysStatusSurfaces() {
   // Header popover is now the sole surface for system status.
-  if (_sysStatusPopoverOpen) renderSysStatusPopover();
+  if (_sysStatusPopoverOpen) {
+    renderSysStatusPopover();
+    _positionSysStatusPopover();
+  }
 }
+
+// Keep the popover pixel-snapped if the window is resized while it's open.
+window.addEventListener('resize', () => {
+  if (_sysStatusPopoverOpen) _positionSysStatusPopover();
+});
 
 // Close the popover on any outside click. Bound once at load.
 document.addEventListener('click', (e) => {
@@ -14297,23 +14729,42 @@ document.addEventListener('click', (e) => {
 });
 
 
-// ── Claude auth banner ─────────────────────────────────────────────────────
-// Detection is server-side (stream-line sentinel scan + on-demand probe).
-// The dashboard polls /api/claude/auth-status and surfaces a banner with
-// "Authenticate" (launches `claude /login` in the existing terminal pop-out)
-// and "Re-check" (forces a probe) when auth is broken.
+// ── Auth banner — multi-provider ───────────────────────────────────────────
+// Always checks claude (via the legacy /api/claude/auth-status alias). When
+// multi_provider_enabled is on and the default provider differs from claude,
+// also checks that provider and surfaces provider-specific messaging.
 let _authBannerDismissed = false;
 let _authBannerLastReason = null;
 
 async function refreshAuthStatus() {
   try {
+    // Always check claude (the original + most common provider).
     const res = await fetch(API_BASE + '/api/claude/auth-status');
     if (!res.ok) return;
     const state = await res.json();
+    // Attach provider name so _renderAuthBanner can label it correctly.
+    state._provider = 'claude';
     _renderAuthBanner(state);
   } catch (e) {
     // Network blip — leave whatever banner state we have.
   }
+}
+
+async function refreshProviderAuthStatus(providerName) {
+  if (!providerName || providerName === 'claude') { refreshAuthStatus(); return; }
+  try {
+    const res = await fetch(API_BASE + `/api/agent/provider/${providerName}/auth`);
+    if (!res.ok) return;
+    const data = await res.json();
+    // Normalize to the same shape as /api/claude/auth-status
+    const auth = data.auth_state || {};
+    const state = {
+      ok: auth.status === 'ok',
+      reason: auth.status !== 'ok' ? auth.status : null,
+      _provider: providerName,
+    };
+    _renderAuthBanner(state);
+  } catch (e) { /* ignore blips */ }
 }
 
 function _renderAuthBanner(state) {
@@ -14336,22 +14787,32 @@ function _renderAuthBanner(state) {
   if (textEl) textEl.textContent = _authBannerMessage(state);
   const signin = document.getElementById('auth-banner-signin');
   if (signin) {
-    signin.textContent = 'Authenticate Claude';
-    signin.onclick = () => claudeAuthenticate();
+    const prov = (state && state._provider) || 'claude';
+    const provLabel = prov === 'claude' ? 'Claude'
+      : ((_agentProviders || []).find(p => p.name === prov) || {}).display_name || prov;
+    signin.textContent = `Authenticate ${provLabel}`;
+    if (prov === 'claude') {
+      signin.onclick = () => claudeAuthenticate();
+    } else {
+      signin.onclick = () => settingsProviderTerminalLogin(prov, signin);
+    }
   }
   banner.classList.remove('hidden');
 }
 
 function _authBannerMessage(state) {
+  const prov = (state && state._provider) ? state._provider : 'claude';
+  const provLabel = prov === 'claude' ? 'Claude'
+    : ((_agentProviders || []).find(p => p.name === prov) || {}).display_name || prov;
   switch (state && state.reason) {
     case 'not_logged_in':
-      return "Claude isn't signed in. Agents will fail until you authenticate.";
+      return `${provLabel} isn't signed in. Agents will fail until you authenticate.`;
     case 'invalid_api_key':
-      return 'Claude credentials are invalid — sign in again to refresh them.';
+      return `${provLabel} credentials are invalid — sign in again to refresh them.`;
     case 'cli_not_found':
-      return "The `claude` CLI isn't on this machine's PATH.";
+      return `The \`${prov}\` CLI isn't on this machine's PATH.`;
     default:
-      return 'Claude authentication is failing. Sign in to retry.';
+      return `${provLabel} authentication is failing. Sign in to retry.`;
   }
 }
 
@@ -14419,6 +14880,80 @@ async function settingsClaudeAuthCheck() {
     _renderClaudeAuthStatusLine(state);
   } catch (e) {
     if (line) line.innerHTML = '<span style="color:#ef4444">Check failed</span>';
+  }
+}
+
+// ── Provider Auth helpers (Gemini, Codex, Aider, ...) ─────────────────────
+// One env var per provider. For OAuth providers (gemini), users can also
+// click "Launch terminal login" to complete the browser flow.
+const PROVIDER_AUTH_KEYS = {
+  gemini:   'GEMINI_API_KEY',
+  codex:    'OPENAI_API_KEY',
+  aider:    'OPENAI_API_KEY',
+  opencode: 'OPENCODE_API_KEY',
+  goose:    'OPENAI_API_KEY',
+  kiro:     'AWS_PROFILE',
+};
+
+async function settingsProviderSetEnv(provider, key, btnEl) {
+  const inp = document.getElementById(`settings-prov-key-${provider}`);
+  if (!inp) return;
+  const value = inp.value || '';
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Saving...'; }
+  try {
+    const res = await fetch(API_BASE + `/api/agent/provider/${provider}/env`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      alert('Failed to save: ' + (data.error || res.status));
+      return;
+    }
+    showToast(value ? `Saved ${key}. New ${provider} sessions will use it.`
+                    : `Cleared ${key}.`, 6000);
+    // Mask the input now that it's saved
+    if (value) inp.value = '••••••••';
+    settingsProviderRefresh(provider);
+  } catch (e) {
+    alert('Save failed: ' + e);
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Save'; }
+  }
+}
+
+async function settingsProviderTerminalLogin(provider, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Launching...'; }
+  try {
+    const res = await fetch(API_BASE + `/api/agent/provider/${provider}/login-launch`,
+                            { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      alert('Failed to launch terminal: ' + (data.error || res.status));
+      return;
+    }
+    showToast(`A terminal opened with ${provider}. Complete sign-in there, then click Refresh.`, 12000);
+  } catch (e) {
+    alert('Launch failed: ' + e);
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Launch terminal login'; }
+  }
+}
+
+async function settingsProviderRefresh(provider) {
+  // Force a fresh /api/agent/providers fetch (reset the cached list) and
+  // re-render the Settings panel so the new state shows up.
+  _agentProviders = null;
+  try {
+    await fetch(API_BASE + `/api/agent/provider/${provider}/auth`);
+  } catch (e) { /* fire-and-forget; the providers re-fetch is what counts */ }
+  if (typeof refreshSettings === 'function') {
+    refreshSettings();
+  } else if (openModals && openModals.has('__settings')) {
+    // Fallback: re-open the Settings modal so the new auth-state pills render.
+    closeModalById('__settings');
+    setTimeout(() => openSettings(), 50);
   }
 }
 
@@ -14504,9 +15039,10 @@ function _sbRender() {
         : `_sbOpenAgentLog('${esc(pid)}')`;
       const cls = hasCsid ? 'sb-row sb-row-recent' : 'sb-row sb-row-recent sb-row-no-csid';
       const absTime = _sbFormatAbs(e.ts);
+      const provBadge = _providerBadge(e.provider);
       return `
         <div class="${cls}" onclick="${handler}" title="${esc(e.task || '')}">
-          <span class="sb-project">${esc(e.project_name || pid)}</span>
+          <span class="sb-project">${esc(e.project_name || pid)}${provBadge ? '&nbsp;' + provBadge : ''}</span>
           <span class="sb-task">${esc(e.task || '(no task)')}</span>
           <span class="sb-status sb-status-${esc(status)}">${esc(status)}</span>
           <span class="sb-time sb-time-stack">
@@ -15306,6 +15842,109 @@ function showRestartingOverlay() {
   setTimeout(poll, 1200);
 }
 
+// ── Provider Settings section ─────────────────────────────────────────────
+// Renders the "Agent Provider" block inside _renderSettings(). One health
+// card per registered provider — claude included, so it no longer needs the
+// separate standalone "Claude Sign-in" section.
+function _renderProviderSettings(cfg) {
+  // Fall back to a synthetic claude entry if the providers endpoint hasn't
+  // resolved — the Claude sign-in card must never silently disappear.
+  let provs = _agentProviders || [];
+  if (provs.length === 0) {
+    provs = [{ name: 'claude', display_name: 'Claude Code', installed: true,
+               auth_status: 'unknown' }];
+  }
+
+  const defProv = cfg.default_provider || 'claude';
+  const provOpts = provs.map(p =>
+    `<option value="${esc(p.name)}" ${defProv === p.name ? 'selected' : ''}>${esc(p.display_name)}</option>`
+  ).join('');
+
+  const provRows = provs.map(p => {
+    const isClaude  = p.name === 'claude';
+    const installed = !!p.installed;
+    const authOk    = p.auth_status === 'ok';
+    const authNone  = p.auth_status === 'not_logged_in';
+    const pillColor = !installed ? 'var(--text-faint)' : authOk ? 'var(--green)' : 'var(--amber)';
+    const pillText  = !installed ? 'not installed'
+                    : authOk    ? 'signed in'
+                    : authNone  ? 'not signed in'
+                    : 'status unknown';
+    const version   = p.version ? ` · v${esc(p.version)}` : '';
+
+    // Install help: show install command for uninstalled providers
+    const installHint = !installed && p.install_hint
+      ? `<div class="settings-hint" style="margin-top:4px;font-family:monospace;font-size:11px;color:var(--accent)">${esc(p.install_hint)}</div>`
+      : '';
+
+    // Action area differs by provider:
+    //  • claude  → OAuth via the `/login` slash command in a terminal
+    //  • others  → API-key env var + optional terminal login
+    let actionBtns = '';
+    let authControls = '';
+    if (isClaude) {
+      actionBtns = `<div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn-add" onclick="settingsClaudeLogin()">Sign in</button>
+        <button class="btn-add" style="background:var(--surface3);color:var(--text)" onclick="settingsClaudeAuthCheck()">Check</button>
+      </div>`;
+      authControls = `<div class="settings-hint" style="margin-top:6px">
+        Opens a terminal running <code>claude</code>; type <code>/login</code> to finish browser sign-in.
+        <span id="claude-auth-status-line" style="display:inline-block;margin-left:6px"></span>
+      </div>`;
+    } else if (installed) {
+      const envKey = PROVIDER_AUTH_KEYS[p.name] || '';
+      const keyInput = envKey ? `
+        <div style="display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <label style="font-size:11px;color:var(--text-faint);min-width:130px">${esc(envKey)}</label>
+          <input id="settings-prov-key-${esc(p.name)}" type="password"
+                 class="settings-input" style="flex:1;min-width:160px"
+                 placeholder="${authOk ? '(saved — paste to replace)' : 'paste API key'}"
+                 autocomplete="off">
+          <button class="btn-add" onclick="settingsProviderSetEnv('${esc(p.name)}','${esc(envKey)}',this)">Save</button>
+        </div>` : '';
+      const loginBtn = `<button class="btn-add" style="background:var(--surface3);color:var(--text);margin-top:8px;margin-right:6px"
+                               onclick="settingsProviderTerminalLogin('${esc(p.name)}',this)">Launch terminal login</button>`;
+      const refreshBtn = `<button class="btn-add" style="background:var(--surface3);color:var(--text);margin-top:8px"
+                                  onclick="settingsProviderRefresh('${esc(p.name)}')">Refresh</button>`;
+      authControls = keyInput + `<div>${loginBtn}${refreshBtn}</div>`;
+    }
+
+    return `
+      <div class="settings-row" style="align-items:flex-start;flex-direction:column">
+        <div style="display:flex;width:100%;align-items:flex-start;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div class="settings-label" style="display:flex;align-items:center;gap:8px">
+              ${esc(p.display_name)}
+              <span style="font-size:10px;font-weight:600;padding:1px 7px;border-radius:10px;background:var(--surface3);color:${pillColor}">
+                ${pillText}${version}
+              </span>
+            </div>
+            ${installHint}
+          </div>
+          ${actionBtns}
+        </div>
+        ${authControls}
+      </div>`;
+  }).join('');
+
+  // The global-default picker is noise when claude is the only provider.
+  const defaultRow = provs.length > 1 ? `
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Global Default</div>
+          <div class="settings-hint">Seeds the provider picker for new conversations. Each chat can still pick a different provider in the composer.</div>
+        </div>
+        <select class="settings-select" onchange="saveSetting('default_provider',this.value)">${provOpts}</select>
+      </div>` : '';
+
+  return `
+    <div class="settings-section" id="settings-providers-section">
+      <div class="settings-section-title">Agent Provider</div>
+      ${defaultRow}
+      ${provRows}
+    </div>`;
+}
+
 async function openSettings() {
   const modalId = '__settings';
   if (openModals.has(modalId)) {
@@ -15347,6 +15986,9 @@ async function openSettings() {
 async function _renderSettings() {
   const body = document.getElementById('settings-body');
   if (!body) return;
+  // Ensure the provider list is loaded before render — the Agent Provider
+  // section (incl. Claude sign-in) is built from it.
+  try { await _ensureAgentProviders(); } catch (_) {}
   // Refresh remote-access status alongside config so the panel renders with
   // live state (no provider / not enrolled / enrolled).
   fetchRemoteStatus().then(s => { window._remoteState = s; refreshRemoteAccessSection(); });
@@ -15403,23 +16045,7 @@ async function _renderSettings() {
   }
 
   body.innerHTML = `
-    <div class="settings-section">
-      <div class="settings-section-title">Claude Sign-in</div>
-      <div class="settings-row">
-        <div>
-          <div class="settings-label">Sign in to Claude</div>
-          <div class="settings-hint">
-            Opens a terminal window running <code>claude</code>. Type <code>/login</code> in
-            that window to complete browser sign-in.
-            <span id="claude-auth-status-line" style="display:inline-block;margin-left:8px"></span>
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;flex-shrink:0">
-          <button class="btn-add" onclick="settingsClaudeLogin()">Sign in</button>
-          <button class="btn-add" style="background:var(--surface3);color:var(--text)" onclick="settingsClaudeAuthCheck()">Check status</button>
-        </div>
-      </div>
-    </div>
+    ${_renderProviderSettings(cfg)}
 
     <div class="settings-section">
       <div class="settings-section-title">Identity</div>
@@ -15450,9 +16076,9 @@ async function _renderSettings() {
     </div>
 
     <div class="settings-section">
-      <div class="settings-section-title">Claude Code Integration</div>
+      <div class="settings-section-title">Agent Integration</div>
       <div class="settings-row">
-        <div><div class="settings-label">Streaming Agent (Mode B)</div><div class="settings-hint">Persistent process with stdin messaging</div></div>
+        <div><div class="settings-label">Streaming Agent (Mode B)</div><div class="settings-hint">Persistent process with stdin messaging (Claude: native; other providers: synthetic)</div></div>
         ${toggle('use_streaming_agent', cfg.use_streaming_agent)}
       </div>
       <div class="settings-row">
@@ -17442,10 +18068,11 @@ function renderRunRows(runs, projectId) {
     } else {
       clickAction = `showToast('No transcript saved for this run (claude session id missing)', 4000)`;
     }
+    const _rProvBadge = _providerBadge(r.provider);
     return `<div class="run-row" onclick="${clickAction}" title="${esc(summary)}">
       <span class="run-row-ts">${esc(ts)}</span>
       <span class="run-row-status">${statusIcon}</span>
-      <span class="run-row-summary">${esc(summary || '(no summary)')}</span>
+      <span class="run-row-summary">${esc(summary || '(no summary)')}${_rProvBadge ? '&nbsp;' + _rProvBadge : ''}</span>
     </div>`;
   }).join('');
 }
@@ -17473,12 +18100,18 @@ function _jumpToLiveRun(projectId, sessionId) {
 
 const _transcriptCache = {};  // csid -> {messages, size, message_count}
 
-async function openTranscriptViewer(projectId, csid, label) {
+async function openTranscriptViewer(projectId, csid, label, provider) {
   const modalId = '__transcript_' + csid;
   if (openModals.has(modalId)) {
     focusModal(modalId);
     return;
   }
+  // Derive provider from the project if not passed explicitly
+  if (!provider) {
+    const tvProj = allProjects.find(p => p.id === projectId);
+    provider = tvProj ? (tvProj.provider || 'claude') : 'claude';
+  }
+  const tvBadge = _providerBadge(provider);
   const win = document.createElement('div');
   win.className = 'modal-window';
   win.dataset.modalId = modalId;
@@ -17488,7 +18121,7 @@ async function openTranscriptViewer(projectId, csid, label) {
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
       <div style="min-width:0;flex:1">
-        <div style="font-size:14px;font-weight:700;color:var(--text)">Transcript</div>
+        <div style="font-size:14px;font-weight:700;color:var(--text)">Transcript ${tvBadge}</div>
         <div style="font-size:11px;color:var(--text-faint);font-family:var(--mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label || '')} &middot; ${esc(csid)}</div>
       </div>
       <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
@@ -17521,7 +18154,15 @@ async function openTranscriptViewer(projectId, csid, label) {
     const body = document.getElementById('transcript-body-' + csid);
     if (!body) return;
     if (!data.messages || !data.messages.length) {
-      body.innerHTML = '<div class="transcript-empty">Empty transcript.</div>';
+      // Non-JSONL providers may return log_lines instead of structured messages
+      if (data.log_lines && data.log_lines.length) {
+        body.innerHTML = `<div class="transcript-empty" style="font-style:normal;text-align:left">` +
+          `<div style="font-size:11px;color:var(--text-faint);margin-bottom:8px">Raw agent output (${provider} does not produce structured transcripts)</div>` +
+          `<pre style="white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5">${esc(data.log_lines.join('\n'))}</pre>` +
+          `</div>`;
+      } else {
+        body.innerHTML = '<div class="transcript-empty">Empty transcript.</div>';
+      }
       return;
     }
     body.innerHTML = data.messages.map(m => {
@@ -17529,9 +18170,9 @@ async function openTranscriptViewer(projectId, csid, label) {
         return `<div class="transcript-tool">[tool: ${esc(m.tool || 'unknown')}]</div>`;
       }
       const cls = m.role === 'user' ? 'transcript-msg user' : (m.role === 'error' ? 'transcript-msg error' : 'transcript-msg assistant');
-      const label = m.role === 'user' ? 'You' : (m.role === 'error' ? 'Error' : 'Agent');
+      const msgLabel = m.role === 'user' ? 'You' : (m.role === 'error' ? 'Error' : 'Agent');
       return `<div class="${cls}">
-        <div class="transcript-msg-label">${label}</div>
+        <div class="transcript-msg-label">${msgLabel}</div>
         <div class="transcript-msg-text">${esc(m.text || '')}</div>
       </div>`;
     }).join('');
