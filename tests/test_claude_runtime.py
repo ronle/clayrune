@@ -780,6 +780,83 @@ def test_attachment_hint_inherited_by_all_runtimes():
         assert rt.with_attachment_hint("no markers here") == "no markers here"
 
 
+# ── Stage 2 full-parity: MC Tool Protocol ────────────────────────────────────
+
+
+def test_parse_and_strip_mc_tool_blocks():
+    from agent_runtime import parse_mc_tool_blocks, strip_mc_tool_blocks
+    text = (
+        'Sure, let me ask.\n\n'
+        '```mc:question\n'
+        '{"questions": [{"header": "X", "question": "A or B?", '
+        '"options": [{"label": "A"}, {"label": "B"}]}]}\n'
+        '```\n'
+    )
+    blocks = parse_mc_tool_blocks(text)
+    assert len(blocks) == 1
+    assert blocks[0][0] == 'question'
+    assert '"questions"' in blocks[0][1]
+    stripped = strip_mc_tool_blocks(text)
+    assert 'mc:question' not in stripped
+    assert 'Sure, let me ask.' in stripped
+    # no-block text is returned unchanged
+    assert parse_mc_tool_blocks('just text') == []
+    assert strip_mc_tool_blocks('just text') == 'just text'
+
+
+def test_with_mc_tool_protocol_idempotent():
+    from agent_runtime import GeminiRuntime, MC_TOOL_PROTOCOL_PROMPT
+    rt = GeminiRuntime()
+    assert rt.with_mc_tool_protocol('') == MC_TOOL_PROTOCOL_PROMPT
+    out = rt.with_mc_tool_protocol('SYSTEM CONTEXT')
+    assert out.startswith('SYSTEM CONTEXT')
+    assert MC_TOOL_PROTOCOL_PROMPT in out
+    # idempotent — re-applying does not double the protocol
+    assert rt.with_mc_tool_protocol(out) == out
+
+
+def test_apply_mc_tool_blocks_question():
+    """An mc:question block populates pending_questions exactly like Claude's
+    native AskUserQuestion tool, and pauses the turn."""
+    from agent_runtime import GeminiRuntime
+    rt = GeminiRuntime()
+    session = {'log_lines': []}
+    turn = (
+        '```mc:question\n'
+        '{"questions": [{"header": "DB", "question": "Postgres or SQLite?", '
+        '"options": [{"label": "Postgres"}, {"label": "SQLite"}]}]}\n'
+        '```'
+    )
+    res = rt.apply_mc_tool_blocks(session, turn)
+    assert res == {'blocks_found': True, 'paused': True}
+    assert session['waiting_for_question'] is True
+    pq = session['pending_questions']
+    assert len(pq) == 1
+    assert pq[0]['question_id']
+    assert pq[0]['questions'][0]['question'] == 'Postgres or SQLite?'
+
+
+def test_apply_mc_tool_blocks_malformed_is_safe():
+    """A malformed block is logged and skipped — never raised, never pauses."""
+    from agent_runtime import GeminiRuntime
+    rt = GeminiRuntime()
+    session = {'log_lines': []}
+    res = rt.apply_mc_tool_blocks(session, '```mc:question\n{not json\n```')
+    assert res['blocks_found'] is True
+    assert res['paused'] is False
+    assert 'pending_questions' not in session
+    assert any('malformed' in line for line in session['log_lines'])
+
+
+def test_apply_mc_tool_blocks_no_blocks():
+    from agent_runtime import GeminiRuntime
+    rt = GeminiRuntime()
+    session = {'log_lines': []}
+    res = rt.apply_mc_tool_blocks(session, 'Just a normal answer, no tools.')
+    assert res == {'blocks_found': False, 'paused': False}
+    assert 'pending_questions' not in session
+
+
 # ── CapabilityFlags new fields present on all runtimes ───────────────────────
 
 
