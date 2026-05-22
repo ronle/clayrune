@@ -3031,35 +3031,6 @@ def _skills_catalog_block(project):
             "file tools and follow it.\n" + "\n".join(lines))
 
 
-def _memory_block_for_agent(project):
-    """MEMORY.md content for non-Claude agents (full-parity Stage 4).
-
-    Claude Code auto-loads ~/.claude/projects/<path>/memory/MEMORY.md natively;
-    other provider CLIs don't. So MC injects the curated memory index into the
-    system prompt — without it a non-Claude agent has zero cross-session
-    memory. Returns '' for Claude (native load — context byte-identical) or
-    when there is no memory file. Capped so a large index can't blow the
-    prompt. Best-effort: any failure yields ''.
-    """
-    if (project.get('provider') or 'claude').lower() == 'claude':
-        return ''
-    try:
-        mp = _get_memory_path(project)
-        if not mp or not Path(mp).exists():
-            return ''
-        text = Path(mp).read_text(encoding='utf-8', errors='replace').strip()
-    except Exception:
-        return ''
-    if not text:
-        return ''
-    cap = 16000
-    if len(text) > cap:
-        text = text[:cap] + '\n…[truncated — search the full memory file for more]'
-    return ("--- PROJECT MEMORY (MEMORY.md) ---\n"
-            "Your accumulated cross-session memory for this project — treat it "
-            "as background context. Do not hand-edit the file.\n" + text)
-
-
 def _build_agent_context(project, incognito=False, task=''):
     """Build system prompt context for the agent.
 
@@ -3075,6 +3046,13 @@ def _build_agent_context(project, incognito=False, task=''):
     naturally — the lack of activity/recent-conversations is just the truth.
     """
     parts = []
+    # Non-Claude agents (Gemini etc.) get a slimmer context. Claude treats a
+    # rich context dump as background; weaker models read prompt-history-shaped
+    # sections (the MEMORY.md session log, recent conversations, recent
+    # activity) as a TASK LIST and go off doing phantom work on a plain "Hi".
+    # So those sections are Claude-only; non-Claude still gets the targeted
+    # read-floor (RELEVANT MEMORY) which is small and task-scoped.
+    _is_claude = (project.get('provider') or 'claude').lower() == 'claude'
     agent_name = CONFIG.get('agent_name', '')
     user_name = CONFIG.get('user_name', '')
     if agent_name:
@@ -3167,11 +3145,11 @@ def _build_agent_context(project, incognito=False, task=''):
     if _skills_block:
         parts.append(_skills_block)
 
-    # Stage 4 full-parity: non-Claude agents don't auto-load MEMORY.md —
-    # inject the curated memory index so they have cross-session context.
-    _mem_block = _memory_block_for_agent(project)
-    if _mem_block:
-        parts.append(_mem_block)
+    # NOTE: the full MEMORY.md is NOT injected here for non-Claude agents.
+    # An earlier attempt (Stage 4 "memory-in") dumped the whole index in —
+    # but its Session Log is a wall of past prompts, which Gemini read as a
+    # live task list. The targeted read-floor below ("RELEVANT MEMORY") is
+    # the memory mechanism for every provider: small, task-scoped, safe.
 
     # Pre-authored Clayrune API reference — agents inside Clayrune used to
     # curl-probe endpoints every session. Injecting the curated reference
@@ -3197,9 +3175,10 @@ def _build_agent_context(project, incognito=False, task=''):
                 "--- RELEVANT MEMORY (auto-surfaced for this task; "
                 "use the mc-memory-search skill to dig deeper) ---\n" + rl)
 
-    # Recent activity
+    # Recent activity — Claude-only: a non-Claude agent reads these past
+    # "Agent dispatched: <task>" lines as things it still has to do.
     log = project.get('activity_log', [])[:3]
-    if log:
+    if log and _is_claude:
         lines = [f"  - {e.get('ts','')}: {e.get('msg','')}" for e in log]
         parts.append("Recent activity:\n" + "\n".join(lines))
 
@@ -3207,8 +3186,13 @@ def _build_agent_context(project, incognito=False, task=''):
     # sessions (never reached completion log) are still discoverable. Display the
     # LAST user message, not the first, since the first is usually a meta prompt
     # (context condensation, boot text) that the user won't recognize.
+    # Claude-only: these are Claude transcripts, listed with `claude -r <id>`
+    # resume hints. For a non-Claude agent they are both wrong (not its CLI)
+    # and actively harmful — it reads them as "our last chat" and tries to
+    # continue tasks from them.
     project_path = project.get('project_path', '')
-    convos = _recent_claude_transcripts(project_path, limit=5) if project_path else []
+    convos = (_recent_claude_transcripts(project_path, limit=5)
+              if (project_path and _is_claude) else [])
     if convos:
         live_by_csid = {}
         try:
@@ -3241,7 +3225,7 @@ def _build_agent_context(project, incognito=False, task=''):
             "Recent conversations (use 'claude -r <id>' to resume any of these — "
             "label is the user's LAST message):\n" + "\n".join(sess_lines)
         )
-    else:
+    elif _is_claude:
         agent_log = _load_agent_log(project['id'])[:3]
         if agent_log:
             sess_lines = []
