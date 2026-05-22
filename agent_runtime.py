@@ -1308,25 +1308,18 @@ def _sync_mcp_to_gemini_safe(project_path: str) -> Optional[Dict[str, Any]]:
 
 
 def _log_mcp_sync_result(log_lines: List[str], result: Optional[Dict[str, Any]]) -> None:
-    """Surface the MCP-sync outcome in the session log so the user can see
-    what got plumbed through to Gemini."""
+    """Surface the MCP-sync outcome in the session log.
+
+    Only failures are logged. The routine success cases (servers available /
+    user entries kept / stale entries cleared) ran on EVERY dispatch and
+    followup, so a "[mcp-sync] available to Gemini: ..." line appeared in the
+    chat on every single turn — pure noise. The sync still happens; it is
+    just silent unless something actually went wrong.
+    """
     if not result:
         return
     if result.get('error'):
         log_lines.append(f"[mcp-sync] failed (best-effort): {result['error']}")
-        return
-    added = result.get('added') or []
-    skipped = result.get('skipped') or []
-    removed = result.get('removed') or []
-    if added:
-        log_lines.append(f"[mcp-sync] available to Gemini: {', '.join(added)}")
-    if skipped:
-        log_lines.append(
-            f"[mcp-sync] kept user-owned entries (not overwritten): "
-            f"{', '.join(skipped)}")
-    if removed:
-        log_lines.append(
-            f"[mcp-sync] cleared stale MC-managed entries: {', '.join(removed)}")
 
 
 class GeminiRuntime(AgentRuntime):
@@ -1920,9 +1913,16 @@ class GeminiRuntime(AgentRuntime):
                     session['last_output_time'] = _time.time()
                 elif ev and ev.type == EventType.TURN_END:
                     _cb('on_turn_end', ev)
-                # INIT, USER_MESSAGE (the prompt echo) and unrecognized
-                # envelopes (ev is None) are consumed silently — they carry
-                # no agent output.
+                elif ev and ev.type == EventType.INIT:
+                    # Capture Gemini's own session id so followups resume THIS
+                    # exact session by id (--resume <id>) — never `latest`,
+                    # which grabs whatever gemini session is newest in the
+                    # project dir and, after prior runs, is a stale unrelated
+                    # conversation that gets continued by mistake.
+                    if ev.session_id:
+                        session['_gemini_session_id'] = ev.session_id
+                # USER_MESSAGE (the prompt echo) and unrecognized envelopes
+                # (ev is None) are consumed silently — no agent output.
         except Exception as e:
             if session.get('proc') is proc:
                 session['log_lines'].append(f"[stream error: {e}]")
@@ -1952,7 +1952,9 @@ class GeminiRuntime(AgentRuntime):
                 session.setdefault('log_lines', []).append(
                     f'[mc-tool scan error: {e}]')
             if session.get('proc') is proc:
-                if session.get('status') == 'running':
+                # `_interrupted` → the user killed this turn; the non-zero rc
+                # is the kill, not a crash. Leave the status interrupt() set.
+                if session.get('status') == 'running' and not session.get('_interrupted'):
                     if mc_res['paused']:
                         session['status'] = 'idle'
                     else:
@@ -1989,17 +1991,8 @@ class GeminiRuntime(AgentRuntime):
         old_proc = session.get('proc')
         if old_proc and old_proc.poll() is None:
             _kill_pid(old_proc.pid)
+        session.pop('_interrupted', None)  # new turn — clear the prior kill flag
 
-        # Stage 5 — native session resume. `gemini --resume latest` re-opens
-        # the project's most-recent saved session and carries the ENTIRE prior
-        # conversation server-side (verified: a non-interactive `-p` run saves
-        # a session, and resuming it recalls turn-1 context). So a followup
-        # sends only the new message — not the 16 KB MEMORY.md + rules +
-        # context blob the old respawn path re-pasted every turn. That blob
-        # was the token-burn culprit: Gemini has no prompt cache, so every
-        # re-paste was billed in full. The MC Tool Protocol is re-sent (it is
-        # tiny, ~1 KB) so the agent never loses the ability to ask questions
-        # deep into a long conversation.
         bin_path = self.resolve_binary()
         if not bin_path:
             session['log_lines'].append("[gemini binary missing — cannot continue]")
@@ -2007,13 +2000,34 @@ class GeminiRuntime(AgentRuntime):
             session['last_status_change_time'] = _time.time()
             return
 
-        full_prompt = (f"{MC_TOOL_PROTOCOL_PROMPT}\n\n---\n\n"
-                       f"{self.with_attachment_hint(message)}")
-
         mcp_sync = _sync_mcp_to_gemini_safe(handle.project_path)
         _log_mcp_sync_result(session['log_lines'], mcp_sync)
 
-        cmd = self.build_command() + ['--resume', 'latest']
+        # Stage 5 — native session resume. Resume THIS session by the id
+        # captured from its init event (--resume <id>) — NEVER `latest`:
+        # `latest` re-opens whatever gemini session is newest in the project
+        # dir, which after prior runs is a stale, unrelated conversation that
+        # then gets continued by mistake (the "phantom task" bug). Resuming
+        # carries the whole conversation server-side, so the followup sends
+        # only the new message — not the 16 KB context blob the old respawn
+        # path re-pasted every turn (the token burn — Gemini has no prompt
+        # cache). The ~1 KB MC Tool Protocol is re-sent so the agent never
+        # loses the ability to ask questions deep into a conversation.
+        gemini_sid = session.get('_gemini_session_id')
+        if gemini_sid:
+            cmd = self.build_command() + ['--resume', gemini_sid]
+            full_prompt = (f"{MC_TOOL_PROTOCOL_PROMPT}\n\n---\n\n"
+                           f"{self.with_attachment_hint(message)}")
+        else:
+            # No id captured (session predates this fix, or init never landed)
+            # — re-paste context rather than risk `latest` resuming the wrong
+            # session. Costs tokens for this one turn but is always correct.
+            cmd = self.build_command()
+            session['_system_prompt'] = self.with_mc_tool_protocol(
+                self._slim_system_prompt(session.get('_system_prompt') or ''))
+            full_prompt = _compose_respawn_prompt(
+                session, self.with_attachment_hint(message))
+
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
@@ -2039,11 +2053,17 @@ class GeminiRuntime(AgentRuntime):
 
     def interrupt(self, handle: SessionHandle) -> None:
         session = handle.session_dict
+        # Mark interrupted + terminal BEFORE killing the process. The reader
+        # thread's finally block runs the instant the process dies; if status
+        # were still 'running' it would misreport the kill as "exited with
+        # code 1" and attach a misleading error hint. Setting state first
+        # closes that race; `_interrupted` is also checked in the finally.
+        session['_interrupted'] = True
+        session['status'] = 'stopped'
+        session['last_status_change_time'] = _time.time()
         proc = session.get('proc')
         if proc and proc.poll() is None:
             _kill_pid(proc.pid)
-        session['status'] = 'stopped'
-        session['last_status_change_time'] = _time.time()
         session['process_alive'] = False
         session['log_lines'].append('[interrupted]')
 
