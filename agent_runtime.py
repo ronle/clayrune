@@ -209,8 +209,11 @@ emitting (this does NOT end your turn — keep working after it):
 `status` is one of: pending, in_progress, completed.
 """
 
+# Lenient on whitespace around the info string and the body so a model that
+# formats the fence slightly differently (no newline, extra spaces) still
+# parses — the body is JSON-loaded with surrounding whitespace stripped.
 _MC_TOOL_BLOCK_RE = re.compile(
-    r'```[ \t]*mc:(question|plan|todo)[ \t]*\r?\n(.*?)\r?\n?```',
+    r'```[ \t]*mc:(question|plan|todo)[ \t\r\n]*(.*?)```',
     re.DOTALL | re.IGNORECASE)
 
 
@@ -306,7 +309,7 @@ class AgentRuntime(ABC):
             found = True
             if tool_type == 'question':
                 try:
-                    data = json.loads(body)
+                    data = json.loads(body, strict=False)
                     questions = (data.get('questions')
                                  if isinstance(data, dict) else data)
                     if isinstance(questions, dict):
@@ -324,7 +327,7 @@ class AgentRuntime(ABC):
                         f'[mc:question ignored — malformed block: {e}]')
             elif tool_type == 'todo':
                 try:
-                    data = json.loads(body)
+                    data = json.loads(body, strict=False)
                     todos = data.get('todos') if isinstance(data, dict) else data
                     if not isinstance(todos, list):
                         raise ValueError('no todos[]')
@@ -1846,11 +1849,14 @@ class GeminiRuntime(AgentRuntime):
         session = handle.session_dict
         cbs = handle.meta.get('callbacks', {})
 
-        # This turn's assistant text, accumulated for the MC Tool Protocol scan
-        # at turn end. `assist_idxs` tracks which log_lines entries hold that
-        # text so an mc: block can be stripped from the visible chat.
+        # This turn's assistant text, accumulated in stream order (joined with
+        # '' — Gemini emits sub-sentence deltas, so '' reconstructs the exact
+        # output; joining with '\n' would inject literal newlines into any
+        # JSON the model emits and corrupt an mc: block). Once a ```mc: fence
+        # appears, `_mc_suppressing` stops the raw block from reaching the live
+        # chat — it streams faster than a turn-end cleanup could remove it.
         turn_text_parts: List[str] = []
-        assist_idxs: List[int] = []
+        _mc_suppressing = False
 
         def _cb(name: str, ev: AgentEvent) -> None:
             fn = cbs.get(name)
@@ -1884,11 +1890,17 @@ class GeminiRuntime(AgentRuntime):
                 ev = self.parse_event(line, handle.mc_session_id)
                 if ev and ev.type == EventType.ASSISTANT_TEXT:
                     _txt = ev.payload.get('text', line)
-                    session['log_lines'].append(_txt)
-                    assist_idxs.append(len(session['log_lines']) - 1)
                     turn_text_parts.append(_txt)
-                    session['last_output_time'] = _time.time()
-                    _cb('on_assistant_text', ev)
+                    if not _mc_suppressing and '```mc:' in ''.join(turn_text_parts):
+                        # An MC Tool Protocol block has started — suppress the
+                        # raw block (and anything after it) from the live chat.
+                        # It is parsed and acted on at turn end. Any preamble
+                        # before the fence was streamed by earlier deltas.
+                        _mc_suppressing = True
+                    if not _mc_suppressing:
+                        session['log_lines'].append(_txt)
+                        session['last_output_time'] = _time.time()
+                        _cb('on_assistant_text', ev)
                 elif ev and ev.type == EventType.TOOL_USE:
                     blocks = ev.payload.get('blocks', [])
                     name = blocks[0].get('name', '') if blocks else ''
@@ -1919,14 +1931,15 @@ class GeminiRuntime(AgentRuntime):
             # A question pauses the turn in 'idle' awaiting the user's reply.
             mc_res = {'blocks_found': False, 'paused': False}
             try:
-                turn_text = '\n'.join(turn_text_parts)
+                turn_text = ''.join(turn_text_parts)
                 mc_res = self.apply_mc_tool_blocks(session, turn_text)
-                if mc_res['blocks_found']:
-                    cleaned = strip_mc_tool_blocks(turn_text).strip()
-                    ll = session.get('log_lines') or []
-                    for i, idx in enumerate(assist_idxs):
-                        if 0 <= idx < len(ll):
-                            ll[idx] = cleaned if i == 0 else ''
+                if _mc_suppressing and not mc_res['blocks_found']:
+                    # A ```mc: fence appeared but no complete, valid block was
+                    # parsed (turn ended mid-block, or it was malformed) —
+                    # flush the suppressed text so it is not silently lost.
+                    leftover = turn_text.strip()
+                    if leftover:
+                        session['log_lines'].append(leftover)
                 if mc_res['paused']:
                     session['log_lines'].append(
                         '[Waiting for your answer — choose above to continue]')
