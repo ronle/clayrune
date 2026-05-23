@@ -6326,6 +6326,14 @@ def agent_send(project_id):
             user_label = CONFIG.get('user_name') or 'User'
             session['log_lines'].append(f"\n> {user_label}: {message}\n")
             session['_send_already_logged'] = True
+            # Mark followup as in-flight under the same lock so the SSE generate()
+            # loop sees the signal immediately. Without this, an eagerly-opened
+            # SSE can close on stale terminal status before agent_followup gets
+            # a chance to flip status to 'running'. Cleared by the followup
+            # handler (and by _get_active_restart_blockers stuck-flag recovery)
+            # once the new turn is actually live.
+            if decision == 'followup':
+                session['_dispatching_followup'] = True
 
     # Route to the appropriate handler. Each does its own lock acquisition
     # for the actual mutation; the decision above is just to pick the path.
@@ -6477,8 +6485,23 @@ def agent_stream(project_id):
                     if session.get('guardian_state') == 'recovering':
                         pass  # Wait for guardian recovery to complete
                     elif not session.get('pending_followups') and not session.get('_dispatching_followup'):
-                        yield f"data: {json.dumps({'type': 'status', 'status': status, **_session_usage_payload(session)})}\n\n"
-                        break
+                        # Eager-followup grace window: sendFollowup() opens the
+                        # SSE BEFORE POSTing /agent/send, so the very first
+                        # iterations here can read a stale terminal status (the
+                        # prior turn) before write_followup has had a chance to
+                        # flip status back to 'running'. Closing in that gap
+                        # leaves the FE's status pill stuck on "Completed" for
+                        # the ~2s reconnect window — exactly the
+                        # COMPLETED-while-running bug Gemini Mode A exhibits.
+                        # First ~3s of the stream: hold off; if a followup is
+                        # actually incoming, status will flip to 'running' and
+                        # turn_start will be emitted normally. If nothing
+                        # arrives, fall through and close.
+                        if tick < 10:  # 10 * 0.3s ≈ 3s grace
+                            pass
+                        else:
+                            yield f"data: {json.dumps({'type': 'status', 'status': status, **_session_usage_payload(session)})}\n\n"
+                            break
 
             # Emit guardian state changes
             g_state = session.get('guardian_state')
@@ -6557,6 +6580,10 @@ def agent_followup(project_id):
             existing['status'] = 'running'
             existing['last_status_change_time'] = _time.time()
             existing['last_output_time'] = _time.time()
+            # Clear the in-flight marker set by agent_send: we're no longer
+            # "dispatching", we're now "running". Leaving it set would prevent
+            # the Mode A SSE from closing on the NEXT terminal status.
+            existing.pop('_dispatching_followup', None)
             # Refresh the stashed system context so MEMORY / AGENT_RULES edits
             # made mid-conversation ride along on the next per-turn respawn.
             # The runtime re-injects existing['_system_prompt'] every followup
@@ -6721,6 +6748,11 @@ def agent_followup(project_id):
             existing['last_status_change_time'] = _time.time()
             existing['last_output_time'] = _time.time()
             existing['pending_recovery_message'] = message
+            # Clear the in-flight marker set by agent_send (or left by an auto-
+            # dispatched queued followup): we're no longer "dispatching", we're
+            # now "running". Leaving it set would prevent the Mode A SSE from
+            # closing on the NEXT terminal status.
+            existing.pop('_dispatching_followup', None)
             user_label = CONFIG.get('user_name') or 'User'
             if not existing.pop('_send_already_logged', False):
                 existing['log_lines'].append(f"\n> {user_label}: {message}\n")
@@ -11888,6 +11920,13 @@ GUARDIAN_CHECK_INTERVAL = 10
 # Claude can legitimately go silent for several minutes during long thinking,
 # context loads, or tool calls — so we require CPU idleness as confirmation.
 GUARDIAN_HUNG_TIMEOUT = 600
+# Per-provider override. gemini-cli has an upstream non-interactive tool-call
+# hang (google-gemini/gemini-cli#16567) where --yolo doesn't bypass the
+# tool-confirmation-request and the JS event loop parks on the unresolved
+# promise — no heartbeat, no exit, until killed. Gemini itself rarely needs
+# more than ~60s for legitimate thinking, so a 90s watchdog catches the hang
+# fast without false-positiving real work.
+GUARDIAN_HUNG_TIMEOUT_BY_PROVIDER = {'gemini': 90}
 GUARDIAN_STUCK_FLAG_TIMEOUT = 120
 GUARDIAN_MAX_RECOVERIES = 3
 GUARDIAN_BACKOFF_BASE = 5
@@ -12047,11 +12086,22 @@ def _guardian_check_session(sid, session, now):
     # State 2: hung process (alive, no output for GUARDIAN_HUNG_TIMEOUT seconds AND no CPU progress)
     if status == 'running' and proc and proc.poll() is None:
         silent_secs = now - last_output
-        if silent_secs > GUARDIAN_HUNG_TIMEOUT and _proc_is_cpu_idle(session, proc, now):
-            _log(f"[guardian] Session {sid[:8]}: no output for {silent_secs:.0f}s, killing")
+        provider = (session.get('provider') or 'claude').lower()
+        hung_timeout = GUARDIAN_HUNG_TIMEOUT_BY_PROVIDER.get(provider, GUARDIAN_HUNG_TIMEOUT)
+        if silent_secs > hung_timeout and _proc_is_cpu_idle(session, proc, now):
+            _log(f"[guardian] Session {sid[:8]} ({provider}): no output for {silent_secs:.0f}s, killing")
             with get_manager(session['project_id']).lock:
-                session['log_lines'].append(
-                    f'[Guardian: no output for {silent_secs:.0f}s — killing hung process]')
+                # Gemini's tool-call hang has a known upstream cause — surface
+                # it instead of the generic message so the user knows retrying
+                # often works and it isn't an MC fault.
+                if provider == 'gemini':
+                    session['log_lines'].append(
+                        f'[Guardian: gemini stuck for {silent_secs:.0f}s — '
+                        f'likely upstream tool-call hang '
+                        f'(google-gemini/gemini-cli#16567). Retrying usually works.]')
+                else:
+                    session['log_lines'].append(
+                        f'[Guardian: no output for {silent_secs:.0f}s — killing hung process]')
                 session['guardian_state'] = 'needs_attention'
             # Snapshot pid; release lock before kill (process-tree walk can be slow on Windows)
             _kill_proc_background(proc)
