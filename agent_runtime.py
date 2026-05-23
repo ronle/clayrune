@@ -1452,25 +1452,34 @@ class GeminiRuntime(AgentRuntime):
                 timestamp=_now_iso(), payload={'text': str(text)}, raw=msg,
             )
         elif mtype == 'tool_use':
+            # Per gemini-cli PR #10883 the canonical fields are `tool_name` and
+            # `parameters` (not `name` / `input` — those were guessed from
+            # claude's shape and never populated, so every `[tool: call]` had a
+            # blank name). Keep the legacy fallbacks for forward compat in case
+            # the schema shifts again.
+            tname = msg.get('tool_name') or msg.get('name', '')
+            tparams = msg.get('parameters') or msg.get('input') or {}
             return AgentEvent(
                 type=EventType.TOOL_USE, provider='gemini',
                 session_id=session_id, mc_session_id=mc_session_id,
                 timestamp=_now_iso(),
-                payload={'blocks': [{'type': 'tool_use', 'name': msg.get('name', ''),
-                                     'input': msg.get('input', {}), 'tool_use_id': None}]},
+                payload={'blocks': [{'type': 'tool_use', 'name': tname,
+                                     'input': tparams,
+                                     'tool_use_id': msg.get('tool_id') or None}]},
                 raw=msg,
             )
         elif mtype == 'tool_result':
-            # tool_id looks like "<tool_name>-<digits>-<digits>"; strip the
-            # two trailing numeric id segments to recover the tool name.
-            tool_id = msg.get('tool_id') or ''
-            tname = (tool_id.rsplit('-', 2)[0] if tool_id.count('-') >= 2
-                     else (tool_id or msg.get('name') or ''))
+            # tool_result carries `tool_id` + `status` but NO name field — the
+            # name must be recovered by correlating with the preceding
+            # `tool_use` event (handled in _read_stream via the per-session
+            # tool_id→name map). Pass the raw tool_id through so the reader
+            # can do the lookup.
             return AgentEvent(
                 type=EventType.TOOL_RESULT, provider='gemini',
                 session_id=session_id, mc_session_id=mc_session_id,
                 timestamp=_now_iso(),
-                payload={'name': tname, 'status': msg.get('status') or ''},
+                payload={'tool_id': msg.get('tool_id') or '',
+                         'status': msg.get('status') or ''},
                 raw=msg,
             )
         elif mtype in ('result', 'turn_end', 'done'):
@@ -1903,6 +1912,18 @@ class GeminiRuntime(AgentRuntime):
                 elif ev and ev.type == EventType.TOOL_USE:
                     blocks = ev.payload.get('blocks', [])
                     name = blocks[0].get('name', '') if blocks else ''
+                    tid = blocks[0].get('tool_use_id') if blocks else None
+                    # Per-session tool_id → tool_name map. tool_result events
+                    # carry only tool_id, so we cache the name here for the
+                    # reader's TOOL_RESULT branch to look up. Bounded to the
+                    # last 64 tool calls so a marathon session can't grow it
+                    # unboundedly.
+                    if tid and name:
+                        tmap = session.setdefault('_gemini_tool_names', {})
+                        tmap[tid] = name
+                        if len(tmap) > 64:
+                            for k in list(tmap.keys())[:-64]:
+                                tmap.pop(k, None)
                     # Canonical `[tool: ...]` prefix — the frontend keys
                     # tool-line styling, the show/hide "Tool call lines"
                     # toggle and the activity ticker off that exact prefix.
@@ -1912,7 +1933,9 @@ class GeminiRuntime(AgentRuntime):
                         f"[tool: {name}]" if name else "[tool: call]")
                     session['last_output_time'] = _time.time()
                 elif ev and ev.type == EventType.TOOL_RESULT:
-                    nm = ev.payload.get('name') or 'tool'
+                    tid = ev.payload.get('tool_id') or ''
+                    tmap = session.get('_gemini_tool_names') or {}
+                    nm = tmap.get(tid) or ev.payload.get('name') or 'tool'
                     st = ev.payload.get('status') or ''
                     session['log_lines'].append(
                         f"[tool: {nm} result{(' — ' + st) if st else ''}]")

@@ -943,6 +943,46 @@ def test_gemini_parse_event_turn_end():
     assert ev.type == EventType.TURN_END
 
 
+def test_gemini_parse_event_tool_use_canonical_fields():
+    """gemini-cli PR #10883 emits `tool_name` + `parameters` on tool_use
+    (NOT `name` / `input` — those were guessed from claude's shape and never
+    populated, hence MC's blank `[tool: call]` for every gemini tool call).
+    """
+    from agent_runtime import GeminiRuntime, EventType
+    rt = GeminiRuntime()
+    raw = json.dumps({
+        'type': 'tool_use',
+        'tool_name': 'Bash',
+        'tool_id': 'bash-123',
+        'parameters': {'command': 'ls'},
+    })
+    ev = rt.parse_event(raw)
+    assert ev is not None and ev.type == EventType.TOOL_USE
+    block = ev.payload['blocks'][0]
+    assert block['name'] == 'Bash'
+    assert block['input'] == {'command': 'ls'}
+    assert block['tool_use_id'] == 'bash-123'
+
+
+def test_gemini_parse_event_tool_result_correlates_via_tool_id():
+    """tool_result has only `tool_id` + `status`, no name field. The parser
+    passes tool_id through; _read_stream does the name lookup via a per-
+    session tool_id→tool_name map populated by the prior tool_use event.
+    """
+    from agent_runtime import GeminiRuntime, EventType
+    rt = GeminiRuntime()
+    raw = json.dumps({
+        'type': 'tool_result',
+        'tool_id': 'bash-123',
+        'status': 'success',
+        'output': 'file1.txt',
+    })
+    ev = rt.parse_event(raw)
+    assert ev is not None and ev.type == EventType.TOOL_RESULT
+    assert ev.payload['tool_id'] == 'bash-123'
+    assert ev.payload['status'] == 'success'
+
+
 # ── ABC completeness ──────────────────────────────────────────────────────────
 
 
