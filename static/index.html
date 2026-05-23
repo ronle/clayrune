@@ -9193,10 +9193,18 @@ function agentPanelHTML(p) {
       : '';
     const isActiveOrch = isHivemindOrchestrator({sessionId: activeSessionId, hivemindRole: (activeSession||{}).hivemindRole});
     const orchHmId = isActiveOrch ? ((activeSession||{}).hivemindId || '') : '';
+    // Provider badge — ALWAYS show in the chat header (unlike _providerBadge
+    // which hides claude to keep tile/list rows quiet). Inside a chat the
+    // user needs to know which model they're talking to at a glance, even
+    // when it's the default claude.
+    const _provName = ((activeSession && activeSession.provider) || p.provider || 'claude').toLowerCase();
+    const _provLabel = (_agentProviders || []).find(x => x.name === _provName)?.display_name || _provName;
+    const _provBadge = `<span class="provider-badge prov-${esc(_provName.replace(/[^a-z]/g,''))}" title="Provider: ${esc(_provLabel)}">${esc(_provName)}</span>`;
     tabContent = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;flex-shrink:0">
         <span class="agent-status-dot ${st}"></span>
         <span class="agent-status-label ${st}">${esc(consoleStatusLabelText)}</span>
+        ${_provBadge}
         ${isActiveOrch ? '<span class="hm-orch-label">&#x2B21; Hivemind</span>' : ''}
         ${stopBtn}
         ${_pcaps.emits_usage ? `<span class="token-badge" id="session-metrics-${esc(activeSessionId)}">${activeSession ? sessionMetricsHTML(activeSession, _pcaps) : ''}</span>` : ''}
@@ -11025,7 +11033,7 @@ async function fetchAgentStatus(projectId) {
       // nag. The server still computes `s.long_session_advisory`; nothing
       // consumes it now. To bring the nudge back, render it somewhere
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude' };
       if (s.log_lines && s.log_lines.length > 0) {
         agentOutputBuffers[sid] = s.log_lines;
         // Anchor the SSE since= cursor to the server's authoritative count so
@@ -11036,11 +11044,12 @@ async function fetchAgentStatus(projectId) {
       }
       const existingHist = agentHistory.find(h => h.sessionId === sid);
       if (!existingHist) {
-        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', incognito: !!s.incognito });
+        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', incognito: !!s.incognito, provider: s.provider || 'claude' });
       } else {
         if (s.incognito && !existingHist.incognito) existingHist.incognito = true;
         if (s.trigger_type && !existingHist.triggerType) existingHist.triggerType = s.trigger_type;
         if (s.trigger_id && !existingHist.triggerId) existingHist.triggerId = s.trigger_id;
+        if (s.provider && !existingHist.provider) existingHist.provider = s.provider;
       }
       // Auto-connect SSE for:
       //  - actively-running sessions (need live output)

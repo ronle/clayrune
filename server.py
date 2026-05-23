@@ -7308,6 +7308,7 @@ def agent_status(project_id):
                 'guardian_state': s.get('guardian_state'),
                 'circuit_breaker_tripped': s.get('circuit_breaker_tripped', False),
                 'incognito': s.get('incognito', False),
+                'provider': s.get('provider') or 'claude',
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (
