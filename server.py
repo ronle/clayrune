@@ -5948,6 +5948,7 @@ def _dispatch_via_runtime(p, task, *, provider_name,
             'trigger_type': trigger_type,
             'trigger_id': trigger_id,
             'provider': provider_name,
+            'agent_model': p.get('agent_model', '') or CONFIG.get('agent_model', ''),
         }
         agent_sessions[session_id] = session
         mgr.session_ids.add(session_id)
@@ -6153,6 +6154,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'incognito': bool(incognito),
                 'trigger_type': trigger_type,
                 'trigger_id': trigger_id,
+                'agent_model': p.get('agent_model', '') or CONFIG.get('agent_model', ''),
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -6206,6 +6208,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'incognito': bool(incognito),
                 'trigger_type': trigger_type,
                 'trigger_id': trigger_id,
+                'agent_model': p.get('agent_model', '') or CONFIG.get('agent_model', ''),
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -7280,6 +7283,11 @@ def delete_plans():
 @app.route('/api/project/<project_id>/agent/status')
 def agent_status(project_id):
     sessions = []
+    # Hoist project lookup + per-project default model out of the loop. Used
+    # as a fallback for legacy sessions that were dispatched before
+    # session['agent_model'] was captured per-dispatch.
+    _proj_default_model = ((load_project(project_id) or {}).get('agent_model')
+                           or CONFIG.get('agent_model') or '')
     for sid, s in agent_sessions.items():
         if s['project_id'] == project_id:
             sessions.append({
@@ -7309,6 +7317,10 @@ def agent_status(project_id):
                 'circuit_breaker_tripped': s.get('circuit_breaker_tripped', False),
                 'incognito': s.get('incognito', False),
                 'provider': s.get('provider') or 'claude',
+                # Per-session snapshot, with project-level fallback so older
+                # sessions (dispatched before the field was captured) still
+                # surface a usable model string. Empty = provider default.
+                'agent_model': s.get('agent_model') or _proj_default_model,
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (
