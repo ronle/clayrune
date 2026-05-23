@@ -8503,78 +8503,7 @@ function setAdvancedFlag(key, on) {
   applyAdvancedFlags();
 }
 
-// ── Prompt History (Up/Down arrow recall) — per-project ─────────────────────
-const _promptHistoryCache = {};  // projectId → array
-const _PROMPT_HISTORY_MAX = 100;
-let _promptHistoryIdx = -1;  // -1 = not navigating
-let _promptDraft = '';        // stash current input when navigating
-let _promptHistoryProject = null; // which project we're navigating in
-
-function _getPromptHistory(projectId) {
-  if (!projectId) return [];
-  if (!_promptHistoryCache[projectId]) {
-    _promptHistoryCache[projectId] = JSON.parse(localStorage.getItem('prompt_history_' + projectId) || '[]');
-  }
-  return _promptHistoryCache[projectId];
-}
-
-function _pushPromptHistory(text, projectId) {
-  if (!text || !projectId) return;
-  const hist = _getPromptHistory(projectId);
-  // Deduplicate: remove if already most recent
-  if (hist.length && hist[hist.length - 1] === text) return;
-  hist.push(text);
-  if (hist.length > _PROMPT_HISTORY_MAX) hist.shift();
-  localStorage.setItem('prompt_history_' + projectId, JSON.stringify(hist));
-  _promptHistoryIdx = -1;
-}
-
 function handleInputEnter(event, sendFn, projectId) {
-  // Up/Down arrow: navigate prompt history (per-project)
-  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-    const ta = event.target;
-    const hist = _getPromptHistory(projectId);
-    if (!hist.length) return;
-    // Only activate when cursor is on first line (Up) or last line (Down)
-    const val = ta.value;
-    const pos = ta.selectionStart;
-    if (event.key === 'ArrowUp') {
-      // Only if cursor is on the first line
-      const beforeCursor = val.substring(0, pos);
-      if (beforeCursor.includes('\n')) return; // not on first line
-      event.preventDefault();
-      if (_promptHistoryIdx === -1 || _promptHistoryProject !== projectId) {
-        _promptDraft = val;
-        _promptHistoryIdx = hist.length - 1;
-        _promptHistoryProject = projectId;
-      } else if (_promptHistoryIdx > 0) {
-        _promptHistoryIdx--;
-      }
-      ta.value = hist[_promptHistoryIdx];
-      ta.selectionStart = ta.selectionEnd = ta.value.length;
-    } else {
-      // ArrowDown — only if cursor is on the last line
-      const afterCursor = val.substring(pos);
-      if (afterCursor.includes('\n')) return; // not on last line
-      if (_promptHistoryIdx === -1 || _promptHistoryProject !== projectId) return;
-      event.preventDefault();
-      _promptHistoryIdx++;
-      if (_promptHistoryIdx >= hist.length) {
-        _promptHistoryIdx = -1;
-        _promptHistoryProject = null;
-        ta.value = _promptDraft;
-      } else {
-        ta.value = hist[_promptHistoryIdx];
-      }
-      ta.selectionStart = ta.selectionEnd = ta.value.length;
-    }
-    return;
-  }
-  // Any other key resets history navigation
-  if (_promptHistoryIdx !== -1 && event.key !== 'Enter') {
-    _promptHistoryIdx = -1;
-    _promptHistoryProject = null;
-  }
   if (event.key !== 'Enter') return;
   if (enterKeyMode === 'enter') {
     // Enter sends, Shift+Enter for newline
@@ -9555,7 +9484,6 @@ async function dispatchAgent(projectId) {
 
   // Require a prompt for fresh sessions; resume can go without one
   if (!task && !resumeId) { input.focus(); return; }
-  _pushPromptHistory(task, projectId);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
 
@@ -10886,7 +10814,6 @@ async function sendFollowup(projectId, sessionId) {
     return;
   }
 
-  _pushPromptHistory(message, projectId);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
 
@@ -11544,7 +11471,6 @@ async function dispatchContinue(projectId, entryId, claudeSessionId) {
   const input = document.getElementById(`continue-msg-${entryId}`);
   const task = input.value.trim();
   if (!task) { input.focus(); return; }
-  _pushPromptHistory(task, projectId);
   input.value = '';
   if (input.id) delete textareaValues[input.id];
   continueInputOpen = {};
@@ -22004,6 +21930,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const sb = document.querySelector('.sidebar');
   if (sb) sb.addEventListener('mouseleave', () => setTimeout(_reapplyAllSnaps, 220));
 });
+
+// Purge legacy per-project prompt-history entries (feature removed 2026-05-22).
+try {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('prompt_history_')) localStorage.removeItem(k);
+  }
+} catch (e) {}
 
 let modalDrag = null;
 
