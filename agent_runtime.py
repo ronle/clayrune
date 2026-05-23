@@ -2017,10 +2017,6 @@ class GeminiRuntime(AgentRuntime):
     def write_followup(self, handle: SessionHandle, message: str,
                        attachments: Optional[List[str]] = None) -> None:
         session = handle.session_dict
-        old_proc = session.get('proc')
-        if old_proc and old_proc.poll() is None:
-            _kill_pid(old_proc.pid)
-        session.pop('_interrupted', None)  # new turn — clear the prior kill flag
 
         bin_path = self.resolve_binary()
         if not bin_path:
@@ -2070,7 +2066,18 @@ class GeminiRuntime(AgentRuntime):
             startupinfo=_STARTUPINFO,
         )
         self._write_prompt_async(proc, full_prompt, handle.mc_session_id)
+
+        # SWAP-FIRST, KILL-LAST. The old reader's finally block checks
+        # `session.get('proc') is proc` to decide whether to log a crash.
+        # If we kill the old proc BEFORE swapping `session['proc']` (the
+        # previous order), the old reader's finally fires while the dict
+        # still points at the old proc, misreports the kill as
+        # "[gemini exited with code N]" + hint, and renders a false-crash
+        # line right under the user's followup message. Swapping first
+        # ensures the old reader's guard correctly suppresses that log.
+        old_proc = session.get('proc')
         session['proc'] = proc
+        session.pop('_interrupted', None)
         session['status'] = 'running'
         session['process_alive'] = True
         session['last_output_time'] = _time.time()
@@ -2079,6 +2086,9 @@ class GeminiRuntime(AgentRuntime):
         t = threading.Thread(target=self._read_stream, args=(proc, handle),
                              daemon=True, name=f'gemini-reader-{handle.mc_session_id[:8]}')
         t.start()
+
+        if old_proc and old_proc.poll() is None:
+            _kill_pid(old_proc.pid)
 
     def interrupt(self, handle: SessionHandle) -> None:
         session = handle.session_dict
