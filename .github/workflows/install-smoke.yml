@@ -108,17 +108,23 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
-      - name: Run install.sh with python + brew hidden
+      - name: Run install.sh with brew hidden + modern python hidden
         env:
           CLAYRUNE_NO_CONFIRM: '1'
         shell: zsh -l {0}
         run: |
           set +e
-          # Build a tmp PATH that strips out every directory containing a
-          # python3 binary or the brew binary. Forces _find_python to fail
-          # and the uv-fallback to run.
+          # Strip only NON-SYSTEM dirs containing a python3 binary or brew.
+          # We MUST keep /usr/bin and /bin on PATH — they hold curl, git,
+          # sed, basename and the macOS-bundled python3 (which is 3.9, too
+          # old for our 3.11+ check). Apple's old python3 stub being on PATH
+          # is what makes _find_python return empty and trigger the
+          # uv-fallback we want to test.
           stripped=$(echo "$PATH" | tr ':' '\n' | while read d; do
             [ -z "$d" ] && continue
+            case "$d" in
+              /usr/bin|/bin|/usr/sbin|/sbin|/System/*|/Library/Apple/*) echo "$d"; continue ;;
+            esac
             [ -x "$d/python3" ] && continue
             [ -x "$d/python3.11" ] && continue
             [ -x "$d/python3.12" ] && continue
@@ -126,21 +132,24 @@ jobs:
             [ -x "$d/brew" ] && continue
             echo "$d"
           done | paste -sd: -)
-          # The brew binary on Apple Silicon runners lives at
-          # /opt/homebrew/bin which we just stripped, but `command -v brew`
-          # also resolves a shim — defensive check.
           export PATH="$stripped"
           hash -r 2>/dev/null || true
           echo "Stripped PATH: $PATH"
-          echo "python3:" $(command -v python3 || echo "(missing — good)")
+          echo "curl:" $(command -v curl || echo "(MISSING — bad)")
+          echo "python3:" $(command -v python3 || echo "(missing)") "version:" $(python3 --version 2>&1 || echo "(none)")
           echo "brew:" $(command -v brew || echo "(missing — good)")
+          # Run the live installer
           curl -sSL https://clayrune.io/install.sh | sh
           ec=$?
+          # Auth gate exit-1 is expected (can't OAuth in CI). Anything else
+          # means the install phase itself broke — including 0 if curl
+          # silently did nothing (we proved curl exists above, so 0 here
+          # would mean install.sh completed past auth, also fine).
           if [ "$ec" -ne 0 ] && [ "$ec" -ne 1 ]; then
-            echo "install.sh exited $ec — unexpected (uv-fallback likely broken)"
+            echo "install.sh exited $ec — unexpected"
             exit "$ec"
           fi
-          echo "install.sh exit $ec — uv-fallback path OK"
+          echo "install.sh exit $ec — install phase OK"
 
       - name: Verify uv installed a Python and venv works
         shell: zsh -l {0}
