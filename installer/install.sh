@@ -159,6 +159,30 @@ _check_claude_auth() {
   return 0
 }
 
+# ── Preflight: macOS Xcode Command Line Tools ─────────────────────────────
+#
+# On a clean macOS, neither `git` nor any other compiler is on PATH until
+# the Xcode Command Line Tools are installed. nvm's curl-installer needs
+# `git` to clone itself — without CLT it fails opaquely with "You may be on
+# a Mac, and need to install the Xcode Command Line Developer Tools."
+# (We hit this on Keegan's MBP 2026-05-25.) Detect and bail with a clear
+# instruction BEFORE we burn five minutes of the user's time and bandwidth
+# in nvm-install land.
+if [ "$(uname)" = "Darwin" ]; then
+  if ! xcode-select -p >/dev/null 2>&1; then
+    printf "%sXcode Command Line Tools are not installed.%s\n\n" "$Y" "$R"
+    printf "macOS needs them before nvm / git / Python can be set up.\n\n"
+    printf "%sStep 1.%s Run this in your Terminal:\n" "$B" "$R"
+    printf "         %sxcode-select --install%s\n\n" "$C" "$R"
+    printf "         A system dialog will pop up. Click %sInstall%s and\n" "$B" "$R"
+    printf "         wait for the download to finish (~5-10 min on a fast\n"
+    printf "         connection). Apple downloads ~1 GB.\n\n"
+    printf "%sStep 2.%s Re-run the Clayrune installer:\n" "$B" "$R"
+    printf "         %scurl -sSL https://clayrune.io/install.sh | sh%s\n" "$C" "$R"
+    exit 1
+  fi
+fi
+
 # ── Step 0: Ensure Node 18+ is available ───────────────────────────────────
 
 # This must run BEFORE any Claude CLI install attempt because npm-installed
