@@ -338,7 +338,12 @@ fi
 # prompt gets handed off to a CLI that responds with "Not logged in · Please
 # run /login" and silently exits. Catch that here and tell the user clearly.
 printf "Checking Claude CLI authentication...\n"
-if ! _check_claude_auth; then
+# CI override: skip the OAuth check so smoke tests can exercise the later
+# steps (Python/uv setup, venv, launcher). Production install never sets
+# this; documented in .github/workflows/install-smoke.yml.
+if [ -n "${CLAYRUNE_SKIP_AUTH_CHECK:-}" ]; then
+  printf "%sSkip%s auth check (CLAYRUNE_SKIP_AUTH_CHECK set)\n\n" "$Y" "$R"
+elif ! _check_claude_auth; then
   # Resolve the actual claude binary path so the user can run it directly,
   # without having to fight PATH in a new terminal. Anthropic's installer
   # puts claude in ~/.local/bin which isn't on a fresh shell's PATH by
@@ -355,8 +360,9 @@ if ! _check_claude_auth; then
   printf "%sStep 2.%s Re-run this installer:\n" "$B" "$R"
   printf "         %scurl -sSL https://clayrune.io/install.sh | sh%s\n" "$C" "$R"
   exit 1
+else
+  printf "%sOK%s Authenticated\n\n" "$G" "$R"
 fi
-printf "%sOK%s Authenticated\n\n" "$G" "$R"
 
 # ── Direct deterministic install (no Claude handoff) ──────────────────────
 #

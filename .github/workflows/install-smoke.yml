@@ -111,6 +111,9 @@ jobs:
       - name: Run install.sh with brew hidden + modern python hidden
         env:
           CLAYRUNE_NO_CONFIRM: '1'
+          # Skip the OAuth gate so the test reaches Step 2/5 (Python/uv).
+          # install.sh respects this only when set; production never does.
+          CLAYRUNE_SKIP_AUTH_CHECK: '1'
         shell: zsh -l {0}
         run: |
           set +e
@@ -141,15 +144,16 @@ jobs:
           # Run the live installer
           curl -sSL https://clayrune.io/install.sh | sh
           ec=$?
-          # Auth gate exit-1 is expected (can't OAuth in CI). Anything else
-          # means the install phase itself broke — including 0 if curl
-          # silently did nothing (we proved curl exists above, so 0 here
-          # would mean install.sh completed past auth, also fine).
-          if [ "$ec" -ne 0 ] && [ "$ec" -ne 1 ]; then
+          # With CLAYRUNE_SKIP_AUTH_CHECK we expect install.sh to run
+          # ALL the way through (clone, venv, launcher, server start).
+          # Server-start may fail in CI (no display) but the venv setup
+          # (Step 2/5 — the uv path we're actually testing) must complete
+          # before that point.
+          if [ "$ec" -ne 0 ] && [ "$ec" -ne 1 ] && [ "$ec" -ne 2 ]; then
             echo "install.sh exited $ec — unexpected"
             exit "$ec"
           fi
-          echo "install.sh exit $ec — install phase OK"
+          echo "install.sh exit $ec — checking artifacts"
 
       - name: Verify uv installed a Python and venv works
         shell: zsh -l {0}
