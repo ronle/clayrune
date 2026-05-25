@@ -482,10 +482,37 @@ if [ -z "$PYTHON_CMD" ]; then
     if command -v brew >/dev/null 2>&1; then
       brew install python@3.11 || brew install python@3.12 || true
     else
-      printf "  Homebrew not found. Install from https://brew.sh, then re-run.\n"
+      # No Homebrew — fall back to uv (Astral). uv ships a fully self-
+      # contained CPython into ~/.local/share/uv/python/, with no sudo, no
+      # brew, and no Xcode rebuild. Total cost is ~30 sec of download +
+      # extract. Tried this path on Keegan's MBP after Step 2 bailed with
+      # "Homebrew not found. Install from https://brew.sh, then re-run."
+      # — telling a user to leave the installer and go install brew defeats
+      # the whole "smooth install" goal.
+      printf "  Homebrew not found; installing Python via uv (Astral)...\n"
+      if curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1; then
+        export PATH="$HOME/.local/bin:$PATH"
+        if command -v uv >/dev/null 2>&1; then
+          uv python install 3.12 >/dev/null 2>&1 || \
+            uv python install 3.11 >/dev/null 2>&1 || true
+          # uv python find prints the absolute path of the installed
+          # interpreter — use that directly as PYTHON_CMD instead of
+          # relying on PATH discovery (uv doesn't add a python3.12 shim).
+          PYTHON_CMD=$(uv python find 3.12 2>/dev/null || \
+                       uv python find 3.11 2>/dev/null || \
+                       echo "")
+        fi
+      fi
+      if [ -z "$PYTHON_CMD" ]; then
+        printf "  uv install failed or produced no usable Python.\n"
+      fi
     fi
   fi
-  PYTHON_CMD=$(_find_python || true)
+  # Only re-discover when we didn't get an explicit path (uv branch sets one
+  # directly; brew/apt rely on PATH).
+  if [ -z "$PYTHON_CMD" ]; then
+    PYTHON_CMD=$(_find_python || true)
+  fi
 fi
 
 if [ -z "$PYTHON_CMD" ]; then
@@ -493,7 +520,8 @@ if [ -z "$PYTHON_CMD" ]; then
   printf "          Install manually then re-run:\n"
   printf "            %sUbuntu/Debian:  sudo apt install python3.11 python3.11-venv%s\n" "$C" "$R"
   printf "            %sFedora/RHEL:    sudo dnf install python3.11%s\n" "$C" "$R"
-  printf "            %smacOS:          brew install python@3.11%s\n" "$C" "$R"
+  printf "            %smacOS (uv):     curl -LsSf https://astral.sh/uv/install.sh | sh && uv python install 3.12%s\n" "$C" "$R"
+  printf "            %smacOS (brew):   brew install python@3.11%s\n" "$C" "$R"
   exit 2
 fi
 printf "  Using: %s ($("$PYTHON_CMD" --version 2>&1))\n" "$PYTHON_CMD"
