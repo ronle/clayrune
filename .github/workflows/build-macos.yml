@@ -42,7 +42,10 @@ jobs:
           # WebKit. The pywebview wheel doesn't declare them as hard deps,
           # so we install them explicitly here.
           pip install pyobjc-core pyobjc-framework-Cocoa pyobjc-framework-WebKit
-          pip install pyinstaller
+          # Pillow lets PyInstaller auto-convert the .png icon to .icns at
+          # BUNDLE time. Without it, BUNDLE() raises ValueError on the icon
+          # parameter and the build fails right at the .app assembly step.
+          pip install pyinstaller pillow
 
       - name: Build .app
         run: |
