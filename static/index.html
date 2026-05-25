@@ -7411,6 +7411,11 @@ function refreshModalById(modalId) {
   _renderAllMermaidPlaceholders(content);
   if (sid && curTab === 'agent') {
     sizeAgentChat(entry.element, sid);
+    // Render any AskUserQuestion cards that arrived for this session while
+    // its DOM was absent (user was on another tab / modal was closed). The
+    // queue is keyed by session id; flushing is idempotent so a no-op when
+    // nothing is pending.
+    flushPendingQuestions(sid);
   }
   if (modalZoomLevels[modalId]) {
     applyModalZoom(entry.element, modalZoomLevels[modalId]);
@@ -10677,14 +10682,50 @@ let _aqCounter = 0;
 // question on SSE reconnect (so late-joiners see it); the set prevents double
 // rendering. Cleared in submitQuestionAnswer when the user answers.
 const _renderedQuestionIds = {};
+// Per-session pending question queue. When a `question` SSE event arrives for
+// a session whose chat DOM isn't currently mounted (user is on a different
+// agent tab, or the modal is closed and reopened from a notification), we
+// stash the question here so flushPendingQuestions() can render it as soon
+// as the DOM appears (refreshModal / switchAgentTab). Without this, a
+// question delivered to a non-active tab was silently lost — the seen-set
+// got marked but the DOM lookup failed, and no SSE replay fires on tab
+// switch (the SSE was never disconnected). Symptom: user has to send "???"
+// or any followup to force a reconnect that replays pending_questions.
+const _pendingQuestionsBySession = {};
 function renderAgentQuestion(sessionId, projectId, questions, questionId) {
-  const el = document.getElementById(`agent-output-${sessionId}`);
-  if (!el || !questions || !questions.length) return;
-  const seen = _renderedQuestionIds[sessionId] || (_renderedQuestionIds[sessionId] = new Set());
-  if (questionId) {
-    if (seen.has(questionId)) return;
-    seen.add(questionId);
+  if (!questions || !questions.length) return;
+  // Always queue first (idempotent on questionId), then attempt to flush.
+  // This way a question that arrives while the tab DOM is absent doesn't
+  // get dropped — it renders on the next flush (tab switch / modal open).
+  const q = _pendingQuestionsBySession[sessionId] || (_pendingQuestionsBySession[sessionId] = []);
+  if (questionId && q.some(p => p.questionId === questionId)) {
+    // Already queued (e.g. SSE reconnect replay). Still flush so DOM catches up.
+    flushPendingQuestions(sessionId);
+    return;
   }
+  q.push({ questions, questionId, projectId });
+  flushPendingQuestions(sessionId);
+}
+// Render any queued questions whose DOM target is now present. Idempotent —
+// safe to call from any point that creates / re-creates the chat DOM.
+function flushPendingQuestions(sessionId) {
+  const el = document.getElementById(`agent-output-${sessionId}`);
+  if (!el) return;
+  const queue = _pendingQuestionsBySession[sessionId];
+  if (!queue || !queue.length) return;
+  const seen = _renderedQuestionIds[sessionId] || (_renderedQuestionIds[sessionId] = new Set());
+  // Drain in arrival order; leave already-rendered ones marked but pop them.
+  const remaining = [];
+  for (const item of queue) {
+    if (item.questionId && seen.has(item.questionId)) continue;
+    _doRenderAgentQuestion(sessionId, item.projectId, item.questions, item.questionId, el);
+    if (item.questionId) seen.add(item.questionId);
+  }
+  // Leave queue empty if everything rendered; keep unrendered for any future
+  // case (currently none — _doRenderAgentQuestion is synchronous).
+  _pendingQuestionsBySession[sessionId] = remaining;
+}
+function _doRenderAgentQuestion(sessionId, projectId, questions, questionId, el) {
   const wasPinned = _isAgentOutputPinned(el);
   const formId = `aq-${sessionId}-${_aqCounter++}`;
 
@@ -10795,6 +10836,8 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
   // followup, but if SSE has a transient retry between here and there we don't
   // want a fresh question for a new turn to be suppressed.
   delete _renderedQuestionIds[sessionId];
+  // Drop any still-pending queue for this session — the user just answered.
+  delete _pendingQuestionsBySession[sessionId];
 
   // Send as follow-up
   const input = document.getElementById(`agent-followup-${sessionId}`);
