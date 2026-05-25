@@ -1,0 +1,81 @@
+name: Build macOS .app
+
+# Builds dist/Clayrune.app, zips it to MissionControl-macOS.zip, and either
+# attaches the zip to the triggering release (release event) or uploads it as
+# a workflow artifact (manual dispatch). Mirrors the Windows path so future
+# Mac users can download → unzip → right-click → Open (Gatekeeper one-time)
+# without a Terminal step.
+#
+# No code signing (project policy: [[feedback-no-paid-code-signing]]) — users
+# see "unidentified developer" on first open, same UX bucket as Windows
+# SmartScreen.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+concurrency:
+  group: build-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install runtime deps (without pythonnet — Windows-only)
+        run: |
+          # pythonnet pulls .NET runtime stubs and fails to build on macOS.
+          # Strip it out before pip install; app.py guards all pythonnet
+          # imports behind `if sys.platform == 'win32'`.
+          grep -v '^pythonnet' requirements.txt > /tmp/requirements-macos.txt
+          pip install -r /tmp/requirements-macos.txt
+          # pywebview on macOS needs pyobjc-core + pyobjc-framework-Cocoa /
+          # WebKit. The pywebview wheel doesn't declare them as hard deps,
+          # so we install them explicitly here.
+          pip install pyobjc-core pyobjc-framework-Cocoa pyobjc-framework-WebKit
+          pip install pyinstaller
+
+      - name: Build .app
+        run: |
+          pyinstaller build-macos.spec --noconfirm
+          ls -la dist/
+
+      - name: Smoke-test bundle structure
+        run: |
+          test -d "dist/Clayrune.app" || (echo "Clayrune.app missing"; exit 1)
+          test -f "dist/Clayrune.app/Contents/MacOS/Clayrune" || (echo "binary missing"; exit 1)
+          test -d "dist/Clayrune.app/Contents/Resources" || (echo "Resources missing"; exit 1)
+          du -sh "dist/Clayrune.app"
+
+      - name: Zip the bundle
+        run: |
+          cd dist
+          # ditto preserves macOS extended attributes (xattrs) so the
+          # zipped .app re-launches cleanly. zip(1) loses them.
+          ditto -c -k --sequesterRsrc --keepParent Clayrune.app MissionControl-macOS.zip
+          ls -lh MissionControl-macOS.zip
+
+      - name: Upload as workflow artifact (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MissionControl-macOS
+          path: dist/MissionControl-macOS.zip
+          retention-days: 14
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/MissionControl-macOS.zip --clobber

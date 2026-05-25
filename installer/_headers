@@ -2,12 +2,22 @@
 # installer files so browsers don't try to render them as HTML when a
 # user pastes the URL into the address bar.
 
+# install.sh / install.ps1 are served as attachments rather than text/plain.
+# A user who opens https://clayrune.io/install.sh in a browser used to see
+# the raw script body, and a tempting "select all + copy + paste into
+# Terminal" path. zsh chokes on the `!` in `#!/usr/bin/env sh` (history
+# expansion → `event not found: /usr/bin/env`) and the install never runs.
+# Forcing a download means the only viable execution path is the canonical
+# one-liner `curl -sSL https://clayrune.io/install.sh | sh`, which curl
+# happily honors regardless of these headers.
 /install.sh
-  Content-Type: text/plain; charset=utf-8
+  Content-Type: application/octet-stream
+  Content-Disposition: attachment; filename="install.sh"
   Cache-Control: public, max-age=300
 
 /install.ps1
-  Content-Type: text/plain; charset=utf-8
+  Content-Type: application/octet-stream
+  Content-Disposition: attachment; filename="install.ps1"
   Cache-Control: public, max-age=300
 
 /install-prompt.md
