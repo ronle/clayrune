@@ -116,6 +116,28 @@ _setup_node() {
     return 1
   fi
 
+  # Ensure every rc file the user might open a shell from picks up nvm.
+  # nvm's curl-installer detects the calling shell from $0, which is `bash`
+  # when piped through `| bash` (as we do). On macOS the default shell is
+  # zsh, so a fresh Terminal tab reads ~/.zshrc — which nvm never touched
+  # — and `claude` / `node` are nowhere on PATH. Result: install.sh exits
+  # successfully, the user opens a new terminal, runs `claude /login`, and
+  # gets "command not found." (Hit on Keegan's MBP 2026-05-25.) Backfill
+  # the sourcing line into every rc that exists; idempotent via grep guard.
+  _nvm_source_line='export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
+  # On macOS, default shell is zsh — ensure ~/.zshrc exists (a fresh Mac
+  # often doesn't have one) so the sourcing line below has somewhere to land.
+  if [ "$(uname)" = "Darwin" ] && [ ! -f "$HOME/.zshrc" ]; then
+    touch "$HOME/.zshrc"
+  fi
+  for _rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+    [ -f "$_rc" ] || continue
+    if ! grep -q 'NVM_DIR' "$_rc" 2>/dev/null; then
+      printf '\n# nvm (added by Clayrune installer)\n%s\n' "$_nvm_source_line" >> "$_rc"
+      printf "  Added nvm sourcing to %s\n" "$_rc"
+    fi
+  done
+
   # Install Node 20, use it now, set as default for future shells
   printf "Installing Node 20 via nvm...\n"
   if ! nvm install 20 >/dev/null 2>&1; then
@@ -133,6 +155,34 @@ _setup_node() {
   fi
   printf "%sNode setup completed but `node --version` still reports v%s.%s\n" "$E" "$m" "$R"
   return 1
+}
+
+# Persist the directory containing `claude` into the user's shell rc files
+# so a brand-new terminal can find it WITHOUT them having to remember any
+# PATH commands. Anthropic's curl-installer drops claude in ~/.local/bin,
+# which is on PATH in our script's PATH-refreshed shell but never in a
+# fresh login shell. (Anthropic's installer prints its own warning about
+# this and tells the user to edit .zshrc; we shouldn't make them do that.)
+# Idempotent — guarded by grep so re-runs don't double-append.
+_persist_claude_path() {
+  cl=$(command -v claude 2>/dev/null) || return 0
+  [ -n "$cl" ] || return 0
+  dir=$(dirname "$cl")
+  # Skip if it's already in a directory every shell already has on PATH
+  # (avoids polluting rc files with /usr/local/bin etc.).
+  case ":$dir:" in
+    *:/usr/local/bin:*|*:/usr/bin:*|*:/bin:*) return 0 ;;
+  esac
+  if [ "$(uname)" = "Darwin" ] && [ ! -f "$HOME/.zshrc" ]; then
+    touch "$HOME/.zshrc"
+  fi
+  for _rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+    [ -f "$_rc" ] || continue
+    if ! grep -q "PATH.*$dir" "$_rc" 2>/dev/null; then
+      printf '\n# Claude CLI (added by Clayrune installer)\nexport PATH="%s:$PATH"\n' "$dir" >> "$_rc"
+      printf "  Added %s to PATH in %s\n" "$dir" "$_rc"
+    fi
+  done
 }
 
 # Returns 0 iff `claude --version` exits 0 AND emits non-empty output.
@@ -227,6 +277,7 @@ else
       _refresh_claude_path
       if _validate_claude; then
         printf "%s✓ Anthropic installer succeeded%s\n\n" "$G" "$R"
+        _persist_claude_path
         installed=1
       else
         printf "%s✗ Installer ran but 'claude --version' doesn't work; trying next method...%s\n\n" "$Y" "$R"
@@ -245,6 +296,7 @@ else
       _refresh_claude_path
       if _validate_claude; then
         printf "%s✓ npm install succeeded%s\n\n" "$G" "$R"
+        _persist_claude_path
         installed=1
       else
         printf "%s✗ npm completed but 'claude --version' doesn't work%s\n" "$Y" "$R"
@@ -277,17 +329,21 @@ fi
 # run /login" and silently exits. Catch that here and tell the user clearly.
 printf "Checking Claude CLI authentication...\n"
 if ! _check_claude_auth; then
+  # Resolve the actual claude binary path so the user can run it directly,
+  # without having to fight PATH in a new terminal. Anthropic's installer
+  # puts claude in ~/.local/bin which isn't on a fresh shell's PATH by
+  # default (Anthropic prints its own warning, but users don't always act
+  # on it). Using the absolute path here means Step 2 just works regardless
+  # of which shell rc has or hasn't been sourced.
+  _claude_abs=$(command -v claude 2>/dev/null || echo "claude")
   printf "\n%sClaude CLI is installed but not authenticated.%s\n\n" "$Y" "$R"
-  printf "%sStep 1.%s Open a NEW terminal window so PATH picks up Claude CLI.\n" "$B" "$R"
-  printf "         (Or in this shell, force a login-shell reload: %sexec bash -l%s)\n" "$C" "$R"
-  printf "         (This sources ~/.profile for ~/.local/bin AND ~/.bashrc for nvm.)\n\n"
-  printf "%sStep 2.%s Log in to Claude:\n" "$B" "$R"
-  printf "         %sclaude /login%s\n" "$C" "$R"
+  printf "%sStep 1.%s Log in to Claude (run this exact command — uses absolute path,\n" "$B" "$R"
+  printf "         no PATH or new-terminal dance needed):\n"
+  printf "         %s%s /login%s\n" "$C" "$_claude_abs" "$R"
   printf "         (Follow the OAuth prompts, or paste an Anthropic API key.)\n"
   printf "         (After you see \"Logged in\", type %sexit%s or press Ctrl+D to leave the Claude REPL.)\n\n" "$C" "$R"
-  printf "%sStep 3.%s Re-run this installer:\n" "$B" "$R"
-  printf "         %scurl -sSL https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.sh | CLAYRUNE_PROMPT_URL=https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md sh%s\n" "$C" "$R"
-  printf "         (Once clayrune.io is up: %scurl -sSL https://clayrune.io/install.sh | sh%s)\n" "$C" "$R"
+  printf "%sStep 2.%s Re-run this installer:\n" "$B" "$R"
+  printf "         %scurl -sSL https://clayrune.io/install.sh | sh%s\n" "$C" "$R"
   exit 1
 fi
 printf "%sOK%s Authenticated\n\n" "$G" "$R"
