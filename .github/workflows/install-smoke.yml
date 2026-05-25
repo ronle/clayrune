@@ -1,0 +1,99 @@
+name: Install smoke test
+
+# Runs the live clayrune.io/install.sh against a clean Ubuntu + macOS runner
+# to validate the end-to-end install flow.
+#
+# Why this exists: brand-new-Mac surprises like ~/.local/bin not being on
+# PATH, nvm sourcing only landing in ~/.bashrc on a zsh-default machine,
+# and Anthropic's curl-installer dropping claude somewhere fresh shells
+# can't find — those were all caught only when Keegan tried to install on
+# 2026-05-25 and pasted three rounds of broken output. This workflow turns
+# that feedback loop into seconds, on every push to installer/.
+#
+# Auth-gated steps are NOT exercised here — the runner can't OAuth into
+# Claude. We just verify install.sh gets THROUGH the install-and-PATH-fix
+# phase and that a fresh login shell can still find `claude`.
+
+on:
+  push:
+    paths:
+      - 'installer/install.sh'
+      - 'installer/_headers'
+      - '.github/workflows/install-smoke.yml'
+  pull_request:
+    paths:
+      - 'installer/install.sh'
+  workflow_dispatch:
+
+concurrency:
+  group: install-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Run install.sh from clayrune.io (auth-gated parts will exit 1)
+        env:
+          CLAYRUNE_NO_CONFIRM: '1'
+        run: |
+          set +e
+          curl -sSL https://clayrune.io/install.sh | sh
+          ec=$?
+          # install.sh exits 1 at the auth check (we can't OAuth in CI).
+          # That's expected and acceptable — anything before that point
+          # must have succeeded.
+          if [ "$ec" -ne 0 ] && [ "$ec" -ne 1 ]; then
+            echo "install.sh exited $ec — unexpected"
+            exit "$ec"
+          fi
+          echo "install.sh reached the auth gate (exit $ec) — install phase OK"
+
+      - name: Verify claude binary is reachable from a fresh login shell
+        run: |
+          # `bash -lc` simulates a brand-new terminal — must source the rc
+          # files install.sh just modified. If our PATH-persist logic
+          # works, `claude --version` succeeds here.
+          bash -lc 'command -v claude && claude --version' || {
+            echo "FAIL: fresh login shell can't find claude — PATH persistence broken"
+            echo "Dumping rc files:"
+            for f in ~/.bashrc ~/.bash_profile ~/.profile; do
+              if [ -f "$f" ]; then echo "--- $f ---"; cat "$f"; fi
+            done
+            exit 1
+          }
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Run install.sh from clayrune.io
+        env:
+          CLAYRUNE_NO_CONFIRM: '1'
+        shell: zsh -l {0}
+        run: |
+          set +e
+          curl -sSL https://clayrune.io/install.sh | sh
+          ec=$?
+          if [ "$ec" -ne 0 ] && [ "$ec" -ne 1 ]; then
+            echo "install.sh exited $ec — unexpected"
+            exit "$ec"
+          fi
+          echo "install.sh reached the auth gate (exit $ec) — install phase OK"
+
+      - name: Verify claude reachable from a fresh zsh login shell
+        shell: zsh -l {0}
+        run: |
+          # zsh -l reads ~/.zshrc — the file install.sh's PATH-persist
+          # code is supposed to have modified. If our logic works here,
+          # `claude --version` succeeds.
+          command -v claude || {
+            echo "FAIL: fresh zsh login shell can't find claude on PATH"
+            echo "Dumping ~/.zshrc:"
+            [ -f ~/.zshrc ] && cat ~/.zshrc || echo "(.zshrc does not exist)"
+            echo "Searching common install dirs:"
+            ls -la ~/.local/bin/claude ~/.claude/bin/claude ~/.npm-global/bin/claude /usr/local/bin/claude /opt/homebrew/bin/claude 2>&1 | head -10
+            exit 1
+          }
+          claude --version
