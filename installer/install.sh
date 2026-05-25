@@ -262,8 +262,7 @@ if ! _check_claude_auth; then
   printf "         (Follow the OAuth prompts, or paste an Anthropic API key.)\n"
   printf "         (After you see \"Logged in\", type %sexit%s or press Ctrl+D to leave the Claude REPL.)\n\n" "$C" "$R"
   printf "%sStep 3.%s Re-run this installer:\n" "$B" "$R"
-  printf "         %scurl -sSL https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.sh | CLAYRUNE_PROMPT_URL=https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md sh%s\n" "$C" "$R"
-  printf "         (Once clayrune.io is up: %scurl -sSL https://clayrune.io/install.sh | sh%s)\n" "$C" "$R"
+  printf "         %scurl -sSL https://clayrune.io/install.sh | sh%s\n" "$C" "$R"
   exit 1
 fi
 printf "%sOK%s Authenticated\n\n" "$G" "$R"
