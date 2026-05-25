@@ -190,7 +190,17 @@ _persist_claude_path() {
 # binary exists, not that it actually runs (the WSL Node-version mismatch
 # scenario produces a `claude` binary that crashes with a SyntaxError on every
 # invocation).
+#
+# Refresh PATH first: a re-run of install.sh may be invoked from a parent
+# shell that hasn't sourced the rc files our previous run modified (e.g.
+# a fresh `curl | sh` subshell whose parent zsh never sourced ~/.zshrc
+# because the user interacted with claude via its absolute path). Without
+# this refresh, _validate_claude returns 1, the install loop fires again,
+# and Anthropic's installer either re-runs from scratch or hangs prompting
+# for overwrite — both are visible as "stuck on Trying Anthropic installer"
+# to the user. Refresh resolves the existing install before the loop.
 _validate_claude() {
+  _refresh_claude_path
   command -v claude >/dev/null 2>&1 || return 1
   out=$(claude --version 2>/dev/null) || return 1
   [ -n "$out" ] || return 1
