@@ -102,6 +102,10 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<!-- QRCode.js (davidshimjs, MIT, ~25KB) — used by the Settings "Pair Mobile App"
+     section to render the clayrune://pair URI as a scannable QR for the
+     Android shell's SetupActivity. Pure JS, no dependencies. -->
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script type="module">
   // Mermaid for agent-generated diagrams. v11 because v10's flowchart layout
   // (dagre) produces tangled lines for non-trivial graphs; v11 ships with the
@@ -16160,6 +16164,8 @@ async function _renderSettings() {
   fetchRemoteStatus().then(s => { window._remoteState = s; refreshRemoteAccessSection(); });
   // Hydrate push notifications section (permission, VAPID key, subscriptions).
   setTimeout(() => { try { refreshPushSection(); } catch (_) {} }, 0);
+  // Hydrate mobile pairing section (CF Access creds + QR for the APK setup screen).
+  setTimeout(() => { try { refreshMobilePairingSection(); } catch (_) {} }, 0);
   let cfg;
   try {
     const res = await fetch(API_BASE + '/api/config');
@@ -16372,6 +16378,8 @@ async function _renderSettings() {
     ${remoteAccessSettingsHTML()}
 
     ${pushNotificationsSettingsHTML()}
+
+    ${mobilePairingSettingsHTML()}
 
     <div class="settings-section">
       <div class="settings-section-title">Server</div>
@@ -17093,6 +17101,195 @@ async function testPushNotification() {
     }
   } catch (e) {
     showToast(`Test failed: ${e.message || e}`, 6000);
+  }
+}
+
+// ── Mobile pairing (Clayrune Android shell — QR-based onboarding) ────────────
+// Lets the user configure CF Access service-token creds ONCE on the desktop
+// dashboard and ship them to the phone via a scannable QR code, instead of
+// hand-typing the Client ID / Secret in SetupActivity. The APK's
+// SetupActivity scans `clayrune://pair?...` and auto-fills + verifies +
+// persists. Backend lives under /api/mobile-pair/*.
+
+window._mobilePairState = { configured: null, tunnel_url: '', client_id: '',
+                            client_secret_masked: '', pair_uri: '' };
+
+function mobilePairingSettingsHTML() {
+  return `
+    <div class="settings-section" id="mobile-pair-section">
+      <div class="settings-section-title">Pair Mobile App</div>
+      <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
+        Set up the Clayrune Android app without hand-typing service-token
+        credentials on a phone keyboard. Enter your Cloudflare Access
+        creds once here, then scan the QR code from the app's setup screen.
+      </div>
+      <div id="mobile-pair-body">
+        <div class="settings-hint" style="font-size:11px;opacity:.6;padding:4px 0">Loading…</div>
+      </div>
+    </div>`;
+}
+
+async function refreshMobilePairingSection() {
+  const body = document.getElementById('mobile-pair-body');
+  if (!body) return;
+  let st;
+  try {
+    const r = await fetch(API_BASE + '/api/mobile-pair/config');
+    st = await r.json();
+  } catch (e) {
+    body.innerHTML = `<div class="settings-hint" style="color:var(--red,#e35858)">Failed to load: ${esc(e.message || e)}</div>`;
+    return;
+  }
+  window._mobilePairState = st;
+  if (!st.configured) {
+    body.innerHTML = _mobilePairFormHTML('', '', '');
+    return;
+  }
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr auto;gap:14px;align-items:flex-start">
+      <div style="min-width:0">
+        <div class="settings-row" style="border:none;padding:0">
+          <div>
+            <div class="settings-label">Tunnel URL</div>
+            <div class="settings-hint" style="word-break:break-all">${esc(st.tunnel_url)}</div>
+          </div>
+        </div>
+        <div class="settings-row" style="border:none;padding:0">
+          <div>
+            <div class="settings-label">CF Access Client ID</div>
+            <div class="settings-hint" style="word-break:break-all">${esc(st.client_id)}</div>
+          </div>
+        </div>
+        <div class="settings-row" style="border:none;padding:0">
+          <div>
+            <div class="settings-label">CF Access Client Secret</div>
+            <div class="settings-hint">${esc(st.client_secret_masked || '••••')}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn-dispatch" style="font-size:12px;padding:6px 10px;background:transparent;border:1px solid var(--border)" onclick="_mobilePairEdit()">Edit</button>
+          <button class="btn-dispatch" style="font-size:12px;padding:6px 10px;background:transparent;border:1px solid var(--border)" onclick="_mobilePairCopyUri()">Copy URI</button>
+          <button class="btn-dispatch" style="font-size:12px;padding:6px 10px;background:var(--red-dim,#5a2828);border-color:var(--red,#e35858);color:var(--red-text,#ffd2d2)" onclick="_mobilePairDelete()">Remove</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+        <div id="mobile-pair-qr" style="background:#fff;padding:10px;border-radius:8px;width:220px;height:220px;display:flex;align-items:center;justify-content:center"></div>
+        <div class="settings-hint" style="font-size:10px;text-align:center;max-width:220px">Scan from the Clayrune app's setup screen</div>
+      </div>
+    </div>`;
+  _mobilePairRenderQR(st.pair_uri);
+}
+
+function _mobilePairFormHTML(url, cid, secret) {
+  return `
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div>
+        <div class="settings-label">Tunnel URL</div>
+        <div class="settings-hint" style="margin-bottom:4px">e.g. <code>https://ronl.clayrune.io</code></div>
+        <input id="mobile-pair-url" class="settings-input" type="text" value="${esc(url || '')}" placeholder="https://your.clayrune.io" style="width:100%">
+      </div>
+      <div>
+        <div class="settings-label">CF Access Client ID</div>
+        <div class="settings-hint" style="margin-bottom:4px">Cloudflare Zero Trust → Access → Service Auth — ends in <code>.access</code></div>
+        <input id="mobile-pair-cid" class="settings-input" type="text" value="${esc(cid || '')}" placeholder="abc1234....access" style="width:100%">
+      </div>
+      <div>
+        <div class="settings-label">CF Access Client Secret</div>
+        <div class="settings-hint" style="margin-bottom:4px">Long opaque string. Shown only at creation — rotate if lost.</div>
+        <input id="mobile-pair-secret" class="settings-input" type="password" value="${esc(secret || '')}" placeholder="••••••••••••" style="width:100%">
+      </div>
+      <div id="mobile-pair-error" style="display:none;font-size:11px;color:var(--red,#e35858);background:#ef444411;border-left:3px solid #ef4444;padding:8px 12px;border-radius:4px"></div>
+      <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
+        <button class="btn-dispatch" style="font-size:12px;padding:6px 10px" onclick="_mobilePairSave()">Verify & save</button>
+        ${window._mobilePairState && window._mobilePairState.configured
+          ? `<button class="btn-dispatch" style="font-size:12px;padding:6px 10px;background:transparent;border:1px solid var(--border)" onclick="refreshMobilePairingSection()">Cancel</button>`
+          : ''}
+      </div>
+    </div>`;
+}
+
+function _mobilePairEdit() {
+  const body = document.getElementById('mobile-pair-body');
+  if (!body) return;
+  const st = window._mobilePairState || {};
+  body.innerHTML = _mobilePairFormHTML(st.tunnel_url || '', st.client_id || '', '');
+}
+
+async function _mobilePairSave() {
+  const urlEl = document.getElementById('mobile-pair-url');
+  const cidEl = document.getElementById('mobile-pair-cid');
+  const secEl = document.getElementById('mobile-pair-secret');
+  const errEl = document.getElementById('mobile-pair-error');
+  if (!urlEl || !cidEl || !secEl) return;
+  const tunnel_url = urlEl.value.trim();
+  const client_id = cidEl.value.trim();
+  const client_secret = secEl.value.trim();
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  if (!tunnel_url || !client_id || !client_secret) {
+    if (errEl) { errEl.textContent = 'All three fields are required.'; errEl.style.display = ''; }
+    return;
+  }
+  const saveBtn = document.querySelector('#mobile-pair-body button.btn-dispatch');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Verifying…'; }
+  try {
+    const r = await fetch(API_BASE + '/api/mobile-pair/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tunnel_url, client_id, client_secret }),
+    });
+    const b = await r.json();
+    if (!r.ok || !b.ok) {
+      if (errEl) { errEl.textContent = `Verification failed: ${b.error || ('HTTP ' + r.status)}`; errEl.style.display = ''; }
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Verify & save'; }
+      return;
+    }
+    showToast('Mobile pairing saved');
+    await refreshMobilePairingSection();
+  } catch (e) {
+    if (errEl) { errEl.textContent = `Failed: ${e.message || e}`; errEl.style.display = ''; }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Verify & save'; }
+  }
+}
+
+async function _mobilePairDelete() {
+  if (!confirm('Remove mobile-pairing credentials? The QR code will stop working until you reconfigure.')) return;
+  try {
+    await fetch(API_BASE + '/api/mobile-pair/config', { method: 'DELETE' });
+    showToast('Mobile pairing removed');
+    await refreshMobilePairingSection();
+  } catch (e) {
+    showToast(`Delete failed: ${e.message || e}`, 5000);
+  }
+}
+
+function _mobilePairCopyUri() {
+  const uri = (window._mobilePairState && window._mobilePairState.pair_uri) || '';
+  if (!uri) return;
+  navigator.clipboard.writeText(uri).then(
+    () => showToast('Pair URI copied to clipboard'),
+    () => showToast('Copy failed — select the QR and right-click instead', 5000),
+  );
+}
+
+function _mobilePairRenderQR(uri) {
+  const el = document.getElementById('mobile-pair-qr');
+  if (!el || !uri) return;
+  el.innerHTML = '';
+  if (typeof QRCode === 'undefined') {
+    el.innerHTML = '<div style="font-size:11px;color:#666">QR library not loaded</div>';
+    return;
+  }
+  try {
+    new QRCode(el, {
+      text: uri,
+      width: 200,
+      height: 200,
+      colorDark: '#000000',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:11px;color:#666">QR render failed: ${esc(e.message || e)}</div>`;
   }
 }
 
