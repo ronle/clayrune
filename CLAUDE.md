@@ -253,3 +253,44 @@ restart, agents still see the old hard rules.**
 - `docs/SKILLS_CURATION_PHASE4_SPEC.md` — current authoritative spec
 - `docs/SKILLS_CURATION_DESIGN.md` — parent design + Conditions 1–11
 - `docs/SKILLS_CURATION_COMMITTEE_BRIEF.md` — pattern for the v1.1 brief
+
+## Learning definition locked + build order revised (added 2026-05-27)
+
+After Phase 4 v1.1 committee returned RATIFY-WITH-CONDITIONS (no blockers,
+14 must-fix-in-design), Ron pushed back on the framing ("we're not
+defining the right things here"). A working definition of "learning" was
+then locked in conversation. See `~/.claude/projects/C--Users-levir-Documents--claude-mission-control/memory/decision_learning_definition.md`
+for the full text. Headline:
+
+> **Learning is when the agent's effective behavior changes over time,
+> driven by experience, without the human having to type the change.**
+
+Experience includes own past sessions AND proactive external exploration.
+Targets include codebase + work + user + agent itself. Default scope is
+cross-project (narrowed only when intrinsically project-specific) with
+dual-checkpoint tagging (extraction-time + promotion-time). Feedback
+signal is RELAXED: human review at promotion is sufficient.
+
+**Phase 4 v1.1 spec is now reference-only.** Mechanism details (Scribe
+trigger, lock pattern, fingerprint approach, kill switch, atomic-write
+discipline) remain valid as building blocks for the eventual v2 design.
+The scope/structure/UX layer needs redesign against the locked definition.
+
+**Revised build order:**
+
+1. **Fix condense first.** The 2026-05-23 diagnostic noted 58 timeouts +
+   48 errors in structured condense. The memory-refinement half of the
+   existing learning loop is degrading. Foundation must be working before
+   adding new learning layers on top.
+2. **Redesign Phase 4 as v2** against the locked definition. Cross-project
+   default, external-exploration retention, user learning included,
+   dual-checkpoint scope tagging. Old committee assessments at
+   `docs/_committee/SKILLS_CURATION_PHASE4_seat<N>_*.md` remain useful as
+   raw input (particularly Seat 1 on fingerprint stability and Seat 3 on
+   lock contract precision).
+3. **Committee review of v2.**
+4. **Build.**
+
+**No backend learning-system code lands** until condense is fixed AND a
+v2 design has cleared committee. Same discipline as parent design v2 and
+Memory System §3.A.MID.
