@@ -14523,25 +14523,33 @@ def _perform_server_restart_async(audit_entry):
     frontend's polling overlay reconnects when /api/projects starts answering
     again, and the localStorage open-modals snapshot restores the conversation
     layout.
+
+    Hardening (2026-05-27): if `_stop_all_sessions_for_restart` deadlocks (e.g.
+    on an SSE-held mgr.lock held by the very session that triggered the
+    restart), the original implementation hung forever and never re-exec'd.
+    The UI's "any 200 = back" poll then declared false success against the
+    old process. Three guards: (a) spawn the new process FIRST so progress is
+    made before any potentially-blocking work, (b) bound the graceful stop in
+    its own thread with a hard timeout, (c) start a hard watchdog that forces
+    os._exit(2) past an absolute deadline no matter what.
     """
     def _do_restart():
+        # Watchdog: under any circumstance, terminate within 10s of being
+        # asked to restart. Daemon thread won't be joined; os._exit is a hard
+        # SIGKILL-equivalent that bypasses atexit hooks but that's the point.
+        def _watchdog():
+            _time.sleep(10.0)
+            try: _log("[restart] watchdog tripped — forcing termination")
+            except Exception: pass
+            os._exit(2)
+        threading.Thread(target=_watchdog, daemon=True).start()
+
         _time.sleep(0.4)  # let the HTTP 202 actually reach the client
-        try:
-            _stop_all_sessions_for_restart()
-        except Exception as e:
-            _log(f"[restart] stop-all failed (continuing anyway): {e}")
-        try:
-            _append_restart_log(audit_entry)
-        except Exception:
-            pass
-        _log("[restart] spawning fresh server process and exiting old one")
-        # Use subprocess.Popen instead of os.execv. On Windows execv is
-        # implemented as spawn-new-then-exit-old AND the new process inherits
-        # open handles (including the listening socket). Worse, any child
-        # processes we spawned (Mode B agents, terminal sessions) ALSO hold
-        # that socket FD — so the port stays bound until every descendant
-        # dies, which can be longer than the new instance is willing to wait.
-        # A fresh subprocess.Popen with close_fds=True starts clean.
+
+        # (1) Spawn the new instance FIRST. Even if everything below hangs,
+        # the user already has a fresh server starting up. The new instance's
+        # port-conflict bypass will wait for the old socket to free.
+        spawned = False
         new_env = os.environ.copy()
         new_env['MC_RESTART_FROM_PID'] = str(os.getpid())
         try:
@@ -14560,23 +14568,40 @@ def _perform_server_restart_async(audit_entry):
                 )
             else:
                 popen_kwargs['start_new_session'] = True
-                # TODO(linux/macos): once the parent exits, the child's stdout/stderr
-                # are wired to the now-closed terminal so log output disappears.
-                # Redirect to a rotating file (e.g. data/server.log) here:
-                #   logf = open(_DATA_ROOT / 'data' / 'server.log', 'ab')
-                #   popen_kwargs['stdout'] = logf
-                #   popen_kwargs['stderr'] = subprocess.STDOUT
-                # Skipped today because MC is Windows-only in practice and the
-                # CREATE_NEW_CONSOLE branch above gives Windows users a visible window.
             subprocess.Popen([sys.executable] + sys.argv, **popen_kwargs)
+            spawned = True
+            _log("[restart] spawned new server process")
         except Exception as e:
             _log(f"[restart] failed to spawn new instance: {e}")
-            os._exit(1)
-        # Give the spawn ~250ms to get past its own startup before we exit and
-        # release the listening socket. (The new instance's port-conflict
-        # bypass will keep waiting beyond that if needed.)
+
+        # (2) Best-effort graceful stop, bounded by a wall-clock timeout.
+        # Run in its own thread so a deadlock cannot prevent the os._exit
+        # below. Whether or not it finishes, we proceed.
+        stop_done = threading.Event()
+        def _bounded_stop():
+            try: _stop_all_sessions_for_restart()
+            except Exception as e:
+                try: _log(f"[restart] stop-all failed: {e}")
+                except Exception: pass
+            finally:
+                stop_done.set()
+        threading.Thread(target=_bounded_stop, daemon=True).start()
+        stop_done.wait(timeout=4.0)
+        if not stop_done.is_set():
+            try: _log("[restart] stop-all exceeded 4s — proceeding to exit anyway")
+            except Exception: pass
+
+        # (3) Audit log + exit. Log write is best-effort.
+        try: _append_restart_log(audit_entry)
+        except Exception: pass
+
+        # Brief settle so the new process can claim the port if the OS is
+        # quick about it; the new instance is allowed to wait longer.
         _time.sleep(0.25)
-        os._exit(0)
+        try: _log(f"[restart] exiting old process (spawned={spawned})")
+        except Exception: pass
+        os._exit(0 if spawned else 1)
+
     threading.Thread(target=_do_restart, daemon=True).start()
 
 
