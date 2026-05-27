@@ -88,6 +88,11 @@ data/system_status.json
 # to the native Android app. Contains a private RSA key; never commit.
 data/firebase_admin.json
 
+# Mobile pairing — CF Access service-token credentials used to provision the
+# Clayrune Android shell via QR code. Contains the secret in plaintext (must
+# be readable to render the QR each time the user views the pairing page).
+data/mobile_pairing.json
+
 # Monthly maintenance audit reports — runtime output of the read-only
 # audit (docs/MAINTENANCE_AUDIT_PROMPT.md). Reviewed by Ron, not
 # committed. Gitignoring this is what lets the audit satisfy its own

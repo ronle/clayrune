@@ -13246,6 +13246,148 @@ def push_test():
     return jsonify(result)
 
 
+# ── Mobile pairing (WhatsApp-style QR onboarding for the Android APK) ───────
+# Stores the CF Access service-token credentials needed by the Clayrune
+# Android shell to reach this MC instance. Configured ONCE on the desktop
+# dashboard (user-friendly form, validated against the live tunnel), then
+# served as a QR code that the APK's SetupActivity scans to auto-fill +
+# verify + persist. Removes the need for non-operator users to fish service
+# tokens out of the Cloudflare Zero Trust UI.
+#
+# Storage matches push_vapid.json / firebase_admin.json: plain JSON under
+# data/, gitignored, no encryption-at-rest (the secret has to be readable in
+# plaintext to render the QR — encryption with a colocated key is theatre).
+# It lives in data/, NOT data/projects/, so load_projects() does not see it.
+
+MOBILE_PAIRING_PATH = _DATA_ROOT / 'data' / 'mobile_pairing.json'
+
+
+def _load_mobile_pairing() -> dict:
+    try:
+        with open(MOBILE_PAIRING_PATH, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return d
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _save_mobile_pairing(d: dict) -> None:
+    MOBILE_PAIRING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MOBILE_PAIRING_PATH.with_suffix('.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, indent=2)
+    tmp.replace(MOBILE_PAIRING_PATH)
+
+
+def _mobile_pair_mask(secret: str) -> str:
+    """Return a `••••abcd` style mask of the last 4 chars for display."""
+    if not isinstance(secret, str) or len(secret) < 4:
+        return '••••'
+    return '••••' + secret[-4:]
+
+
+def _mobile_pair_verify(tunnel_url: str, client_id: str,
+                        client_secret: str) -> tuple[bool, str]:
+    """Hit the tunnel root with CF service-token headers; success means the
+    creds + URL combo actually authorise. Returns (ok, error_or_empty)."""
+    import urllib.request
+    import urllib.error
+    if not tunnel_url or not client_id or not client_secret:
+        return False, 'missing fields'
+    url = tunnel_url.rstrip('/') + '/'
+    req = urllib.request.Request(url, method='GET')
+    req.add_header('CF-Access-Client-Id', client_id)
+    req.add_header('CF-Access-Client-Secret', client_secret)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            code = resp.getcode()
+            if code != 200:
+                return False, f'HTTP {code} from tunnel'
+            body = resp.read(4096).decode('utf-8', errors='replace')
+            # The dashboard root returns the MC HTML — sanity-check we hit
+            # MC and not a CF Access challenge / 200-but-wrong-content.
+            if 'Clayrune' not in body and 'Mission Control' not in body:
+                return False, 'tunnel returned 200 but body did not look like MC'
+        return True, ''
+    except urllib.error.HTTPError as e:
+        return False, f'HTTP {e.code} ({e.reason})'
+    except urllib.error.URLError as e:
+        return False, f'connection failed: {e.reason}'
+    except Exception as e:
+        return False, f'unexpected error: {e}'
+
+
+def _mobile_pair_uri(d: dict) -> str:
+    """Compose the clayrune://pair?... URI the APK SetupActivity scans."""
+    from urllib.parse import urlencode
+    qs = urlencode({
+        'v': '1',
+        'u': d.get('tunnel_url') or '',
+        'i': d.get('client_id') or '',
+        's': d.get('client_secret') or '',
+    })
+    return f'clayrune://pair?{qs}'
+
+
+@app.route('/api/mobile-pair/config', methods=['GET'])
+def mobile_pair_get():
+    d = _load_mobile_pairing()
+    if not d.get('tunnel_url') or not d.get('client_id') or not d.get('client_secret'):
+        return jsonify({'configured': False})
+    return jsonify({
+        'configured': True,
+        'tunnel_url': d['tunnel_url'],
+        'client_id': d['client_id'],
+        'client_secret_masked': _mobile_pair_mask(d['client_secret']),
+        'pair_uri': _mobile_pair_uri(d),
+        'updated_at': d.get('updated_at'),
+    })
+
+
+@app.route('/api/mobile-pair/config', methods=['PUT'])
+def mobile_pair_put():
+    body = request.get_json(silent=True) or {}
+    tunnel_url = (body.get('tunnel_url') or '').strip()
+    client_id = (body.get('client_id') or '').strip()
+    client_secret = (body.get('client_secret') or '').strip()
+    skip_verify = bool(body.get('skip_verify'))
+    if tunnel_url and not tunnel_url.startswith(('http://', 'https://')):
+        tunnel_url = 'https://' + tunnel_url
+    if not tunnel_url or not client_id or not client_secret:
+        return jsonify({'ok': False, 'error': 'tunnel_url, client_id, client_secret required'}), 400
+    if not skip_verify:
+        ok, err = _mobile_pair_verify(tunnel_url, client_id, client_secret)
+        if not ok:
+            return jsonify({'ok': False, 'error': err}), 400
+    d = {
+        'tunnel_url': tunnel_url,
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'updated_at': _time.time(),
+    }
+    _save_mobile_pairing(d)
+    return jsonify({
+        'ok': True,
+        'configured': True,
+        'tunnel_url': tunnel_url,
+        'client_id': client_id,
+        'client_secret_masked': _mobile_pair_mask(client_secret),
+        'pair_uri': _mobile_pair_uri(d),
+        'updated_at': d['updated_at'],
+    })
+
+
+@app.route('/api/mobile-pair/config', methods=['DELETE'])
+def mobile_pair_delete():
+    try:
+        MOBILE_PAIRING_PATH.unlink()
+    except FileNotFoundError:
+        pass
+    return jsonify({'ok': True, 'configured': False})
+
+
 @app.route('/api/presence', methods=['POST'])
 def api_presence():
     """Heartbeat from a dashboard that has chat(s) open + visible + focused.
