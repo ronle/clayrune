@@ -5493,7 +5493,14 @@ def _condense_plan(project):
             'archive_tail': archive_tail,
             'line_budget': int(CONFIG.get('index_line_budget', 160) or 160),
         }, ensure_ascii=False)
-        model = CONFIG.get('condense_model', '') or 'sonnet'
+        # Default to haiku, NOT sonnet. The structured condense is a one-shot
+        # JSON call with no tools and a schema-validated reply — same shape as
+        # Scribe, which already defaults to haiku. Sonnet's reasoning depth is
+        # wasted here and routinely times out on 30KB+ stdin payloads (live:
+        # 91 model_errors + 58 timeouts vs 5 successes before this default
+        # was corrected). Users who want sonnet can still set condense_model
+        # explicitly in Settings.
+        model = CONFIG.get('condense_model', '') or 'haiku'
         try:
             raw = _scribe_call(model, _CONDENSE_PLAN_PROMPT, body)
         except subprocess.TimeoutExpired:
