@@ -17309,9 +17309,16 @@ async function _mobilePairGenerate() {
     return;
   }
 
-  // Render the one-time QR. The client_secret is in `pair_uri` and nowhere
-  // else — once this block is dismissed, the user must mint a new token to
-  // re-scan.
+  // Refresh the paired list FIRST so the new token shows up. This rebuilds
+  // the auto section's DOM (including #mobile-pair-qr-block), so we have to
+  // render the one-time QR AFTER the refresh — otherwise the QR gets nuked
+  // by the re-render. The client_secret lives only in `b.pair_uri`; once
+  // the user dismisses this block they have to revoke + re-pair to scan
+  // again. We stash b.pair_uri so a re-render survives even if some other
+  // refresh fires concurrently.
+  window._mobilePairFreshUri = b.pair_uri;
+  await refreshMobilePairingSection();
+  const qrBlock = document.getElementById('mobile-pair-qr-block');
   if (qrBlock) {
     qrBlock.innerHTML = `
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:flex-start">
@@ -17324,7 +17331,7 @@ async function _mobilePairGenerate() {
             if you can't scan now, revoke and create a new pairing instead.
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn-dispatch" style="font-size:11px;padding:4px 10px;background:transparent;border:1px solid var(--border)" onclick="_mobilePairCopyFreshUri('${esc(b.pair_uri).replace(/'/g, '\\\'')}')">Copy URI</button>
+            <button class="btn-dispatch" style="font-size:11px;padding:4px 10px;background:transparent;border:1px solid var(--border)" onclick="_mobilePairCopyFreshUri()">Copy URI</button>
             <button class="btn-dispatch" style="font-size:11px;padding:4px 10px;background:transparent;border:1px solid var(--border)" onclick="_mobilePairDismissFresh()">Done</button>
           </div>
         </div>
@@ -17332,19 +17339,23 @@ async function _mobilePairGenerate() {
     qrBlock.style.display = '';
     _mobilePairRenderQRInto('mobile-pair-qr-fresh', b.pair_uri);
   }
-  if (btn) { btn.disabled = false; btn.textContent = 'Pair another'; }
-  if (labelEl) labelEl.value = '';
-  // Refresh the paired list — the new token should appear immediately.
-  refreshMobilePairingSection();
+  // The label input was re-rendered by refresh — clear it on the new node.
+  const newLabelEl = document.getElementById('mobile-pair-label');
+  if (newLabelEl) newLabelEl.value = '';
+  const newBtn = document.querySelector('#mobile-pair-create .btn-dispatch');
+  if (newBtn) newBtn.textContent = 'Pair another';
 }
 
 function _mobilePairDismissFresh() {
   const qrBlock = document.getElementById('mobile-pair-qr-block');
   if (qrBlock) { qrBlock.style.display = 'none'; qrBlock.innerHTML = ''; }
+  // Drop the stashed secret too — once dismissed it's gone for good.
+  window._mobilePairFreshUri = null;
 }
 
-function _mobilePairCopyFreshUri(uri) {
-  if (!uri) return;
+function _mobilePairCopyFreshUri() {
+  const uri = window._mobilePairFreshUri || '';
+  if (!uri) { showToast('No fresh pair URI to copy', 3000); return; }
   navigator.clipboard.writeText(uri).then(
     () => showToast('Pair URI copied — keep it secret'),
     () => showToast('Copy failed', 4000),
