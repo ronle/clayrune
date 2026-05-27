@@ -464,6 +464,271 @@ async def revoke_device(
     return {"ok": True, "already_revoked": False, "deleted": deleted}
 
 
+# ─── Mobile pairing tokens ───────────────────────────────────────────────────
+#
+# Per-device CF Access service tokens used by the Android shell. Each phone
+# pairs to a specific MC device (the "host" device) and gets its own service
+# token attached to that device's Access app via a dedicated Service Auth
+# policy. Per-device = revocable per-phone with no blast radius on other
+# devices/phones.
+#
+# Flow:
+#   1. Dashboard on the host MC instance calls
+#      POST /v1/devices/{this_device_id}/mobile-tokens with {label}
+#   2. CP creates a CF service token, adds a Service Auth policy to the host's
+#      Access app including that token, stores the linkage in
+#      devices/{device_id}/mobile_tokens/{doc_id}
+#   3. Response includes client_id + client_secret (ONCE — CF won't reveal the
+#      secret again); host MC turns it into a clayrune://pair?... URI for the
+#      QR code
+#   4. APK scans → uses those CF Access headers on every request → CF Access
+#      authorizes → tunnel → MC
+#
+# Auth: device-self or the owning Firebase user. The caller MUST be authorized
+# as the device's owner; cross-user pairing is rejected.
+
+
+_MOBILE_TOKEN_NAME_RE = re.compile(r"^[A-Za-z0-9 _.\-]{1,48}$")
+
+
+def _mobile_tokens_col(device_id: str):
+    """Subcollection holding per-device mobile-token rows."""
+    return fs.db().collection(fs.COL_DEVICES).document(device_id) \
+        .collection("mobile_tokens")
+
+
+def _authorized_for_device(user: dict, device_row: dict, *, rid: str) -> None:
+    """403 unless `user` owns `device_row`. Raises HTTPException on mismatch."""
+    if device_row.get("user_id") != user.get("user_id"):
+        raise HTTPException(status_code=403, detail={
+            "code": "forbidden",
+            "message": "Device belongs to a different user.",
+            "request_id": rid,
+        })
+
+
+@router.post("/devices/{device_id}/mobile-tokens", tags=["account"])
+async def create_mobile_token(
+    device_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
+    x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
+):
+    """Mint a new mobile-pairing service token for a phone.
+
+    Body: {"label": "Ron's Pixel"} — free-form, shown in the dashboard list.
+
+    Response (ONE TIME — store immediately, secret is unrecoverable):
+      {
+        "ok": true,
+        "token_id": "<firestore doc id>",
+        "cf_token_id": "<CF Access service-token id>",
+        "client_id": "<CF Access Client ID>",
+        "client_secret": "<CF Access Client Secret>",
+        "hostname": "<username>.clayrune.io",
+        "label": "Ron's Pixel",
+        "created_at": "<iso8601>"
+      }
+    """
+    rid = _request_id(request)
+    user = _resolve_user(authorization, x_dev_user_email, x_mc_device_auth)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    label = (body.get("label") or "").strip()[:48]
+    if not label:
+        label = "Mobile device"
+    if not _MOBILE_TOKEN_NAME_RE.fullmatch(label):
+        raise HTTPException(status_code=400, detail={
+            "code": "bad_label",
+            "message": "label must be 1–48 chars of letters, digits, space, dot, underscore, dash.",
+            "request_id": rid,
+        })
+
+    device_row = fs.device_by_id(device_id)
+    if device_row is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "unknown_device", "message": "Device not enrolled.", "request_id": rid,
+        })
+    _authorized_for_device(user, device_row, rid=rid)
+
+    app_id = device_row.get("cf_access_app_id", "")
+    hostname = device_row.get("hostname_claim", "")
+    if not app_id or not hostname:
+        raise HTTPException(status_code=409, detail={
+            "code": "device_unprovisioned",
+            "message": "Device has no CF Access app — re-enroll the host before pairing phones.",
+            "request_id": rid,
+        })
+
+    cf = _get_cf_client()
+    # CF service-token names must be unique per account; namespace by username
+    # + a short random suffix so concurrent pairs don't collide and so deleted
+    # tokens don't shadow new ones.
+    suffix = secrets.token_hex(3)
+    cf_token_name = f"clayrune-{hostname}-{suffix}"
+    try:
+        token = await cf.create_service_token(name=cf_token_name)
+    except cloudflare.CloudflareAPIError as e:
+        log.error("[mobile-pair] create_service_token failed: %s", e)
+        raise HTTPException(status_code=502, detail={
+            "code": "cf_create_token_failed",
+            "message": f"Cloudflare rejected token creation: {e}",
+            "request_id": rid,
+        })
+
+    cf_token_id = token.get("id") or ""
+    client_id = token.get("client_id") or ""
+    client_secret = token.get("client_secret") or ""
+    if not (cf_token_id and client_id and client_secret):
+        # CF returned 2xx but body is malformed — best-effort cleanup so we
+        # don't leak an orphan token.
+        try: await cf.delete_service_token(cf_token_id)
+        except Exception: pass
+        raise HTTPException(status_code=502, detail={
+            "code": "cf_create_token_malformed",
+            "message": "Cloudflare returned an incomplete token response.",
+            "request_id": rid,
+        })
+
+    try:
+        policy = await cf.add_service_token_policy(
+            app_id=app_id, token_id=cf_token_id,
+            name=f"Mobile · {label}",
+        )
+    except cloudflare.CloudflareAPIError as e:
+        # Roll back the orphan token if we can't attach it to the policy.
+        try: await cf.delete_service_token(cf_token_id)
+        except Exception: pass
+        log.error("[mobile-pair] add_service_token_policy failed: %s", e)
+        raise HTTPException(status_code=502, detail={
+            "code": "cf_attach_policy_failed",
+            "message": f"Cloudflare rejected policy attach: {e}",
+            "request_id": rid,
+        })
+
+    cf_policy_id = policy.get("id") or ""
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    doc_ref = _mobile_tokens_col(device_id).document()
+    doc_ref.set({
+        "label": label,
+        "cf_token_id": cf_token_id,
+        "cf_token_name": cf_token_name,
+        "cf_policy_id": cf_policy_id,
+        "client_id": client_id,
+        # NOTE: we DO NOT persist client_secret. CF will not reveal it again,
+        # but that's the caller's problem (they got it in the response). If
+        # they lose it, they re-pair (delete + create new).
+        "created_at": now,
+        "last_used_at": None,
+        "revoked_at": None,
+    })
+
+    return {
+        "ok": True,
+        "token_id": doc_ref.id,
+        "cf_token_id": cf_token_id,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "hostname": hostname,
+        "label": label,
+        "created_at": now,
+    }
+
+
+@router.get("/devices/{device_id}/mobile-tokens", tags=["account"])
+async def list_mobile_tokens(
+    device_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
+    x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
+):
+    """List paired mobile devices for this host. Does NOT return secrets."""
+    rid = _request_id(request)
+    user = _resolve_user(authorization, x_dev_user_email, x_mc_device_auth)
+    device_row = fs.device_by_id(device_id)
+    if device_row is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "unknown_device", "message": "Device not enrolled.", "request_id": rid,
+        })
+    _authorized_for_device(user, device_row, rid=rid)
+
+    out = []
+    for snap in _mobile_tokens_col(device_id).stream():
+        row = snap.to_dict() or {}
+        if row.get("revoked_at"):
+            continue
+        out.append({
+            "token_id": snap.id,
+            "label": row.get("label", ""),
+            "client_id": row.get("client_id", ""),  # public half is fine to surface
+            "created_at": row.get("created_at"),
+            "last_used_at": row.get("last_used_at"),
+        })
+    out.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return {"tokens": out}
+
+
+@router.delete("/devices/{device_id}/mobile-tokens/{token_id}", tags=["account"])
+async def delete_mobile_token(
+    device_id: str,
+    token_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
+    x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
+):
+    """Revoke a paired phone: delete CF policy + CF service token + Firestore row.
+
+    Idempotent. Best-effort on CF — Firestore row is deleted even if CF API
+    fails, so the dashboard list stays accurate.
+    """
+    rid = _request_id(request)
+    user = _resolve_user(authorization, x_dev_user_email, x_mc_device_auth)
+    device_row = fs.device_by_id(device_id)
+    if device_row is None:
+        return {"ok": True, "already_revoked": True, "reason": "device_not_found"}
+    _authorized_for_device(user, device_row, rid=rid)
+
+    doc_ref = _mobile_tokens_col(device_id).document(token_id)
+    snap = doc_ref.get()
+    if not snap.exists:
+        return {"ok": True, "already_revoked": True, "reason": "token_not_found"}
+    row = snap.to_dict() or {}
+    app_id = device_row.get("cf_access_app_id", "")
+    cf_token_id = row.get("cf_token_id", "")
+    cf_policy_id = row.get("cf_policy_id", "")
+
+    cf = _get_cf_client()
+    deleted = {"policy": False, "token": False}
+    if app_id and cf_policy_id:
+        try:
+            await cf.delete_access_policy(app_id=app_id, policy_id=cf_policy_id)
+            deleted["policy"] = True
+        except Exception as e:
+            log.warning("[mobile-pair] delete policy %s failed: %s", cf_policy_id, e)
+    if cf_token_id:
+        try:
+            await cf.delete_service_token(cf_token_id)
+            deleted["token"] = True
+        except Exception as e:
+            log.warning("[mobile-pair] delete token %s failed: %s", cf_token_id, e)
+
+    try:
+        doc_ref.delete()
+    except Exception as e:
+        log.warning("[mobile-pair] firestore delete failed: %s", e)
+
+    return {"ok": True, "deleted": deleted}
+
+
 # ─── Username policy (matches `03-` §3.5) ────────────────────────────────────
 
 

@@ -3554,6 +3554,12 @@ def _read_agent_stream(proc, session):
             # Try to parse stream-json output
             try:
                 msg = json.loads(line)
+                # Defensive: json.loads on a bare-string line returns a str
+                # (e.g. a quoted error blob), which would crash msg.get()
+                # below with `'str' object has no attribute 'get'` and kill
+                # the reader. Treat any non-dict envelope as non-JSON noise.
+                if not isinstance(msg, dict):
+                    raise json.JSONDecodeError('non-dict JSON envelope', line, 0)
                 msg_type = msg.get('type', '')
                 # Capture Claude CLI session UUID from init or result messages
                 if 'session_id' in msg:
@@ -3563,14 +3569,18 @@ def _read_agent_stream(proc, session):
                 # session emits these). No-op for any other message type.
                 _capture_system_init(msg)
                 _LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
-                if msg_type == 'assistant' and 'message' in msg:
-                    for block in msg['message'].get('content', []):
+                if msg_type == 'assistant' and isinstance(msg.get('message'), dict):
+                    for block in msg['message'].get('content', []) or []:
+                        if not isinstance(block, dict):
+                            continue
                         if block.get('type') == 'text':
                             session['log_lines'].append(block['text'])
                             session['last_output_time'] = _time.time()
                         elif block.get('type') == 'tool_use':
                             tool_name = block.get('name', '')
                             tool_input = block.get('input', {})
+                            if not isinstance(tool_input, dict):
+                                tool_input = {}
                             activity = _format_tool_activity(tool_name, tool_input)
                             session['log_lines'].append(activity)
                             session['last_output_time'] = _time.time()
@@ -3714,20 +3724,29 @@ def _read_agent_stream_b(proc, session):
                 continue
             try:
                 msg = json.loads(line)
+                # See Mode A reader: any non-dict JSON envelope crashes the
+                # reader at msg.get() with `'str' object has no attribute
+                # 'get'`. Treat as non-JSON noise instead.
+                if not isinstance(msg, dict):
+                    raise json.JSONDecodeError('non-dict JSON envelope', line, 0)
                 msg_type = msg.get('type', '')
                 if 'session_id' in msg:
                     _note_claude_sid(session, msg['session_id'])
                 # See Mode A reader: refresh the system-status cache.
                 _capture_system_init(msg)
                 _LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
-                if msg_type == 'assistant' and 'message' in msg:
-                    for block in msg['message'].get('content', []):
+                if msg_type == 'assistant' and isinstance(msg.get('message'), dict):
+                    for block in msg['message'].get('content', []) or []:
+                        if not isinstance(block, dict):
+                            continue
                         if block.get('type') == 'text':
                             session['log_lines'].append(block['text'])
                             session['last_output_time'] = _time.time()
                         elif block.get('type') == 'tool_use':
                             tool_name = block.get('name', '')
                             tool_input = block.get('input', {})
+                            if not isinstance(tool_input, dict):
+                                tool_input = {}
                             activity = _format_tool_activity(tool_name, tool_input)
                             session['log_lines'].append(activity)
                             session['last_output_time'] = _time.time()
@@ -5971,7 +5990,8 @@ def _apply_mobile_brief(message: str, request_data: dict) -> str:
 
 def _dispatch_via_runtime(p, task, *, provider_name,
                           incognito=False, trigger_type='manual',
-                          trigger_id='', reuse_session_id=''):
+                          trigger_id='', reuse_session_id='',
+                          display_task=None):
     """Dispatch a session through the AgentRuntime abstraction (non-claude).
 
     The runtime owns: binary resolution, subprocess.Popen, reader thread,
@@ -5997,11 +6017,16 @@ def _dispatch_via_runtime(p, task, *, provider_name,
         else:
             session_id = uuid.uuid4().hex[:12]
 
+        # Seed log_lines with the user's prompt so the frontend chat shows it
+        # even after /agent/status overwrites the buffer with server log_lines.
+        # Same fix as the claude path — see `_dispatch_agent_internal`.
+        user_label = CONFIG.get('user_name') or 'User'
+        _seed_task = display_task if display_task is not None else task
         # Pre-create the session dict so SSE clients can attach instantly
         session = {
             'status': 'running',
             'task': task,
-            'log_lines': [],
+            'log_lines': [f"> {user_label}: {_seed_task}"],
             'started_at': now_iso(),
             'session_id': session_id,
             'project_id': project_id,
@@ -6065,7 +6090,8 @@ def _dispatch_via_runtime(p, task, *, provider_name,
 
 def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                              trigger_type='manual', trigger_id='',
-                             reuse_session_id='', provider_override=''):
+                             reuse_session_id='', provider_override='',
+                             display_task=None):
     """Core dispatch logic shared by HTTP endpoint and scheduler.
 
     Returns session_id on success, raises ValueError on error.
@@ -6115,7 +6141,8 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                                          incognito=incognito,
                                          trigger_type=trigger_type,
                                          trigger_id=trigger_id,
-                                         reuse_session_id=reuse_session_id)
+                                         reuse_session_id=reuse_session_id,
+                                         display_task=display_task)
         except Exception as e:
             _log(f"[dispatch] runtime '{provider_name}' failed, no fallback: {e}")
             raise
@@ -6149,14 +6176,24 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     # server's log_lines (transcript only) which overwrites its local
     # `[prefix]` seed — and the user's new prompt disappears from the view.
     _seed_log_lines = []
+    user_label = CONFIG.get('user_name') or 'User'
+    # `display_task` is the user-visible original (caller-supplied so the mobile
+    # brief-reply directive doesn't leak into the chat bubble). When not given,
+    # fall back to `task` — for non-mobile dispatches they're identical.
+    _seed_task = display_task if display_task is not None else task
     if resume_id:
         try:
-            user_label = CONFIG.get('user_name') or 'User'
             _seed_log_lines = _transcript_buffer_lines(
                 pp, resume_id, user_label, max_messages=300)
-            _seed_log_lines.append(f"\n> {user_label}: {task}\n")
+            _seed_log_lines.append(f"\n> {user_label}: {_seed_task}\n")
         except Exception as e:
             _log(f"[dispatch] transcript preload failed for {resume_id[:12]}: {e}")
+    else:
+        # Fresh dispatch: persist the user's prompt so the frontend chat shows
+        # it even after /agent/status overwrites the buffer with server log_lines.
+        # Without this, the locally-seeded `> {task}` prefix gets wiped on the
+        # first poll and the user only sees the agent's reply (no question).
+        _seed_log_lines.append(f"> {user_label}: {_seed_task}")
 
     mgr = get_manager(project_id)
     mgr.ensure_guardian()
@@ -6329,7 +6366,8 @@ def agent_dispatch(project_id):
     try:
         session_id = _dispatch_agent_internal(project_id, claude_task, resume_id,
                                               incognito=incognito,
-                                              provider_override=provider_override)
+                                              provider_override=provider_override,
+                                              display_task=task)
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code
@@ -13386,6 +13424,170 @@ def mobile_pair_delete():
     except FileNotFoundError:
         pass
     return jsonify({'ok': True, 'configured': False})
+
+
+# ─── Auto-pair (Path B / control plane) ─────────────────────────────────────
+#
+# Sister flow to /api/mobile-pair/config (manual operator paste). When the
+# user is Path B-enrolled the dashboard hides the manual form and uses these
+# endpoints instead: MC asks the CP to mint a per-device CF service token
+# and returns the QR URI. No CF dashboard, no service-token paste.
+#
+# The CF client_secret returned by the CP is the only thing that can pair
+# the phone. It is NOT persisted server-side — the QR is shown once at
+# creation, then forgotten. Re-pairing = revoke + create new. This matches
+# CF's own "secret shown once" semantics and keeps data/mobile_pairing.json
+# free of secrets we don't strictly need to hold.
+
+def _mobile_pair_auto_uri(*, tunnel_url: str, client_id: str, client_secret: str) -> str:
+    """Compose the clayrune://pair?... URI from auto-minted creds.
+
+    Same scheme as _mobile_pair_uri (the manual flow) so the APK's
+    SetupActivity sees one consistent payload format regardless of source.
+    """
+    from urllib.parse import urlencode
+    qs = urlencode({
+        'v': '1',
+        'u': tunnel_url,
+        'i': client_id,
+        's': client_secret,
+    })
+    return f'clayrune://pair?{qs}'
+
+
+def _mobile_pair_load_keystore_identity():
+    """Return (this_device_id, auth_kwargs, error_dict|None). Centralises the
+    keystore + dev-shim resolution shared by all three auto-pair endpoints."""
+    try:
+        from mc_remote import device_keys
+    except Exception as e:
+        return None, {}, {'error': 'import_error', 'message': str(e)}
+    try:
+        identity = device_keys.load_identity()
+    except Exception:
+        identity = None
+    if not identity:
+        # Dev-shim fallback for headless / pre-Firebase test installs.
+        email = os.environ.get('MC_REMOTE_DEV_EMAIL', '').strip()
+        if not email:
+            return None, {}, {'error': 'not_enrolled',
+                              'message': "Click 'Enable Remote Access' first."}
+        return None, {'email': email}, None
+    return identity.device_id, {
+        'auth_device_id': identity.device_id,
+        'enrollment_token': identity.enrollment_token,
+    }, None
+
+
+@app.route('/api/mobile-pair/generate', methods=['POST'])
+def mobile_pair_generate():
+    """Mint a new per-device mobile-pairing token via the control plane.
+
+    Body: {"label": "Ron's Pixel"} — free-form, shown in the dashboard list.
+
+    Response (one-time — the client_secret is not retrievable later):
+      { ok: true, token_id, label, hostname, pair_uri, client_id, created_at }
+    """
+    body = request.get_json(silent=True) or {}
+    label = (body.get('label') or '').strip()[:48] or 'Mobile device'
+
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider',
+                        'message': 'Remote access provider not configured.'}), 501
+
+    this_device_id, auth_kwargs, err = _mobile_pair_load_keystore_identity()
+    if err is not None:
+        return jsonify(err), 503
+    if not this_device_id:
+        return jsonify({'error': 'not_enrolled',
+                        'message': 'No keystore identity — finish Path B enrollment first.'}), 409
+
+    try:
+        from mc_remote import enrollment as _mc_enrollment, config
+    except Exception as e:
+        return jsonify({'error': 'import_error', 'message': str(e)}), 500
+
+    body_out = _mc_enrollment.create_mobile_token_via_cp(
+        cp_base_url=config.control_plane_base_url(),
+        device_id=this_device_id,
+        label=label,
+        **auth_kwargs,
+    )
+    if body_out.get('error') or not body_out.get('ok'):
+        status = body_out.get('status') or 502
+        try: status = int(status)
+        except Exception: status = 502
+        return jsonify(body_out), status
+
+    hostname = body_out.get('hostname') or ''
+    client_id = body_out.get('client_id') or ''
+    client_secret = body_out.get('client_secret') or ''
+    if not (hostname and client_id and client_secret):
+        return jsonify({'error': 'cp_incomplete_response',
+                        'message': 'Control plane response missing creds.',
+                        'cp_body': body_out}), 502
+
+    tunnel_url = hostname if hostname.startswith(('http://', 'https://')) else 'https://' + hostname
+    pair_uri = _mobile_pair_auto_uri(tunnel_url=tunnel_url, client_id=client_id,
+                                     client_secret=client_secret)
+
+    return jsonify({
+        'ok': True,
+        'token_id': body_out.get('token_id'),
+        'cf_token_id': body_out.get('cf_token_id'),
+        'label': body_out.get('label') or label,
+        'hostname': hostname,
+        'tunnel_url': tunnel_url,
+        'client_id': client_id,
+        'pair_uri': pair_uri,
+        'created_at': body_out.get('created_at'),
+    })
+
+
+@app.route('/api/mobile-pair/tokens', methods=['GET'])
+def mobile_pair_tokens_list():
+    """List the user's paired phones via the control plane."""
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider', 'tokens': []}), 501
+    this_device_id, auth_kwargs, err = _mobile_pair_load_keystore_identity()
+    if err is not None:
+        return jsonify({**err, 'tokens': []}), 503
+    if not this_device_id:
+        return jsonify({'error': 'not_enrolled', 'tokens': []}), 409
+    try:
+        from mc_remote import enrollment as _mc_enrollment, config
+    except Exception as e:
+        return jsonify({'error': 'import_error', 'message': str(e), 'tokens': []}), 500
+    return jsonify(_mc_enrollment.list_mobile_tokens_via_cp(
+        cp_base_url=config.control_plane_base_url(),
+        device_id=this_device_id,
+        **auth_kwargs,
+    ))
+
+
+@app.route('/api/mobile-pair/tokens/<token_id>', methods=['DELETE'])
+def mobile_pair_token_delete(token_id):
+    """Revoke a paired phone via the control plane."""
+    p = _get_remote_provider()
+    if p is None:
+        return jsonify({'error': 'no_provider'}), 501
+    this_device_id, auth_kwargs, err = _mobile_pair_load_keystore_identity()
+    if err is not None:
+        return jsonify(err), 503
+    if not this_device_id:
+        return jsonify({'error': 'not_enrolled'}), 409
+    try:
+        from mc_remote import enrollment as _mc_enrollment, config
+    except Exception as e:
+        return jsonify({'error': 'import_error', 'message': str(e)}), 500
+    return jsonify(_mc_enrollment.delete_mobile_token_via_cp(
+        cp_base_url=config.control_plane_base_url(),
+        device_id=this_device_id,
+        token_id=token_id,
+        **auth_kwargs,
+    ))
 
 
 @app.route('/api/presence', methods=['POST'])
