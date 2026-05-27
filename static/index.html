@@ -15928,6 +15928,20 @@ function showRestartingOverlay() {
   try { _saveOpenModalsSnapshot(); } catch {}
   try { _flushModalPrefs && _flushModalPrefs(); } catch {}
 
+  // Capture the OLD server's identity so we can verify a true restart later.
+  // A buggy restart (deadlock in _do_restart, etc.) leaves the same process
+  // answering — comparing started_at against the pre-restart value is what
+  // distinguishes a real re-exec from a false-positive "200 OK" from the
+  // surviving original process. Fired in parallel with overlay rendering;
+  // the poll loop waits for it before declaring success. See server.py
+  // _perform_server_restart_async for the corresponding backend hardening.
+  let oldStartedAt = '';
+  let oldPid = null;
+  const oldIdReady = fetch(API_BASE + '/api/system/heartbeat', { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(b => { if (b) { oldStartedAt = b.started_at || ''; oldPid = b.pid || null; } })
+    .catch(() => {});
+
   const id = 'mc-restart-overlay';
   if (document.getElementById(id)) return;
   const overlay = document.createElement('div');
@@ -15937,34 +15951,60 @@ function showRestartingOverlay() {
     'display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)';
   overlay.innerHTML =
     '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;' +
-    'padding:24px 32px;max-width:380px;text-align:center;color:var(--text);font-size:13px;line-height:1.55">' +
+    'padding:24px 32px;max-width:420px;text-align:center;color:var(--text);font-size:13px;line-height:1.55">' +
     '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Restarting Clayrune...</div>' +
     '<div id="mc-restart-overlay-status" style="color:var(--text-dim);font-size:12px">Waiting for the server to come back online.</div>' +
     '<div style="margin-top:14px;display:flex;justify-content:center"><div class="mc-spinner" style="width:24px;height:24px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:mc-spin 0.8s linear infinite"></div></div>' +
+    '<div id="mc-restart-overlay-actions" style="display:none;margin-top:14px"><button class="btn-dispatch" onclick="window.location.reload()" style="font-size:12px;padding:6px 12px">Reload anyway</button></div>' +
     '<style>@keyframes mc-spin{to{transform:rotate(360deg)}}</style>' +
     '</div>';
   document.body.appendChild(overlay);
 
   let attempts = 0;
   const statusEl = document.getElementById('mc-restart-overlay-status');
+  const actionsEl = document.getElementById('mc-restart-overlay-actions');
   const poll = async () => {
     attempts += 1;
+    // Wait at least until the pre-restart identity has been captured before
+    // making a success determination — otherwise the very first poll could
+    // see a working old process, find no `oldStartedAt` to compare against,
+    // and fail to detect the false-positive.
+    try { await oldIdReady; } catch (_) {}
     try {
-      const r = await fetch(API_BASE + '/api/projects', { cache: 'no-store' });
+      const r = await fetch(API_BASE + '/api/system/heartbeat', { cache: 'no-store' });
       if (r.ok) {
-        if (statusEl) statusEl.textContent = 'Server is back. Reloading...';
-        setTimeout(() => window.location.reload(), 600);
-        return;
+        const b = await r.json().catch(() => ({}));
+        const nowStartedAt = b.started_at || '';
+        const nowPid = b.pid || null;
+        // Real restart = started_at advanced (preferred) or PID changed.
+        // Both being identical means the OLD process is still answering and
+        // we should NOT declare success — that's the false-positive bug.
+        const restarted = (oldStartedAt && nowStartedAt && nowStartedAt !== oldStartedAt)
+                       || (oldPid && nowPid && nowPid !== oldPid);
+        if (restarted) {
+          if (statusEl) statusEl.textContent = 'Server is back. Reloading...';
+          setTimeout(() => window.location.reload(), 600);
+          return;
+        }
+        // Old process still answering — keep waiting.
+        if (statusEl && attempts > 3) {
+          statusEl.textContent = 'Server still finishing shutdown (' + attempts + 's)...';
+        }
       }
     } catch (e) {
-      // expected during the gap
+      // expected during the gap — the old process is gone, new one not yet up
+      if (statusEl) statusEl.textContent = 'Connection dropped. Waiting for the new instance...';
     }
-    if (statusEl && attempts > 5) {
-      statusEl.textContent = 'Still waiting (' + attempts + 's)... if this hangs, you may need to start the server manually.';
+    if (attempts > 15 && actionsEl) {
+      if (statusEl) statusEl.textContent = 'Restart appears stuck. The old process may still be running.';
+      actionsEl.style.display = '';
+    }
+    if (attempts > 45) {
+      if (statusEl) statusEl.textContent = 'Restart did not complete after 45s. Start the server manually.';
+      return;
     }
     setTimeout(poll, 1000);
   };
-  // First check after a short delay so we don't hit the still-alive server pre-exec.
   setTimeout(poll, 1200);
 }
 
