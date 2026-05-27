@@ -17282,7 +17282,6 @@ async function _mobilePairRenderManual(bodyEl) {
 async function _mobilePairGenerate() {
   const labelEl = document.getElementById('mobile-pair-label');
   const errEl = document.getElementById('mobile-pair-error');
-  const qrBlock = document.getElementById('mobile-pair-qr-block');
   const btn = document.querySelector('#mobile-pair-create .btn-dispatch');
   const label = (labelEl ? labelEl.value : '').trim() || 'Mobile device';
   if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
