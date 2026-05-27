@@ -320,6 +320,15 @@ class CloudflareClient:
         many includes) so revoking a single device = deleting one policy +
         one token, no read-modify-write race on a shared list.
 
+        Sets `session_duration: "0s"` — without this, CF Access issues a
+        24h `CF_AppSession` cookie on the first authenticated request and
+        future requests are authorized by the cookie alone, ignoring the
+        underlying token. That means revoke wouldn't actually kick the phone
+        out for up to 24h. `0s` means "no cached session — re-validate the
+        token on every request"; the APK already sends headers per-request
+        so there's no UX cost. Per-policy session_duration overrides the
+        app-level default (which stays 24h for browser sessions).
+
         Returns the created policy dict (incl. `id`)."""
         acc = await self.get_account_id()
         return await self._call(
@@ -327,6 +336,7 @@ class CloudflareClient:
             json={
                 "name": name or "Mobile device",
                 "decision": "non_identity",
+                "session_duration": "0s",
                 "include": [{"service_token": {"token_id": token_id}}],
             },
         )
