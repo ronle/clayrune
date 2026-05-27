@@ -6076,6 +6076,36 @@ function modalContentHTML(p) {
                 &#x2713; Connect</button>
             `}
           </div>
+          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'code-sync-sub-${esc(p.id)}')">
+            <span class="menu-icon">&#x1F501;</span> Code Sync ${p.code_sync_enabled ? `<span style="margin-left:4px;color:var(--green);font-size:11px">&#x2713; enabled</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">not enabled</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+          </button>
+          <div class="modal-menu-sub" id="code-sync-sub-${esc(p.id)}" style="min-width:240px">
+            ${p.code_sync_enabled ? `
+              <div style="padding:6px 10px;font-size:11px;color:var(--text-dim)">
+                ${p.code_sync_status ? `
+                  Ahead <strong>${p.code_sync_status.ahead||0}</strong> ·
+                  Behind <strong>${p.code_sync_status.behind||0}</strong> ·
+                  Incoming <strong>${p.code_sync_status.incoming_count||0}</strong>
+                  ${p.code_sync_status.dirty ? '<br><span style="color:var(--accent)">&#9888; working tree dirty</span>' : ''}
+                ` : '<em>no status yet — run Sync Now</em>'}
+                ${p.code_sync_last_fetch ? `<br><span style="font-size:10px">Last fetch: ${esc(timeAgoJS(p.code_sync_last_fetch))}</span>` : ''}
+                ${p.code_sync_last_error ? `<br><span style="color:var(--red-text);font-size:10px">${esc(p.code_sync_last_error)}</span>` : ''}
+              </div>
+              <button class="modal-menu-sub-item" onclick="codeSyncNow('${esc(p.id)}')">
+                &#x21BB; Sync Now</button>
+              <button class="modal-menu-sub-item" onclick="codeSyncShowIncoming('${esc(p.id)}')">
+                &#x1F4E5; View Incoming${(p.code_sync_status && p.code_sync_status.incoming_count) ? ` (${p.code_sync_status.incoming_count})` : ''}</button>
+              <button class="modal-menu-sub-item" style="color:var(--red-text)" onclick="codeSyncDisable('${esc(p.id)}')">
+                &#x2715; Disable</button>
+            ` : `
+              <div style="padding:6px 10px;font-size:11px;color:var(--text-dim)">
+                Enables bidirectional code sync via a per-machine sync branch.
+                Read-only spike — no auto-commit yet.
+              </div>
+              <button class="modal-menu-sub-item" onclick="codeSyncEnable('${esc(p.id)}')">
+                &#x2713; Enable</button>
+            `}
+          </div>
           <button class="modal-menu-item mc-adv-memory" onclick="openMemoryModal('${esc(p.id)}')">
             <span class="menu-icon">&#x1F4DD;</span> Memory
           </button>
@@ -8013,6 +8043,112 @@ async function githubSyncNow(projectId) {
   }
 }
 
+// ── Code sync (spike — read-only) ────────────────────────────────────────
+async function codeSyncEnable(projectId) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/code-sync/enable`, {method: 'POST'});
+    const data = await res.json();
+    if (data.error) { alert('Enable failed: ' + data.error); return; }
+    await refreshSilent();
+  } catch (e) { alert('Enable failed: ' + e.message); }
+}
+
+async function codeSyncDisable(projectId) {
+  if (!confirm('Disable code sync? The hidden worktree and remote branch are left in place.')) return;
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  await fetch(API_BASE + `/api/project/${projectId}/code-sync/disable`, {method: 'POST'});
+  await refreshSilent();
+}
+
+async function codeSyncNow(projectId) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/code-sync/sync`, {method: 'POST'});
+    const data = await res.json();
+    if (data.error) alert(data.error);
+    await refreshSilent();
+  } catch (e) { alert('Code sync failed: ' + e.message); }
+}
+
+async function codeSyncShowIncoming(projectId) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  let status;
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/code-sync/status`);
+    status = await res.json();
+    if (status.error) { alert(status.error); return; }
+  } catch (e) { alert('Failed to load incoming: ' + e.message); return; }
+
+  const groups = status.incoming || [];
+  const totalCommits = groups.reduce((n, g) => n + (g.commits || []).length, 0);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:20px';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const body = totalCommits === 0
+    ? `<div style="padding:24px;text-align:center;color:var(--text-dim);font-size:13px">
+         Nothing incoming. Either the other side hasn't pushed yet, or
+         everything they pushed is already on <strong>${esc(status.working_branch||'main')}</strong>.
+       </div>`
+    : groups.map(g => `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">
+            ${esc(g.install_label||g.branch)} &middot;
+            <span style="color:var(--text-faint);font-family:monospace">${esc(g.branch)}</span>
+          </div>
+          ${(g.commits||[]).map(c => `
+            <div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border-soft,var(--border))">
+              <code style="color:var(--accent);font-size:11px;flex-shrink:0">${esc(c.short)}</code>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px">${esc(c.subject||'(no subject)')}</div>
+                <div style="font-size:10px;color:var(--text-faint)">${esc(c.author_name||'')} &middot; ${esc(c.authored_at||'')}</div>
+              </div>
+              <button class="btn-small" style="font-size:10px;padding:3px 8px"
+                onclick="codeSyncDismiss('${esc(projectId)}','${esc(c.sha)}', this)">Reject</button>
+            </div>
+          `).join('')}
+        </div>
+      `).join('');
+
+  overlay.innerHTML = `
+    <div style="background:var(--bg-card,var(--bg));border:1px solid var(--border);border-radius:10px;max-width:720px;width:100%;max-height:80vh;overflow:auto;padding:18px 20px;color:var(--text)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h3 style="margin:0;font-size:14px">Incoming code from other installs</h3>
+        <button class="btn-small" onclick="this.closest('.modal-overlay').remove()">Close</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">
+        ${totalCommits} commit${totalCommits===1?'':'s'} across ${groups.length} branch${groups.length===1?'':'es'}.
+        Accept is not wired yet — spike is read-only. Reject hides a commit from this list locally.
+      </div>
+      ${body}
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function codeSyncDismiss(projectId, sha, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const res = await fetch(API_BASE + `/api/project/${projectId}/code-sync/dismiss`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sha})
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); if (btn) { btn.disabled = false; btn.textContent = 'Reject'; } return; }
+    // Pop this row out of the modal
+    if (btn) {
+      const row = btn.parentElement;
+      if (row) row.remove();
+    }
+  } catch (e) {
+    alert('Reject failed: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Reject'; }
+  }
+}
+
 function toggleShowDone(e, projectId) {
   e.stopPropagation();
   showDoneMap[projectId] = !showDoneMap[projectId];
@@ -9589,9 +9725,38 @@ async function _reconcileAgentBuffer(projectId, sessionId) {
     const data = await r.json();
     const sess = (data.sessions || []).find(s => s.session_id === sessionId);
     if (!sess) return;
+    // Status reconciliation. SSE can silently buffer on mobile WebView / CF
+    // Tunnel — turn_start / status events never reach the client and the
+    // pill stays frozen on the prior (often "Completed") state. Sync from
+    // the authoritative /agent/status here so the UI catches up regardless.
+    const serverStatus = sess.status;
+    const cached = agentStatusCache[sessionId];
+    if (serverStatus && cached && cached.status !== serverStatus) {
+      cached.status = serverStatus;
+      if (sess.usage) cached.usage = sess.usage;
+      if (sess.cost_usd !== undefined) cached.cost_usd = sess.cost_usd;
+      if (sess.num_turns !== undefined) cached.num_turns = sess.num_turns;
+      updateHistoryStatus(sessionId, serverStatus);
+      updateAgentStatusUI(sessionId, serverStatus);
+    }
+    // Question-form reconciliation. A `type: question` SSE event can be
+    // silently dropped the same way — agent ends up waiting with no form
+    // visible while the chat shows "Completed". Server now mirrors
+    // pending_questions on /agent/status; replay them through
+    // renderAgentQuestion which dedupes by question_id, so re-delivery is
+    // safe even if the SSE eventually arrives.
+    if (sess.waiting_for_question && cached) {
+      cached.waitingForQuestion = true;
+      const _hQ = agentHistory.find(h => h.sessionId === sessionId);
+      if (_hQ) _hQ.waitingForQuestion = true;
+      for (const pq of (sess.pending_questions || [])) {
+        try { renderAgentQuestion(sessionId, projectId, pq.questions || [], pq.question_id || ''); }
+        catch (_) {}
+      }
+    }
     const serverLines = sess.log_lines || [];
     const have = agentServerLines[sessionId] || 0;
-    if (serverLines.length <= have) return;  // in sync — nothing to recover
+    if (serverLines.length <= have) return;  // buffer in sync — nothing more to recover
     const missing = serverLines.slice(have);
     for (const text of missing) {
       // Race guard: SSE may have delivered the same line between fetch start
@@ -10941,6 +11106,26 @@ async function sendFollowup(projectId, sessionId) {
     // `> Ron:` line normally, and if it didn't (mobile drop, stale cursor),
     // we silently fill in the gap so the user always sees their prompt.
     setTimeout(() => _reconcileAgentBuffer(projectId, targetSessionId), 1500);
+    // Status-recovery watchdog. On mobile WebView + CF Tunnel the eager-
+    // opened SSE often silently buffers — turn_start never reaches the
+    // client and the pill stays frozen on "idle" / "Completed" while the
+    // agent works or waits on an AskUserQuestion. Symptom: user has to
+    // background+foreground the app for any update. If turn_start hasn't
+    // fired by ~4s after POST resolved, tear down the (possibly dead) SSE,
+    // reconnect, and reconcile status + pending question from server.
+    setTimeout(() => {
+      if (!(_sendInFlight[sessionId] || _sendInFlight[targetSessionId])) return;
+      if (agentEventSources[targetSessionId]) {
+        agentEventSources[targetSessionId].close();
+        delete agentEventSources[targetSessionId];
+      }
+      if (agentSSEWatchdogs[targetSessionId]) {
+        clearInterval(agentSSEWatchdogs[targetSessionId]);
+        delete agentSSEWatchdogs[targetSessionId];
+      }
+      connectAgentStream(projectId, targetSessionId);
+      _reconcileAgentBuffer(projectId, targetSessionId);
+    }, 4000);
   }).catch(e => console.error('Send error:', e));
 
   // Start followup response timeout — if no output in 20s, warn user

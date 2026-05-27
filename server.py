@@ -2155,6 +2155,62 @@ def github_status(project_id):
     })
 
 
+# ── Code sync endpoints (spike — read-only) ─────────────────────────────────
+
+@app.route('/api/project/<project_id>/code-sync/enable', methods=['POST'])
+def code_sync_enable(project_id):
+    """Turn on code sync for a project. Creates the hidden worktree on
+    the sync branch and pushes it to the remote (best-effort)."""
+    if load_project(project_id) is None:
+        return jsonify({'error': 'not found'}), 404
+    ok, msg = _proj_sync.enable(project_id)
+    if not ok:
+        return jsonify({'error': msg}), 400
+    return jsonify({'ok': True, 'message': msg})
+
+
+@app.route('/api/project/<project_id>/code-sync/disable', methods=['POST'])
+def code_sync_disable(project_id):
+    if load_project(project_id) is None:
+        return jsonify({'error': 'not found'}), 404
+    ok, msg = _proj_sync.disable(project_id)
+    if not ok:
+        return jsonify({'error': msg}), 400
+    return jsonify({'ok': True, 'message': msg})
+
+
+@app.route('/api/project/<project_id>/code-sync/sync', methods=['POST'])
+def code_sync_sync_now(project_id):
+    if load_project(project_id) is None:
+        return jsonify({'error': 'not found'}), 404
+    ok, summary = _proj_sync.sync_now(project_id)
+    if not ok:
+        return jsonify({'error': summary}), 429 if 'rate limited' in summary else 400
+    return jsonify({'ok': True, 'summary': summary})
+
+
+@app.route('/api/project/<project_id>/code-sync/status')
+def code_sync_status(project_id):
+    p = load_project(project_id)
+    if p is None:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify(_proj_sync.compute_status(p))
+
+
+@app.route('/api/project/<project_id>/code-sync/dismiss', methods=['POST'])
+def code_sync_dismiss(project_id):
+    """Reject a remote commit so it stops appearing in incoming. Spike
+    has no Accept yet — Reject is the only review action wired so far."""
+    if load_project(project_id) is None:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json() or {}
+    sha = (data.get('sha') or '').strip()
+    ok, msg = _proj_sync.dismiss_commit(project_id, sha)
+    if not ok:
+        return jsonify({'error': msg}), 400
+    return jsonify({'ok': True, 'message': msg})
+
+
 # ── Attachment endpoints ─────────────────────────────────────────────────────
 
 # P2-2 (IMPROVEMENT_PLAN_V2.md): per-project upload quota.
@@ -3902,6 +3958,13 @@ def _log_agent_activity(project_id, msg):
 import github_sync as _gh_sync
 _gh_sync.register(_POPEN_FLAGS, _STARTUPINFO,
                    _log_agent_activity, load_project, save_project, now_iso)
+
+
+# ── Project (code) sync module — spike: read-only fetch + status ────────────
+import project_sync as _proj_sync
+_proj_sync.register(_POPEN_FLAGS, _STARTUPINFO,
+                    _log_agent_activity, load_project, save_project, now_iso,
+                    _DATA_ROOT)
 
 
 def _load_agent_log(project_id):
@@ -6683,6 +6746,13 @@ def agent_followup(project_id):
                 existing['status'] = 'running'
                 existing['last_status_change_time'] = _time.time()
                 existing['last_output_time'] = _time.time()
+                # Clear the in-flight marker set by agent_send. Otherwise the
+                # flag leaks past status='running' and, once this turn
+                # completes (status flips back to idle/completed), Guardian
+                # State 5 mops it up 30s later with a misleading
+                # "[Guardian: cleared stuck dispatching flag]" line on every
+                # message. Mode A clears it at the parallel spot below.
+                existing.pop('_dispatching_followup', None)
                 old_proc = existing.get('proc')
                 if old_proc:
                     _unregister_process(old_proc.pid)
@@ -6713,6 +6783,9 @@ def agent_followup(project_id):
                 existing['status'] = 'running'
                 existing['last_status_change_time'] = _time.time()
                 existing['last_output_time'] = _time.time()
+                # Clear the in-flight marker set by agent_send — see note on
+                # the parallel respawn branch above for why this matters.
+                existing.pop('_dispatching_followup', None)
 
                 # Mobile brief replies: the directive (if applicable) rides on
                 # the claude-bound payload only. log_lines above already used
@@ -7321,6 +7394,11 @@ def agent_status(project_id):
                 'trigger_id': s.get('trigger_id', ''),
                 'waiting_for_plan_approval': s.get('waiting_for_plan_approval', False),
                 'waiting_for_question': s.get('waiting_for_question', False),
+                # Mirror pending_questions so the FE can re-render the form on
+                # reconcile even when SSE silently buffered the question event
+                # (mobile WebView / CF Tunnel). Dedupe is by question_id on
+                # the client, so re-delivery is safe.
+                'pending_questions': s.get('pending_questions', []) if s.get('waiting_for_question') else [],
                 'guardian_state': s.get('guardian_state'),
                 'circuit_breaker_tripped': s.get('circuit_breaker_tripped', False),
                 'incognito': s.get('incognito', False),
@@ -11570,6 +11648,28 @@ def _scheduler_loop():
                         _log(f"[scheduler] GitHub sync error for {proj['id']}: {e}")
         except Exception as e:
             _log(f"[scheduler] GitHub sync loop error: {e}")
+
+        # ── Code sync auto-fetch (every 5 minutes) ──
+        try:
+            for proj in load_projects():
+                if not proj.get('code_sync_enabled'):
+                    continue
+                last = proj.get('code_sync_last_fetch', '')
+                if last:
+                    try:
+                        last_dt = datetime.fromisoformat(last.replace('Z', '+00:00'))
+                        if last_dt.tzinfo is None:
+                            last_dt = last_dt.replace(tzinfo=timezone.utc)
+                        if (now - last_dt).total_seconds() < 300:
+                            continue
+                    except Exception:
+                        pass
+                try:
+                    _proj_sync.sync_now(proj['id'])
+                except Exception as e:
+                    _log(f"[scheduler] code sync error for {proj['id']}: {e}")
+        except Exception as e:
+            _log(f"[scheduler] code sync loop error: {e}")
 
         # ── Purge stale sessions from memory ──────────────────────────────
         try:
