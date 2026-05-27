@@ -11229,7 +11229,17 @@ async function fetchAgentStatus(projectId) {
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
       agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '' };
       if (s.log_lines && s.log_lines.length > 0) {
-        agentOutputBuffers[sid] = s.log_lines;
+        // Defensive: older / runtime-dispatched sessions may not have seeded
+        // the user prompt into server-side log_lines, so a wholesale replace
+        // would wipe the locally-echoed `> {task}` prefix and the user's
+        // first message would disappear from the chat. Prepend it back when
+        // missing so the chat survives a refresh.
+        const _hasPrompt = s.log_lines.some(l => (l || '').trimStart().startsWith('> '));
+        if (!_hasPrompt && s.task) {
+          agentOutputBuffers[sid] = [`> ${s.task}`, ...s.log_lines];
+        } else {
+          agentOutputBuffers[sid] = s.log_lines;
+        }
         // Anchor the SSE since= cursor to the server's authoritative count so
         // a subsequent connectAgentStream() resumes at the right index instead
         // of replaying all log_lines from 0 (which would double the buffer
