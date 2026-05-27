@@ -198,3 +198,58 @@ Steps 2–7 require **committee review against the design doc before any
 code lands** — same discipline as Memory System Step 6 (`MEMORY_SYSTEM_SPEC.md`
 §3.A.MID) and Leg C structured condense (CHANGELOG `[2026-05-18e]`
 committee review block).
+
+## Skills Curation — Phase 4 promoted, Phase 1 softened (added 2026-05-27)
+
+**Build order revised.** The original v2 design ordered telemetry (Phase 2)
+before the silent Distiller (Phase 4). A 2026-05-27 diagnostic against
+`~/.claude/projects/**/*.jsonl` showed **zero proactive Phase 1 fires
+across 1,199 sessions in 9 days** post-ship (`mc-distill` loaded in ~99%
+of those sessions). The committee's soak-gate Condition #14 collected its
+evidence: the in-session-recurrence bar is structurally incompatible with
+single-task sessions, so telemetry that counts Phase 1 fires would be
+silent. Phase 4 (cross-session observer) is promoted to the next thing
+built; Phase 2's substrate (`_skill_stats.json`, locks, fingerprint
+normalization, kill-switch gate) folds into Phase 4's implementation.
+
+**Spec:** `docs/SKILLS_CURATION_PHASE4_SPEC.md` (DRAFT v1.1, 2026-05-27).
+Companion to the parent `docs/SKILLS_CURATION_DESIGN.md` (still
+authoritative for the load-bearing rules and Conditions 1–11 from the
+2026-05-19 committee). When reading the parent doc's "Recommended build
+order," **defer to v1.1**: Phase 4 is next, not Phase 2.
+
+**Locked decisions (v1.1):**
+- Recurrence threshold default = `3`.
+- Cross-project scoping: per-project default for proposal generation
+  (blast-radius safety) + a "cross-project candidates" surface that
+  *notifies* but does not auto-write (operator-level patterns are
+  findable without leaking).
+- Extraction prompt is "what topics did this session touch?" — narrow
+  objective question; the cross-session aggregator does the judging.
+  This is the inverse of Phase 1's "is this worth bottling?" framing.
+
+**Phase 1 softening (parallel SKILL.md edit).** `mc-distill` SKILL.md
+softened on disk 2026-05-27 ahead of Phase 4 backend code:
+- Dropped `recurrence ≥ 2 within session`
+- Dropped `once per session, max`
+- Reversed `err toward asking less` disposition
+- Kept natural-breakpoint + specificity + no-duplicates bars
+The source file is at `data/skills/builtin/mc-distill/SKILL.md`; the
+propagated copy at `~/.claude/skills/mc-distill/SKILL.md` refreshes via
+`_install_builtin_skills()` checksum drift on next MC restart. **Until
+restart, agents still see the old hard rules.**
+
+**Pending (in order):**
+1. MC restart (operator approval required per
+   [[feedback-server-restart-approval]]) — propagates softening.
+2. Committee review against v1.1 spec — same four-seat structure as
+   parent (pattern-integrity / agent-behavior / concurrency / config-
+   ops). No backend code lands until ratification + condition closure.
+3. Phase 4 build — `distiller.py` module + hooks into
+   `_write_session_memory` + two server endpoints + DATA_DIR exclusion
+   regression test. ~400–600 LOC. Single bundled PR recommended.
+
+**Resumability anchors** (read these when picking this up later):
+- `docs/SKILLS_CURATION_PHASE4_SPEC.md` — current authoritative spec
+- `docs/SKILLS_CURATION_DESIGN.md` — parent design + Conditions 1–11
+- `docs/SKILLS_CURATION_COMMITTEE_BRIEF.md` — pattern for the v1.1 brief
