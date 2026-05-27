@@ -1,6 +1,6 @@
 ---
 name: mc-distill
-description: Propose a reusable SKILL.md from the current session when a pattern, workflow, gotcha, or rule worth bottling has emerged. TRIGGER on explicit user request ("/distill", "propose a skill", "do we have a pattern here") OR proactively when you notice a clear repeatable pattern (≥2 recurrences) at a natural breakpoint (end of task, after commit, wrap-up). See body for hard rules, proposal format, and once-per-session-max constraint. Writes only to data/skills/_proposed/<sid>/ for manual review; never auto-installs.
+description: Propose a reusable SKILL.md from the current session when a workflow, gotcha, or hard-won insight worth bottling has emerged. TRIGGER on explicit user request ("/distill", "propose a skill", "do we have a pattern here") OR proactively when you've made a novel discovery at a natural breakpoint (end of task, after commit, wrap-up). Body covers proposal format and the natural-breakpoint + specificity bars. Writes only to data/skills/_proposed/<sid>/ for manual review; never auto-installs.
 ---
 
 # Distill a SKILL.md proposal from the current session
@@ -17,15 +17,25 @@ Run through the full Procedure below.
 
 ### 2. Proactive (agent-initiated)
 
-YOU notice a pattern worth bottling and surface it without being asked.
+YOU notice an insight worth bottling and surface it without being asked.
 
-**Hard rules for proactive triggering — ALL must hold:**
+**Posture (softened 2026-05-27 per Phase 4 spec §3.8):** the cross-session
+silent Distiller (Phase 4) will catch patterns that recur across many
+sessions — that is no longer your job. YOUR job is the novel, in-the-
+moment insight: a hard-won discovery from THIS session that's worth
+bottling immediately, even if it only happened once, because waiting
+weeks for cross-session recurrence to catch it is silly when the
+insight is fresh.
 
-- **Recurrence:** the pattern occurred ≥2 times observably in this session, OR the user has explicitly noted "we did this before."
+**Rules for proactive triggering — ALL must hold:**
+
 - **Natural breakpoint:** you're at the end of a task, just after a commit, or in a clear wrap-up moment. NEVER trigger mid-task, mid-debug, mid-investigation.
-- **Specificity:** you can name the pattern in one sentence and justify the recurrence with concrete observations from this session.
+- **Specificity:** you can name the insight in one sentence and justify it with concrete observations from this session. Vague is worse than silent — "always test your code" is not a skill; "when editing server.py: run `pytest -q` before committing because import-time side-effects mean syntax-clean isn't behavior-clean" is.
 - **Not already covered:** quick search first (step 1 of Procedure).
-- **Once per session, max.** If you've already proposed proactively in this session and the user accepted/deferred/declined, do not propose again. Wait for next session.
+
+**Disposition (reversed 2026-05-27):** if you noticed something worth bottling at a natural breakpoint, **say so**. Phase 4 catches what you missed; you catch what you noticed. The previous "err toward asking less" tone produced zero proactive proposals across ~1199 sessions in 9 days — silence was over-correction. Lean toward surfacing when the natural-breakpoint + specificity bars are met.
+
+**No once-per-session cap.** If a session produces multiple genuinely distinct insights (rare but possible — e.g., a debug session that yields both a workaround AND a diagnostic technique), each may warrant a proposal at its respective natural breakpoint.
 
 **Proactive proposal format (inline message to the user):**
 
