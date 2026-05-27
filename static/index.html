@@ -16173,9 +16173,9 @@ async function _renderSettings() {
   // live state (no provider / not enrolled / enrolled).
   fetchRemoteStatus().then(s => { window._remoteState = s; refreshRemoteAccessSection(); });
   // Hydrate push notifications section (permission, VAPID key, subscriptions).
-  setTimeout(() => { try { refreshPushSection(); } catch (_) {} }, 0);
-  // Hydrate mobile pairing section (CF Access creds + QR for the APK setup screen).
-  setTimeout(() => { try { refreshMobilePairingSection(); } catch (_) {} }, 0);
+  // NOTE: these used to fire via setTimeout BEFORE body.innerHTML was set,
+  // which raced — refreshPushSection's early-return-on-missing-element left
+  // the section stuck on its placeholder. Now called after body fill below.
   let cfg;
   try {
     const res = await fetch(API_BASE + '/api/config');
@@ -16419,6 +16419,12 @@ async function _renderSettings() {
   // body.innerHTML was set, which raced and left the row stuck on the
   // "Checking for updates..." placeholder.)
   refreshUpdateStatus();
+
+  // Same lesson — hydrate the push + mobile-pair sections AFTER the DOM has
+  // their containers. Both functions early-return if their target element
+  // isn't found, so the placeholder used to get stuck.
+  try { refreshPushSection(); } catch (_) {}
+  try { refreshMobilePairingSection(); } catch (_) {}
 
 }
 
