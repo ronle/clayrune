@@ -281,6 +281,63 @@ class CloudflareClient:
         acc = await self.get_account_id()
         await self._call("DELETE", f"/accounts/{acc}/access/apps/{app_id}")
 
+    # ─── Service tokens (mobile pairing) ──────────────────────────────────
+    #
+    # Used by the mobile-pair flow: each phone gets its OWN service token
+    # attached to the user's existing Access app via a dedicated Service Auth
+    # policy. Per-device tokens mean revocation is per-phone (lose your
+    # phone → revoke that one token; the others keep working). The CP holds
+    # the only CF API credential; users never see CF.
+
+    async def create_service_token(self, *, name: str,
+                                   duration: str = "8760h") -> dict:
+        """Create a CF Access service token. Returns
+        {id, client_id, client_secret, name, duration, ...}.
+
+        The `client_secret` is returned ONLY at creation — store it server-side
+        if you need to surface it again. CF will never reveal it after this.
+        `duration` is a Go duration string; 8760h = 1 year. Tokens auto-rotate
+        but a long duration avoids forced re-pair if the device misses the
+        rotation window.
+        """
+        acc = await self.get_account_id()
+        return await self._call(
+            "POST", f"/accounts/{acc}/access/service_tokens",
+            json={"name": name, "duration": duration},
+        )
+
+    async def delete_service_token(self, token_id: str) -> None:
+        """Permanently delete a service token. Any policy that includes it by
+        ID will continue to exist but stop matching — caller is responsible
+        for cleaning up the policy if it has no other includes."""
+        acc = await self.get_account_id()
+        await self._call("DELETE", f"/accounts/{acc}/access/service_tokens/{token_id}")
+
+    async def add_service_token_policy(self, *, app_id: str, token_id: str,
+                                       name: Optional[str] = None) -> dict:
+        """Attach a service token to an existing Access app via a dedicated
+        Service Auth policy. One policy per token (vs sharing one policy with
+        many includes) so revoking a single device = deleting one policy +
+        one token, no read-modify-write race on a shared list.
+
+        Returns the created policy dict (incl. `id`)."""
+        acc = await self.get_account_id()
+        return await self._call(
+            "POST", f"/accounts/{acc}/access/apps/{app_id}/policies",
+            json={
+                "name": name or "Mobile device",
+                "decision": "non_identity",
+                "include": [{"service_token": {"token_id": token_id}}],
+            },
+        )
+
+    async def delete_access_policy(self, *, app_id: str, policy_id: str) -> None:
+        acc = await self.get_account_id()
+        await self._call(
+            "DELETE",
+            f"/accounts/{acc}/access/apps/{app_id}/policies/{policy_id}",
+        )
+
     # ─── Verify token (used by SETUP_CHECKLIST §5) ────────────────────────
 
     async def verify_token(self) -> dict:

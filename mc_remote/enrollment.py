@@ -355,6 +355,95 @@ def revoke_all_sessions_via_cp(*, cp_base_url: str,
         return {"error": "bad_response", "raw": r.text[:200]}
 
 
+def create_mobile_token_via_cp(*, cp_base_url: str, device_id: str, label: str,
+                               email: str = "", enrollment_token: str = "",
+                               auth_device_id: str = "",
+                               timeout: float = 20.0) -> dict:
+    """POST /v1/devices/{device_id}/mobile-tokens.
+
+    Mints a new CF Access service token for a phone and attaches it to the
+    host's Access app server-side. Returns
+    {token_id, client_id, client_secret, hostname, label} on success — the
+    client_secret is returned ONCE; surface it to the QR immediately.
+
+    Auth: prefer device-token (`auth_device_id` + `enrollment_token`) over
+    `email` (dev shim). `auth_device_id` defaults to `device_id` when blank
+    (the typical local-call case where the device pairs against its own row).
+    """
+    import requests
+    if not auth_device_id:
+        auth_device_id = device_id
+    url = f"{cp_base_url.rstrip('/')}/devices/{device_id}/mobile-tokens"
+    try:
+        r = requests.post(url, headers=_auth_headers(
+            email=email, device_id=auth_device_id, enrollment_token=enrollment_token,
+        ), json={"label": label}, timeout=timeout)
+    except requests.RequestException as e:
+        return {"error": "network_error", "message": str(e)}
+    try:
+        body = r.json()
+    except Exception:
+        body = {"error": "bad_response", "raw": r.text[:200]}
+    if r.status_code >= 300:
+        body.setdefault("error", "http_error")
+        body.setdefault("status", r.status_code)
+    return body
+
+
+def list_mobile_tokens_via_cp(*, cp_base_url: str, device_id: str,
+                              email: str = "", enrollment_token: str = "",
+                              auth_device_id: str = "",
+                              timeout: float = 15.0) -> dict:
+    """GET /v1/devices/{device_id}/mobile-tokens. Returns {tokens: [...]}.
+
+    Never includes client_secret — only labels + last_used metadata.
+    """
+    import requests
+    if not auth_device_id:
+        auth_device_id = device_id
+    url = f"{cp_base_url.rstrip('/')}/devices/{device_id}/mobile-tokens"
+    try:
+        r = requests.get(url, headers=_auth_headers(
+            email=email, device_id=auth_device_id, enrollment_token=enrollment_token,
+        ), timeout=timeout)
+    except requests.RequestException as e:
+        return {"error": "network_error", "message": str(e), "tokens": []}
+    try:
+        body = r.json()
+    except Exception:
+        body = {"error": "bad_response", "raw": r.text[:200], "tokens": []}
+    if r.status_code >= 300:
+        body.setdefault("error", "http_error")
+        body.setdefault("status", r.status_code)
+        body.setdefault("tokens", [])
+    return body
+
+
+def delete_mobile_token_via_cp(*, cp_base_url: str, device_id: str, token_id: str,
+                               email: str = "", enrollment_token: str = "",
+                               auth_device_id: str = "",
+                               timeout: float = 20.0) -> dict:
+    """DELETE /v1/devices/{device_id}/mobile-tokens/{token_id}. Idempotent."""
+    import requests
+    if not auth_device_id:
+        auth_device_id = device_id
+    url = f"{cp_base_url.rstrip('/')}/devices/{device_id}/mobile-tokens/{token_id}"
+    try:
+        r = requests.delete(url, headers=_auth_headers(
+            email=email, device_id=auth_device_id, enrollment_token=enrollment_token,
+        ), timeout=timeout)
+    except requests.RequestException as e:
+        return {"error": "network_error", "message": str(e)}
+    try:
+        body = r.json()
+    except Exception:
+        body = {"error": "bad_response", "raw": r.text[:200]}
+    if r.status_code >= 300:
+        body.setdefault("error", "http_error")
+        body.setdefault("status", r.status_code)
+    return body
+
+
 def revoke_via_cp(*, cp_base_url: str, device_id: str, enrollment_token: str,
                   timeout: float = 30.0) -> dict:
     """POST /v1/devices/{device_id}/revoke. Returns the response dict.
