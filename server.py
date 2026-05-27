@@ -766,6 +766,62 @@ def _build_claude_flags(project=None, streaming=False):
     )[1:]  # strip binary — _build_claude_flags() contract is flags-only
 
 
+def _sysprompt_file_args(context):
+    """Return (cli_args, tmp_path) for passing a system prompt via a temp file.
+
+    On Windows, npm-installed `claude.cmd` is invoked through cmd.exe, which
+    enforces an 8191-char command-line cap (vs. CreateProcess's 32 KB). A
+    multi-KB context (CLAYRUNE_API_REFERENCE + rules + read-floor + recent
+    activity) passed inline as `--append-system-prompt <context>` blows past
+    that cap and the spawn fails with "The command line is too long" + rc=1.
+
+    The hidden `--append-system-prompt-file <path>` flag is exactly the
+    escape hatch — Claude CLI supports it (verified locally; absent from
+    `claude --help` but documented in `--bare`'s help text). The temp file
+    is created here; the caller MUST call _sysprompt_cleanup(path, proc)
+    right after Popen so the file is deleted when the process exits.
+
+    Returns ([], None) for empty/missing context so callers can splat
+    unconditionally.
+    """
+    if not context:
+        return [], None
+    import tempfile
+    fd, path = tempfile.mkstemp(prefix='clayrune-sysprompt-', suffix='.txt')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(context)
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return ['--append-system-prompt-file', path], path
+
+
+def _sysprompt_cleanup(path, proc):
+    """Schedule deletion of the temp system-prompt file when `proc` exits.
+
+    Daemon thread; survives until the process actually terminates so we
+    never delete the file out from under claude.cmd mid-startup. No-op if
+    `path` is None (empty context).
+    """
+    if not path:
+        return
+    def _wait_and_unlink():
+        try:
+            proc.wait()
+        except Exception:
+            pass
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    threading.Thread(target=_wait_and_unlink, daemon=True,
+                     name=f'sysprompt-cleanup').start()
+
+
 # ── Agent session tracking ───────────────────────────────────────────────────
 # session_id → {proc, status, task, log_lines, started_at, session_id, project_id}
 agent_sessions = {}
@@ -3894,14 +3950,16 @@ def _auto_recover_failed_resume(session):
 
     try:
         if mode == 'B':
+            _sp_args, _sp_path = _sysprompt_file_args(context)
             cmd = [_resolve_claude(), *_build_claude_flags(p, streaming=True),
-                   '--append-system-prompt', context]
+                   *_sp_args]
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, cwd=pp,
                 text=True, encoding='utf-8', errors='replace',
                 creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
             )
+            _sysprompt_cleanup(_sp_path, proc)
             initial_msg = json.dumps({
                 "type": "user",
                 "message": {"role": "user", "content": fresh_task}
@@ -3930,14 +3988,16 @@ def _auto_recover_failed_resume(session):
 
         else:
             # Mode A
+            _sp_args, _sp_path = _sysprompt_file_args(context)
             cmd = [_resolve_claude(), '-p', fresh_task, *_build_claude_flags(p),
-                   '--append-system-prompt', context]
+                   *_sp_args]
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, cwd=pp,
                 text=True, encoding='utf-8', errors='replace',
                 creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
             )
+            _sysprompt_cleanup(_sp_path, proc)
             threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
             _register_process(proc, 'Agent (Mode A, fresh retry)', 'agent',
                               session['session_id'], project_id, task[:80])
@@ -4410,8 +4470,10 @@ def _revive_from_agent_log(project_id, session_id, message, p):
 
     if use_streaming:
         cmd = [_resolve_claude(), *resume_flags, *_build_claude_flags(p, streaming=True)]
+        _sp_path = None
         if not resume_flags and context:
-            cmd.extend(['--append-system-prompt', context])
+            _sp_args, _sp_path = _sysprompt_file_args(context)
+            cmd.extend(_sp_args)
         try:
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -4421,7 +4483,13 @@ def _revive_from_agent_log(project_id, session_id, message, p):
             )
         except Exception as e:
             _log(f"[revive] {project_id}: spawn failed: {e}")
+            if _sp_path:
+                try:
+                    os.unlink(_sp_path)
+                except OSError:
+                    pass
             return None
+        _sysprompt_cleanup(_sp_path, proc)
         threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
         _register_process(proc, 'Agent revived (B)', 'agent', session_id, project_id, message[:80])
 
@@ -4465,13 +4533,15 @@ def _revive_from_agent_log(project_id, session_id, message, p):
         return session
 
     # Mode A
+    _sp_path = None
     if resume_flags:
         cmd = [_resolve_claude(), *resume_flags, '-p', revival_msg, *_build_claude_flags(p)]
     else:
         if not context:
             context = _build_agent_context(p)
+        _sp_args, _sp_path = _sysprompt_file_args(context)
         cmd = [_resolve_claude(), '-p', revival_msg, *_build_claude_flags(p),
-               '--append-system-prompt', context]
+               *_sp_args]
     try:
         proc = subprocess.Popen(
             cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -4481,7 +4551,13 @@ def _revive_from_agent_log(project_id, session_id, message, p):
         )
     except Exception as e:
         _log(f"[revive] {project_id}: spawn failed: {e}")
+        if _sp_path:
+            try:
+                os.unlink(_sp_path)
+            except OSError:
+                pass
         return None
+    _sysprompt_cleanup(_sp_path, proc)
     threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
     _register_process(proc, 'Agent revived (A)', 'agent', session_id, project_id, message[:80])
 
@@ -6207,12 +6283,14 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
 
         if use_streaming:
             # Mode B: persistent process with stream-json stdin
+            _sp_path = None
             if resume_id:
                 cmd = [_resolve_claude(), '-r', resume_id, *_build_claude_flags(p, streaming=True)]
             else:
                 context = _build_agent_context(p, incognito=incognito, task=task)
+                _sp_args, _sp_path = _sysprompt_file_args(context)
                 cmd = [_resolve_claude(), *_build_claude_flags(p, streaming=True),
-                       '--append-system-prompt', context]
+                       *_sp_args]
 
             proc = subprocess.Popen(
                 cmd,
@@ -6226,6 +6304,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 creationflags=_POPEN_FLAGS,
                 startupinfo=_STARTUPINFO,
             )
+            _sysprompt_cleanup(_sp_path, proc)
 
             # Send initial message via stdin JSON
             initial_msg = json.dumps({
@@ -6271,12 +6350,14 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             t.start()
         else:
             # Mode A: spawn-per-turn (existing behavior)
+            _sp_path = None
             if resume_id:
                 cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *_build_claude_flags(p)]
             else:
                 context = _build_agent_context(p, incognito=incognito, task=task)
+                _sp_args, _sp_path = _sysprompt_file_args(context)
                 cmd = [_resolve_claude(), '-p', task, *_build_claude_flags(p),
-                       '--append-system-prompt', context]
+                       *_sp_args]
 
             proc = subprocess.Popen(
                 cmd,
@@ -6290,6 +6371,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 creationflags=_POPEN_FLAGS,
                 startupinfo=_STARTUPINFO,
             )
+            _sysprompt_cleanup(_sp_path, proc)
 
             threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
             _register_process(proc, 'Agent (Mode A)', 'agent',
@@ -6801,13 +6883,16 @@ def agent_followup(project_id):
                 # Build command while under lock, spawn outside to avoid blocking
                 cmd = [_resolve_claude(), *resume_flags,
                        *_build_claude_flags(p, streaming=True)]
+                _sp_path = None
                 if not resume_flags and context:
-                    cmd.extend(['--append-system-prompt', context])
+                    _sp_args, _sp_path = _sysprompt_file_args(context)
+                    cmd.extend(_sp_args)
                 _respawn_b = {
                     'cmd': cmd, 'pp': pp, 'message': message,
                     'existing': existing, 'session_id': session_id,
                     'project_id': project_id,
                     'old_proc': old_proc,
+                    'sysprompt_path': _sp_path,
                     # Carry the request data so the closure can decide whether
                     # to apply the mobile-brief directive at the stdin write.
                     'request_data': data,
@@ -6895,6 +6980,7 @@ def agent_followup(project_id):
                     text=True, encoding='utf-8', errors='replace',
                     creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
                 )
+                _sysprompt_cleanup(rb.get('sysprompt_path'), proc)
                 _log(f"[respawn-B] {rb['project_id']}: spawned PID {proc.pid}")
                 threading.Thread(target=_hide_windows_delayed,
                                  args=(proc.pid,), daemon=True).start()
@@ -6928,6 +7014,14 @@ def agent_followup(project_id):
                 rb['existing']['status'] = 'error'
                 rb['existing']['last_status_change_time'] = _time.time()
                 rb['existing']['process_alive'] = False
+                # Pop the temp sysprompt file: spawn never reached the
+                # cleanup wiring, so the watchdog thread doesn't exist.
+                _sp_orphan = rb.get('sysprompt_path')
+                if _sp_orphan:
+                    try:
+                        os.unlink(_sp_orphan)
+                    except OSError:
+                        pass
 
         threading.Thread(target=_do_respawn_b, daemon=True).start()
         _log_agent_activity(project_id, f"Agent resumed: {message[:100]}")
@@ -6935,6 +7029,7 @@ def agent_followup(project_id):
 
     # Mode A: Spawn process outside the lock to avoid blocking other requests
     def _start_followup():
+        _sp_path = None  # bound here so the except below can sweep on early failure
         try:
             followup_msg = message
             if claude_sid:
@@ -6960,7 +7055,8 @@ def agent_followup(project_id):
             claude_followup_msg = _apply_mobile_brief(followup_msg, data)
             cmd = [_resolve_claude(), *resume_flags, '-p', claude_followup_msg, *_build_claude_flags(p)]
             if not resume_flags:
-                cmd.extend(['--append-system-prompt', context])
+                _sp_args, _sp_path = _sysprompt_file_args(context)
+                cmd.extend(_sp_args)
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
@@ -6973,6 +7069,7 @@ def agent_followup(project_id):
                 creationflags=_POPEN_FLAGS,
                 startupinfo=_STARTUPINFO,
             )
+            _sysprompt_cleanup(_sp_path, proc)
             threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
             old_proc = existing.get('proc')
             if old_proc:
@@ -6987,6 +7084,12 @@ def agent_followup(project_id):
                 existing['log_lines'].append(f'[follow-up process failed: {e}]')
                 existing['status'] = 'error'
                 existing['last_status_change_time'] = _time.time()
+            # Popen may have raised before sysprompt cleanup was wired — sweep.
+            if _sp_path:
+                try:
+                    os.unlink(_sp_path)
+                except OSError:
+                    pass
 
     threading.Thread(target=_start_followup, daemon=True).start()
 
@@ -7164,6 +7267,7 @@ def agent_interrupt(project_id):
     is_mode_b = session.get('mode') == 'B'
 
     def _do_respawn():
+        _sp_path = None  # bound here so the except below can sweep on early failure
         try:
             # Check transcript size
             resume_flags = []
@@ -7187,13 +7291,15 @@ def agent_interrupt(project_id):
                 cmd = [_resolve_claude(), *resume_flags,
                        *_build_claude_flags(p, streaming=True)]
                 if not resume_flags and context:
-                    cmd.extend(['--append-system-prompt', context])
+                    _sp_args, _sp_path = _sysprompt_file_args(context)
+                    cmd.extend(_sp_args)
                 proc = subprocess.Popen(
                     cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, cwd=pp,
                     text=True, encoding='utf-8', errors='replace',
                     creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
                 )
+                _sysprompt_cleanup(_sp_path, proc)
                 threading.Thread(target=_hide_windows_delayed,
                                  args=(proc.pid,), daemon=True).start()
                 _register_process(proc, 'Agent interrupt-resume (B)', 'agent',
@@ -7229,8 +7335,9 @@ def agent_interrupt(project_id):
                 else:
                     if not context:
                         context = _build_agent_context(p)
+                    _sp_args, _sp_path = _sysprompt_file_args(context)
                     cmd = [_resolve_claude(), '-p', claude_respawn_msg, *_build_claude_flags(p),
-                           '--append-system-prompt', context]
+                           *_sp_args]
 
                 proc = subprocess.Popen(
                     cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -7238,6 +7345,7 @@ def agent_interrupt(project_id):
                     text=True, encoding='utf-8', errors='replace',
                     creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
                 )
+                _sysprompt_cleanup(_sp_path, proc)
                 threading.Thread(target=_hide_windows_delayed,
                                  args=(proc.pid,), daemon=True).start()
                 _register_process(proc, 'Agent interrupt-resume (A)', 'agent',
@@ -7258,6 +7366,12 @@ def agent_interrupt(project_id):
             # Clear the interrupt gate on failure too — otherwise the session
             # stays permanently gated and no future reader can update status.
             session.pop('_interrupting', None)
+            # Popen may have raised before sysprompt cleanup was wired — sweep.
+            if _sp_path:
+                try:
+                    os.unlink(_sp_path)
+                except OSError:
+                    pass
 
     threading.Thread(target=_do_respawn, daemon=True).start()
 
@@ -8796,10 +8910,11 @@ def _hm_spawn_worker_session(manifest, ws, p, hivemind_id, ws_id):
     # Claude path (byte-identical) — _resolve_claude() delegates to ClaudeRuntime.
     max_turns = (manifest.get('config', {}).get('worker_max_turns', 0) or
                  CONFIG.get('agent_max_turns', 0))
+    _sp_args, _sp_path = _sysprompt_file_args(worker_context)
     cmd = [_resolve_claude(), '-p', task, '--print', '--verbose',
            '--output-format', 'stream-json',
            '--dangerously-skip-permissions',
-           '--append-system-prompt', worker_context]
+           *_sp_args]
     if model:
         cmd.extend(['--model', model])
     if max_turns and int(max_turns) > 0:
@@ -8817,6 +8932,7 @@ def _hm_spawn_worker_session(manifest, ws, p, hivemind_id, ws_id):
         creationflags=_POPEN_FLAGS,
         startupinfo=_STARTUPINFO,
     )
+    _sysprompt_cleanup(_sp_path, proc)
     threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
     _register_process(proc, f'Hivemind Worker ({ws.get("title", ws_id)[:30]})',
                       'hivemind_worker', session_id, project_id, task[:80])
