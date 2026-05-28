@@ -9345,11 +9345,18 @@ function agentPanelHTML(p) {
     const _provText = _provModel ? `${_provName} · ${_provModel}` : _provName;
     const _provTitle = _provModel ? `Provider: ${_provLabel} • Model: ${_provModel}` : `Provider: ${_provLabel} (default model)`;
     const _provBadge = `<span class="provider-badge prov-${esc(_provName.replace(/[^a-z]/g,''))}" title="${esc(_provTitle)}">${esc(_provText)}</span>`;
+    // APK version pill — visible only inside the Capacitor APK (the native
+    // injection sets window.__clayruneAPK). Lets the user confirm which
+    // version is loaded and whether the native POST bridge is active. On
+    // the desktop dashboard / regular browser the pill stays hidden.
+    const _apk = (typeof window !== 'undefined') ? window.__clayruneAPK : null;
+    const _apkBadge = _apk ? `<span class="provider-badge" style="background:${_apk.bridge ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.15)'};color:${_apk.bridge ? '#10b981' : '#ef4444'}" title="${_apk.bridge ? 'Native POST bridge active' : 'WARNING: native bridge missing — POSTs may hang after Doze'}">APK ${esc(_apk.version)}${_apk.bridge ? '' : ' ⚠'}</span>` : '';
     tabContent = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;flex-shrink:0">
         <span class="agent-status-dot ${st}"></span>
         <span class="agent-status-label ${st}">${esc(consoleStatusLabelText)}</span>
         ${_provBadge}
+        ${_apkBadge}
         ${isActiveOrch ? '<span class="hm-orch-label">&#x2B21; Hivemind</span>' : ''}
         ${stopBtn}
         ${_pcaps.emits_usage ? `<span class="token-badge" id="session-metrics-${esc(activeSessionId)}">${activeSession ? sessionMetricsHTML(activeSession, _pcaps) : ''}</span>` : ''}
