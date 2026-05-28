@@ -6306,17 +6306,22 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             )
             _sysprompt_cleanup(_sp_path, proc)
 
-            # Send initial message via stdin JSON
-            initial_msg = json.dumps({
-                "type": "user",
-                "message": {"role": "user", "content": task}
-            }) + '\n'
-            proc.stdin.write(initial_msg)
-            proc.stdin.flush()
-
             threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
             _register_process(proc, 'Agent (Mode B)', 'agent',
                               session_id, project_id, task[:80])
+
+            # Build initial message but DO NOT write it under mgr.lock — see
+            # below. claude can stall before reading stdin (rate-limit at
+            # startup, large transcript replay, auth probe, etc.) and a
+            # blocking write here would hold the project lock indefinitely,
+            # wedging every subsequent /agent/* call for the project.
+            # Diagnosed 2026-05-28 — scheduler dispatch stuck on a rate-
+            # limited claude pinned the manager lock for 5h, blackholing all
+            # mobile sends/interrupts/followups to day_trading.
+            _initial_msg = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": task}
+            }) + '\n'
 
             session = {
                 'proc': proc,
@@ -6348,6 +6353,27 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
 
             t = threading.Thread(target=_read_agent_stream_b, args=(proc, session), daemon=True)
             t.start()
+
+            # Initial stdin write — deferred to a daemon thread so a stalled
+            # claude (rate-limited startup, etc.) can't pin mgr.lock and wedge
+            # the whole project. Followups also serialize on stdin_lock, so
+            # the initial message always lands first.
+            def _write_initial(_proc=proc, _msg=_initial_msg, _sess=session):
+                lk = _sess.get('stdin_lock')
+                if lk:
+                    lk.acquire()
+                try:
+                    _proc.stdin.write(_msg)
+                    _proc.stdin.flush()
+                except Exception as _e:
+                    _sess['log_lines'].append(f'[stdin write error on dispatch: {_e}]')
+                    _sess['status'] = 'error'
+                    _sess['last_status_change_time'] = _time.time()
+                    _sess['process_alive'] = False
+                finally:
+                    if lk:
+                        lk.release()
+            threading.Thread(target=_write_initial, daemon=True).start()
         else:
             # Mode A: spawn-per-turn (existing behavior)
             _sp_path = None
