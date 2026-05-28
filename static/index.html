@@ -9686,8 +9686,23 @@ async function dispatchAgent(projectId) {
     const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
 
     const displayTask = task || 'Continue where we left off.';
-    const prefix = resumeId ? `> [resuming prior session] ${displayTask}` : `> ${displayTask}`;
+    // Match the server's seeded log_lines format so the SSE/reconcile delivery
+    // of the same line dedupes against this optimistic insert. The server
+    // writes `> {user_label}: {task}` to log_lines on fresh dispatch (see
+    // server.py:6105 / 6272); if the prefix here doesn't match, BOTH the
+    // optimistic line and the server line end up in the buffer → the user
+    // sees their first message echoed twice on a brand-new conversation
+    // (followups don't have this — sendFollowup has no optimistic buffer
+    // write; the dedup goes through the .agent-echo DOM-class path instead).
+    const userLabel = (window._globalConfig && (window._globalConfig.user_name || window._globalConfig.user_display_name)) || 'User';
+    const prefix = resumeId ? `> [resuming prior session] ${displayTask}` : `> ${userLabel}: ${displayTask}`;
     agentOutputBuffers[sessionId] = [prefix];
+    // Treat the optimistic line as if it had already arrived from the server,
+    // so connectAgentStream's `?since=` cursor skips it and reconcile's
+    // `serverLines.length > have` check doesn't re-deliver it. Without this,
+    // matching the format alone isn't enough — every replay would still push
+    // a second copy.
+    agentServerLines[sessionId] = 1;
     const incognitoFlag = !!body.incognito;
     agentStatusCache[sessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '', incognito: incognitoFlag, provider: _chosenProvider };
     agentHistory.unshift({ projectId, sessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag, provider: _chosenProvider });
