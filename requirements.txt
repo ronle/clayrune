@@ -19,3 +19,10 @@ pywebpush>=2.0.0
 # data/firebase_admin.json (gitignored). Optional — if the SDK or
 # credentials are missing, server skips FCM and falls back to web push.
 firebase-admin>=6.5.0
+
+# ── Image downscaling on upload ──────────────────────────────────────────────
+# Anthropic API rejects multi-image requests when any image > 2000px on the
+# long edge. /api/agent/upload-image transparently shrinks oversized pastes
+# so the agent doesn't trip the limit mid-conversation. Optional — if Pillow
+# is missing, uploads save as-is.
+Pillow>=10.0.0

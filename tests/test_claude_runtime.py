@@ -1142,22 +1142,25 @@ def test_parse_transcript_file_result_not_in_output(tmp_path):
 
 
 def test_parse_transcript_file_max_messages_truncates(tmp_path):
-    """max_messages stops reading after a line pushes count to/over the limit.
+    """max_messages keeps the TAIL of the transcript (most-recent N entries).
 
-    The check fires AFTER processing all blocks in a single JSONL line, so a
-    single assistant line with multiple blocks can yield more than max_messages
-    entries. The key invariant: we don't read ADDITIONAL lines past the limit.
+    Head-truncation hides the actual work product behind the opening prompt,
+    which broke long conversations in the UI. Fixture produces, in order:
+    user → assistant → tool_call → assistant. With max_messages=1 we keep
+    the last assistant message, not the user opener.
     """
     from agent_runtime import ClaudeRuntime
     rt = ClaudeRuntime()
     f = _write_fixture(tmp_path)
-    # max_messages=1: user line adds 1 entry → ≥ 1 → stop immediately.
     truncated = rt.parse_transcript_file(f, max_messages=1)
     assert len(truncated) == 1
-    assert truncated[0]['role'] == 'user'
+    assert truncated[0]['role'] == 'assistant'
+    assert truncated[0]['text'] == '2+2 equals 4.'
     # Full parse (fixture has user + 2 asst blocks + tool + asst → 4 total)
-    full = rt.parse_transcript_file(f, max_messages=300)
+    full = rt.parse_transcript_file(f, max_messages=2000)
     assert len(full) > 1
+    assert full[0]['role'] == 'user'  # head preserved when under limit
+    assert full[-1]['text'] == '2+2 equals 4.'
 
 
 def test_parse_transcript_file_nonexistent_returns_error():

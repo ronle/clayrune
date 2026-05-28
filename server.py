@@ -457,12 +457,12 @@ def _find_transcript_file(project_path, claude_session_id):
         project_path, claude_session_id)
 
 
-def _parse_transcript_messages(f, max_messages=300):
+def _parse_transcript_messages(f, max_messages=2000):
     """Parse a Claude Code JSONL transcript into [{role, text, tool, timestamp}] for read-only display.
 
     role: 'user' | 'assistant' | 'tool_call'
-    Returns at most max_messages entries; longer transcripts are truncated.
-    Delegates to ClaudeRuntime.parse_transcript_file() — parsing logic lives in the runtime.
+    Returns at most max_messages entries; on overflow, keeps the TAIL (most
+    recent) — see ClaudeRuntime.parse_transcript_file() for the rationale.
     """
     return _agent_runtime.get_runtime('claude').parse_transcript_file(f, max_messages=max_messages)
 
@@ -2575,6 +2575,48 @@ def import_from_project(project_id):
 
 # ── Agent image upload ────────────────────────────────────────────────────────
 
+# Anthropic's many-image request limit: each image's long edge must be ≤ 2000px,
+# else the API drops it with "an image in the conversation could not be
+# processed and was removed." Shrinking on save keeps the original aspect ratio
+# and saves the agent from tripping the limit later in the conversation.
+_UPLOAD_IMAGE_MAX_EDGE = 2000
+
+
+def _downscale_image_if_huge(path: Path) -> dict:
+    """Resize an on-disk image to ≤ _UPLOAD_IMAGE_MAX_EDGE on the long edge.
+
+    Best-effort: returns {'resized': bool, 'original': (w,h), 'final': (w,h)}
+    on success, or {'resized': False, 'error': str} if Pillow is missing,
+    the file isn't a recognized image, or the resize fails. Never raises —
+    the upload itself must not fail because of an opportunistic shrink.
+    """
+    try:
+        from PIL import Image  # local import: Pillow is optional
+    except ImportError:
+        return {'resized': False, 'error': 'pillow_missing'}
+    try:
+        with Image.open(path) as im:
+            orig = im.size
+            w, h = orig
+            if max(w, h) <= _UPLOAD_IMAGE_MAX_EDGE:
+                return {'resized': False, 'original': orig, 'final': orig}
+            im.thumbnail((_UPLOAD_IMAGE_MAX_EDGE, _UPLOAD_IMAGE_MAX_EDGE),
+                         Image.LANCZOS)
+            final = im.size
+            # Preserve original format (PNG stays PNG, JPEG stays JPEG, …)
+            save_kwargs = {}
+            fmt = (im.format or '').upper()
+            if fmt in ('JPEG', 'JPG'):
+                save_kwargs['quality'] = 90
+                save_kwargs['optimize'] = True
+            elif fmt == 'PNG':
+                save_kwargs['optimize'] = True
+            im.save(path, **save_kwargs)
+            return {'resized': True, 'original': orig, 'final': final}
+    except Exception as e:
+        return {'resized': False, 'error': f'{type(e).__name__}: {e}'}
+
+
 @app.route('/api/agent/upload-image', methods=['POST'])
 def agent_upload_image():
     """Save a pasted image and return its absolute path for agent consumption."""
@@ -2596,7 +2638,12 @@ def agent_upload_image():
     stored_name = f'agent_{uuid.uuid4().hex[:10]}{ext}'
     dest = UPLOADS_DIR / stored_name
     f.save(str(dest))
-    return jsonify({'ok': True, 'path': str(dest.resolve())})
+    resize_info = _downscale_image_if_huge(dest)
+    resp = {'ok': True, 'path': str(dest.resolve())}
+    if resize_info.get('resized'):
+        resp['resized_from'] = list(resize_info['original'])
+        resp['resized_to'] = list(resize_info['final'])
+    return jsonify(resp)
 
 
 
