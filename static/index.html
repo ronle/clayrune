@@ -11069,11 +11069,21 @@ async function sendFollowup(projectId, sessionId) {
   const sendBody = { message: fullMessage, session_id: sessionId };
   if (getIncognitoFor(projectId)) sendBody.incognito = true;
   _maybeTagMobileClient(sendBody);
+  // Fail-fast timeout: on Android after a Doze cycle the WebView fetch can
+  // hang forever on dead sockets — the user sees their prompt cleared, the
+  // echo briefly appear and then vanish (reconcile sees no recovered line),
+  // and no error toast. Surface the failure within 12s so the user knows to
+  // retry instead of staring at a frozen "Completed" pill. The local echo
+  // line carries `agent-echo-failed` so it stays visible (as a retry cue)
+  // instead of being silently wiped by the next reconcile pass.
+  const _sendAC = new AbortController();
+  const _sendTID = setTimeout(() => _sendAC.abort(), 12000);
   fetch(API_BASE + `/api/project/${projectId}/agent/send`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(sendBody)
-  }).then(r => r.json()).then(data => {
+    body: JSON.stringify(sendBody),
+    signal: _sendAC.signal
+  }).then(r => { clearTimeout(_sendTID); return r.json(); }).then(data => {
     if (!data.ok && !data.queued) {
       console.error('Send failed:', data.error);
     }
@@ -11130,7 +11140,31 @@ async function sendFollowup(projectId, sessionId) {
       connectAgentStream(projectId, targetSessionId);
       _reconcileAgentBuffer(projectId, targetSessionId);
     }, 4000);
-  }).catch(e => console.error('Send error:', e));
+  }).catch(e => {
+    clearTimeout(_sendTID);
+    console.error('Send error:', e);
+    delete _sendInFlight[sessionId];
+    const aborted = (e && (e.name === 'AbortError' || /aborted/i.test(String(e))));
+    // Mark the local echo as failed so it stays visible (otherwise the next
+    // reconcile pass wipes any `.agent-echo` the moment it sees an unrelated
+    // "> " line from prior turns, and the user is left with no trace of what
+    // they typed). Also restore the input so they can retry without retyping.
+    const el = document.getElementById(`agent-output-${sessionId}`);
+    if (el) {
+      const echo = el.querySelector('.agent-echo');
+      if (echo) {
+        echo.classList.remove('agent-echo');
+        echo.classList.add('agent-echo-failed');
+        echo.style.opacity = '0.6';
+        echo.textContent = `> [failed to send] ${message}`;
+      }
+    }
+    const inp = document.getElementById(`agent-followup-${sessionId}`);
+    if (inp && !inp.value) inp.value = message;
+    showToast(aborted
+      ? 'Send timed out — network may be paused. Try again.'
+      : `Send failed: ${e && e.message ? e.message : 'network error'}`, 4500);
+  });
 
   // Start followup response timeout — if no output in 20s, warn user
   if (followupTimeouts[sessionId]) clearTimeout(followupTimeouts[sessionId].timerId);
@@ -22172,11 +22206,52 @@ document.getElementById('modal-layer').addEventListener('input', e => {
 // (with the recently-stopped guard), reloads log_lines, reconnects SSE,
 // and re-renders. No status gate: the server decides the truth.
 let _lastResyncAt = 0;
-function _resyncOpenModalsFromServer() {
+let _resumeBlankoutSince = 0;
+async function _resyncOpenModalsFromServer() {
   if (document.visibilityState !== 'visible') return;
   const now = Date.now();
   if (now - _lastResyncAt < 1200) return;  // debounce focus+visibility double-fire
   _lastResyncAt = now;
+
+  // Android Doze / App Standby (especially Samsung One UI) can park the
+  // WebView's entire network stack while backgrounded. When the app comes
+  // back, existing EventSource and fetch handles report "alive" but their
+  // underlying sockets are dead — POST /agent/send hangs silently and SSE
+  // never delivers. Symptom: stuck "Completed" status, vanishing prompts,
+  // missing responses until app kill+restart.
+  //
+  // Recovery sequence: (1) probe the pipe with a fast heartbeat; (2) if it
+  // looks dead, force-close every EventSource and clear stale send-in-flight
+  // markers so the next user action can build fresh sockets. fetchAgentStatus
+  // will reopen SSE for running/active sessions.
+  let pipeAlive = false;
+  try {
+    const ac = new AbortController();
+    const tid = setTimeout(() => ac.abort(), 4000);
+    const r = await fetch(API_BASE + '/api/system/heartbeat', { signal: ac.signal, cache: 'no-store' });
+    clearTimeout(tid);
+    pipeAlive = r.ok;
+  } catch {}
+
+  if (!pipeAlive) {
+    if (!_resumeBlankoutSince) _resumeBlankoutSince = now;
+    showToast('Reconnecting after sleep…', 1800);
+    // Tear down every zombie EventSource. fetchAgentStatus below reopens the
+    // ones that should be live (running, or idle on the active tab).
+    for (const sid of Object.keys(agentEventSources)) {
+      try { agentEventSources[sid].close(); } catch {}
+      delete agentEventSources[sid];
+      if (agentSSEWatchdogs[sid]) { clearInterval(agentSSEWatchdogs[sid]); delete agentSSEWatchdogs[sid]; }
+    }
+    // Stale _sendInFlight markers can suppress turn_complete/status events
+    // after a Doze cycle — drop anything older than the 8s gate.
+    for (const sid of Object.keys(_sendInFlight)) {
+      if (now - _sendInFlight[sid] > 8000) delete _sendInFlight[sid];
+    }
+  } else {
+    _resumeBlankoutSince = 0;
+  }
+
   const pids = new Set();
   for (const [, entry] of openModals) {
     if (!entry || entry.minimized || !entry.projectId) continue;
