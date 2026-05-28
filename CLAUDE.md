@@ -273,8 +273,37 @@ signal is RELAXED: human review at promotion is sufficient.
 
 **Phase 4 v1.1 spec is now reference-only.** Mechanism details (Scribe
 trigger, lock pattern, fingerprint approach, kill switch, atomic-write
-discipline) remain valid as building blocks for the eventual v2 design.
-The scope/structure/UX layer needs redesign against the locked definition.
+discipline) remain valid as building blocks for the v2 design.
+
+**v2 spec DRAFTED 2026-05-27:** `docs/SKILLS_CURATION_PHASE4_SPEC_V2.md`.
+Incorporates all five shifts (cross-project default,
+external-exploration retention as first-class artifact,
+proactive-exploration disposition, user-facing learning,
+dual-checkpoint scope tagging). Closes all 14 v1.1 must-fix-in-design
+conditions. Settles the three open questions: (a) restore mc-distill's
+once-per-session cap, (b) closed-vocabulary Stage 1 + near-miss
+telemetry (NOT embeddings, NOT bag-of-tokens), (c) mc-distill §Tone
+removed and §Procedure step 2 rewritten so the SKILL.md is end-to-end
+internally consistent. Introduces a four-artifact model
+(SKILL/UPDATE/EXPLORATION/PREFERENCE) with one `_proposed/` writer.
+
+**v2 RATIFIED-WITH-CONDITIONS 2026-05-27** by 4-seat committee
+(synthesis appended to v2 spec under `## Committee review (2026-05-27)`).
+Unanimous, no blockers. 14 must-fix-in-design + 5 must-fix-in-
+implementation + 2 soak-gate conditions. Strongest cross-seat
+convergences: EXPLORATION.md needs per-session cap (Seats 2+3); cross-
+artifact suppression must key on (fingerprint, kind) (Seats 2+3);
+cross-project recurrence composition rule unspecified (Seats 2+3+4);
+cross-project aggregation lock+cost discipline punted (Seats 1+3+4);
+closed-vocab lists under-fitted to this codebase + subsystem terms
+in wrong slot (Seat 1); in-session push fingerprint needs server-side
+re-normalization (Seats 1+3).
+
+**v2.1 revision required** before backend lands. Two open architectural
+picks need Ron's input first: (D2) `coarse_fingerprint` recurrence
+threshold = `exact+1` OR separate per-project config key? (D3(ii))
+cross-project aggregation walk uses serial per-project locks OR
+lock-free with 3-retry parse?
 
 **Revised build order:**
 
@@ -282,15 +311,21 @@ The scope/structure/UX layer needs redesign against the locked definition.
    48 errors in structured condense. The memory-refinement half of the
    existing learning loop is degrading. Foundation must be working before
    adding new learning layers on top.
-2. **Redesign Phase 4 as v2** against the locked definition. Cross-project
-   default, external-exploration retention, user learning included,
-   dual-checkpoint scope tagging. Old committee assessments at
-   `docs/_committee/SKILLS_CURATION_PHASE4_seat<N>_*.md` remain useful as
-   raw input (particularly Seat 1 on fingerprint stability and Seat 3 on
-   lock contract precision).
-3. **Committee review of v2.**
-4. **Build.**
+2. **Redesign Phase 4 as v2** — DONE 2026-05-27. See
+   `docs/SKILLS_CURATION_PHASE4_SPEC_V2.md`.
+3. **Committee review of v2** — DONE 2026-05-27. RATIFY-WITH-CONDITIONS.
+4. **v2.1 spec revision** — addresses 14 must-fix-in-design conditions.
+   Gated on Ron picking D2 + D3(ii) architectural alternatives.
+5. **Build.** ~900–1200 LOC for v2.1 scope (up from v2's 700–900 due
+   to convergent condition edits). Single bundled PR.
 
-**No backend learning-system code lands** until condense is fixed AND a
-v2 design has cleared committee. Same discipline as parent design v2 and
+**No backend learning-system code lands** until condense is fixed AND
+v2 has cleared committee. Same discipline as parent design v2 and
 Memory System §3.A.MID.
+
+**Resumability anchors** (updated 2026-05-27):
+- `docs/SKILLS_CURATION_PHASE4_SPEC_V2.md` — CURRENT authoritative spec
+- `docs/SKILLS_CURATION_PHASE4_SPEC.md` — v1.1, reference-only
+- `docs/SKILLS_CURATION_DESIGN.md` — parent design + Conditions 1–11
+- `~/.claude/projects/.../memory/decision_learning_definition.md` — locked def
+- `docs/_committee/SKILLS_CURATION_PHASE4_seat<N>_*.md` — v1.1 committee assessments
