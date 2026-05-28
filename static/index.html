@@ -9349,8 +9349,20 @@ function agentPanelHTML(p) {
     // injection sets window.__clayruneAPK). Lets the user confirm which
     // version is loaded and whether the native POST bridge is active. On
     // the desktop dashboard / regular browser the pill stays hidden.
+    //
+    // Auto-hide the GREEN (bridge-active) pill after 20s — it's
+    // confirmation, not a permanent indicator. The RED (bridge-missing)
+    // pill stays forever since it's a warning the user needs to act on.
     const _apk = (typeof window !== 'undefined') ? window.__clayruneAPK : null;
-    const _apkBadge = _apk ? `<span class="provider-badge" style="background:${_apk.bridge ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.15)'};color:${_apk.bridge ? '#10b981' : '#ef4444'}" title="${_apk.bridge ? 'Native POST bridge active' : 'WARNING: native bridge missing — POSTs may hang after Doze'}">APK ${esc(_apk.version)}${_apk.bridge ? '' : ' ⚠'}</span>` : '';
+    if (_apk && _apk.bridge && !window._apkPillFirstShownAt) {
+      window._apkPillFirstShownAt = Date.now();
+      // Schedule a one-shot re-render at 20s so the pill goes away even
+      // when nothing else triggers a refresh (idle session, no SSE events).
+      setTimeout(() => { try { renderAgentConsole(); refreshModal(); } catch (_) {} }, 20500);
+    }
+    const _apkExpired = (_apk && _apk.bridge && window._apkPillFirstShownAt
+        && (Date.now() - window._apkPillFirstShownAt > 20000));
+    const _apkBadge = (_apk && !_apkExpired) ? `<span class="provider-badge" style="background:${_apk.bridge ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.15)'};color:${_apk.bridge ? '#10b981' : '#ef4444'}" title="${_apk.bridge ? 'Native POST bridge active' : 'WARNING: native bridge missing — POSTs may hang after Doze'}">APK ${esc(_apk.version)}${_apk.bridge ? '' : ' ⚠'}</span>` : '';
     tabContent = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;flex-shrink:0">
         <span class="agent-status-dot ${st}"></span>
