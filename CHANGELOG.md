@@ -4,6 +4,36 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-05-28] — Mobile resume wedge: heartbeat-probe + fail-fast send
+
+Android Doze / App Standby (worst on Samsung One UI / Z Fold) was parking
+the Capacitor WebView's network stack while the app was backgrounded.
+When it came back, every existing `EventSource` and `fetch` handle
+reported "alive" but the underlying sockets were dead — POSTs hung
+silently and SSE never delivered. Symptom Ron hit in the Day Trading
+Engulfing chat: typed prompt, input cleared, no echo, status frozen on
+"COMPLETED", and even subsequent agent replies in *other* chats didn't
+arrive until the app was killed and restarted. The existing
+visibilitychange handler was running but only calling
+`fetchAgentStatus()` — which itself uses the wedged fetch path, so the
+resync went nowhere.
+
+`_resyncOpenModalsFromServer` now opens with a 4s-timeout heartbeat
+probe to `/api/system/heartbeat`. If the probe fails (network parked
+state), it force-closes every `agentEventSources[]` + watchdog, clears
+stale `_sendInFlight` markers older than the 8s gate, and shows a
+"Reconnecting after sleep…" toast — then `fetchAgentStatus()` rebuilds
+fresh SSE for running / active-tab idle sessions. Fail-fast on the user
+action side too: `sendFollowup`'s POST gets a 12s `AbortController`
+timeout. On abort or any catch we delete the in-flight marker, restore
+the typed message into the textarea, repaint the local echo as
+`.agent-echo-failed` (so reconcile's `.agent-echo` wipe doesn't erase
+it), and surface a toast — instead of vanishing the user's prompt with
+no trace.
+
+Files: `static/index.html` `_resyncOpenModalsFromServer` + `sendFollowup`
+catch path.
+
 ## [2026-05-22] — System-status popover renders above project cards
 
 The header system-status popover (rate limit, agent providers, install
