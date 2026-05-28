@@ -9061,7 +9061,10 @@ function agentPanelHTML(p) {
         </div>`
       : '';
   } else {
-    const tabsHTML = sessions.map(h => {
+    // Desktop tab strip: oldest conversation on the left, newest on the right
+    // (append-on-right). `sessions` stays newest-first for auto-select + mobile
+    // list semantics; we only flip the render order here.
+    const tabsHTML = sessions.slice().reverse().map(h => {
       const isActive = h.sessionId === activeSessionId;
       const label = (h.task || '').substring(0, 30) || 'Session';
       const isOrch = isHivemindOrchestrator(h);
