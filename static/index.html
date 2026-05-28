@@ -11185,18 +11185,10 @@ async function sendFollowup(projectId, sessionId) {
       : `Send failed: ${e && e.message ? e.message : 'network error'}`, 4500);
   });
 
-  // Start followup response timeout — if no output in 20s, warn user
-  if (followupTimeouts[sessionId]) clearTimeout(followupTimeouts[sessionId].timerId);
-  followupTimeouts[sessionId] = {
-    projectId,
-    timerId: setTimeout(() => {
-      delete followupTimeouts[sessionId];
-      const cached = agentStatusCache[sessionId];
-      if (cached && cached.status === 'running') {
-        showToast('Agent appears unresponsive — no output for 20 seconds. Try sending another message or restart the agent.', 10000);
-      }
-    }, 20000)
-  };
+  // (Previously: a 20s "agent appears unresponsive" toast fired here. Removed
+  // 2026-05-28 — the new fail-fast send timeout above + visible echo retention
+  // already cover the actual-failure case; this toast just nagged on every
+  // turn that legitimately took >20s, which is most non-trivial work.)
 }
 
 const _recentlyStoppedSessions = {};  // sessionId → timestamp when stopped
