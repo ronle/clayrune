@@ -1011,7 +1011,7 @@ class ClaudeRuntime(AgentRuntime):
         return results
 
     def parse_transcript_file(self, path: Path,
-                              max_messages: int = 300) -> List[Dict[str, Any]]:
+                              max_messages: int = 2000) -> List[Dict[str, Any]]:
         """Parse a Claude JSONL transcript file into message dicts for display.
 
         Mirrors _parse_transcript_messages() in server.py. Uses parse_event()
@@ -1021,6 +1021,11 @@ class ClaudeRuntime(AgentRuntime):
         Returns [{role, text, tool?, timestamp}] where role is
         'user' | 'assistant' | 'tool_call'. On file/parse failure returns
         [{'role': 'error', 'text': '<reason>'}].
+
+        When the transcript has more than `max_messages` entries, returns the
+        TAIL — most-recent messages are what users care about for read-only
+        display of a finished conversation; head-truncation would hide the
+        actual work product behind the opening prompt.
         """
         messages: List[Dict[str, Any]] = []
         try:
@@ -1058,10 +1063,10 @@ class ClaudeRuntime(AgentRuntime):
                                 messages.append({'role': 'tool_call',
                                                  'tool': block.get('name', ''),
                                                  'timestamp': ts})
-                    if len(messages) >= max_messages:
-                        break
         except Exception as e:
             return [{'role': 'error', 'text': f'Failed to parse transcript: {e}'}]
+        if len(messages) > max_messages:
+            return messages[-max_messages:]
         return messages
 
     def memory_path(self, project_path: str) -> Optional[Path]:
