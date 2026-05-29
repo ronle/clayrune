@@ -5646,7 +5646,7 @@ _AUTO_MODEL_CLASSIFIER_PROMPT = (
     "Bias CONSERVATIVE: prefer S over H when unsure; prefer S over O when unsure."
 )
 
-_AUTO_MODEL_VALID = {'H': 'haiku', 'S': 'sonnet', 'O': 'opus'}
+_AUTO_MODEL_VALID = {'H': 'haiku', 'S': 'sonnet', 'O': 'claude-opus-4-8'}
 
 
 def _route_dispatch_model(prompt, fallback_model):
