@@ -1067,6 +1067,11 @@ def _project_guardian_loop(manager):
 # ── Memory condensation state ────────────────────────────────────────────────
 _condensing_projects = set()
 _condense_lock = threading.Lock()
+# pid → unix timestamp of last _dispatch_condense call. Prevents the pre-
+# dispatch trigger from re-firing on every back-to-back conversation when
+# CLAUDE.md + MEMORY.md keep the total above threshold (condense is async
+# and can't shrink the files before the next dispatch check runs).
+_condense_triggered_at: dict = {}
 
 # P2-1 (IMPROVEMENT_PLAN_V2.md): per-project memory-condensation visibility.
 # Condensation is a background `claude -p` housekeeping agent the user never
@@ -1176,6 +1181,13 @@ def _should_condense(project, include_claude_md=False):
     pid = project['id']
     with _condense_lock:
         if pid in _condensing_projects:
+            return False
+        # Cooldown: don't re-trigger within 1 hour of the last dispatch. This
+        # prevents the pre-dispatch check from firing on back-to-back sessions
+        # when CLAUDE.md + MEMORY.md keep the total above threshold while the
+        # previous condense job is still running or just finished.
+        _cooldown = int(CONFIG.get('condense_cooldown_secs', 3600) or 3600)
+        if _time.time() - _condense_triggered_at.get(pid, 0) < _cooldown:
             return False
     # Skip running-agent check when called from pre-dispatch (agent hasn't started yet)
     if not include_claude_md and _has_running_agent(pid):
@@ -6110,6 +6122,7 @@ def _dispatch_condense(project):
         if pid in _condensing_projects:
             return
         _condensing_projects.add(pid)
+        _condense_triggered_at[pid] = _time.time()
 
     # Leg C executor selection. 'structured' (docs/CONDENSE_STRUCTURED_DESIGN.md)
     # replaces the free claude -p + Write agent below with one non-agentic JSON
