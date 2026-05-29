@@ -5441,11 +5441,10 @@ def _scribe_stat(project_id, key, n=1):
         pass  # telemetry must never break completion
 
 
-# Coarse model-tier extraction. Anthropic model IDs like
-# 'claude-haiku-4-5-20251001' / 'claude-sonnet-4-6' / 'claude-opus-4-7' all
-# carry the tier as a hyphenated segment; the auto-router emits raw 'haiku' /
-# 'sonnet' / 'opus' so by_pair stays small (3x3 + fallback bucket) instead of
-# exploding per dated snapshot.
+# Coarse model-tier extraction for telemetry. Even though the router emits
+# full model IDs like 'claude-haiku-4-5-20251001', we bucket by tier in
+# /api/router/stats so by_pair stays small (3x3 + fallback) instead of
+# exploding per model snapshot.
 _ROUTER_TIER_KEYWORDS = ('haiku', 'sonnet', 'opus')
 
 
@@ -5646,16 +5645,17 @@ _AUTO_MODEL_CLASSIFIER_PROMPT = (
     "Bias CONSERVATIVE: prefer S over H when unsure; prefer S over O when unsure."
 )
 
-_AUTO_MODEL_VALID = {'H': 'haiku', 'S': 'sonnet', 'O': 'claude-opus-4-8'}
+_AUTO_MODEL_VALID = {'H': 'claude-haiku-4-5-20251001', 'S': 'claude-sonnet-4-6', 'O': 'claude-opus-4-8'}
 
 
 def _route_dispatch_model(prompt, fallback_model):
-    """Return ('haiku'|'sonnet'|'opus', source) for the given user prompt.
+    """Return (model_name, source) where model_name is a full Claude model ID.
 
-    source is 'auto' when the classifier ran, 'manual' when auto is off,
-    'fallback' when the classifier was called but errored. fallback_model is
-    whatever the user picked in the UI; it's used verbatim when auto is off
-    and as the safety net when the classifier fails.
+    Returns one of _AUTO_MODEL_VALID's values (explicit full IDs, not aliases)
+    from the classifier result. source is 'auto' when the classifier ran,
+    'manual' when auto is off, 'fallback' when the classifier errored.
+    fallback_model is used verbatim when auto is off and as the safety net
+    when the classifier fails.
     """
     if not CONFIG.get('auto_model_enabled', False):
         return fallback_model, 'manual'
