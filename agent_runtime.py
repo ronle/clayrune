@@ -606,6 +606,9 @@ class ClaudeRuntime(AgentRuntime):
     name = 'claude'
     display_name = 'Claude Code'
 
+    # Valid --effort levels accepted by the CLI (`claude --effort <level>`).
+    EFFORT_LEVELS = ('low', 'medium', 'high', 'xhigh', 'max')
+
     # ── Path helpers ──────────────────────────────────────────────────────────
 
     @staticmethod
@@ -690,7 +693,8 @@ class ClaudeRuntime(AgentRuntime):
 
     def build_command(self, *, model: str = '', max_turns: int = 0,
                       streaming: bool = False, perm_mode: str = '',
-                      channels: str = '', remote_control: bool = False) -> List[str]:
+                      channels: str = '', remote_control: bool = False,
+                      effort: str = '') -> List[str]:
         """Return [binary, *flags]. Equivalent to _build_claude_flags() in server.py.
 
         Config values are passed explicitly (not read from server.py CONFIG) so
@@ -715,6 +719,8 @@ class ClaudeRuntime(AgentRuntime):
             cmd.extend(['--input-format', 'stream-json'])
         if model:
             cmd.extend(['--model', model])
+        if effort and str(effort).strip().lower() in self.EFFORT_LEVELS:
+            cmd.extend(['--effort', str(effort).strip().lower()])
         if max_turns and int(max_turns) > 0:
             cmd.extend(['--max-turns', str(int(max_turns))])
         if perm_mode:

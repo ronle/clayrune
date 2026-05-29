@@ -5999,6 +5999,15 @@ function modalContentHTML(p) {
             <button class="modal-menu-sub-item${p.agent_model==='claude-haiku-4-5-20251001'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-haiku-4-5-20251001')">
               <span class="modal-menu-sub-dot" style="background:var(--blue)"></span> Haiku 4.5</button>
           </div>
+          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'effort-sub-${esc(p.id)}')">
+            <span class="menu-icon">&#x26A1;</span> Effort ${p.agent_effort ? `<span style="margin-left:4px;color:var(--accent);font-size:11px">${esc(p.agent_effort)}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+          </button>
+          <div class="modal-menu-sub" id="effort-sub-${esc(p.id)}">
+            ${[['','Default (global)','var(--text-faint)'],['low','Low','var(--blue)'],['medium','Medium','var(--green)'],['high','High','var(--amber)'],['xhigh','Extra high','var(--amber)'],['max','Max','var(--accent)']].map(([v,l,c]) =>
+              `<button class="modal-menu-sub-item${(p.agent_effort||'')===v?' active':''}" onclick="setProjectEffort('${esc(p.id)}','${v}')">
+              <span class="modal-menu-sub-dot" style="background:${c}"></span> ${l}</button>`
+            ).join('')}
+          </div>
           ${(() => {
             // Providers not fetched yet — kick a load and refresh this modal
             // when it lands, so the picker isn't permanently hidden just for
@@ -6633,6 +6642,19 @@ async function setProjectModel(projectId, model) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ agent_model: model })
+    });
+    await refreshSilent();
+  } catch(e) {}
+}
+
+async function setProjectEffort(projectId, effort) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.modal-menu-sub.open').forEach(d => d.classList.remove('open'));
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ agent_effort: effort })
     });
     await refreshSilent();
   } catch(e) {}
@@ -16411,6 +16433,18 @@ async function _renderSettings() {
     `<option value="${v}" ${cfg.agent_model === v ? 'selected' : ''}>${l}</option>`
   ).join('');
 
+  const effortOptions = [
+    ['', 'Default (CLI default)'],
+    ['low', 'Low'],
+    ['medium', 'Medium'],
+    ['high', 'High'],
+    ['xhigh', 'Extra high'],
+    ['max', 'Max'],
+  ];
+  const effortSel = effortOptions.map(([v, l]) =>
+    `<option value="${v}" ${(cfg.agent_effort || '') === v ? 'selected' : ''}>${l}</option>`
+  ).join('');
+
   const permOptions = [
     ['', 'Default'],
     ['default', 'Default (ask)'],
@@ -16462,6 +16496,10 @@ async function _renderSettings() {
       <div class="settings-row">
         <div><div class="settings-label">Default Model</div><div class="settings-hint">Fallback when project has no override</div></div>
         <select class="settings-select" onchange="saveSetting('agent_model',this.value)">${modelSel}</select>
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Effort Level</div><div class="settings-hint">How hard Opus thinks per request (<code>--effort</code>). Set once at dispatch — can't change mid-session. Default leaves the CLI's own default.</div></div>
+        <select class="settings-select" onchange="saveSetting('agent_effort',this.value)">${effortSel}</select>
       </div>
       <div class="settings-row">
         <div>

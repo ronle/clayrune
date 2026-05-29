@@ -195,6 +195,7 @@ def _load_config():
         'projects_base': str(Path.home()),
         'auto_workspace_base': str(Path.home() / 'MissionControl'),
         'agent_model': '',
+        'agent_effort': '',
         'agent_max_turns': 0,
         'agent_permission_mode': '',
         'desktop_mode': False,
@@ -776,6 +777,7 @@ def _build_claude_flags(project=None, streaming=False, model_override=None):
     model = model_override or (
         (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '')
     )
+    effort = (project or {}).get('agent_effort', '') or CONFIG.get('agent_effort', '')
     return _agent_runtime.get_runtime('claude').build_command(
         model=model,
         max_turns=CONFIG.get('agent_max_turns', 0),
@@ -786,6 +788,7 @@ def _build_claude_flags(project=None, streaming=False, model_override=None):
             (project or {}).get('agent_remote_control', False) or
             CONFIG.get('agent_remote_control', False)
         ),
+        effort=effort,
     )[1:]  # strip binary — _build_claude_flags() contract is flags-only
 
 
@@ -11905,7 +11908,7 @@ def mcp_url_install():
 # ── Global config endpoints ────────────────────────────────────────────────
 
 _CONFIG_EDITABLE_KEYS = {
-    'user_name', 'agent_name', 'agent_model', 'agent_max_turns',
+    'user_name', 'agent_name', 'agent_model', 'agent_effort', 'agent_max_turns',
     'agent_permission_mode', 'agent_channels', 'agent_remote_control',
     'use_streaming_agent', 'condense_enabled', 'condense_threshold_kb',
     'condense_model', 'condense_mode', 'index_line_budget',
