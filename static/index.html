@@ -9681,18 +9681,52 @@ async function dispatchAgent(projectId) {
   input.value = '';
   if (input.id) delete textareaValues[input.id];
 
+  // Compute all display state synchronously before any async work so the UI
+  // can switch to the chat view immediately (the dispatch POST + auto-router
+  // classifier run server-side and add ~0.5s before a response arrives).
+  const displayTask = task || 'Continue where we left off.';
+  const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
+  const _projForProv = allProjects.find(x => x.id === projectId);
+  const _chosenProvider = _composerProvider(_projForProv);
+  const incognitoFlag = !!getIncognitoFor(projectId);
+  // Match the server's seeded log_lines format so the SSE/reconcile delivery
+  // of the same line dedupes against this optimistic insert. The server
+  // writes `> {user_label}: {task}` to log_lines on fresh dispatch (see
+  // server.py:6105 / 6272); if the prefix here doesn't match, BOTH the
+  // optimistic line and the server line end up in the buffer → the user
+  // sees their first message echoed twice on a brand-new conversation
+  // (followups don't have this — sendFollowup has no optimistic buffer
+  // write; the dedup goes through the .agent-echo DOM-class path instead).
+  const userLabel = (window._globalConfig && (window._globalConfig.user_name || window._globalConfig.user_display_name)) || 'User';
+  const prefix = resumeId ? `> [resuming prior session] ${displayTask}` : `> ${userLabel}: ${displayTask}`;
+
+  // Use a temp session ID to show the chat view immediately. It gets promoted
+  // to the real server-assigned ID once the POST returns.
+  const tempSessionId = `_pending_${Date.now()}`;
+  agentOutputBuffers[tempSessionId] = [prefix];
+  // Treat the optimistic line as if it had already arrived from the server,
+  // so connectAgentStream's `?since=` cursor skips it and reconcile's
+  // `serverLines.length > have` check doesn't re-deliver it. Without this,
+  // matching the format alone isn't enough — every replay would still push
+  // a second copy.
+  agentServerLines[tempSessionId] = 1;
+  agentStatusCache[tempSessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '', incognito: incognitoFlag, provider: _chosenProvider };
+  agentHistory.unshift({ projectId, sessionId: tempSessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag, provider: _chosenProvider });
+  activeAgentTab[projectId] = tempSessionId;
+  delete agentConvNew[projectId];  // dispatched → drill into the new convo
+  refreshModal();
+  renderAgentConsole();
+
   // Upload any pasted images and build final task
   const imagePaths = await uploadAgentImages(projectId);
-  const fullTask = buildTaskWithImages(task || 'Continue where we left off.', imagePaths);
+  const fullTask = buildTaskWithImages(displayTask, imagePaths);
   clearAgentImages(projectId);
 
   const body = { task: fullTask };
   if (resumeId) body.resume_conversation_id = resumeId;
-  if (getIncognitoFor(projectId)) body.incognito = true;
+  if (incognitoFlag) body.incognito = true;
   // Per-conversation provider — the composer dropdown is authoritative. The
   // project's `provider` field is only the default seed for this picker.
-  const _projForProv = allProjects.find(x => x.id === projectId);
-  const _chosenProvider = _composerProvider(_projForProv);
   body.provider = _chosenProvider;
   _maybeTagMobileClient(body);
 
@@ -9703,33 +9737,34 @@ async function dispatchAgent(projectId) {
       body: JSON.stringify(body)
     });
     const data = await res.json();
-    if (!data.ok) { alert(data.error || 'Dispatch failed'); return; }
+    if (!data.ok) {
+      // Dispatch failed — clean up temp session and restore the dispatch screen
+      delete agentOutputBuffers[tempSessionId];
+      delete agentServerLines[tempSessionId];
+      delete agentStatusCache[tempSessionId];
+      const errIdx = agentHistory.findIndex(h => h.sessionId === tempSessionId);
+      if (errIdx >= 0) agentHistory.splice(errIdx, 1);
+      delete activeAgentTab[projectId];
+      agentConvNew[projectId] = true;
+      input.value = task;
+      refreshModal();
+      alert(data.error || 'Dispatch failed');
+      return;
+    }
     const sessionId = data.session_id;
-    const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
 
-    const displayTask = task || 'Continue where we left off.';
-    // Match the server's seeded log_lines format so the SSE/reconcile delivery
-    // of the same line dedupes against this optimistic insert. The server
-    // writes `> {user_label}: {task}` to log_lines on fresh dispatch (see
-    // server.py:6105 / 6272); if the prefix here doesn't match, BOTH the
-    // optimistic line and the server line end up in the buffer → the user
-    // sees their first message echoed twice on a brand-new conversation
-    // (followups don't have this — sendFollowup has no optimistic buffer
-    // write; the dedup goes through the .agent-echo DOM-class path instead).
-    const userLabel = (window._globalConfig && (window._globalConfig.user_name || window._globalConfig.user_display_name)) || 'User';
-    const prefix = resumeId ? `> [resuming prior session] ${displayTask}` : `> ${userLabel}: ${displayTask}`;
-    agentOutputBuffers[sessionId] = [prefix];
-    // Treat the optimistic line as if it had already arrived from the server,
-    // so connectAgentStream's `?since=` cursor skips it and reconcile's
-    // `serverLines.length > have` check doesn't re-deliver it. Without this,
-    // matching the format alone isn't enough — every replay would still push
-    // a second copy.
+    // Promote temp → real session ID
+    const savedBuf = agentOutputBuffers[tempSessionId] || [prefix];
+    delete agentOutputBuffers[tempSessionId];
+    delete agentServerLines[tempSessionId];
+    delete agentStatusCache[tempSessionId];
+    const histEntry = agentHistory.find(h => h.sessionId === tempSessionId);
+    if (histEntry) histEntry.sessionId = sessionId;
+    if (activeAgentTab[projectId] === tempSessionId) activeAgentTab[projectId] = sessionId;
+
+    agentOutputBuffers[sessionId] = savedBuf;
     agentServerLines[sessionId] = 1;
-    const incognitoFlag = !!body.incognito;
     agentStatusCache[sessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '', incognito: incognitoFlag, provider: _chosenProvider };
-    agentHistory.unshift({ projectId, sessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag, provider: _chosenProvider });
-    activeAgentTab[projectId] = sessionId;
-    delete agentConvNew[projectId];  // dispatched → drill into the new convo
 
     // Zero-gap: if resuming a known prior conversation, patch its last_user now.
     // For a fresh session, we don't know the claude_session_id yet; it will be
@@ -9750,6 +9785,15 @@ async function dispatchAgent(projectId) {
       refreshModal();
     }
   } catch(e) {
+    delete agentOutputBuffers[tempSessionId];
+    delete agentServerLines[tempSessionId];
+    delete agentStatusCache[tempSessionId];
+    const errIdx = agentHistory.findIndex(h => h.sessionId === tempSessionId);
+    if (errIdx >= 0) agentHistory.splice(errIdx, 1);
+    delete activeAgentTab[projectId];
+    agentConvNew[projectId] = true;
+    input.value = task;
+    refreshModal();
     alert('Failed to dispatch: ' + e.message);
   }
 }
