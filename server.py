@@ -239,6 +239,14 @@ def _load_config():
         # one idea per message, no headers/bullets/long code blocks. The user's
         # chat bubble still shows the original message verbatim. Off by default.
         'mobile_brief_replies_enabled': False,
+        # Auto model router (experimental, default OFF). When on, every dispatch
+        # runs a cheap Haiku classifier on the prompt and picks Haiku/Sonnet/Opus
+        # based on task complexity. When off, the user-selected model is used
+        # as-is. The classifier is fail-open: any error falls back to the
+        # user-selected model. Side branch feat/auto-model-router — see backlog
+        # for the v2 within-turn multi-CC-call variant.
+        'auto_model_enabled': False,
+        'auto_model_classifier_model': '',  # '' -> 'haiku'
     }
     if CONFIG_PATH.exists():
         try:
@@ -5400,6 +5408,58 @@ def _scribe_call(model, instruction, body):
     if result is None:
         raise RuntimeError("scribe claude call failed (non-zero exit or timeout)")
     return result.text
+
+
+# ── Auto model router (classifier) ──────────────────────────────────────────
+# Cheap Haiku oneshot that picks one of Haiku / Sonnet / Opus for a given user
+# prompt. Used to right-size dispatches and stop burning Opus budget on trivial
+# Q&A. Fail-open: any error returns the caller's fallback so a flaky classifier
+# never breaks the dispatch path.
+#
+# Single token output keeps the call small (~5 tokens total). The prompt biases
+# conservative — when in doubt, pick the larger model. The classifier is opt-in
+# via CONFIG['auto_model_enabled']; when off, _route_dispatch_model is a no-op
+# pass-through.
+
+_AUTO_MODEL_CLASSIFIER_PROMPT = (
+    "You classify a coding-assistant request into one of three Claude models: "
+    "Haiku (H), Sonnet (S), or Opus (O).\n\n"
+    "Output EXACTLY one character — H, S, or O. No other text, no punctuation.\n\n"
+    "Pick H ONLY when the request is clearly trivial: a single fact question, "
+    "a one-line lookup, casual chat, a yes/no, or a tiny one-file edit with "
+    "obvious intent.\n\n"
+    "Pick O ONLY when the request is clearly complex: multi-step refactor, "
+    "architecture or design decision, cross-file debugging, deep code generation, "
+    "long planning, or anything that explicitly asks for careful reasoning.\n\n"
+    "Pick S for everything else — most normal coding tasks land here.\n\n"
+    "Bias CONSERVATIVE: prefer S over H when unsure; prefer S over O when unsure."
+)
+
+_AUTO_MODEL_VALID = {'H': 'haiku', 'S': 'sonnet', 'O': 'opus'}
+
+
+def _route_dispatch_model(prompt, fallback_model):
+    """Return ('haiku'|'sonnet'|'opus', source) for the given user prompt.
+
+    source is 'auto' when the classifier ran, 'manual' when auto is off,
+    'fallback' when the classifier was called but errored. fallback_model is
+    whatever the user picked in the UI; it's used verbatim when auto is off
+    and as the safety net when the classifier fails.
+    """
+    if not CONFIG.get('auto_model_enabled', False):
+        return fallback_model, 'manual'
+    if not prompt or not prompt.strip():
+        return fallback_model, 'fallback'
+    classifier_model = CONFIG.get('auto_model_classifier_model', '') or 'haiku'
+    try:
+        raw = _scribe_call(classifier_model, _AUTO_MODEL_CLASSIFIER_PROMPT, prompt.strip())
+    except Exception:
+        return fallback_model, 'fallback'
+    token = (raw or '').strip().upper()[:1]
+    chosen = _AUTO_MODEL_VALID.get(token)
+    if not chosen:
+        return fallback_model, 'fallback'
+    return chosen, 'auto'
 
 
 def _scribe_extract(project, session):
@@ -11351,6 +11411,7 @@ _CONFIG_EDITABLE_KEYS = {
     'long_session_advisory_enabled', 'long_session_advisory_turns',
     'projects_base', 'shared_rules_path', 'port', 'log_level',
     'mobile_brief_replies_enabled',
+    'auto_model_enabled', 'auto_model_classifier_model',
 }
 
 @app.route('/api/config')
