@@ -1305,8 +1305,12 @@ def load_projects():
     for f in DATA_DIR.glob('*.json'):
         # Sibling data files co-located in DATA_DIR that are NOT project
         # records (mirror the _agent_log.json precedent; _scribe_stats.json
-        # added with SPEC §8 telemetry).
-        if f.name.endswith(('_agent_log.json', '_scribe_stats.json')):
+        # added with SPEC §8 telemetry; _router_stats.json added with the
+        # auto-router. LOAD-BEARING per CLAUDE.md — a stray non-project
+        # JSON here 500s _get_active_restart_blockers and the restart
+        # endpoints. Every new sidecar MUST be excluded here.
+        if f.name.endswith(('_agent_log.json', '_scribe_stats.json',
+                            '_router_stats.json')):
             continue
         try:
             p = json.loads(f.read_text(encoding='utf-8'))
@@ -1968,6 +1972,50 @@ def get_scribe_stats(project_id):
         return jsonify(json.loads(fp.read_text(encoding='utf-8') or '{}'))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/router/stats', methods=['GET'])
+def get_router_stats_aggregate():
+    """Cross-project auto-router counters. Sums totals and by_pair across
+    every project's _router_stats.json. Surfaces last_fallback as the most
+    recent across projects. Read-only; never mutates state.
+
+    Response shape:
+      {
+        "totals": {"manual": N, "auto": N, "fallback": N},
+        "by_pair": {"opus->haiku": N, ...},
+        "last_fallback": {"ts": "...Z", "reason": "...", "project_id": "..."},
+        "projects": N            # how many had a stats file
+      }
+    """
+    agg_totals = {}
+    agg_by_pair = {}
+    last_fb = None
+    project_count = 0
+    for f in DATA_DIR.glob('*_router_stats.json'):
+        try:
+            data = json.loads(f.read_text(encoding='utf-8') or '{}')
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        project_count += 1
+        for k, v in (data.get('totals') or {}).items():
+            agg_totals[k] = int(agg_totals.get(k, 0)) + int(v or 0)
+        for k, v in (data.get('by_pair') or {}).items():
+            agg_by_pair[k] = int(agg_by_pair.get(k, 0)) + int(v or 0)
+        fb = data.get('last_fallback')
+        if isinstance(fb, dict) and fb.get('ts'):
+            if last_fb is None or fb['ts'] > last_fb.get('ts', ''):
+                # Derive project_id from the filename suffix-strip.
+                pid = f.name[:-len('_router_stats.json')]
+                last_fb = {**fb, 'project_id': pid}
+    return jsonify({
+        'totals': agg_totals,
+        'by_pair': agg_by_pair,
+        'last_fallback': last_fb,
+        'projects': project_count,
+    })
 
 
 @app.route('/api/project/<project_id>/memory/search', methods=['GET'])
@@ -5377,6 +5425,66 @@ def _scribe_stat(project_id, key, n=1):
         pass  # telemetry must never break completion
 
 
+# Coarse model-tier extraction. Anthropic model IDs like
+# 'claude-haiku-4-5-20251001' / 'claude-sonnet-4-6' / 'claude-opus-4-7' all
+# carry the tier as a hyphenated segment; the auto-router emits raw 'haiku' /
+# 'sonnet' / 'opus' so by_pair stays small (3x3 + fallback bucket) instead of
+# exploding per dated snapshot.
+_ROUTER_TIER_KEYWORDS = ('haiku', 'sonnet', 'opus')
+
+
+def _router_model_tier(model_name):
+    s = (model_name or '').lower()
+    for k in _ROUTER_TIER_KEYWORDS:
+        if k in s:
+            return k
+    return s or 'unknown'
+
+
+def _router_stat(project_id, requested_model, chosen_model, source, reason=''):
+    """Auto-router telemetry — bumps a per-project counter on every dispatch.
+
+    Shape (per docs/DISPATCH_AND_ROUTING_ANALYSIS.md §B.5):
+      {
+        "totals": {"manual": N, "auto": N, "fallback": N},
+        "by_pair": {"opus->haiku": N, "opus->sonnet": N, ...,
+                    "fallback:opus": N},
+        "last_fallback": {"ts": "...Z", "reason": "..."}
+      }
+
+    Best-effort; never raises. Telemetry must never break dispatch.
+    """
+    try:
+        fp = DATA_DIR / f'{project_id}_router_stats.json'
+        stats = {}
+        if fp.exists():
+            try:
+                stats = json.loads(fp.read_text(encoding='utf-8') or '{}')
+            except Exception:
+                stats = {}
+        if not isinstance(stats, dict):
+            stats = {}
+        totals = stats.setdefault('totals', {})
+        totals[source] = int(totals.get(source, 0)) + 1
+        by_pair = stats.setdefault('by_pair', {})
+        req_tier = _router_model_tier(requested_model)
+        chosen_tier = _router_model_tier(chosen_model)
+        if source == 'fallback':
+            key = f'fallback:{req_tier}'
+        else:
+            key = f'{req_tier}->{chosen_tier}'
+        by_pair[key] = int(by_pair.get(key, 0)) + 1
+        if source == 'fallback':
+            stats['last_fallback'] = {
+                'ts': now_iso(),
+                'reason': reason or 'unknown',
+            }
+        stats['_updated'] = now_iso()
+        fp.write_text(json.dumps(stats, indent=2), encoding='utf-8')
+    except Exception:
+        pass  # telemetry must never break dispatch
+
+
 def _scribe_render_lines(lines):
     """Render an iterable of raw .jsonl text lines into the compact view.
 
@@ -6483,6 +6591,15 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                     p, incognito=incognito, task=task),
                 streaming=use_streaming))
         _sp_args, _sp_path = _sysprompt_file_args(context)
+    # Per-dispatch telemetry — best-effort; never raises. requested = the
+    # model the user configured; chosen = what actually went to --model
+    # (post-router). See docs/DISPATCH_AND_ROUTING_ANALYSIS.md §B.5.
+    _router_stat(
+        project_id,
+        requested_model=(p.get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'),
+        chosen_model=routed_model,
+        source=routed_source,
+    )
 
     mgr = get_manager(project_id)
     mgr.ensure_guardian()
