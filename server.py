@@ -7091,6 +7091,7 @@ def agent_followup(project_id):
         return jsonify({'error': 'session_id required'}), 400
 
     _respawn_b = None  # set if Mode B needs to respawn outside lock
+    _model_route_state = None  # set when alive+auto_model_enabled; handled post-lock
 
     # Pre-check: if session is gone from agent_sessions (server restart, tab close,
     # 24h purge), try reviving from agent_log via -r <claude_session_id>.
@@ -7255,7 +7256,7 @@ def agent_followup(project_id):
                 }
                 # Fall through — spawn happens after lock release
             else:
-                # Process alive — write message directly to stdin
+                # Process alive — optionally re-classify model before writing to stdin
                 user_label = CONFIG.get('user_name') or 'User'
                 if not existing.pop('_send_already_logged', False):
                     existing['log_lines'].append(f"\n> {user_label}: {message}\n")
@@ -7266,34 +7267,43 @@ def agent_followup(project_id):
                 # the parallel respawn branch above for why this matters.
                 existing.pop('_dispatching_followup', None)
 
-                # Mobile brief replies: the directive (if applicable) rides on
-                # the claude-bound payload only. log_lines above already used
-                # the unaugmented message for the user's chat bubble.
-                claude_content = _apply_mobile_brief(message, data)
-                stdin_msg = json.dumps({
-                    "type": "user",
-                    "message": {"role": "user", "content": claude_content}
-                }) + '\n'
+                if CONFIG.get('auto_model_enabled', False) and message:
+                    # Defer stdin write — classify model post-lock to avoid
+                    # blocking mgr.lock for the ~0.5s Haiku classifier call.
+                    _model_route_state = {
+                        'current_model': existing.get('model') or 'sonnet',
+                        'claude_sid': existing.get('claude_session_id'),
+                        'proc': existing['proc'],
+                        'existing': existing,
+                    }
+                    # Fall through to post-lock routing section
+                else:
+                    # Router off — write stdin directly (original path)
+                    claude_content = _apply_mobile_brief(message, data)
+                    stdin_msg = json.dumps({
+                        "type": "user",
+                        "message": {"role": "user", "content": claude_content}
+                    }) + '\n'
 
-                def _write_stdin():
-                    lock = existing.get('stdin_lock')
-                    if lock:
-                        lock.acquire()
-                    try:
-                        existing['proc'].stdin.write(stdin_msg)
-                        existing['proc'].stdin.flush()
-                    except Exception as e:
-                        existing['log_lines'].append(f'[stdin write error: {e}]')
-                        existing['status'] = 'error'
-                        existing['last_status_change_time'] = _time.time()
-                        existing['process_alive'] = False
-                    finally:
+                    def _write_stdin():
+                        lock = existing.get('stdin_lock')
                         if lock:
-                            lock.release()
+                            lock.acquire()
+                        try:
+                            existing['proc'].stdin.write(stdin_msg)
+                            existing['proc'].stdin.flush()
+                        except Exception as e:
+                            existing['log_lines'].append(f'[stdin write error: {e}]')
+                            existing['status'] = 'error'
+                            existing['last_status_change_time'] = _time.time()
+                            existing['process_alive'] = False
+                        finally:
+                            if lock:
+                                lock.release()
 
-                threading.Thread(target=_write_stdin, daemon=True).start()
-                _log_agent_activity(project_id, f"Agent follow-up: {message[:100]}")
-                return jsonify({'ok': True, 'session_id': session_id})
+                    threading.Thread(target=_write_stdin, daemon=True).start()
+                    _log_agent_activity(project_id, f"Agent follow-up: {message[:100]}")
+                    return jsonify({'ok': True, 'session_id': session_id})
 
         else:
             # Mode A: existing behavior
@@ -7320,6 +7330,73 @@ def agent_followup(project_id):
             if not existing.pop('_send_already_logged', False):
                 existing['log_lines'].append(f"\n> {user_label}: {message}\n")
             claude_sid = existing.get('claude_session_id')
+
+    # Mode B per-turn model routing (process alive, auto_model_enabled=True)
+    # Classifier runs here — outside mgr.lock — to avoid blocking other requests.
+    if _model_route_state:
+        mrs = _model_route_state
+        new_model, new_source = _resolve_dispatch_model(p, message)
+        current_model = mrs['current_model']
+        _router_stat(project_id,
+                     requested_model=current_model,
+                     chosen_model=new_model,
+                     source=new_source)
+        if _router_model_tier(new_model) != _router_model_tier(current_model):
+            # Model tier changed — kill current process, respawn with -r + new model
+            _log(f"[followup-B-route] {project_id}: model switch {current_model} → {new_model}")
+            claude_sid = mrs['claude_sid']
+            resume_flags = ['-r', claude_sid] if claude_sid else []
+            _sp_path = None
+            cmd = [_resolve_claude(), *resume_flags,
+                   *_build_claude_flags(p, streaming=True, model_override=new_model)]
+            if not resume_flags:
+                _route_context = _build_agent_context(p)
+                _sp_args, _sp_path = _sysprompt_file_args(_route_context)
+                cmd.extend(_sp_args)
+            with get_manager(project_id).lock:
+                _route_existing = agent_sessions.get(session_id)
+                if _route_existing:
+                    _route_existing['model'] = new_model
+                    _route_existing['model_source'] = new_source
+                    _route_existing['process_alive'] = False
+                    _route_existing['log_lines'].append(
+                        f'[Auto-router: switching {current_model} → {new_model}]')
+            _respawn_b = {
+                'cmd': cmd, 'pp': pp, 'message': message,
+                'existing': mrs['existing'],
+                'session_id': session_id, 'project_id': project_id,
+                'old_proc': mrs['proc'],
+                'sysprompt_path': _sp_path,
+                'request_data': data,
+            }
+        else:
+            # Same tier — write stdin directly
+            _rs_existing = mrs['existing']
+            claude_content = _apply_mobile_brief(message, data)
+            stdin_msg = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": claude_content}
+            }) + '\n'
+
+            def _write_stdin_routed():
+                lock = _rs_existing.get('stdin_lock')
+                if lock:
+                    lock.acquire()
+                try:
+                    _rs_existing['proc'].stdin.write(stdin_msg)
+                    _rs_existing['proc'].stdin.flush()
+                except Exception as e:
+                    _rs_existing['log_lines'].append(f'[stdin write error: {e}]')
+                    _rs_existing['status'] = 'error'
+                    _rs_existing['last_status_change_time'] = _time.time()
+                    _rs_existing['process_alive'] = False
+                finally:
+                    if lock:
+                        lock.release()
+
+            threading.Thread(target=_write_stdin_routed, daemon=True).start()
+            _log_agent_activity(project_id, f"Agent follow-up: {message[:100]}")
+            return jsonify({'ok': True, 'session_id': session_id})
 
     # Mode B respawn — spawn outside the lock to avoid blocking stop/other ops
     if _respawn_b:
