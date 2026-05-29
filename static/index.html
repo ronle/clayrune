@@ -10129,6 +10129,16 @@ function connectAgentStream(projectId, sessionId) {
         renderAgentConsole();
         refreshSilent();
       } else if (msg.type === 'error') {
+        if (_sendInFlight[sessionId]) {
+          // SSE opened before POST resolved or session is being revived —
+          // close this stale stream silently so the POST-completion reconnect
+          // can attach to the live session. Never set status = 'error' here:
+          // that would show a spurious BLOCKED pill before the send finishes.
+          es.close();
+          delete agentEventSources[sessionId];
+          if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
+          return;
+        }
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         if (agentStatusCache[sessionId]) agentStatusCache[sessionId].status = 'error';
         updateHistoryStatus(sessionId, 'error');
@@ -11246,6 +11256,19 @@ async function sendFollowup(projectId, sessionId) {
     // at the new session so SSE connects there.
     const targetSessionId = data.session_id || sessionId;
     if (targetSessionId !== sessionId) {
+      // A fresh session was spawned — redirect the active tab so the user
+      // sees the new session running rather than the old one stuck at its
+      // previous terminal status.
+      const oldHist = agentHistory.find(h => h.sessionId === sessionId && h.projectId === projectId);
+      if (oldHist && !agentHistory.find(h => h.sessionId === targetSessionId)) {
+        agentHistory.unshift({ ...oldHist, sessionId: targetSessionId, status: 'running', startedAt: new Date().toISOString() });
+      }
+      agentStatusCache[targetSessionId] = { ...(agentStatusCache[sessionId] || {}), status: 'running', startedAt: new Date().toISOString(), claudeSessionId: '' };
+      activeAgentTab[projectId] = targetSessionId;
+      _sendInFlight[targetSessionId] = _sendInFlight[sessionId] || Date.now();
+      delete _sendInFlight[sessionId];
+      refreshModal();
+      renderAgentConsole();
       if (agentEventSources[sessionId]) {
         agentEventSources[sessionId].close();
         delete agentEventSources[sessionId];
