@@ -8,6 +8,7 @@ import mimetypes
 import subprocess
 import sys
 import threading
+import concurrent.futures
 import time as _time
 from pathlib import Path
 from typing import Dict, Optional
@@ -247,6 +248,12 @@ def _load_config():
         # for the v2 within-turn multi-CC-call variant.
         'auto_model_enabled': False,
         'auto_model_classifier_model': '',  # '' -> 'haiku'
+        # Classifier hard timeout (seconds). Blocks the dispatch only until this
+        # deadline; on expiry the router fails open to the user-selected model.
+        # Without this, a Haiku rate-limit burst would hang dispatches for the
+        # underlying claude oneshot's 180s timeout — diagnosed in the analysis
+        # doc (docs/DISPATCH_AND_ROUTING_ANALYSIS.md §C.1 step 1).
+        'auto_model_classifier_timeout_secs': 8,
     }
     if CONFIG_PATH.exists():
         try:
@@ -792,11 +799,66 @@ def _resolve_dispatch_model(project, prompt):
 
     Caller threads `model_name` into _build_claude_flags via `model_override`
     and surfaces a per-bubble pill when source != 'manual'. Side-effect free.
+
+    Synchronous path. For parallel classification overlapping with
+    `_build_agent_context`, use `_dispatch_with_routing_parallel`.
     """
     fallback = (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'
     if not prompt or not CONFIG.get('auto_model_enabled', False):
         return fallback, 'manual'
     return _route_dispatch_model(prompt, fallback)
+
+
+# Background pool for parallel classifier calls during dispatch. Keeps the
+# router off the dispatch thread's critical path so context build and
+# classification overlap (see docs/DISPATCH_AND_ROUTING_ANALYSIS.md §B.3.b).
+# Daemon threads so the pool never blocks shutdown.
+_classifier_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix='router-cls'
+)
+
+
+def _dispatch_with_routing(project, prompt, streaming=False):
+    """One-shot helper: resolve model + build flags.
+
+    Returns (model, source, flags). Caller stamps session['model'] and
+    session['model_source'] for SSE emission. Used by dispatch sites that
+    don't have a separate expensive context-build step to parallelize with.
+    """
+    model, source = _resolve_dispatch_model(project, prompt)
+    flags = _build_claude_flags(project, streaming=streaming, model_override=model)
+    return model, source, flags
+
+
+def _dispatch_with_routing_parallel(project, prompt, context_builder, streaming=False):
+    """Same as `_dispatch_with_routing` but runs `context_builder` in parallel
+    with the classifier when the router is on.
+
+    `context_builder` is a zero-arg callable returning the context string
+    (typically `lambda: _build_agent_context(p, incognito=…, task=…)`). Net
+    latency add when router is on: ~0–500 ms (classifier vs. context overlap)
+    instead of 600–1500 ms serially.
+
+    Returns (model, source, flags, context). Caller stamps session fields.
+    When router is off or prompt is empty, runs context_builder synchronously
+    and short-circuits to the manual model.
+    """
+    if not CONFIG.get('auto_model_enabled', False) or not prompt:
+        context = context_builder() if context_builder else ''
+        model, source, flags = _dispatch_with_routing(project, prompt, streaming=streaming)
+        return model, source, flags, context
+
+    fallback = (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'
+    fut = _classifier_pool.submit(_route_dispatch_model, prompt, fallback)
+    context = context_builder() if context_builder else ''
+    timeout = max(1, int(CONFIG.get('auto_model_classifier_timeout_secs', 8) or 8))
+    try:
+        model, source = fut.result(timeout=timeout)
+    except Exception:
+        # Includes concurrent.futures.TimeoutError. Fail-open.
+        model, source = fallback, 'fallback'
+    flags = _build_claude_flags(project, streaming=streaming, model_override=model)
+    return model, source, flags, context
 
 
 def _sysprompt_file_args(context):
@@ -11437,6 +11499,7 @@ _CONFIG_EDITABLE_KEYS = {
     'projects_base', 'shared_rules_path', 'port', 'log_level',
     'mobile_brief_replies_enabled',
     'auto_model_enabled', 'auto_model_classifier_model',
+    'auto_model_classifier_timeout_secs',
 }
 
 @app.route('/api/config')
