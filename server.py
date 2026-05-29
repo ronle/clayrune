@@ -7798,6 +7798,13 @@ def agent_status(project_id):
                 # sessions (dispatched before the field was captured) still
                 # surface a usable model string. Empty = provider default.
                 'agent_model': s.get('agent_model') or _proj_default_model,
+                # Auto-router attribution. `model` is what actually got
+                # passed via --model (may differ from agent_model when the
+                # router picked something else). `model_source` is one of
+                # 'manual' / 'auto' / 'fallback'. Frontend pill reads
+                # both to decide whether to render an auto-router badge.
+                'model': s.get('model') or s.get('agent_model') or _proj_default_model,
+                'model_source': s.get('model_source', 'manual'),
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (
