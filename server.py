@@ -4550,6 +4550,55 @@ def _reconcile_unscribed_sessions():
               f"reconciled {scribed_n} previously-unscribed session(s)")
 
 
+def _backfill_token_telemetry():
+    """Populate model_tokens on existing agent_log entries that pre-date
+    the telemetry feature. Reads each entry's JSONL transcript and writes
+    input_tokens / output_tokens / model / model_tokens. Safe to re-run:
+    entries that already have model_tokens are skipped. Never raises.
+    """
+    try:
+        projects = load_projects()
+    except Exception:
+        return 0
+    updated = 0
+    for p in projects:
+        pid = p.get('id', '')
+        pp = p.get('project_path', '')
+        if not pid or not pp:
+            continue
+        if p.get('_is_incognito_project') or pid == INCOGNITO_PROJECT_ID:
+            continue
+        try:
+            log = _load_agent_log(pid)
+            changed = False
+            for entry in log:
+                if entry.get('model_tokens'):
+                    continue
+                csid = entry.get('claude_session_id', '')
+                if not csid:
+                    continue
+                tf = _find_transcript_file(pp, csid)
+                if not tf:
+                    continue
+                tel = _extract_transcript_telemetry(tf)
+                if not tel:
+                    continue
+                entry['model'] = tel.get('model', '')
+                entry['input_tokens'] = tel.get('input_tokens', 0)
+                entry['output_tokens'] = tel.get('output_tokens', 0)
+                entry['cache_read_tokens'] = tel.get('cache_read_tokens', 0)
+                entry['model_tokens'] = tel.get('model_tokens', {})
+                changed = True
+                updated += 1
+            if changed:
+                _save_agent_log(pid, log)
+        except Exception as e:
+            _log(f"[telemetry-backfill] {pid}: {e}")
+    if updated:
+        _log(f"[telemetry-backfill] populated {updated} entr{'y' if updated == 1 else 'ies'}")
+    return updated
+
+
 def _startup_memory_maintenance():
     """Background startup chain: backfill agent_log from transcripts, THEN
     reconcile unscribed sessions (order matters — reconcile needs the
@@ -4566,6 +4615,10 @@ def _startup_memory_maintenance():
         _reconcile_unscribed_sessions()
     except Exception as e:
         _log(f"[scribe-reconcile] bootstrap failed: {e}")
+    try:
+        _backfill_token_telemetry()
+    except Exception as e:
+        _log(f"[telemetry-backfill] failed: {e}")
 
 
 def _revive_history_lines(project_path, claude_sid, user_label, max_messages=40):
@@ -15328,6 +15381,20 @@ def _mc_usage_from_agent_logs():
         'all_time': all_t,
         'last_data_date': last_data_date,
     }
+
+
+@app.route('/api/system/usage/backfill', methods=['POST'])
+def system_usage_backfill():
+    """Trigger a one-shot telemetry backfill in the background.
+    Populates model_tokens on existing agent_log entries from JSONL transcripts.
+    """
+    def _run():
+        try:
+            _backfill_token_telemetry()
+        except Exception as e:
+            _log(f"[telemetry-backfill] endpoint trigger failed: {e}")
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'ok': True, 'msg': 'backfill started in background'})
 
 
 @app.route('/api/system/usage', methods=['GET'])
