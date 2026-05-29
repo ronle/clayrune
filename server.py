@@ -846,7 +846,7 @@ def _dispatch_with_routing_parallel(project, prompt, context_builder, streaming=
     if not CONFIG.get('auto_model_enabled', False) or not prompt:
         context = context_builder() if context_builder else ''
         model, source, flags = _dispatch_with_routing(project, prompt, streaming=streaming)
-        return model, source, flags, context
+        return model, source, flags, context, ''
 
     fallback = (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'
     fut = _classifier_pool.submit(_route_dispatch_model, prompt, fallback)
@@ -3892,11 +3892,12 @@ def _read_agent_stream(proc, session):
                     # Capture session_id from result as fallback
                     if 'session_id' in msg:
                         _note_claude_sid(session, msg['session_id'])
-                    # Capture token usage and cost data
+                    # Accumulate token usage across turns (result fires once per turn
+                    # in Mode B; overwriting would discard all prior turns).
                     if 'usage' in msg:
-                        session['usage'] = msg['usage']
+                        _accumulate_session_usage(session, msg['usage'])
                     if 'cost_usd' in msg:
-                        session['cost_usd'] = msg['cost_usd']
+                        session['cost_usd'] = (session.get('cost_usd') or 0.0) + (msg['cost_usd'] or 0.0)
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
                     _auto_snapshot_notes_on_turn(session)
@@ -4054,9 +4055,9 @@ def _read_agent_stream_b(proc, session):
                     if 'session_id' in msg:
                         _note_claude_sid(session, msg['session_id'])
                     if 'usage' in msg:
-                        session['usage'] = msg['usage']
+                        _accumulate_session_usage(session, msg['usage'])
                     if 'cost_usd' in msg:
-                        session['cost_usd'] = msg['cost_usd']
+                        session['cost_usd'] = (session.get('cost_usd') or 0.0) + (msg['cost_usd'] or 0.0)
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
                     _auto_snapshot_notes_on_turn(session)
@@ -4849,6 +4850,27 @@ def _revive_from_agent_log(project_id, session_id, message, p):
     threading.Thread(target=_read_agent_stream, args=(proc, session), daemon=True).start()
     _log(f"[revive] {project_id}: Mode A revived session {session_id} via -r {claude_sid[:12]}")
     return session
+
+
+def _accumulate_session_usage(session, turn_usage):
+    """Merge a single turn's usage dict into the running session total.
+
+    CC emits one `result` event per turn in Mode B (persistent). Each event
+    carries only THAT turn's token counts, not a cumulative total. Overwriting
+    session['usage'] discards all prior turns; instead we sum the numeric
+    fields so the final value reflects the whole session.
+    """
+    _INT_FIELDS = ('input_tokens', 'output_tokens',
+                   'cache_read_input_tokens', 'cache_creation_input_tokens')
+    prev = session.get('usage') or {}
+    merged = dict(prev)
+    for k in _INT_FIELDS:
+        merged[k] = int(prev.get(k) or 0) + int(turn_usage.get(k) or 0)
+    # Carry non-numeric metadata from the latest turn (service_tier, etc.)
+    for k, v in turn_usage.items():
+        if k not in _INT_FIELDS:
+            merged[k] = v
+    session['usage'] = merged
 
 
 def _note_claude_sid(session, sid):
@@ -10797,23 +10819,58 @@ def api_usage():
         except Exception:
             return True  # conservative: don't discard data on unknown provider
 
+    # Deduplicate by claude_session_id: Scribe checkpoints write multiple log
+    # entries for the same session (each with cumulative totals). Keep only the
+    # latest entry per csid to avoid counting the same session multiple times.
+    _seen_csids: dict = {}   # csid -> (ts, entry, provider)
+    _no_csid: list = []      # entries without a csid (counted individually)
+
     for f in DATA_DIR.glob('*_agent_log.json'):
         try:
             log = json.loads(f.read_text(encoding='utf-8'))
             for entry in log:
                 if since and entry.get('ts', '') < since:
                     continue
+                csid = entry.get('claude_session_id') or ''
                 p = (entry.get('provider') or 'claude').lower()
-                usage = entry.get('usage') or {}
-                cost = entry.get('cost_usd')
-                _accumulate(p, usage, cost, _provider_emits_cost(p))
+                ts = entry.get('ts', '')
+                if csid:
+                    prev = _seen_csids.get(csid)
+                    if prev is None or ts >= prev[0]:
+                        _seen_csids[csid] = (ts, entry, p)
+                else:
+                    _no_csid.append((entry, p))
         except Exception:
             continue
+
+    def _entry_usage(entry):
+        """Return a usage-shaped dict for an agent_log entry.
+
+        Prefers top-level input_tokens/output_tokens (set by
+        _extract_transcript_telemetry — full-session JSONL sum) when non-zero.
+        Falls back to the nested 'usage' dict (accumulated across turns for new
+        entries; last-turn only for pre-fix legacy entries).
+        """
+        top_in  = int(entry.get('input_tokens') or 0)
+        top_out = int(entry.get('output_tokens') or 0)
+        if top_in or top_out:
+            return {'input_tokens': top_in, 'output_tokens': top_out}
+        nested = entry.get('usage') or {}
+        return {'input_tokens': int(nested.get('input_tokens') or 0),
+                'output_tokens': int(nested.get('output_tokens') or 0)}
+
+    for ts, entry, p in _seen_csids.values():
+        _accumulate(p, _entry_usage(entry), entry.get('cost_usd'), _provider_emits_cost(p))
+    for entry, p in _no_csid:
+        _accumulate(p, _entry_usage(entry), entry.get('cost_usd'), _provider_emits_cost(p))
 
     # Include running sessions that haven't been logged yet
     for s in agent_sessions.values():
         if since and s.get('started_at', '') < since:
             continue
+        csid = s.get('claude_session_id') or ''
+        if csid and csid in _seen_csids:
+            continue  # already counted from log
         p = (s.get('provider') or 'claude').lower()
         usage = s.get('usage') or {}
         cost = s.get('cost_usd')
@@ -15331,6 +15388,11 @@ def _mc_usage_from_agent_logs():
              'all_time': {model: tokens}, 'last_data_date': str}
     Reads all *_agent_log.json in DATA_DIR. Entries without model_tokens are
     skipped (pre-telemetry entries). Never raises.
+
+    Deduplicates by claude_session_id: Scribe checkpoints write multiple entries
+    for the same session (each with the cumulative token total from session start).
+    We keep only the latest entry per csid to avoid counting the same tokens N times.
+    Sessions without a csid are counted individually (legacy / non-CC providers).
     """
     today_str = datetime.now().strftime('%Y-%m-%d')
     try:
@@ -15343,6 +15405,11 @@ def _mc_usage_from_agent_logs():
     last_data_date = ''
 
     try:
+        # First pass: collect all entries across all log files, deduplicated by csid.
+        # For each csid, keep only the latest entry (highest ts = most complete snapshot).
+        # Entries without a csid are kept as-is (keyed by a unique fallback).
+        best_by_csid: dict = {}  # csid -> entry dict
+        _no_csid_counter = 0
         for log_path in DATA_DIR.glob('*_agent_log.json'):
             try:
                 entries = json.loads(log_path.read_text(encoding='utf-8',
@@ -15352,25 +15419,40 @@ def _mc_usage_from_agent_logs():
             if not isinstance(entries, list):
                 continue
             for e in entries:
+                if not isinstance(e, dict):
+                    continue
                 mt = e.get('model_tokens')
                 if not mt or not isinstance(mt, dict):
                     continue
                 ts = (e.get('ts') or '')[:10]
                 if not ts:
                     continue
-                if ts > last_data_date:
-                    last_data_date = ts
-                for model, tok in mt.items():
-                    tok = int(tok or 0)
-                    if not tok:
-                        continue
-                    all_t[model] = int(all_t.get(model, 0)) + tok
-                    if ts >= month_cutoff:
-                        month_t[model] = int(month_t.get(model, 0)) + tok
-                    if ts >= week_cutoff:
-                        week_t[model] = int(week_t.get(model, 0)) + tok
-                    if ts == today_str:
-                        today_t[model] = int(today_t.get(model, 0)) + tok
+                csid = e.get('claude_session_id') or ''
+                if csid:
+                    prev = best_by_csid.get(csid)
+                    if prev is None or ts >= (prev.get('ts') or '')[:10]:
+                        best_by_csid[csid] = e
+                else:
+                    # No csid — count individually (non-CC provider or legacy entry)
+                    _no_csid_counter += 1
+                    best_by_csid[f'__no_csid_{_no_csid_counter}'] = e
+
+        for e in best_by_csid.values():
+            mt = e.get('model_tokens') or {}
+            ts = (e.get('ts') or '')[:10]
+            if ts > last_data_date:
+                last_data_date = ts
+            for model, tok in mt.items():
+                tok = int(tok or 0)
+                if not tok:
+                    continue
+                all_t[model] = int(all_t.get(model, 0)) + tok
+                if ts >= month_cutoff:
+                    month_t[model] = int(month_t.get(model, 0)) + tok
+                if ts >= week_cutoff:
+                    week_t[model] = int(week_t.get(model, 0)) + tok
+                if ts == today_str:
+                    today_t[model] = int(today_t.get(model, 0)) + tok
     except Exception:
         pass
 
