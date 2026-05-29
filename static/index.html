@@ -11474,9 +11474,15 @@ async function fetchAgentStatus(projectId) {
     // Temp sessions (_pending_*) are optimistic pre-POST entries — the server
     // doesn't know about them yet; exclude them so a concurrent fetchAgentStatus
     // doesn't race-delete the temp session and cause a spurious BLOCKED flash.
+    // Locally-running sessions are also protected: a fetchAgentStatus response
+    // initiated BEFORE dispatch may arrive after the temp→real promotion and
+    // carry an empty session list, which would race-delete the newly promoted
+    // real session ID (not _pending_ any more) and cause a BLOCKED flash.
     const _isInjectedRO = sid => !!(agentStatusCache[sid] || {})._readOnlyRevived;
     const _isPending = sid => (sid || '').startsWith('_pending_');
-    const staleEntries = agentHistory.filter(h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId));
+    const _isLocallyRunning = sid => (agentStatusCache[sid] || {}).status === 'running';
+    const _isStale = h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId) && !_isLocallyRunning(h.sessionId);
+    const staleEntries = agentHistory.filter(_isStale);
     for (const stale of staleEntries) {
       delete agentStatusCache[stale.sessionId];
       delete agentOutputBuffers[stale.sessionId];
@@ -11490,12 +11496,13 @@ async function fetchAgentStatus(projectId) {
       }
     }
     if (staleEntries.length > 0) {
-      agentHistory = agentHistory.filter(h => !(h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId)));
+      agentHistory = agentHistory.filter(h => !_isStale(h));
     }
     // Clear active tab if it points to a stale session (but keep an injected
-    // read-only tab the user is actively viewing, and keep a _pending_ tab that
-    // is still mid-dispatch and will be promoted once the POST returns).
-    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId]) && !_isInjectedRO(activeAgentTab[projectId]) && !_isPending(activeAgentTab[projectId])) {
+    // read-only tab the user is actively viewing, keep a _pending_ tab that
+    // is still mid-dispatch, and keep a locally-running session that a stale
+    // fetch may not yet know about).
+    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId]) && !_isInjectedRO(activeAgentTab[projectId]) && !_isPending(activeAgentTab[projectId]) && !_isLocallyRunning(activeAgentTab[projectId])) {
       delete activeAgentTab[projectId];
     }
 
