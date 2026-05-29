@@ -15239,10 +15239,13 @@ def system_usage_get():
     today_str = datetime.now().strftime('%Y-%m-%d')
     today_tokens = {}
     week_tokens = {}
+    month_tokens = {}
+    last_data_date = ''
     try:
-        cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        week_cutoff  = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        month_cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
     except Exception:
-        cutoff = today_str
+        week_cutoff = month_cutoff = today_str
     for entry in daily:
         if not isinstance(entry, dict):
             continue
@@ -15250,12 +15253,17 @@ def system_usage_get():
         tbm = entry.get('tokensByModel') or {}
         if not isinstance(tbm, dict):
             continue
+        if d and d > last_data_date:
+            last_data_date = d
         if d == today_str:
             for m, t in tbm.items():
                 today_tokens[m] = int(today_tokens.get(m, 0)) + int(t or 0)
-        if d >= cutoff:
+        if d >= week_cutoff:
             for m, t in tbm.items():
                 week_tokens[m] = int(week_tokens.get(m, 0)) + int(t or 0)
+        if d >= month_cutoff:
+            for m, t in tbm.items():
+                month_tokens[m] = int(month_tokens.get(m, 0)) + int(t or 0)
 
     model_usage = data.get('modelUsage') or {}
     top_models = []
@@ -15274,10 +15282,12 @@ def system_usage_get():
         'available': True,
         'today': today_tokens,
         'week': week_tokens,
+        'month': month_tokens,
         'top_models': top_models,
         'total_sessions': int(data.get('totalSessions') or 0),
         'total_messages': int(data.get('totalMessages') or 0),
         'last_computed_date': data.get('lastComputedDate') or '',
+        'last_data_date': last_data_date,
         'rate_limit_info': _LAST_SYSTEM_STATUS.get('rate_limit_info') or {},
     })
 
