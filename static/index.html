@@ -9344,10 +9344,23 @@ function agentPanelHTML(p) {
     // provider's CLI default; we render just the provider in that case.
     const _provName = ((activeSession && activeSession.provider) || p.provider || 'claude').toLowerCase();
     const _provLabel = (_agentProviders || []).find(x => x.name === _provName)?.display_name || _provName;
-    const _provModel = (activeSession && activeSession.agentModel) || '';
+    // When the auto-router picked a model for this session, prefer the routed
+    // model (activeSession.model) over the configured one (activeSession.agentModel).
+    // model_source carries the attribution: 'manual' = user-configured;
+    // 'auto' = classifier-picked; 'fallback' = classifier failed, user model used.
+    const _modelSource = (activeSession && activeSession.modelSource) || 'manual';
+    const _routedModel = (activeSession && activeSession.model) || '';
+    const _provModel = _routedModel || (activeSession && activeSession.agentModel) || '';
     const _provText = _provModel ? `${_provName} · ${_provModel}` : _provName;
-    const _provTitle = _provModel ? `Provider: ${_provLabel} • Model: ${_provModel}` : `Provider: ${_provLabel} (default model)`;
-    const _provBadge = `<span class="provider-badge prov-${esc(_provName.replace(/[^a-z]/g,''))}" title="${esc(_provTitle)}">${esc(_provText)}</span>`;
+    const _routerSuffixHTML = (_modelSource === 'auto')
+      ? ` <span style="opacity:.7;font-size:10px;font-weight:600;letter-spacing:.4px;margin-left:4px">AUTO</span>`
+      : (_modelSource === 'fallback')
+        ? ` <span style="opacity:.7;font-size:10px;font-weight:600;letter-spacing:.4px;margin-left:4px;color:var(--orange,#f59e0b)" title="Classifier failed; using your configured model">FB</span>`
+        : '';
+    const _provTitle = _provModel
+      ? `Provider: ${_provLabel} • Model: ${_provModel}${_modelSource === 'auto' ? ' (auto-picked by router)' : (_modelSource === 'fallback' ? ' (classifier failed, fallback)' : '')}`
+      : `Provider: ${_provLabel} (default model)`;
+    const _provBadge = `<span class="provider-badge prov-${esc(_provName.replace(/[^a-z]/g,''))}" title="${esc(_provTitle)}">${esc(_provText)}${_routerSuffixHTML}</span>`;
     // APK version pill — visible only inside the Capacitor APK (the native
     // injection sets window.__clayruneAPK). Lets the user confirm which
     // version is loaded and whether the native POST bridge is active. On
@@ -11290,7 +11303,7 @@ async function fetchAgentStatus(projectId) {
       // nag. The server still computes `s.long_session_advisory`; nothing
       // consumes it now. To bring the nudge back, render it somewhere
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '' };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual' };
       if (s.log_lines && s.log_lines.length > 0) {
         // Defensive: older / runtime-dispatched sessions may not have seeded
         // the user prompt into server-side log_lines, so a wholesale replace
@@ -11311,7 +11324,7 @@ async function fetchAgentStatus(projectId) {
       }
       const existingHist = agentHistory.find(h => h.sessionId === sid);
       if (!existingHist) {
-        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '' });
+        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual' });
       } else {
         if (s.incognito && !existingHist.incognito) existingHist.incognito = true;
         if (s.trigger_type && !existingHist.triggerType) existingHist.triggerType = s.trigger_type;
@@ -16309,6 +16322,13 @@ async function _renderSettings() {
       <div class="settings-row">
         <div><div class="settings-label">Default Model</div><div class="settings-hint">Fallback when project has no override</div></div>
         <select class="settings-select" onchange="saveSetting('agent_model',this.value)">${modelSel}</select>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Auto-pick model <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:var(--accent-dim);color:var(--accent);margin-left:6px;letter-spacing:.3px">EXPERIMENTAL</span></div>
+          <div class="settings-hint">Let Clayrune pick the right model (Haiku / Sonnet / Opus) for each request based on task complexity — saves subscription budget by sending trivial prompts to Haiku and reserving Opus for hard work. The chat header shows an <b>AUTO</b> badge when the classifier picks; failures fall back to your default model with an <b>FB</b> badge. Off = always use your default.</div>
+        </div>
+        ${toggle('auto_model_enabled', cfg.auto_model_enabled)}
       </div>
       <div class="settings-row">
         <div><div class="settings-label">Max Turns</div><div class="settings-hint">0 = unlimited</div></div>
