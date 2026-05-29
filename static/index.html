@@ -7227,8 +7227,12 @@ function sizeAgentChat(win, sessionId) {
     // DOM write even if the value is identical, so unnecessary writes
     // create a feedback loop that makes the input area visibly oscillate
     // during agent streaming.
+    // Fresh-mount exception: always write AND schedule a rAF re-run, because
+    // the panel header may not have settled yet (token badge, elapsed-time text)
+    // and the first measurement can produce a wrong desiredOutH that the 2px
+    // guard would then lock in permanently, clipping the Send button.
     const _prevOutH = parseFloat(out.dataset.lastOutH || '');
-    const _outHChanged = isNaN(_prevOutH) || Math.abs(desiredOutH - _prevOutH) > 2;
+    const _outHChanged = freshMount || isNaN(_prevOutH) || Math.abs(desiredOutH - _prevOutH) > 2;
     if (_outHChanged) {
       // Clear explicit sizing on out ONLY when we're about to change it.
       out.style.removeProperty('height');
@@ -7255,6 +7259,11 @@ function sizeAgentChat(win, sessionId) {
       requestAnimationFrame(() => {
         out.scrollTop = out.scrollHeight;
         if (out.scrollHeight > 0) out.dataset.scrollInitialized = '1';
+        // Re-run sizing after layout settles — the first call may have measured
+        // the panel header before it finished reflowing (token badge, elapsed-
+        // time text), producing a desiredOutH that clips the Send button.
+        const _win = out.closest('.modal-window');
+        if (_win && sessionId) sizeAgentChat(_win, sessionId);
       });
     } else if (outHeightChanged && wasStrictlyAtBottom) {
       // Only re-pin to bottom when the chat height actually changed AND the
@@ -7392,6 +7401,18 @@ function refreshModalById(modalId) {
     const newInput = document.getElementById(`agent-followup-${sid}`);
     if (newInput) {
       newInput.replaceWith(savedChatInput);
+      // Enforce textareaValues as the source of truth for the preserved node.
+      // Android WebView can restore the previously-typed text to the input when
+      // the app returns from background — before refreshModalById runs. That
+      // OS-restored value ends up on the preserved node even though sendFollowup
+      // already cleared it and deleted it from textareaValues. Setting .value
+      // here overrides the OS restoration. We ONLY do this when textareaValues
+      // has no entry (key deleted after send) — if the user is mid-typing the
+      // cached value matches and we safely skip the assignment, preserving IME.
+      const _cachedVal = textareaValues[savedChatInput.id];
+      if (_cachedVal === undefined) {
+        savedChatInput.value = '';  // safe: no IME state to disrupt on an empty field
+      }
       // Restore caret/selection — detaching can drop it in some engines.
       if (savedSelStart !== null) {
         try { savedChatInput.setSelectionRange(savedSelStart, savedSelEnd); } catch (_) {}
