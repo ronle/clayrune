@@ -7204,26 +7204,13 @@ function sizeAgentChat(win, sessionId) {
   const sep = chat.querySelector('.agent-chat-separator');
   const chatInputEl = chat.querySelector('.agent-chat-input');
   const chatInputRowEl = chat.querySelector('.agent-chat-input-row');
-  // Clear any explicit sizing on agent-output BEFORE measuring chat-input.
-  // Without this, a prior call's `flex: 0 0 X` left chat-input squeezed
-  // (button bottom-clipped); we'd read the squeezed offsetHeight, over-allocate
-  // again, and the input would only get smaller each refresh — a feedback loop.
-  if (out) {
-    out.style.removeProperty('height');
-    out.style.removeProperty('max-height');
-    out.style.removeProperty('flex');
-    out.style.removeProperty('min-height');
-  }
   const sepH = sep ? sep.offsetHeight : 0;
-  // Compute chat-input's NATURAL height robustly. offsetHeight alone returns
-  // the (possibly clipped/squashed) layout height, which can feed a stale value
-  // into desiredOutH and cause the bottom of the Send button to be cut. Combine
-  // three signals and take the max:
-  //   1. offsetHeight (current layout)
-  //   2. scrollHeight (content height, ignores overflow clipping)
-  //   3. row offsetHeight + computed vertical padding (intrinsic content)
-  // Then add a safety floor of 80px so even pathological measurements never
-  // over-allocate the output area.
+  // Measure chat-input's NATURAL height using content signals that don't
+  // require removing out's explicit height first. scrollHeight and
+  // rowH+padV are immune to out squashing chatInputEl; offsetHeight is
+  // included but de-prioritised by the max() below. This avoids the
+  // remove→measure→re-set cycle that was triggering the ResizeObserver
+  // on every call, causing visible jitter during agent streaming.
   let inputH = 0;
   if (chatInputEl) {
     const offset = chatInputEl.offsetHeight;
@@ -7235,18 +7222,33 @@ function sizeAgentChat(win, sessionId) {
   }
   if (out) {
     const desiredOutH = Math.max(40, chatHeight - sepH - inputH);
-    // Use setProperty with priority='important' so the explicit height beats
-    // any cached layout the browser might still be using from when the
-    // textarea was its smaller size. Plain inline assignment was visibly not
-    // taking effect during the drag in some cases (the textarea was overlapping
-    // the output until the next periodic sizeAgentChat refresh forced layout).
-    out.style.setProperty('height',     desiredOutH + 'px', 'important');
-    out.style.setProperty('max-height', desiredOutH + 'px', 'important');
-    out.style.setProperty('flex',       '0 0 ' + desiredOutH + 'px', 'important');
-    out.style.setProperty('min-height', '0', 'important');
-    out.style.setProperty('overflow-y', 'auto', 'important');
+    // Guard: skip the write (and the forced layout it triggers) when the
+    // computed height hasn't changed. The ResizeObserver fires on every
+    // DOM write even if the value is identical, so unnecessary writes
+    // create a feedback loop that makes the input area visibly oscillate
+    // during agent streaming.
+    const _prevOutH = parseFloat(out.dataset.lastOutH || '');
+    const _outHChanged = isNaN(_prevOutH) || Math.abs(desiredOutH - _prevOutH) > 2;
+    if (_outHChanged) {
+      // Clear explicit sizing on out ONLY when we're about to change it.
+      out.style.removeProperty('height');
+      out.style.removeProperty('max-height');
+      out.style.removeProperty('flex');
+      out.style.removeProperty('min-height');
+      out.dataset.lastOutH = String(desiredOutH);
+      // Use setProperty with priority='important' so the explicit height beats
+      // any cached layout the browser might still be using from when the
+      // textarea was its smaller size. Plain inline assignment was visibly not
+      // taking effect during the drag in some cases (the textarea was overlapping
+      // the output until the next periodic sizeAgentChat refresh forced layout).
+      out.style.setProperty('height',     desiredOutH + 'px', 'important');
+      out.style.setProperty('max-height', desiredOutH + 'px', 'important');
+      out.style.setProperty('flex',       '0 0 ' + desiredOutH + 'px', 'important');
+      out.style.setProperty('min-height', '0', 'important');
+      out.style.setProperty('overflow-y', 'auto', 'important');
+    }
   }
-  const outHeightChanged = heightChanged; // any chat resize implies output resize
+  const outHeightChanged = heightChanged || (typeof _outHChanged !== 'undefined' && _outHChanged);
   if (out) {
     if (freshMount) {
       out.scrollTop = out.scrollHeight;
@@ -9512,8 +9514,12 @@ function newAgentTab(projectId) {
   if (wasOnList && getProjectTabSessions(projectId).length > 1) {
     mcPushConvHistory();
   }
-  // Reset to default (agentPanelHTML will auto-load log and set default resume)
-  delete pendingResumeId[projectId];
+  // Set null explicitly — do NOT delete. Deleting causes agentPanelHTML to
+  // auto-repopulate from the log cache on the very next refreshModal(), which
+  // makes the subsequent dispatch resume the prior conversation instead of
+  // starting fresh. null keeps the key present (skips auto-populate) while
+  // still meaning "no resume" to dispatchAgent and sessionPickerHTML.
+  pendingResumeId[projectId] = null;
   refreshModal();
   setTimeout(() => document.getElementById(`agent-task-${projectId}`)?.focus(), 50);
 }
@@ -22311,6 +22317,21 @@ async function _resyncOpenModalsFromServer() {
 document.addEventListener('visibilitychange', _resyncOpenModalsFromServer);
 window.addEventListener('focus', _resyncOpenModalsFromServer);
 window.addEventListener('pageshow', _resyncOpenModalsFromServer);  // bfcache restore
+
+// Re-pin agent output to bottom when returning from minimize/background.
+// Without this, Capacitor/WebView parks the scroll position mid-stream and
+// the user sees the top of the conversation instead of the latest output.
+function _repinAgentOutputsOnRestore() {
+  if (document.hidden) return;
+  for (const [sid] of Object.entries(agentStatusCache)) {
+    const el = document.getElementById(`agent-output-${sid}`);
+    if (el && _isAgentOutputPinned(el)) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+}
+document.addEventListener('visibilitychange', _repinAgentOutputsOnRestore);
+window.addEventListener('focus', _repinAgentOutputsOnRestore);
 
 // ── Presence heartbeat: push focus-suppression ──────────────────────────────
 // While the tab is VISIBLE + FOCUSED and one or more session chats are open
