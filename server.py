@@ -5210,6 +5210,20 @@ def _log_agent_completion(session):
     if not summary and lines:
         summary = lines[-1]
 
+    # Extract token telemetry from the transcript before building the entry.
+    # Best-effort: failures silently produce empty telemetry.
+    _telemetry = {}
+    if not is_housekeeping and not session.get('incognito'):
+        try:
+            _tp = load_project(project_id)
+            _pp = (_tp or {}).get('project_path', '')
+            _csid = session.get('claude_session_id', '')
+            if _pp and _csid:
+                _tf = _find_transcript_file(_pp, _csid)
+                _telemetry = _extract_transcript_telemetry(_tf)
+        except Exception:
+            pass
+
     entry = {
         'ts': now_iso(),
         'task': session.get('task', ''),
@@ -5237,6 +5251,12 @@ def _log_agent_completion(session):
         # this key on ANY entry means the log was written by Fix-B-aware code
         # (used by the reconciler to distinguish first-boot baseline).
         'scribed': False,
+        # Token telemetry from transcript (indicative; populated going forward).
+        'model': _telemetry.get('model', ''),
+        'input_tokens': _telemetry.get('input_tokens', 0),
+        'output_tokens': _telemetry.get('output_tokens', 0),
+        'cache_read_tokens': _telemetry.get('cache_read_tokens', 0),
+        'model_tokens': _telemetry.get('model_tokens', {}),
     }
     log = _load_agent_log(project_id)
     # Upsert: if a pending entry was written at dispatch time (non-manual trigger),
@@ -5671,6 +5691,55 @@ def _route_dispatch_model(prompt, fallback_model):
     if not chosen:
         return fallback_model, 'fallback'
     return chosen, 'auto'
+
+
+def _extract_transcript_telemetry(path):
+    """Read a JSONL transcript and extract cumulative token usage by model.
+
+    Returns {'model': str, 'input_tokens': int, 'output_tokens': int,
+             'cache_read_tokens': int, 'model_tokens': {model: total_tokens}}
+    or {} on any failure. Never raises. Indicative, not billing-accurate.
+    """
+    if not path:
+        return {}
+    try:
+        model_tokens = {}  # model -> {input, output}
+        with open(path, encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    m = json.loads(line)
+                except Exception:
+                    continue
+                msg = m.get('message') if isinstance(m.get('message'), dict) else None
+                if not msg:
+                    continue
+                model = msg.get('model', '')
+                usage = msg.get('usage')
+                if not model or not isinstance(usage, dict):
+                    continue
+                if model not in model_tokens:
+                    model_tokens[model] = {'input': 0, 'output': 0, 'cache_read': 0}
+                model_tokens[model]['input'] += int(usage.get('input_tokens') or 0)
+                model_tokens[model]['output'] += int(usage.get('output_tokens') or 0)
+                model_tokens[model]['cache_read'] += int(
+                    usage.get('cache_read_input_tokens') or 0)
+        if not model_tokens:
+            return {}
+        dominant = max(model_tokens.items(),
+                       key=lambda x: x[1]['input'] + x[1]['output'])[0]
+        return {
+            'model': dominant,
+            'input_tokens': sum(v['input'] for v in model_tokens.values()),
+            'output_tokens': sum(v['output'] for v in model_tokens.values()),
+            'cache_read_tokens': sum(v['cache_read'] for v in model_tokens.values()),
+            'model_tokens': {m: v['input'] + v['output']
+                             for m, v in model_tokens.items()},
+        }
+    except Exception:
+        return {}
 
 
 def _scribe_extract(project, session):
@@ -15202,6 +15271,65 @@ def system_status_get():
     return jsonify(_build_system_status_payload())
 
 
+def _mc_usage_from_agent_logs():
+    """Aggregate token usage from MC's own agent_log files.
+
+    Returns {'today': {model: tokens}, 'week': {...}, 'month': {...},
+             'all_time': {model: tokens}, 'last_data_date': str}
+    Reads all *_agent_log.json in DATA_DIR. Entries without model_tokens are
+    skipped (pre-telemetry entries). Never raises.
+    """
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    try:
+        week_cutoff  = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        month_cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    except Exception:
+        week_cutoff = month_cutoff = today_str
+
+    today_t, week_t, month_t, all_t = {}, {}, {}, {}
+    last_data_date = ''
+
+    try:
+        for log_path in DATA_DIR.glob('*_agent_log.json'):
+            try:
+                entries = json.loads(log_path.read_text(encoding='utf-8',
+                                                        errors='replace'))
+            except Exception:
+                continue
+            if not isinstance(entries, list):
+                continue
+            for e in entries:
+                mt = e.get('model_tokens')
+                if not mt or not isinstance(mt, dict):
+                    continue
+                ts = (e.get('ts') or '')[:10]
+                if not ts:
+                    continue
+                if ts > last_data_date:
+                    last_data_date = ts
+                for model, tok in mt.items():
+                    tok = int(tok or 0)
+                    if not tok:
+                        continue
+                    all_t[model] = int(all_t.get(model, 0)) + tok
+                    if ts >= month_cutoff:
+                        month_t[model] = int(month_t.get(model, 0)) + tok
+                    if ts >= week_cutoff:
+                        week_t[model] = int(week_t.get(model, 0)) + tok
+                    if ts == today_str:
+                        today_t[model] = int(today_t.get(model, 0)) + tok
+    except Exception:
+        pass
+
+    return {
+        'today': today_t,
+        'week': week_t,
+        'month': month_t,
+        'all_time': all_t,
+        'last_data_date': last_data_date,
+    }
+
+
 @app.route('/api/system/usage', methods=['GET'])
 def system_usage_get():
     """Return local token-usage aggregates derived from ~/.claude/stats-cache.json.
@@ -15223,70 +15351,52 @@ def system_usage_get():
     Frontend ties this off with a "see canonical usage" link to
     https://claude.ai/settings/usage.
     """
-    try:
-        path = Path.home() / '.claude' / 'stats-cache.json'
-        if not path.exists():
-            return jsonify({'available': False, 'reason': 'stats-cache.json not found'})
-        data = json.loads(path.read_text(encoding='utf-8'))
-    except Exception as e:
-        return jsonify({'available': False, 'reason': str(e)})
+    # MC's own agent_log telemetry — primary source for period buckets.
+    mc = _mc_usage_from_agent_logs()
 
-    daily = data.get('dailyModelTokens') or []
-    if not isinstance(daily, list):
-        daily = []
-    # `dailyModelTokens` entries look like:
-    #   {"date": "2026-05-12", "tokensByModel": {"claude-opus-4-7": 1231209, ...}}
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    today_tokens = {}
-    week_tokens = {}
-    month_tokens = {}
-    last_data_date = ''
+    # CC stats-cache — used for all-time top_models and totalSessions/Messages
+    # fallback. May be stale (only updates during interactive CC use).
+    cc_data = {}
+    cc_available = False
     try:
-        week_cutoff  = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        month_cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        cc_path = Path.home() / '.claude' / 'stats-cache.json'
+        if cc_path.exists():
+            cc_data = json.loads(cc_path.read_text(encoding='utf-8'))
+            cc_available = True
     except Exception:
-        week_cutoff = month_cutoff = today_str
-    for entry in daily:
-        if not isinstance(entry, dict):
-            continue
-        d = entry.get('date', '')
-        tbm = entry.get('tokensByModel') or {}
-        if not isinstance(tbm, dict):
-            continue
-        if d and d > last_data_date:
-            last_data_date = d
-        if d == today_str:
-            for m, t in tbm.items():
-                today_tokens[m] = int(today_tokens.get(m, 0)) + int(t or 0)
-        if d >= week_cutoff:
-            for m, t in tbm.items():
-                week_tokens[m] = int(week_tokens.get(m, 0)) + int(t or 0)
-        if d >= month_cutoff:
-            for m, t in tbm.items():
-                month_tokens[m] = int(month_tokens.get(m, 0)) + int(t or 0)
+        pass
 
-    model_usage = data.get('modelUsage') or {}
-    top_models = []
-    if isinstance(model_usage, dict):
-        ranked = []
-        for m, mu in model_usage.items():
-            if not isinstance(mu, dict):
-                continue
-            total = int(mu.get('inputTokens') or 0) + int(mu.get('outputTokens') or 0)
-            ranked.append((m, total, int(mu.get('cacheReadInputTokens') or 0)))
-        ranked.sort(key=lambda x: x[1], reverse=True)
-        for m, total, cache in ranked[:5]:
-            top_models.append({'model': m, 'tokens': total, 'cache_read': cache})
+    # All-time top models: prefer MC aggregated if it has data, fall back to CC.
+    mc_all = mc.get('all_time', {})
+    if mc_all:
+        ranked = sorted(mc_all.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_models = [{'model': m, 'tokens': t, 'cache_read': 0}
+                      for m, t in ranked]
+    else:
+        model_usage = cc_data.get('modelUsage') or {}
+        top_models = []
+        if isinstance(model_usage, dict):
+            ranked = []
+            for m, mu in model_usage.items():
+                if not isinstance(mu, dict):
+                    continue
+                total = int(mu.get('inputTokens') or 0) + int(mu.get('outputTokens') or 0)
+                ranked.append((m, total, int(mu.get('cacheReadInputTokens') or 0)))
+            ranked.sort(key=lambda x: x[1], reverse=True)
+            for m, total, cache in ranked[:5]:
+                top_models.append({'model': m, 'tokens': total, 'cache_read': cache})
+
+    last_data_date = mc.get('last_data_date', '') or cc_data.get('lastComputedDate', '')
 
     return jsonify({
         'available': True,
-        'today': today_tokens,
-        'week': week_tokens,
-        'month': month_tokens,
+        'today': mc.get('today', {}),
+        'week': mc.get('week', {}),
+        'month': mc.get('month', {}),
         'top_models': top_models,
-        'total_sessions': int(data.get('totalSessions') or 0),
-        'total_messages': int(data.get('totalMessages') or 0),
-        'last_computed_date': data.get('lastComputedDate') or '',
+        'total_sessions': int(cc_data.get('totalSessions') or 0),
+        'total_messages': int(cc_data.get('totalMessages') or 0),
+        'last_computed_date': cc_data.get('lastComputedDate') or '',
         'last_data_date': last_data_date,
         'rate_limit_info': _LAST_SYSTEM_STATUS.get('rate_limit_info') or {},
     })
