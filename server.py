@@ -8,6 +8,7 @@ import mimetypes
 import subprocess
 import sys
 import threading
+import concurrent.futures
 import time as _time
 from pathlib import Path
 from typing import Dict, Optional
@@ -239,6 +240,20 @@ def _load_config():
         # one idea per message, no headers/bullets/long code blocks. The user's
         # chat bubble still shows the original message verbatim. Off by default.
         'mobile_brief_replies_enabled': False,
+        # Auto model router (experimental, default OFF). When on, every dispatch
+        # runs a cheap Haiku classifier on the prompt and picks Haiku/Sonnet/Opus
+        # based on task complexity. When off, the user-selected model is used
+        # as-is. The classifier is fail-open: any error falls back to the
+        # user-selected model. Side branch feat/auto-model-router — see backlog
+        # for the v2 within-turn multi-CC-call variant.
+        'auto_model_enabled': False,
+        'auto_model_classifier_model': '',  # '' -> 'haiku'
+        # Classifier hard timeout (seconds). Blocks the dispatch only until this
+        # deadline; on expiry the router fails open to the user-selected model.
+        # Without this, a Haiku rate-limit burst would hang dispatches for the
+        # underlying claude oneshot's 180s timeout — diagnosed in the analysis
+        # doc (docs/DISPATCH_AND_ROUTING_ANALYSIS.md §C.1 step 1).
+        'auto_model_classifier_timeout_secs': 8,
     }
     if CONFIG_PATH.exists():
         try:
@@ -749,12 +764,20 @@ def _save_schedules(schedules):
     SCHEDULES_PATH.write_text(json.dumps(schedules, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
-def _build_claude_flags(project=None, streaming=False):
+def _build_claude_flags(project=None, streaming=False, model_override=None):
     """Build common Claude CLI flags from config, with optional per-project overrides.
     Delegates to ClaudeRuntime.build_command()[1:] — single source of truth.
-    Returns flags only (no binary prefix), matching the legacy contract."""
+    Returns flags only (no binary prefix), matching the legacy contract.
+
+    `model_override` lets a caller force a specific model (e.g. picked by the
+    auto-router via _resolve_dispatch_model). Pass-through when None — existing
+    callers that don't know about routing keep their original behavior.
+    """
+    model = model_override or (
+        (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '')
+    )
     return _agent_runtime.get_runtime('claude').build_command(
-        model=(project or {}).get('agent_model', '') or CONFIG.get('agent_model', ''),
+        model=model,
         max_turns=CONFIG.get('agent_max_turns', 0),
         streaming=streaming,
         perm_mode=CONFIG.get('agent_permission_mode', ''),
@@ -764,6 +787,78 @@ def _build_claude_flags(project=None, streaming=False):
             CONFIG.get('agent_remote_control', False)
         ),
     )[1:]  # strip binary — _build_claude_flags() contract is flags-only
+
+
+def _resolve_dispatch_model(project, prompt):
+    """Pick the model to use for a user-facing dispatch, given the prompt.
+
+    Returns (model_name, source) where source is one of:
+      'manual'   — auto-router off; using the configured/project model verbatim
+      'auto'     — classifier ran and picked this model
+      'fallback' — classifier ran but errored; using the configured model
+
+    Caller threads `model_name` into _build_claude_flags via `model_override`
+    and surfaces a per-bubble pill when source != 'manual'. Side-effect free.
+
+    Synchronous path. For parallel classification overlapping with
+    `_build_agent_context`, use `_dispatch_with_routing_parallel`.
+    """
+    fallback = (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'
+    if not prompt or not CONFIG.get('auto_model_enabled', False):
+        return fallback, 'manual'
+    return _route_dispatch_model(prompt, fallback)
+
+
+# Background pool for parallel classifier calls during dispatch. Keeps the
+# router off the dispatch thread's critical path so context build and
+# classification overlap (see docs/DISPATCH_AND_ROUTING_ANALYSIS.md §B.3.b).
+# Daemon threads so the pool never blocks shutdown.
+_classifier_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix='router-cls'
+)
+
+
+def _dispatch_with_routing(project, prompt, streaming=False):
+    """One-shot helper: resolve model + build flags.
+
+    Returns (model, source, flags). Caller stamps session['model'] and
+    session['model_source'] for SSE emission. Used by dispatch sites that
+    don't have a separate expensive context-build step to parallelize with.
+    """
+    model, source = _resolve_dispatch_model(project, prompt)
+    flags = _build_claude_flags(project, streaming=streaming, model_override=model)
+    return model, source, flags
+
+
+def _dispatch_with_routing_parallel(project, prompt, context_builder, streaming=False):
+    """Same as `_dispatch_with_routing` but runs `context_builder` in parallel
+    with the classifier when the router is on.
+
+    `context_builder` is a zero-arg callable returning the context string
+    (typically `lambda: _build_agent_context(p, incognito=…, task=…)`). Net
+    latency add when router is on: ~0–500 ms (classifier vs. context overlap)
+    instead of 600–1500 ms serially.
+
+    Returns (model, source, flags, context). Caller stamps session fields.
+    When router is off or prompt is empty, runs context_builder synchronously
+    and short-circuits to the manual model.
+    """
+    if not CONFIG.get('auto_model_enabled', False) or not prompt:
+        context = context_builder() if context_builder else ''
+        model, source, flags = _dispatch_with_routing(project, prompt, streaming=streaming)
+        return model, source, flags, context
+
+    fallback = (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'
+    fut = _classifier_pool.submit(_route_dispatch_model, prompt, fallback)
+    context = context_builder() if context_builder else ''
+    timeout = max(1, int(CONFIG.get('auto_model_classifier_timeout_secs', 8) or 8))
+    try:
+        model, source = fut.result(timeout=timeout)
+    except Exception:
+        # Includes concurrent.futures.TimeoutError. Fail-open.
+        model, source = fallback, 'fallback'
+    flags = _build_claude_flags(project, streaming=streaming, model_override=model)
+    return model, source, flags, context
 
 
 def _sysprompt_file_args(context):
@@ -1210,8 +1305,12 @@ def load_projects():
     for f in DATA_DIR.glob('*.json'):
         # Sibling data files co-located in DATA_DIR that are NOT project
         # records (mirror the _agent_log.json precedent; _scribe_stats.json
-        # added with SPEC §8 telemetry).
-        if f.name.endswith(('_agent_log.json', '_scribe_stats.json')):
+        # added with SPEC §8 telemetry; _router_stats.json added with the
+        # auto-router. LOAD-BEARING per CLAUDE.md — a stray non-project
+        # JSON here 500s _get_active_restart_blockers and the restart
+        # endpoints. Every new sidecar MUST be excluded here.
+        if f.name.endswith(('_agent_log.json', '_scribe_stats.json',
+                            '_router_stats.json')):
             continue
         try:
             p = json.loads(f.read_text(encoding='utf-8'))
@@ -1873,6 +1972,50 @@ def get_scribe_stats(project_id):
         return jsonify(json.loads(fp.read_text(encoding='utf-8') or '{}'))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/router/stats', methods=['GET'])
+def get_router_stats_aggregate():
+    """Cross-project auto-router counters. Sums totals and by_pair across
+    every project's _router_stats.json. Surfaces last_fallback as the most
+    recent across projects. Read-only; never mutates state.
+
+    Response shape:
+      {
+        "totals": {"manual": N, "auto": N, "fallback": N},
+        "by_pair": {"opus->haiku": N, ...},
+        "last_fallback": {"ts": "...Z", "reason": "...", "project_id": "..."},
+        "projects": N            # how many had a stats file
+      }
+    """
+    agg_totals = {}
+    agg_by_pair = {}
+    last_fb = None
+    project_count = 0
+    for f in DATA_DIR.glob('*_router_stats.json'):
+        try:
+            data = json.loads(f.read_text(encoding='utf-8') or '{}')
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        project_count += 1
+        for k, v in (data.get('totals') or {}).items():
+            agg_totals[k] = int(agg_totals.get(k, 0)) + int(v or 0)
+        for k, v in (data.get('by_pair') or {}).items():
+            agg_by_pair[k] = int(agg_by_pair.get(k, 0)) + int(v or 0)
+        fb = data.get('last_fallback')
+        if isinstance(fb, dict) and fb.get('ts'):
+            if last_fb is None or fb['ts'] > last_fb.get('ts', ''):
+                # Derive project_id from the filename suffix-strip.
+                pid = f.name[:-len('_router_stats.json')]
+                last_fb = {**fb, 'project_id': pid}
+    return jsonify({
+        'totals': agg_totals,
+        'by_pair': agg_by_pair,
+        'last_fallback': last_fb,
+        'projects': project_count,
+    })
 
 
 @app.route('/api/project/<project_id>/memory/search', methods=['GET'])
@@ -5282,6 +5425,66 @@ def _scribe_stat(project_id, key, n=1):
         pass  # telemetry must never break completion
 
 
+# Coarse model-tier extraction. Anthropic model IDs like
+# 'claude-haiku-4-5-20251001' / 'claude-sonnet-4-6' / 'claude-opus-4-7' all
+# carry the tier as a hyphenated segment; the auto-router emits raw 'haiku' /
+# 'sonnet' / 'opus' so by_pair stays small (3x3 + fallback bucket) instead of
+# exploding per dated snapshot.
+_ROUTER_TIER_KEYWORDS = ('haiku', 'sonnet', 'opus')
+
+
+def _router_model_tier(model_name):
+    s = (model_name or '').lower()
+    for k in _ROUTER_TIER_KEYWORDS:
+        if k in s:
+            return k
+    return s or 'unknown'
+
+
+def _router_stat(project_id, requested_model, chosen_model, source, reason=''):
+    """Auto-router telemetry — bumps a per-project counter on every dispatch.
+
+    Shape (per docs/DISPATCH_AND_ROUTING_ANALYSIS.md §B.5):
+      {
+        "totals": {"manual": N, "auto": N, "fallback": N},
+        "by_pair": {"opus->haiku": N, "opus->sonnet": N, ...,
+                    "fallback:opus": N},
+        "last_fallback": {"ts": "...Z", "reason": "..."}
+      }
+
+    Best-effort; never raises. Telemetry must never break dispatch.
+    """
+    try:
+        fp = DATA_DIR / f'{project_id}_router_stats.json'
+        stats = {}
+        if fp.exists():
+            try:
+                stats = json.loads(fp.read_text(encoding='utf-8') or '{}')
+            except Exception:
+                stats = {}
+        if not isinstance(stats, dict):
+            stats = {}
+        totals = stats.setdefault('totals', {})
+        totals[source] = int(totals.get(source, 0)) + 1
+        by_pair = stats.setdefault('by_pair', {})
+        req_tier = _router_model_tier(requested_model)
+        chosen_tier = _router_model_tier(chosen_model)
+        if source == 'fallback':
+            key = f'fallback:{req_tier}'
+        else:
+            key = f'{req_tier}->{chosen_tier}'
+        by_pair[key] = int(by_pair.get(key, 0)) + 1
+        if source == 'fallback':
+            stats['last_fallback'] = {
+                'ts': now_iso(),
+                'reason': reason or 'unknown',
+            }
+        stats['_updated'] = now_iso()
+        fp.write_text(json.dumps(stats, indent=2), encoding='utf-8')
+    except Exception:
+        pass  # telemetry must never break dispatch
+
+
 def _scribe_render_lines(lines):
     """Render an iterable of raw .jsonl text lines into the compact view.
 
@@ -5400,6 +5603,58 @@ def _scribe_call(model, instruction, body):
     if result is None:
         raise RuntimeError("scribe claude call failed (non-zero exit or timeout)")
     return result.text
+
+
+# ── Auto model router (classifier) ──────────────────────────────────────────
+# Cheap Haiku oneshot that picks one of Haiku / Sonnet / Opus for a given user
+# prompt. Used to right-size dispatches and stop burning Opus budget on trivial
+# Q&A. Fail-open: any error returns the caller's fallback so a flaky classifier
+# never breaks the dispatch path.
+#
+# Single token output keeps the call small (~5 tokens total). The prompt biases
+# conservative — when in doubt, pick the larger model. The classifier is opt-in
+# via CONFIG['auto_model_enabled']; when off, _route_dispatch_model is a no-op
+# pass-through.
+
+_AUTO_MODEL_CLASSIFIER_PROMPT = (
+    "You classify a coding-assistant request into one of three Claude models: "
+    "Haiku (H), Sonnet (S), or Opus (O).\n\n"
+    "Output EXACTLY one character — H, S, or O. No other text, no punctuation.\n\n"
+    "Pick H ONLY when the request is clearly trivial: a single fact question, "
+    "a one-line lookup, casual chat, a yes/no, or a tiny one-file edit with "
+    "obvious intent.\n\n"
+    "Pick O ONLY when the request is clearly complex: multi-step refactor, "
+    "architecture or design decision, cross-file debugging, deep code generation, "
+    "long planning, or anything that explicitly asks for careful reasoning.\n\n"
+    "Pick S for everything else — most normal coding tasks land here.\n\n"
+    "Bias CONSERVATIVE: prefer S over H when unsure; prefer S over O when unsure."
+)
+
+_AUTO_MODEL_VALID = {'H': 'haiku', 'S': 'sonnet', 'O': 'opus'}
+
+
+def _route_dispatch_model(prompt, fallback_model):
+    """Return ('haiku'|'sonnet'|'opus', source) for the given user prompt.
+
+    source is 'auto' when the classifier ran, 'manual' when auto is off,
+    'fallback' when the classifier was called but errored. fallback_model is
+    whatever the user picked in the UI; it's used verbatim when auto is off
+    and as the safety net when the classifier fails.
+    """
+    if not CONFIG.get('auto_model_enabled', False):
+        return fallback_model, 'manual'
+    if not prompt or not prompt.strip():
+        return fallback_model, 'fallback'
+    classifier_model = CONFIG.get('auto_model_classifier_model', '') or 'haiku'
+    try:
+        raw = _scribe_call(classifier_model, _AUTO_MODEL_CLASSIFIER_PROMPT, prompt.strip())
+    except Exception:
+        return fallback_model, 'fallback'
+    token = (raw or '').strip().upper()[:1]
+    chosen = _AUTO_MODEL_VALID.get(token)
+    if not chosen:
+        return fallback_model, 'fallback'
+    return chosen, 'auto'
 
 
 def _scribe_extract(project, session):
@@ -6318,6 +6573,34 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
         # first poll and the user only sees the agent's reply (no question).
         _seed_log_lines.append(f"> {user_label}: {_seed_task}")
 
+    # ── Auto-router + context build, OUTSIDE mgr.lock ───────────────────────
+    # RC-2 constraint (ws_003): the classifier subprocess + context build are
+    # both slow (seconds) and must NOT pin mgr.lock — that's how mobile sends /
+    # interrupts wedge the project for hours when claude rate-limits. Resume
+    # paths skip context build (the CC subprocess already has its sysprompt).
+    _sp_args = []
+    _sp_path = None
+    if resume_id:
+        routed_model, routed_source, base_flags = _dispatch_with_routing(
+            p, task, streaming=use_streaming)
+    else:
+        routed_model, routed_source, base_flags, context = (
+            _dispatch_with_routing_parallel(
+                p, task,
+                context_builder=lambda: _build_agent_context(
+                    p, incognito=incognito, task=task),
+                streaming=use_streaming))
+        _sp_args, _sp_path = _sysprompt_file_args(context)
+    # Per-dispatch telemetry — best-effort; never raises. requested = the
+    # model the user configured; chosen = what actually went to --model
+    # (post-router). See docs/DISPATCH_AND_ROUTING_ANALYSIS.md §B.5.
+    _router_stat(
+        project_id,
+        requested_model=(p.get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'),
+        chosen_model=routed_model,
+        source=routed_source,
+    )
+
     mgr = get_manager(project_id)
     mgr.ensure_guardian()
     with mgr.lock:
@@ -6330,14 +6613,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
 
         if use_streaming:
             # Mode B: persistent process with stream-json stdin
-            _sp_path = None
             if resume_id:
-                cmd = [_resolve_claude(), '-r', resume_id, *_build_claude_flags(p, streaming=True)]
+                cmd = [_resolve_claude(), '-r', resume_id, *base_flags]
             else:
-                context = _build_agent_context(p, incognito=incognito, task=task)
-                _sp_args, _sp_path = _sysprompt_file_args(context)
-                cmd = [_resolve_claude(), *_build_claude_flags(p, streaming=True),
-                       *_sp_args]
+                cmd = [_resolve_claude(), *base_flags, *_sp_args]
 
             proc = subprocess.Popen(
                 cmd,
@@ -6394,6 +6673,11 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'trigger_type': trigger_type,
                 'trigger_id': trigger_id,
                 'agent_model': p.get('agent_model', '') or CONFIG.get('agent_model', ''),
+                # Auto-router attribution — `model` is what actually got
+                # passed via --model (after override); `model_source` is
+                # 'manual' / 'auto' / 'fallback'. Frontend pill reads these.
+                'model': routed_model,
+                'model_source': routed_source,
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -6422,15 +6706,12 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                         lk.release()
             threading.Thread(target=_write_initial, daemon=True).start()
         else:
-            # Mode A: spawn-per-turn (existing behavior)
-            _sp_path = None
+            # Mode A: spawn-per-turn (existing behavior). base_flags / _sp_args
+            # were resolved above the lock (outside RC-2's danger zone).
             if resume_id:
-                cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *_build_claude_flags(p)]
+                cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *base_flags]
             else:
-                context = _build_agent_context(p, incognito=incognito, task=task)
-                _sp_args, _sp_path = _sysprompt_file_args(context)
-                cmd = [_resolve_claude(), '-p', task, *_build_claude_flags(p),
-                       *_sp_args]
+                cmd = [_resolve_claude(), '-p', task, *base_flags, *_sp_args]
 
             proc = subprocess.Popen(
                 cmd,
@@ -6472,6 +6753,8 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'trigger_type': trigger_type,
                 'trigger_id': trigger_id,
                 'agent_model': p.get('agent_model', '') or CONFIG.get('agent_model', ''),
+                'model': routed_model,
+                'model_source': routed_source,
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -6808,6 +7091,7 @@ def agent_followup(project_id):
         return jsonify({'error': 'session_id required'}), 400
 
     _respawn_b = None  # set if Mode B needs to respawn outside lock
+    _model_route_state = None  # set when alive+auto_model_enabled; handled post-lock
 
     # Pre-check: if session is gone from agent_sessions (server restart, tab close,
     # 24h purge), try reviving from agent_log via -r <claude_session_id>.
@@ -6972,7 +7256,7 @@ def agent_followup(project_id):
                 }
                 # Fall through — spawn happens after lock release
             else:
-                # Process alive — write message directly to stdin
+                # Process alive — optionally re-classify model before writing to stdin
                 user_label = CONFIG.get('user_name') or 'User'
                 if not existing.pop('_send_already_logged', False):
                     existing['log_lines'].append(f"\n> {user_label}: {message}\n")
@@ -6983,34 +7267,43 @@ def agent_followup(project_id):
                 # the parallel respawn branch above for why this matters.
                 existing.pop('_dispatching_followup', None)
 
-                # Mobile brief replies: the directive (if applicable) rides on
-                # the claude-bound payload only. log_lines above already used
-                # the unaugmented message for the user's chat bubble.
-                claude_content = _apply_mobile_brief(message, data)
-                stdin_msg = json.dumps({
-                    "type": "user",
-                    "message": {"role": "user", "content": claude_content}
-                }) + '\n'
+                if CONFIG.get('auto_model_enabled', False) and message:
+                    # Defer stdin write — classify model post-lock to avoid
+                    # blocking mgr.lock for the ~0.5s Haiku classifier call.
+                    _model_route_state = {
+                        'current_model': existing.get('model') or 'sonnet',
+                        'claude_sid': existing.get('claude_session_id'),
+                        'proc': existing['proc'],
+                        'existing': existing,
+                    }
+                    # Fall through to post-lock routing section
+                else:
+                    # Router off — write stdin directly (original path)
+                    claude_content = _apply_mobile_brief(message, data)
+                    stdin_msg = json.dumps({
+                        "type": "user",
+                        "message": {"role": "user", "content": claude_content}
+                    }) + '\n'
 
-                def _write_stdin():
-                    lock = existing.get('stdin_lock')
-                    if lock:
-                        lock.acquire()
-                    try:
-                        existing['proc'].stdin.write(stdin_msg)
-                        existing['proc'].stdin.flush()
-                    except Exception as e:
-                        existing['log_lines'].append(f'[stdin write error: {e}]')
-                        existing['status'] = 'error'
-                        existing['last_status_change_time'] = _time.time()
-                        existing['process_alive'] = False
-                    finally:
+                    def _write_stdin():
+                        lock = existing.get('stdin_lock')
                         if lock:
-                            lock.release()
+                            lock.acquire()
+                        try:
+                            existing['proc'].stdin.write(stdin_msg)
+                            existing['proc'].stdin.flush()
+                        except Exception as e:
+                            existing['log_lines'].append(f'[stdin write error: {e}]')
+                            existing['status'] = 'error'
+                            existing['last_status_change_time'] = _time.time()
+                            existing['process_alive'] = False
+                        finally:
+                            if lock:
+                                lock.release()
 
-                threading.Thread(target=_write_stdin, daemon=True).start()
-                _log_agent_activity(project_id, f"Agent follow-up: {message[:100]}")
-                return jsonify({'ok': True, 'session_id': session_id})
+                    threading.Thread(target=_write_stdin, daemon=True).start()
+                    _log_agent_activity(project_id, f"Agent follow-up: {message[:100]}")
+                    return jsonify({'ok': True, 'session_id': session_id})
 
         else:
             # Mode A: existing behavior
@@ -7037,6 +7330,73 @@ def agent_followup(project_id):
             if not existing.pop('_send_already_logged', False):
                 existing['log_lines'].append(f"\n> {user_label}: {message}\n")
             claude_sid = existing.get('claude_session_id')
+
+    # Mode B per-turn model routing (process alive, auto_model_enabled=True)
+    # Classifier runs here — outside mgr.lock — to avoid blocking other requests.
+    if _model_route_state:
+        mrs = _model_route_state
+        new_model, new_source = _resolve_dispatch_model(p, message)
+        current_model = mrs['current_model']
+        _router_stat(project_id,
+                     requested_model=current_model,
+                     chosen_model=new_model,
+                     source=new_source)
+        if _router_model_tier(new_model) != _router_model_tier(current_model):
+            # Model tier changed — kill current process, respawn with -r + new model
+            _log(f"[followup-B-route] {project_id}: model switch {current_model} → {new_model}")
+            claude_sid = mrs['claude_sid']
+            resume_flags = ['-r', claude_sid] if claude_sid else []
+            _sp_path = None
+            cmd = [_resolve_claude(), *resume_flags,
+                   *_build_claude_flags(p, streaming=True, model_override=new_model)]
+            if not resume_flags:
+                _route_context = _build_agent_context(p)
+                _sp_args, _sp_path = _sysprompt_file_args(_route_context)
+                cmd.extend(_sp_args)
+            with get_manager(project_id).lock:
+                _route_existing = agent_sessions.get(session_id)
+                if _route_existing:
+                    _route_existing['model'] = new_model
+                    _route_existing['model_source'] = new_source
+                    _route_existing['process_alive'] = False
+                    _route_existing['log_lines'].append(
+                        f'[Auto-router: switching {current_model} → {new_model}]')
+            _respawn_b = {
+                'cmd': cmd, 'pp': pp, 'message': message,
+                'existing': mrs['existing'],
+                'session_id': session_id, 'project_id': project_id,
+                'old_proc': mrs['proc'],
+                'sysprompt_path': _sp_path,
+                'request_data': data,
+            }
+        else:
+            # Same tier — write stdin directly
+            _rs_existing = mrs['existing']
+            claude_content = _apply_mobile_brief(message, data)
+            stdin_msg = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": claude_content}
+            }) + '\n'
+
+            def _write_stdin_routed():
+                lock = _rs_existing.get('stdin_lock')
+                if lock:
+                    lock.acquire()
+                try:
+                    _rs_existing['proc'].stdin.write(stdin_msg)
+                    _rs_existing['proc'].stdin.flush()
+                except Exception as e:
+                    _rs_existing['log_lines'].append(f'[stdin write error: {e}]')
+                    _rs_existing['status'] = 'error'
+                    _rs_existing['last_status_change_time'] = _time.time()
+                    _rs_existing['process_alive'] = False
+                finally:
+                    if lock:
+                        lock.release()
+
+            threading.Thread(target=_write_stdin_routed, daemon=True).start()
+            _log_agent_activity(project_id, f"Agent follow-up: {message[:100]}")
+            return jsonify({'ok': True, 'session_id': session_id})
 
     # Mode B respawn — spawn outside the lock to avoid blocking stop/other ops
     if _respawn_b:
@@ -7632,6 +7992,13 @@ def agent_status(project_id):
                 # sessions (dispatched before the field was captured) still
                 # surface a usable model string. Empty = provider default.
                 'agent_model': s.get('agent_model') or _proj_default_model,
+                # Auto-router attribution. `model` is what actually got
+                # passed via --model (may differ from agent_model when the
+                # router picked something else). `model_source` is one of
+                # 'manual' / 'auto' / 'fallback'. Frontend pill reads
+                # both to decide whether to render an auto-router badge.
+                'model': s.get('model') or s.get('agent_model') or _proj_default_model,
+                'model_source': s.get('model_source', 'manual'),
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (
@@ -11351,6 +11718,8 @@ _CONFIG_EDITABLE_KEYS = {
     'long_session_advisory_enabled', 'long_session_advisory_turns',
     'projects_base', 'shared_rules_path', 'port', 'log_level',
     'mobile_brief_replies_enabled',
+    'auto_model_enabled', 'auto_model_classifier_model',
+    'auto_model_classifier_timeout_secs',
 }
 
 @app.route('/api/config')
