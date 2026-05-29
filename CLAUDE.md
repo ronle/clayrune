@@ -299,11 +299,13 @@ closed-vocab lists under-fitted to this codebase + subsystem terms
 in wrong slot (Seat 1); in-session push fingerprint needs server-side
 re-normalization (Seats 1+3).
 
-**v2.1 revision required** before backend lands. Two open architectural
-picks need Ron's input first: (D2) `coarse_fingerprint` recurrence
-threshold = `exact+1` OR separate per-project config key? (D3(ii))
-cross-project aggregation walk uses serial per-project locks OR
-lock-free with 3-retry parse?
+**v2.1 DRAFTED 2026-05-29** — all 14 must-fix-in-design conditions
+closed inline in the spec. Architectural picks locked: D2 coarse
+fingerprint threshold = exact + 1 (Option A, no new config key); D3(ii)
+cross-project walk = lock-free with 3-retry parse (Option B, matches
+best-effort posture). Status header on the spec is now
+"DRAFT v2.1 (post-committee-review 2026-05-27, revised 2026-05-29)".
+Backend build can proceed once condense is fixed (gate #1 still open).
 
 **Revised build order:**
 
@@ -314,10 +316,12 @@ lock-free with 3-retry parse?
 2. **Redesign Phase 4 as v2** — DONE 2026-05-27. See
    `docs/SKILLS_CURATION_PHASE4_SPEC_V2.md`.
 3. **Committee review of v2** — DONE 2026-05-27. RATIFY-WITH-CONDITIONS.
-4. **v2.1 spec revision** — addresses 14 must-fix-in-design conditions.
-   Gated on Ron picking D2 + D3(ii) architectural alternatives.
+4. **v2.1 spec revision** — DONE 2026-05-29. All 14 must-fix-in-design
+   conditions closed inline. Picks D2 (Option A: exact+1) and D3(ii)
+   (Option B: lock-free retry) locked.
 5. **Build.** ~900–1200 LOC for v2.1 scope (up from v2's 700–900 due
-   to convergent condition edits). Single bundled PR.
+   to convergent condition edits). Single bundled PR. Gated only on
+   condense fix.
 
 **No backend learning-system code lands** until condense is fixed AND
 v2 has cleared committee. Same discipline as parent design v2 and
