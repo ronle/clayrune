@@ -6465,6 +6465,25 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
         # first poll and the user only sees the agent's reply (no question).
         _seed_log_lines.append(f"> {user_label}: {_seed_task}")
 
+    # ── Auto-router + context build, OUTSIDE mgr.lock ───────────────────────
+    # RC-2 constraint (ws_003): the classifier subprocess + context build are
+    # both slow (seconds) and must NOT pin mgr.lock — that's how mobile sends /
+    # interrupts wedge the project for hours when claude rate-limits. Resume
+    # paths skip context build (the CC subprocess already has its sysprompt).
+    _sp_args = []
+    _sp_path = None
+    if resume_id:
+        routed_model, routed_source, base_flags = _dispatch_with_routing(
+            p, task, streaming=use_streaming)
+    else:
+        routed_model, routed_source, base_flags, context = (
+            _dispatch_with_routing_parallel(
+                p, task,
+                context_builder=lambda: _build_agent_context(
+                    p, incognito=incognito, task=task),
+                streaming=use_streaming))
+        _sp_args, _sp_path = _sysprompt_file_args(context)
+
     mgr = get_manager(project_id)
     mgr.ensure_guardian()
     with mgr.lock:
@@ -6477,14 +6496,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
 
         if use_streaming:
             # Mode B: persistent process with stream-json stdin
-            _sp_path = None
             if resume_id:
-                cmd = [_resolve_claude(), '-r', resume_id, *_build_claude_flags(p, streaming=True)]
+                cmd = [_resolve_claude(), '-r', resume_id, *base_flags]
             else:
-                context = _build_agent_context(p, incognito=incognito, task=task)
-                _sp_args, _sp_path = _sysprompt_file_args(context)
-                cmd = [_resolve_claude(), *_build_claude_flags(p, streaming=True),
-                       *_sp_args]
+                cmd = [_resolve_claude(), *base_flags, *_sp_args]
 
             proc = subprocess.Popen(
                 cmd,
@@ -6541,6 +6556,11 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'trigger_type': trigger_type,
                 'trigger_id': trigger_id,
                 'agent_model': p.get('agent_model', '') or CONFIG.get('agent_model', ''),
+                # Auto-router attribution — `model` is what actually got
+                # passed via --model (after override); `model_source` is
+                # 'manual' / 'auto' / 'fallback'. Frontend pill reads these.
+                'model': routed_model,
+                'model_source': routed_source,
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -6569,15 +6589,12 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                         lk.release()
             threading.Thread(target=_write_initial, daemon=True).start()
         else:
-            # Mode A: spawn-per-turn (existing behavior)
-            _sp_path = None
+            # Mode A: spawn-per-turn (existing behavior). base_flags / _sp_args
+            # were resolved above the lock (outside RC-2's danger zone).
             if resume_id:
-                cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *_build_claude_flags(p)]
+                cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *base_flags]
             else:
-                context = _build_agent_context(p, incognito=incognito, task=task)
-                _sp_args, _sp_path = _sysprompt_file_args(context)
-                cmd = [_resolve_claude(), '-p', task, *_build_claude_flags(p),
-                       *_sp_args]
+                cmd = [_resolve_claude(), '-p', task, *base_flags, *_sp_args]
 
             proc = subprocess.Popen(
                 cmd,
@@ -6619,6 +6636,8 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'trigger_type': trigger_type,
                 'trigger_id': trigger_id,
                 'agent_model': p.get('agent_model', '') or CONFIG.get('agent_model', ''),
+                'model': routed_model,
+                'model_source': routed_source,
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
