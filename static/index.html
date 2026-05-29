@@ -6535,6 +6535,7 @@ function closeModalById(modalId) {
   }
   // Clean up terminal pop-out resources
   cleanupTerminalModal(modalId);
+  if (entry._statusBarObserver) { entry._statusBarObserver.disconnect(); delete entry._statusBarObserver; }
   entry.element.remove();
   const chip = document.getElementById('chip-' + CSS.escape(modalId));
   if (chip) chip.remove();
@@ -7468,6 +7469,26 @@ function refreshModalById(modalId) {
   _renderAllMermaidPlaceholders(content);
   if (sid && curTab === 'agent') {
     sizeAgentChat(entry.element, sid);
+    // Observe non-chat panel children (status bar, tab bar, etc.) so
+    // sizeAgentChat re-fires when the badge/timer text causes the status
+    // row to wrap to a 2nd line during streaming. Without this, the
+    // panel's overflow:hidden clips the input area once the bar grows.
+    const _panel = content.querySelector('.agent-panel');
+    if (_panel) {
+      if (entry._statusBarObserver) entry._statusBarObserver.disconnect();
+      const _obs = new ResizeObserver(() => {
+        const _e = openModals.get(modalId);
+        if (!_e || _e.minimized) return;
+        const _s = activeAgentTab[_e.projectId];
+        if (_s && (modalActiveTab[_e.projectId] || 'agent') === 'agent') {
+          sizeAgentChat(_e.element, _s);
+        }
+      });
+      for (const _child of _panel.children) {
+        if (!_child.classList.contains('agent-chat')) _obs.observe(_child);
+      }
+      entry._statusBarObserver = _obs;
+    }
   }
   if (modalZoomLevels[modalId]) {
     applyModalZoom(entry.element, modalZoomLevels[modalId]);
