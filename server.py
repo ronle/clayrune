@@ -852,13 +852,17 @@ def _dispatch_with_routing_parallel(project, prompt, context_builder, streaming=
     fut = _classifier_pool.submit(_route_dispatch_model, prompt, fallback)
     context = context_builder() if context_builder else ''
     timeout = max(1, int(CONFIG.get('auto_model_classifier_timeout_secs', 8) or 8))
+    _fallback_reason = ''
     try:
         model, source = fut.result(timeout=timeout)
-    except Exception:
-        # Includes concurrent.futures.TimeoutError. Fail-open.
+    except concurrent.futures.TimeoutError:
         model, source = fallback, 'fallback'
+        _fallback_reason = 'timeout'
+    except Exception as _exc:
+        model, source = fallback, 'fallback'
+        _fallback_reason = type(_exc).__name__
     flags = _build_claude_flags(project, streaming=streaming, model_override=model)
-    return model, source, flags, context
+    return model, source, flags, context, _fallback_reason
 
 
 def _sysprompt_file_args(context):
@@ -6593,11 +6597,12 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     # paths skip context build (the CC subprocess already has its sysprompt).
     _sp_args = []
     _sp_path = None
+    _router_fallback_reason = ''
     if resume_id:
         routed_model, routed_source, base_flags = _dispatch_with_routing(
             p, task, streaming=use_streaming)
     else:
-        routed_model, routed_source, base_flags, context = (
+        routed_model, routed_source, base_flags, context, _router_fallback_reason = (
             _dispatch_with_routing_parallel(
                 p, task,
                 context_builder=lambda: _build_agent_context(
@@ -6612,6 +6617,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
         requested_model=(p.get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'),
         chosen_model=routed_model,
         source=routed_source,
+        reason=_router_fallback_reason,
     )
 
     mgr = get_manager(project_id)

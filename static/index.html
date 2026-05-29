@@ -11427,8 +11427,12 @@ async function fetchAgentStatus(projectId) {
     // Read-only reconstructed sessions (deep-link tap on a dead session) are
     // intentionally client-injected and will never be in serverSids — don't
     // treat them as stale or a background poll would wipe the tab mid-read.
+    // Temp sessions (_pending_*) are optimistic pre-POST entries — the server
+    // doesn't know about them yet; exclude them so a concurrent fetchAgentStatus
+    // doesn't race-delete the temp session and cause a spurious BLOCKED flash.
     const _isInjectedRO = sid => !!(agentStatusCache[sid] || {})._readOnlyRevived;
-    const staleEntries = agentHistory.filter(h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId));
+    const _isPending = sid => (sid || '').startsWith('_pending_');
+    const staleEntries = agentHistory.filter(h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId));
     for (const stale of staleEntries) {
       delete agentStatusCache[stale.sessionId];
       delete agentOutputBuffers[stale.sessionId];
@@ -11442,11 +11446,12 @@ async function fetchAgentStatus(projectId) {
       }
     }
     if (staleEntries.length > 0) {
-      agentHistory = agentHistory.filter(h => !(h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId)));
+      agentHistory = agentHistory.filter(h => !(h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId)));
     }
     // Clear active tab if it points to a stale session (but keep an injected
-    // read-only tab the user is actively viewing).
-    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId]) && !_isInjectedRO(activeAgentTab[projectId])) {
+    // read-only tab the user is actively viewing, and keep a _pending_ tab that
+    // is still mid-dispatch and will be promoted once the POST returns).
+    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId]) && !_isInjectedRO(activeAgentTab[projectId]) && !_isPending(activeAgentTab[projectId])) {
       delete activeAgentTab[projectId];
     }
 
