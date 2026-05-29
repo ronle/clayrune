@@ -9851,6 +9851,12 @@ let followupTimeouts = {};  // sessionId → { timerId, projectId }
 // post-POST status=running transition is never seen → UI stays IDLE.
 let _sendInFlight = {};
 
+// sessionId → true once turn_start has been received for the current send.
+// Guards the 12s AbortController catch path from restoring textarea text when
+// the server actually did receive the message (turn_start proves it did).
+// Reset to false at send time; set true at turn_start.
+let _turnStartAcked = {};
+
 // Per-session lock so concurrent reconcile triggers don't double-apply.
 let _reconcileBusy = {};
 
@@ -10048,6 +10054,7 @@ function connectAgentStream(projectId, sessionId) {
         // turn_start is what we're waiting for in _sendInFlight — clear it
         // here so subsequent terminal events can flow normally.
         delete _sendInFlight[sessionId];
+        _turnStartAcked[sessionId] = true;
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = 'running';
           agentStatusCache[sessionId].waitingForPlanApproval = false;
@@ -11192,6 +11199,7 @@ async function sendFollowup(projectId, sessionId) {
   // SSE — those reflect the PRIOR idle state, not the new turn we're about to
   // dispatch. See _sendInFlight comment for the full race.
   _sendInFlight[sessionId] = Date.now();
+  _turnStartAcked[sessionId] = false;
   setTimeout(() => {
     // Safety net: if turn_start never arrives, lift the gate so terminal
     // status events can flow again.
@@ -11325,7 +11333,11 @@ async function sendFollowup(projectId, sessionId) {
       }
     }
     const inp = document.getElementById(`agent-followup-${sessionId}`);
-    if (inp && !inp.value) inp.value = message;
+    // Only restore the textarea if the server never acknowledged the message
+    // (turn_start never arrived). If turn_start DID arrive, the agent received
+    // the message and is/was running — restoring would show stale text that the
+    // user already sent, which is the "text jumps back" bug.
+    if (inp && !inp.value && !_turnStartAcked[sessionId]) inp.value = message;
     showToast(aborted
       ? 'Send timed out — network may be paused. Try again.'
       : `Send failed: ${e && e.message ? e.message : 'network error'}`, 4500);
