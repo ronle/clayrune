@@ -757,12 +757,20 @@ def _save_schedules(schedules):
     SCHEDULES_PATH.write_text(json.dumps(schedules, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
-def _build_claude_flags(project=None, streaming=False):
+def _build_claude_flags(project=None, streaming=False, model_override=None):
     """Build common Claude CLI flags from config, with optional per-project overrides.
     Delegates to ClaudeRuntime.build_command()[1:] — single source of truth.
-    Returns flags only (no binary prefix), matching the legacy contract."""
+    Returns flags only (no binary prefix), matching the legacy contract.
+
+    `model_override` lets a caller force a specific model (e.g. picked by the
+    auto-router via _resolve_dispatch_model). Pass-through when None — existing
+    callers that don't know about routing keep their original behavior.
+    """
+    model = model_override or (
+        (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '')
+    )
     return _agent_runtime.get_runtime('claude').build_command(
-        model=(project or {}).get('agent_model', '') or CONFIG.get('agent_model', ''),
+        model=model,
         max_turns=CONFIG.get('agent_max_turns', 0),
         streaming=streaming,
         perm_mode=CONFIG.get('agent_permission_mode', ''),
@@ -772,6 +780,23 @@ def _build_claude_flags(project=None, streaming=False):
             CONFIG.get('agent_remote_control', False)
         ),
     )[1:]  # strip binary — _build_claude_flags() contract is flags-only
+
+
+def _resolve_dispatch_model(project, prompt):
+    """Pick the model to use for a user-facing dispatch, given the prompt.
+
+    Returns (model_name, source) where source is one of:
+      'manual'   — auto-router off; using the configured/project model verbatim
+      'auto'     — classifier ran and picked this model
+      'fallback' — classifier ran but errored; using the configured model
+
+    Caller threads `model_name` into _build_claude_flags via `model_override`
+    and surfaces a per-bubble pill when source != 'manual'. Side-effect free.
+    """
+    fallback = (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '') or 'sonnet'
+    if not prompt or not CONFIG.get('auto_model_enabled', False):
+        return fallback, 'manual'
+    return _route_dispatch_model(prompt, fallback)
 
 
 def _sysprompt_file_args(context):
