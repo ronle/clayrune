@@ -14861,6 +14861,7 @@ function _renderUsageTab() {
   const resetWhen = rl.resetsAt ? new Date(rl.resetsAt * 1000).toLocaleString() : '';
   const today = u.today || {};
   const week = u.week || {};
+  const month = u.month || {};
   const top = Array.isArray(u.top_models) ? u.top_models : [];
 
   const renderModelRows = (obj) => {
@@ -14874,14 +14875,35 @@ function _renderUsageTab() {
     `).join('');
   };
 
-  const topHTML = top.length === 0
-    ? '<div class="ssp-empty">No model usage recorded.</div>'
-    : top.map(t => `
-        <div class="ssp-token-row">
-          <span class="ssp-token-name">${esc(_ssShortenModel(t.model))}</span>
-          <span class="ssp-token-val">${_ssFormatTokens(t.tokens)} in/out · ${_ssFormatTokens(t.cache_read)} cache</span>
-        </div>
-      `).join('');
+  // Top models section respects tokenCounterMode (same filter as Clayrune activity above).
+  const topModeLabel = { all: 'All-time', today: 'Today', week: 'This week', month: 'This month' }[tokenCounterMode] || 'All-time';
+  let topHTML;
+  if (tokenCounterMode === 'today' || tokenCounterMode === 'week' || tokenCounterMode === 'month') {
+    const periodData = tokenCounterMode === 'today' ? today : tokenCounterMode === 'week' ? week : month;
+    const ranked = Object.entries(periodData).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, 5);
+    topHTML = ranked.length === 0
+      ? '<div class="ssp-empty">No activity in this period.</div>'
+      : ranked.map(([m, t]) => `
+          <div class="ssp-token-row">
+            <span class="ssp-token-name">${esc(_ssShortenModel(m))}</span>
+            <span class="ssp-token-val">${_ssFormatTokens(t)} tok</span>
+          </div>
+        `).join('');
+  } else {
+    topHTML = top.length === 0
+      ? '<div class="ssp-empty">No model usage recorded.</div>'
+      : top.map(t => `
+          <div class="ssp-token-row">
+            <span class="ssp-token-name">${esc(_ssShortenModel(t.model))}</span>
+            <span class="ssp-token-val">${_ssFormatTokens(t.tokens)} in/out · ${_ssFormatTokens(t.cache_read)} cache</span>
+          </div>
+        `).join('');
+  }
+
+  // last_data_date is derived from the max date in dailyModelTokens — always fresh.
+  // last_computed_date is a CC-internal billing-sync timestamp; only updates in
+  // interactive mode, so it can lag by weeks when we run in --print mode.
+  const dataDate = u.last_data_date || u.last_computed_date || '—';
 
   // Everything below is Claude-Code-specific: it comes from claude's
   // machine-wide stats-cache.json + Anthropic rate-limit events. Other
@@ -14904,13 +14926,13 @@ function _renderUsageTab() {
     <div class="ssp-section-head">Last 7 days · tokens by model</div>
     ${renderModelRows(week)}
 
-    <div class="ssp-section-head">All-time top models</div>
+    <div class="ssp-section-head">${esc(topModeLabel)} top models</div>
     ${topHTML}
 
     <div class="ssp-section-head">Totals</div>
     <div class="ssp-row"><span class="ssp-k">Sessions</span><span class="ssp-v">${(u.total_sessions || 0).toLocaleString()}</span></div>
     <div class="ssp-row"><span class="ssp-k">Messages</span><span class="ssp-v">${(u.total_messages || 0).toLocaleString()}</span></div>
-    <div class="ssp-row"><span class="ssp-k">Cache last computed</span><span class="ssp-v">${esc(u.last_computed_date || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Data through</span><span class="ssp-v">${esc(dataDate)}</span></div>
 
     <a class="ssp-link" href="https://claude.ai/settings/usage" target="_blank" rel="noopener">Open canonical usage page →</a>
   `;
