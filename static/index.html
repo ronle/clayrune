@@ -16324,6 +16324,13 @@ async function _renderSettings() {
         <select class="settings-select" onchange="saveSetting('agent_model',this.value)">${modelSel}</select>
       </div>
       <div class="settings-row">
+        <div>
+          <div class="settings-label">Auto-pick model <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:var(--accent-dim);color:var(--accent);margin-left:6px;letter-spacing:.3px">EXPERIMENTAL</span></div>
+          <div class="settings-hint">Let Clayrune pick the right model (Haiku / Sonnet / Opus) for each request based on task complexity — saves subscription budget by sending trivial prompts to Haiku and reserving Opus for hard work. The chat header shows an <b>AUTO</b> badge when the classifier picks; failures fall back to your default model with an <b>FB</b> badge. Off = always use your default.</div>
+        </div>
+        ${toggle('auto_model_enabled', cfg.auto_model_enabled)}
+      </div>
+      <div class="settings-row">
         <div><div class="settings-label">Max Turns</div><div class="settings-hint">0 = unlimited</div></div>
         ${numInput('agent_max_turns', cfg.agent_max_turns)}
       </div>
