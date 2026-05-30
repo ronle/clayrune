@@ -1897,6 +1897,19 @@
   @media (min-width: 961px) {
     .mc-tabs-in-menu { display: none !important; }
   }
+  /* Settings modal fills the height — a tall panel on desktop, a full-screen
+     takeover on mobile (WhatsApp-style) so it reaches the bottom edge instead of
+     floating short. Placed after the generic mobile .modal-content rules so it
+     wins the cascade. #settings-body is flex:1 inside, so the list region fills. */
+  .mc-settings-modal { height: 90vh; max-height: 92vh; }
+  @media (hover: none), (pointer: coarse) {
+    .mc-settings-window { max-height: 100dvh; }
+    .mc-settings-modal { width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  }
+  @media (max-width: 960px) {
+    .mc-settings-window { max-height: 100dvh; }
+    .mc-settings-modal { width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  }
   /* Larger, scrollable three-dot menu on mobile (tap targets + readability) */
   @media (max-width: 960px) {
     .modal-menu-dropdown {
@@ -16635,11 +16648,11 @@ async function openSettings() {
   }
 
   const win = document.createElement('div');
-  win.className = 'modal-window';
+  win.className = 'modal-window mc-settings-window';
   win.dataset.modalId = modalId;
   _settingsView = 'list'; // fresh open always lands on the master list
   const content = document.createElement('div');
-  content.className = 'modal-content';
+  content.className = 'modal-content mc-settings-modal';
   _clampModalSize(content, 480);
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 22px 12px 22px">
@@ -16652,7 +16665,7 @@ async function openSettings() {
         <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
       </div>
     </div>
-    <div id="settings-body" data-view="list" style="padding:8px 22px 24px;overflow-y:auto;max-height:72vh">
+    <div id="settings-body" data-view="list" style="padding:8px 22px 24px;overflow-y:auto;flex:1;min-height:0">
       <div class="process-empty">Loading...</div>
     </div>`;
   win.appendChild(content);
