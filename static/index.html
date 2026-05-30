@@ -1570,53 +1570,90 @@
   }
   .settings-toggle.on::after { transform: translateX(16px); }
 
-  /* ── Settings modal: categorized nav + search ─────────────────────────── */
-  .settings-search-wrap { position: relative; margin: 2px 0 18px; }
+  /* ── Settings modal: WhatsApp-style drill-down list ───────────────────── */
+  .settings-search-wrap { position: relative; margin: 2px 0 16px; }
+  #settings-body[data-view="detail"] .settings-search-wrap { display: none; }
   .settings-search {
     width: 100%; box-sizing: border-box;
-    background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    font-family: inherit; font-size: 13px; padding: 9px 12px 9px 34px;
-    border-radius: 9px; outline: none; transition: border-color .15s, box-shadow .15s;
+    background: var(--surface2); border: 1px solid transparent; color: var(--text);
+    font-family: inherit; font-size: 14px; padding: 10px 14px 10px 40px;
+    border-radius: 999px; outline: none; transition: background .15s, border-color .15s;
   }
-  .settings-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .settings-search:focus { background: var(--bg); border-color: var(--accent); }
   .settings-search::placeholder { color: var(--text-faint); }
   .settings-search-ico {
-    position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
-    width: 15px; height: 15px; color: var(--text-faint); pointer-events: none;
+    position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 16px; color: var(--text-faint); pointer-events: none;
   }
-  .settings-shell { display: flex; gap: 22px; align-items: flex-start; }
-  .settings-nav {
-    display: flex; flex-direction: column; gap: 2px;
-    width: 168px; flex-shrink: 0; position: sticky; top: 0;
+
+  /* master list view */
+  #settings-body[data-view="detail"] #settings-master,
+  #settings-body[data-view="search"] #settings-master { display: none; }
+  .settings-profile {
+    display: flex; align-items: center; gap: 14px; width: 100%;
+    padding: 10px; margin-bottom: 10px; border-radius: 14px;
+    background: none; border: none; cursor: pointer; text-align: left;
+    font-family: inherit; transition: background .12s;
   }
-  .settings-nav-item {
-    display: flex; align-items: center; gap: 10px;
-    width: 100%; padding: 8px 11px; border: 1px solid transparent; border-radius: 9px;
-    background: none; color: var(--text-dim, var(--text)); font-size: 13px;
-    font-family: inherit; text-align: left; cursor: pointer;
-    transition: background .12s, color .12s; white-space: nowrap;
+  .settings-profile:hover { background: var(--surface2); }
+  .settings-avatar {
+    width: 50px; height: 50px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--accent-dim); color: var(--accent); font-size: 21px; font-weight: 700;
   }
-  .settings-nav-item:hover { background: var(--surface2); color: var(--text); }
-  .settings-nav-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
-  .settings-nav-item svg { width: 16px; height: 16px; flex-shrink: 0; opacity: .9; }
-  .settings-panes { flex: 1; min-width: 0; }
+  .settings-profile-name { display: block; font-size: 17px; font-weight: 600; color: var(--text); }
+  .settings-profile-sub { display: block; font-size: 13px; color: var(--text-dim); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .settings-group {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; overflow: hidden; margin-bottom: 14px;
+  }
+  .settings-list-row {
+    display: flex; align-items: center; gap: 15px; width: 100%;
+    padding: 13px 15px; background: none; border: none; cursor: pointer;
+    text-align: left; font-family: inherit; transition: background .12s; position: relative;
+  }
+  .settings-list-row:hover { background: var(--surface2); }
+  .settings-list-row + .settings-list-row::before {
+    content: ''; position: absolute; top: 0; left: 54px; right: 0;
+    border-top: 1px solid var(--border);
+  }
+  .settings-list-ico {
+    width: 24px; height: 24px; flex-shrink: 0; color: var(--text);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .settings-list-ico svg { width: 23px; height: 23px; opacity: .92; }
+  .settings-list-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .settings-list-title { font-size: 15px; color: var(--text); font-weight: 500; }
+  .settings-list-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .settings-list-chev { color: var(--text-faint); font-size: 20px; line-height: 1; flex-shrink: 0; }
+
+  /* detail view (drill-in) */
+  #settings-detail { display: none; }
+  #settings-body[data-view="detail"] #settings-detail,
+  #settings-body[data-view="search"] #settings-detail { display: block; }
+  .settings-detail-pane { animation: settingsPaneIn .22s ease; }
+  @keyframes settingsPaneIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+  #settings-body[data-view="search"] .settings-detail-pane { animation: none; }
+
   .settings-cat-label { display: none; }
-  body.settings-searching .settings-cat-label {
+  #settings-body[data-view="search"] .settings-cat-label {
     display: block; font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .5px; color: var(--text-faint); margin: 14px 0 8px;
+    letter-spacing: .5px; color: var(--text-faint); margin: 16px 0 8px;
   }
-  .settings-empty { padding: 28px 4px; color: var(--text-faint); font-size: 13px; text-align: center; }
+
+  /* back button in the modal header */
+  .settings-back-btn {
+    background: none; border: none; color: var(--text); cursor: pointer;
+    font-size: 22px; line-height: 1; padding: 0 4px 2px; border-radius: 7px;
+    display: flex; align-items: center; transition: background .12s;
+  }
+  .settings-back-btn:hover { background: var(--surface2); }
+
+  .settings-empty { padding: 30px 4px; color: var(--text-faint); font-size: 13px; text-align: center; }
   .settings-hidden { display: none !important; }
-  @media (max-width: 760px) {
-    .settings-shell { flex-direction: column; gap: 14px; }
-    .settings-nav {
-      flex-direction: row; width: 100%; position: static;
-      overflow-x: auto; gap: 6px; padding-bottom: 6px;
-      scrollbar-width: none; -webkit-overflow-scrolling: touch;
-    }
-    .settings-nav::-webkit-scrollbar { display: none; }
-    .settings-nav-item { width: auto; flex-shrink: 0; padding: 7px 13px; }
-  }
 
   /* ADD FORM */
   .backlog-add { display: flex; flex-direction: column; gap: 8px; }
@@ -16411,67 +16448,104 @@ function _renderProviderSettings(cfg) {
     </div>`;
 }
 
-// ── Settings categories + search ─────────────────────────────────────────────
-// The settings modal groups its sections into a handful of top-level categories
-// shown in a left rail (desktop) / horizontal chip bar (mobile). Only the active
-// category is shown; the search box filters rows across every category at once.
-// Persisted at module scope so re-renders (setTone/setAccent/…) keep your place.
+// ── Settings categories + drill-down (WhatsApp-style) ────────────────────────
+// The settings modal is a master list of categories; tapping one drills into a
+// detail screen (back arrow in the header returns). A search box filters every
+// setting across all categories. _settingsActiveCat / _settingsView persist at
+// module scope so re-renders (setTone/setAccent/…) keep your place.
 let _settingsActiveCat = 'providers';
+let _settingsView = 'list'; // 'list' | 'detail' | 'search'
 const _settingsIcon = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const SETTINGS_CATS = [
-  { key:'providers',  label:'Providers',    icon:_settingsIcon('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="M17 5l2.5 2.5"/>') },
-  { key:'agent',      label:'Agent',        icon:_settingsIcon('<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M12 9V5.5"/><circle cx="12" cy="3.5" r="1.5"/><path d="M9 14h.01M15 14h.01"/>') },
-  { key:'memory',     label:'Memory',       icon:_settingsIcon('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>') },
-  { key:'appearance', label:'Appearance',   icon:_settingsIcon('<path d="M12 2.7l5.7 5.7a8 8 0 1 1-11.4 0z"/>') },
-  { key:'connect',    label:'Connectivity', icon:_settingsIcon('<path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M2 9a15 15 0 0 1 20 0"/><path d="M12 19.5h.01"/>') },
-  { key:'system',     label:'System',       icon:_settingsIcon('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="18" y1="16" x2="22" y2="16"/>') },
+  { key:'providers',  group:1, label:'Providers',    sub:'Claude, Gemini, Codex — sign-in & API keys', icon:_settingsIcon('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="M17 5l2.5 2.5"/>') },
+  { key:'agent',      group:1, label:'Agent',        sub:'Identity, model, effort & integration',      icon:_settingsIcon('<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M12 9V5.5"/><circle cx="12" cy="3.5" r="1.5"/><path d="M9 14h.01M15 14h.01"/>') },
+  { key:'memory',     group:1, label:'Memory',       sub:'Auto-condense & housekeeping',               icon:_settingsIcon('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>') },
+  { key:'appearance', group:2, label:'Appearance',   sub:'Theme, accent, density & writing style',     icon:_settingsIcon('<path d="M12 2.7l5.7 5.7a8 8 0 1 1-11.4 0z"/>') },
+  { key:'connect',    group:2, label:'Connectivity', sub:'Remote access, push & mobile pairing',       icon:_settingsIcon('<path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M2 9a15 15 0 0 1 20 0"/><path d="M12 19.5h.01"/>') },
+  { key:'system',     group:2, label:'System',       sub:'Paths, advanced features, server & help',    icon:_settingsIcon('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="18" y1="16" x2="22" y2="16"/>') },
 ];
 
-// Switch the visible category and clear any active search filter.
-function switchSettingsCat(cat) {
-  _settingsActiveCat = cat;
-  const search = document.getElementById('settings-search');
-  if (search) search.value = '';
-  document.body.classList.remove('settings-searching');
-  const noRes = document.getElementById('settings-no-results');
-  if (noRes) noRes.classList.add('settings-hidden');
-  document.querySelectorAll('#settings-nav .settings-nav-item').forEach(b =>
-    b.classList.toggle('active', b.dataset.cat === cat));
-  document.querySelectorAll('#settings-panes .settings-cat').forEach(c =>
-    c.classList.toggle('settings-hidden', c.dataset.cat !== cat));
-  // Clear any row/section hiding left over from a previous search.
-  document.querySelectorAll('#settings-panes .settings-row, #settings-panes .settings-section')
-    .forEach(el => el.classList.remove('settings-hidden'));
-  const panes = document.getElementById('settings-panes');
-  if (panes) panes.scrollTop = 0;
-  // The active chip may be off-screen in the mobile horizontal nav.
-  const activeBtn = document.querySelector('#settings-nav .settings-nav-item.active');
-  if (activeBtn && activeBtn.scrollIntoView) {
-    try { activeBtn.scrollIntoView({ block:'nearest', inline:'center' }); } catch(_) {}
+// One master-list row: icon + title + descriptive subtitle + chevron.
+const _settingsRow = (c) =>
+  `<button type="button" class="settings-list-row" onclick="drillSettings('${c.key}')">`
+  + `<span class="settings-list-ico">${c.icon}</span>`
+  + `<span class="settings-list-txt"><span class="settings-list-title">${esc(c.label)}</span>`
+  + `<span class="settings-list-sub">${esc(c.sub)}</span></span>`
+  + `<span class="settings-list-chev">&#8250;</span></button>`;
+
+function _settingsCatLabel(key) {
+  const c = SETTINGS_CATS.find(x => x.key === key);
+  return c ? c.label : 'Settings';
+}
+
+// Apply the current view (list / detail / search) to the DOM. Called after every
+// _renderSettings rebuild and on every drill/back/search transition.
+function _applySettingsView() {
+  const body = document.getElementById('settings-body');
+  if (!body) return;
+  body.dataset.view = _settingsView;
+
+  const titleEl = document.getElementById('settings-title');
+  const backBtn = document.getElementById('settings-back-btn');
+  if (_settingsView === 'detail') {
+    if (titleEl) titleEl.textContent = _settingsCatLabel(_settingsActiveCat);
+    if (backBtn) backBtn.classList.remove('settings-hidden');
+  } else {
+    if (titleEl) titleEl.textContent = 'Settings';
+    if (backBtn) backBtn.classList.add('settings-hidden');
   }
+
+  if (_settingsView === 'detail') {
+    document.querySelectorAll('#settings-detail .settings-detail-pane').forEach(p =>
+      p.classList.toggle('settings-hidden', p.dataset.cat !== _settingsActiveCat));
+  }
+  if (_settingsView !== 'search') {
+    // Clear any row/section hiding left over from a previous search.
+    document.querySelectorAll('#settings-detail .settings-row, #settings-detail .settings-section')
+      .forEach(el => el.classList.remove('settings-hidden'));
+    const noRes = document.getElementById('settings-no-results');
+    if (noRes) noRes.classList.add('settings-hidden');
+  }
+  body.scrollTop = 0;
+}
+
+// Drill into a category's detail screen.
+function drillSettings(cat) {
+  _settingsActiveCat = cat;
+  _settingsView = 'detail';
+  const s = document.getElementById('settings-search');
+  if (s) s.value = '';
+  _applySettingsView();
+}
+
+// Return from a detail screen to the master list.
+function settingsBack() {
+  _settingsView = 'list';
+  const s = document.getElementById('settings-search');
+  if (s) s.value = '';
+  _applySettingsView();
 }
 
 // Live-filter every setting by label + hint text. A section-title match reveals
 // the whole section; otherwise only matching rows show. Empty query restores the
-// active-category view.
+// master list.
 function filterSettings(q) {
   q = (q || '').trim().toLowerCase();
-  const searching = q.length > 0;
-  document.body.classList.toggle('settings-searching', searching);
-
-  if (!searching) {
-    switchSettingsCat(_settingsActiveCat);
+  if (!q) {
+    _settingsView = 'list';
+    _applySettingsView();
     const s = document.getElementById('settings-search');
     if (s) s.focus();
     return;
   }
 
-  document.querySelectorAll('#settings-nav .settings-nav-item').forEach(b => b.classList.remove('active'));
+  _settingsView = 'search';
+  _applySettingsView();
   let anyMatch = false;
-  document.querySelectorAll('#settings-panes .settings-cat').forEach(cat => {
-    let catHasMatch = false;
+  document.querySelectorAll('#settings-detail .settings-detail-pane').forEach(pane => {
+    let paneHasMatch = false;
     // Direct .settings-section children only (avoids :scope for WebView2 safety).
-    Array.from(cat.children)
+    Array.from(pane.children)
       .filter(el => el.classList && el.classList.contains('settings-section'))
       .forEach(sec => {
         const titleEl = sec.querySelector('.settings-section-title');
@@ -16481,7 +16555,7 @@ function filterSettings(q) {
           // Custom-content section (provider / remote / push / pair): match as a unit.
           const m = titleMatch || sec.textContent.toLowerCase().includes(q);
           sec.classList.toggle('settings-hidden', !m);
-          if (m) catHasMatch = true;
+          if (m) paneHasMatch = true;
         } else {
           let rowMatch = false;
           rows.forEach(r => {
@@ -16490,11 +16564,11 @@ function filterSettings(q) {
             if (m) rowMatch = true;
           });
           sec.classList.toggle('settings-hidden', !rowMatch);
-          if (rowMatch) catHasMatch = true;
+          if (rowMatch) paneHasMatch = true;
         }
       });
-    cat.classList.toggle('settings-hidden', !catHasMatch);
-    if (catHasMatch) anyMatch = true;
+    pane.classList.toggle('settings-hidden', !paneHasMatch);
+    if (paneHasMatch) anyMatch = true;
   });
   const noRes = document.getElementById('settings-no-results');
   if (noRes) noRes.classList.toggle('settings-hidden', anyMatch);
@@ -16512,18 +16586,22 @@ async function openSettings() {
   const win = document.createElement('div');
   win.className = 'modal-window';
   win.dataset.modalId = modalId;
+  _settingsView = 'list'; // fresh open always lands on the master list
   const content = document.createElement('div');
   content.className = 'modal-content';
-  _clampModalSize(content, 680);
+  _clampModalSize(content, 480);
   content.innerHTML = `
-    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
-      <span style="font-size:16px;font-weight:700;color:var(--text)">Settings</span>
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 22px 12px 22px">
+      <span style="display:flex;align-items:center;gap:6px;min-width:0">
+        <button id="settings-back-btn" class="settings-back-btn settings-hidden" onclick="settingsBack()" title="Back" aria-label="Back">&#8592;</button>
+        <span id="settings-title" style="font-size:16px;font-weight:700;color:var(--text)">Settings</span>
+      </span>
       <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
         <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
         <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
       </div>
     </div>
-    <div id="settings-body" style="padding:8px 28px 24px;overflow-y:auto;max-height:70vh">
+    <div id="settings-body" data-view="list" style="padding:8px 22px 24px;overflow-y:auto;max-height:72vh">
       <div class="process-empty">Loading...</div>
     </div>`;
   win.appendChild(content);
@@ -16618,19 +16696,30 @@ async function _renderSettings() {
       <svg class="settings-search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
       <input class="settings-search" id="settings-search" type="text" placeholder="Search settings&hellip;" autocomplete="off" spellcheck="false" oninput="filterSettings(this.value)">
     </div>
-    <div class="settings-shell">
-      <nav class="settings-nav" id="settings-nav">
-        ${SETTINGS_CATS.map(c => `<button type="button" class="settings-nav-item ${c.key === _settingsActiveCat ? 'active' : ''}" data-cat="${c.key}" onclick="switchSettingsCat('${c.key}')">${c.icon}<span class="lbl">${esc(c.label)}</span></button>`).join('')}
-      </nav>
-      <div class="settings-panes" id="settings-panes">
+    <div id="settings-master">
+      <button type="button" class="settings-profile" onclick="drillSettings('agent')">
+        <span class="settings-avatar">${esc(((cfg.user_name || 'You').trim().charAt(0) || 'Y').toUpperCase())}</span>
+        <span style="min-width:0">
+          <span class="settings-profile-name">${esc(cfg.user_name || 'You')}</span>
+          <span class="settings-profile-sub">Agent: ${esc(cfg.agent_name || '—')} &middot; tap to edit identity</span>
+        </span>
+      </button>
+      <div class="settings-group">
+        ${SETTINGS_CATS.filter(c => c.group === 1).map(_settingsRow).join('')}
+      </div>
+      <div class="settings-group">
+        ${SETTINGS_CATS.filter(c => c.group === 2).map(_settingsRow).join('')}
+      </div>
+    </div>
+    <div id="settings-detail">
       <div class="settings-empty settings-hidden" id="settings-no-results">No settings match your search.</div>
 
-      <div class="settings-cat ${_settingsActiveCat === 'providers' ? '' : 'settings-hidden'}" data-cat="providers">
+      <div class="settings-detail-pane settings-hidden" data-cat="providers">
       <div class="settings-cat-label">Providers</div>
     ${_renderProviderSettings(cfg)}
       </div>
 
-      <div class="settings-cat ${_settingsActiveCat === 'agent' ? '' : 'settings-hidden'}" data-cat="agent">
+      <div class="settings-detail-pane settings-hidden" data-cat="agent">
       <div class="settings-cat-label">Agent</div>
     <div class="settings-section">
       <div class="settings-section-title">Identity</div>
@@ -16691,7 +16780,7 @@ async function _renderSettings() {
     </div>
       </div>
 
-      <div class="settings-cat ${_settingsActiveCat === 'memory' ? '' : 'settings-hidden'}" data-cat="memory">
+      <div class="settings-detail-pane settings-hidden" data-cat="memory">
       <div class="settings-cat-label">Memory</div>
     <div class="settings-section">
       <div class="settings-section-title">Memory & Condensation</div>
@@ -16714,7 +16803,7 @@ async function _renderSettings() {
     </div>
       </div>
 
-      <div class="settings-cat ${_settingsActiveCat === 'appearance' ? '' : 'settings-hidden'}" data-cat="appearance">
+      <div class="settings-detail-pane settings-hidden" data-cat="appearance">
       <div class="settings-cat-label">Appearance</div>
     <div class="settings-section">
       <div class="settings-section-title">Appearance</div>
@@ -16772,7 +16861,7 @@ async function _renderSettings() {
     </div>
       </div>
 
-      <div class="settings-cat ${_settingsActiveCat === 'connect' ? '' : 'settings-hidden'}" data-cat="connect">
+      <div class="settings-detail-pane settings-hidden" data-cat="connect">
       <div class="settings-cat-label">Connectivity</div>
     ${remoteAccessSettingsHTML()}
 
@@ -16781,7 +16870,7 @@ async function _renderSettings() {
     ${mobilePairingSettingsHTML()}
       </div>
 
-      <div class="settings-cat ${_settingsActiveCat === 'system' ? '' : 'settings-hidden'}" data-cat="system">
+      <div class="settings-detail-pane settings-hidden" data-cat="system">
       <div class="settings-cat-label">System</div>
     <div class="settings-section">
       <div class="settings-section-title">Paths &amp; Server</div>
@@ -16840,7 +16929,6 @@ async function _renderSettings() {
       </div>
     </div>
       </div>
-      </div>
     </div>`;
 
   // Now that #update-status-hint and #update-btn are in the DOM, kick off the
@@ -16855,6 +16943,9 @@ async function _renderSettings() {
   try { refreshPushSection(); } catch (_) {}
   try { refreshMobilePairingSection(); } catch (_) {}
 
+  // Restore the master/detail/search view (persisted across re-renders so that
+  // setTone/setAccent/etc. don't bounce you back to the list mid-edit).
+  _applySettingsView();
 }
 
 // ── Remote Access ────────────────────────────────────────────────────────────
