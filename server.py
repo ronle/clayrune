@@ -228,6 +228,20 @@ def _load_config():
         'scribe_checkpoint_kb': 0,     # mid-session cadence (KB new transcript); 0=disabled
         'long_session_advisory_enabled': False,  # soft "restart long Mode-B session" nudge
         'long_session_advisory_turns': 25,      # num_turns threshold for that nudge
+        # Phase 4 Distiller (v2.1 §11 global keys).
+        # Self-learning observer parallel to Scribe — extracts cross-session
+        # patterns into _proposed/ for human review. Best-effort, never load-
+        # bearing. Default ON; flip distiller_enabled_global=False to kill all
+        # paths. distiller_cross_project_enabled gates only the cross-project
+        # walk independently. See docs/SKILLS_CURATION_PHASE4_SPEC_V2.md.
+        'distiller_enabled_global': True,
+        'distiller_cross_project_enabled': True,
+        'distiller_model': '',                  # '' → haiku
+        'distiller_window_days': 30,
+        'distiller_cost_cap_tokens_per_project_per_day': 100000,
+        'distiller_proposal_dedupe_days': 7,
+        'distiller_cross_project_walk_debounce_session_count': 5,
+        'distiller_cross_project_walk_debounce_seconds': 600,
         'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor
         'agent_channels': '',
         'agent_remote_control': False,
@@ -1319,17 +1333,25 @@ def save_project(project_id, data):
     filepath.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
+# LOAD-BEARING: every per-project sidecar file MUST be listed here, OR be
+# moved outside DATA_DIR entirely. A stray non-project JSON here 500s
+# _get_active_restart_blockers and the restart endpoints. See CLAUDE.md
+# "LOAD-BEARING RULE — DATA_DIR pollution" and the parametric regression
+# test at tests/test_load_projects_sidecar_exclusions.py (Seat 4 v2 Cond 6
+# closure — single source of truth, parametric + next-sidecar canary).
+EXCLUDED_SIDECAR_SUFFIXES = (
+    '_agent_log.json',
+    '_scribe_stats.json',
+    '_router_stats.json',
+    '_skill_stats.json',           # Phase 4 Distiller — D9 closure
+    '_skill_stats_summary.json',   # Phase 4 Distiller cache — D3 closure
+)
+
+
 def load_projects():
     projects = []
     for f in DATA_DIR.glob('*.json'):
-        # Sibling data files co-located in DATA_DIR that are NOT project
-        # records (mirror the _agent_log.json precedent; _scribe_stats.json
-        # added with SPEC §8 telemetry; _router_stats.json added with the
-        # auto-router. LOAD-BEARING per CLAUDE.md — a stray non-project
-        # JSON here 500s _get_active_restart_blockers and the restart
-        # endpoints. Every new sidecar MUST be excluded here.
-        if f.name.endswith(('_agent_log.json', '_scribe_stats.json',
-                            '_router_stats.json')):
+        if f.name.endswith(EXCLUDED_SIDECAR_SUFFIXES):
             continue
         try:
             p = json.loads(f.read_text(encoding='utf-8'))
@@ -1344,6 +1366,16 @@ def load_projects():
             p.setdefault('blocked_reason', None)
             p.setdefault('backlog', [])
             p.setdefault('project_path', '')
+            # Phase 4 Distiller per-project defaults (v2.1 §11 — I5 closure).
+            # Mirrors the current_task / next_action precedent. Written through
+            # on first session-end touch or first Settings-modal open via save_project.
+            p.setdefault('distiller_mode', 'proposed')
+            p.setdefault('distiller_min_recurrence', 3)
+            p.setdefault('distiller_max_topics_per_session', 3)
+            p.setdefault('distiller_max_preferences_per_session', 3)
+            p.setdefault('distiller_max_explorations_per_session', 3)
+            p.setdefault('distiller_min_turns', 5)
+            p.setdefault('distiller_skip_errors', True)
             _decorate_attachments(p)
             projects.append(p)
         except Exception as e:
@@ -1989,6 +2021,45 @@ def get_scribe_stats(project_id):
         return jsonify({})
     try:
         return jsonify(json.loads(fp.read_text(encoding='utf-8') or '{}'))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Phase 4 Distiller endpoints (v2.1 §7) ────────────────────────────────────
+
+@app.route('/api/project/<project_id>/distiller-stats', methods=['GET'])
+def get_distiller_stats(project_id):
+    """Distiller telemetry — mirrors /scribe-stats shape. Includes recurrence
+    `fingerprints_near_threshold` so operator can see whether the threshold
+    is plausibly reachable (Seat 1 v1.1 Cond 3 inherited)."""
+    try:
+        return jsonify(_distiller.get_distiller_stats(project_id))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/project/<project_id>/distiller/record-push',
+           methods=['POST'])
+def post_distiller_record_push(project_id):
+    """In-session mc-distill calls this on No / Later. Body:
+      {phrase, kind, decision}. Server re-normalizes the phrase
+    through closed-vocab fingerprint (single source of truth — C-G
+    closure)."""
+    body = request.get_json(silent=True) or {}
+    try:
+        result, status = _distiller.record_push(project_id, body)
+        return jsonify(result), status
+    except Exception as e:
+        return jsonify({'accepted': False, 'reason': str(e)}), 500
+
+
+@app.route('/api/distiller/_proposed', methods=['GET'])
+def get_distiller_proposed():
+    """Unified _proposed/ queue lister. Walks global/ + <project_id>/
+    subdirs AND tolerates legacy flat _proposed/<sid>/ entries (§3.0
+    D13 closure). Newest first."""
+    try:
+        return jsonify(_distiller.list_proposed())
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -5102,6 +5173,23 @@ def _write_session_memory(p, session, status, summary_fallback, ts_date):
         wm_remove_sid=session.get('session_id') or session.get('id'))
     if do_condense:
         _dispatch_condense(p)
+    # Phase 4 Distiller — daemon-thread dispatch parallel to Scribe (v2.1 §4.8).
+    # Best-effort: failure NEVER blocks Scribe / MEMORY.md / completion. The
+    # entry point gates itself via _distiller_should_proceed at session_end_extract.
+    try:
+        csid = session.get('claude_session_id', '')
+        if csid:
+            tf = _find_transcript_file(p.get('project_path', ''), csid)
+            jsonl_path = str(tf) if tf else None
+            threading.Thread(
+                target=_distiller._distill_extract_and_aggregate,
+                args=(project_id, session.get('session_id') or session.get('id') or '',
+                      jsonl_path),
+                daemon=True,
+                name=f"distiller-{project_id}",
+            ).start()
+    except Exception:
+        pass  # best-effort: never block completion on Distiller dispatch
     return True
 
 
@@ -5818,6 +5906,32 @@ def _extract_transcript_telemetry(path):
         }
     except Exception:
         return {}
+
+
+# ── Phase 4 Distiller registration ───────────────────────────────────────────
+# distiller.py is the cross-session learning observer (v2.1 spec). Registered
+# here AFTER _scribe_call and _scribe_render_transcript are defined so the
+# module can call them directly. Best-effort; failure to register doesn't
+# break the rest of server startup.
+import distiller as _distiller
+try:
+    _SKILLS_ROOT = Path(__file__).parent / 'data' / 'skills'
+    _distiller.register(
+        data_root=DATA_DIR,
+        skills_root=_SKILLS_ROOT,
+        atomic_write_text=_atomic_write_text,
+        scribe_call=_scribe_call,
+        scribe_render_transcript=_scribe_render_transcript,
+        log=_log,
+        load_project=load_project,
+        save_project=save_project,
+        now_iso=now_iso,
+        config_get=lambda k, d=None: CONFIG.get(k, d),
+        get_per_project_semaphore=_get_checkpoint_sema,
+    )
+except Exception as _distiller_reg_err:
+    _log(f"[distiller] registration failed: {_distiller_reg_err!r} — "
+         f"Distiller will be inert this run")
 
 
 def _scribe_extract(project, session):
@@ -11921,6 +12035,13 @@ _CONFIG_EDITABLE_KEYS = {
     'mobile_brief_replies_enabled',
     'auto_model_enabled', 'auto_model_classifier_model',
     'auto_model_classifier_timeout_secs',
+    # Phase 4 Distiller (v2.1 §11 global keys).
+    'distiller_enabled_global', 'distiller_cross_project_enabled',
+    'distiller_model', 'distiller_window_days',
+    'distiller_cost_cap_tokens_per_project_per_day',
+    'distiller_proposal_dedupe_days',
+    'distiller_cross_project_walk_debounce_session_count',
+    'distiller_cross_project_walk_debounce_seconds',
 }
 
 @app.route('/api/config')
