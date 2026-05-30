@@ -16519,8 +16519,8 @@ let _settingsView = 'list'; // 'list' (categories) | 'subs' (sub-category list) 
 const _settingsIcon = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const SETTINGS_CATS = [
   { key:'providers',  group:1, label:'Providers',    sub:'Claude, Gemini, Codex — sign-in & API keys', icon:_settingsIcon('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="M17 5l2.5 2.5"/>') },
-  { key:'agent',      group:1, label:'Agent',        sub:'Identity, model, effort & integration',      icon:_settingsIcon('<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M12 9V5.5"/><circle cx="12" cy="3.5" r="1.5"/><path d="M9 14h.01M15 14h.01"/>') },
-  { key:'memory',     group:1, label:'Memory',       sub:'Auto-condense & housekeeping',               icon:_settingsIcon('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>') },
+  { key:'agent',      group:1, label:'Agent',        sub:'Identity, model, behavior & integration',    icon:_settingsIcon('<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M12 9V5.5"/><circle cx="12" cy="3.5" r="1.5"/><path d="M9 14h.01M15 14h.01"/>') },
+  { key:'memory',     group:1, label:'Memory',       sub:'Auto-condense & tuning',                     icon:_settingsIcon('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>') },
   { key:'appearance', group:2, label:'Appearance',   sub:'Theme, accent, density & writing style',     icon:_settingsIcon('<path d="M12 2.7l5.7 5.7a8 8 0 1 1-11.4 0z"/>') },
   { key:'connect',    group:2, label:'Connectivity', sub:'Remote access, push & mobile pairing',       icon:_settingsIcon('<path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M2 9a15 15 0 0 1 20 0"/><path d="M12 19.5h.01"/>') },
   { key:'system',     group:2, label:'System',       sub:'Paths, advanced features, server & help',    icon:_settingsIcon('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="18" y1="16" x2="22" y2="16"/>') },
@@ -16881,7 +16881,7 @@ async function _renderSettings() {
     </div>
 
     <div class="settings-section">
-      <div class="settings-section-title">Defaults</div>
+      <div class="settings-section-title">Model</div>
       <div class="settings-row">
         <div><div class="settings-label">Model</div><div class="settings-hint">Default for new chats. Auto picks per task to save budget.</div></div>
         <select class="settings-select" onchange="saveModelChoice(this.value)">${modelSel}</select>
@@ -16890,6 +16890,10 @@ async function _renderSettings() {
         <div><div class="settings-label">Effort</div><div class="settings-hint">How hard the model thinks per request.</div></div>
         <select class="settings-select" onchange="saveSetting('agent_effort',this.value)">${effortSel}</select>
       </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Behavior</div>
       <div class="settings-row">
         <div><div class="settings-label">Max turns</div><div class="settings-hint">0 = unlimited.</div></div>
         ${numInput('agent_max_turns', cfg.agent_max_turns)}
@@ -16923,7 +16927,7 @@ async function _renderSettings() {
       <div class="settings-detail-pane settings-hidden" data-cat="memory">
       <div class="settings-cat-label">Memory</div>
     <div class="settings-section">
-      <div class="settings-section-title">Condensation</div>
+      <div class="settings-section-title">Auto-condense</div>
       <div class="settings-row">
         <div><div class="settings-label">Auto-condense</div><div class="settings-hint">Condense large memory files automatically.</div></div>
         ${toggle('condense_enabled', cfg.condense_enabled)}
@@ -16932,6 +16936,10 @@ async function _renderSettings() {
         <div><div class="settings-label">Threshold (KB)</div><div class="settings-hint">Condense when memory exceeds this.</div></div>
         ${numInput('condense_threshold_kb', cfg.condense_threshold_kb)}
       </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Tuning</div>
       <div class="settings-row">
         <div><div class="settings-label">Model</div><div class="settings-hint">Housekeeping model (blank = default).</div></div>
         ${textInput('condense_model', cfg.condense_model)}
