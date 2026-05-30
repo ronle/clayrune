@@ -1572,7 +1572,8 @@
 
   /* ── Settings modal: WhatsApp-style drill-down list ───────────────────── */
   .settings-search-wrap { position: relative; margin: 2px 0 16px; }
-  #settings-body[data-view="detail"] .settings-search-wrap { display: none; }
+  #settings-body[data-view="detail"] .settings-search-wrap,
+  #settings-body[data-view="subs"] .settings-search-wrap { display: none; }
   .settings-search {
     width: 100%; box-sizing: border-box;
     background: var(--surface2); border: 1px solid transparent; color: var(--text);
@@ -1588,6 +1589,7 @@
 
   /* master list view */
   #settings-body[data-view="detail"] #settings-master,
+  #settings-body[data-view="subs"] #settings-master,
   #settings-body[data-view="search"] #settings-master { display: none; }
   .settings-profile {
     display: flex; align-items: center; gap: 14px; width: 100%;
@@ -1630,13 +1632,29 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .settings-list-chev { color: var(--text-faint); font-size: 20px; line-height: 1; flex-shrink: 0; }
 
-  /* detail view (drill-in) */
+  /* detail + sub-list views (drill-in) */
   #settings-detail { display: none; }
+  #settings-body[data-view="subs"] #settings-detail,
   #settings-body[data-view="detail"] #settings-detail,
   #settings-body[data-view="search"] #settings-detail { display: block; }
-  .settings-detail-pane { animation: settingsPaneIn .22s ease; }
+  .settings-detail-pane, #settings-sub-list:not(.settings-hidden) { animation: settingsPaneIn .2s ease; }
   @keyframes settingsPaneIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
   #settings-body[data-view="search"] .settings-detail-pane { animation: none; }
+  /* the layer-3 settings screen hides its own section title — the header shows it */
+  #settings-body[data-view="detail"] .settings-section-title { display: none; }
+
+  /* layer-2 sub-category rows */
+  .settings-sub-row {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 14px 15px; background: none; border: none; cursor: pointer;
+    text-align: left; font-family: inherit; transition: background .12s; position: relative;
+  }
+  .settings-sub-row:hover { background: var(--surface2); }
+  .settings-sub-row + .settings-sub-row::before {
+    content: ''; position: absolute; top: 0; left: 15px; right: 0; border-top: 1px solid var(--border);
+  }
+  .settings-sub-title { flex: 1; min-width: 0; font-size: 15px; color: var(--text); font-weight: 500; }
+  .settings-sub-chev { color: var(--text-faint); font-size: 20px; line-height: 1; flex-shrink: 0; }
 
   .settings-cat-label { display: none; }
   #settings-body[data-view="search"] .settings-cat-label {
@@ -5427,16 +5445,16 @@ function mcPushDrawerHistory() {
 // it gets its own sentinels: hardware back steps detail → list → close, instead
 // of tearing the whole modal down (the bug Ron hit). Gated to touch devices /
 // narrow viewports — desktop browser back is left alone, same as the others.
-let _mcSettingsHistoryActive = false;        // settings modal open (L1-equivalent)
-let _mcSettingsDetailHistoryActive = false;  // drilled into detail OR in search (L2)
+let _mcSettingsHistoryActive = false;  // settings modal open (innermost back = close)
+let _mcSettingsNavDepth = 0;           // # of in-settings sub-navigation steps pushed (list→subs→detail)
 function _settingsWantsBackNav() { return _isMobileDevice || window.innerWidth <= 960; }
 function mcPushSettingsHistory() {
   if (!_settingsWantsBackNav() || _mcSettingsHistoryActive) return;
   try { history.pushState({ mc: 'settings' }, ''); _mcSettingsHistoryActive = true; } catch (e) {}
 }
-function mcPushSettingsDetailHistory() {
-  if (!_settingsWantsBackNav() || _mcSettingsDetailHistoryActive) return;
-  try { history.pushState({ mc: 'settings-detail' }, ''); _mcSettingsDetailHistoryActive = true; } catch (e) {}
+function mcPushSettingsNav() {
+  if (!_settingsWantsBackNav()) return;
+  try { history.pushState({ mc: 'settings-nav' }, ''); _mcSettingsNavDepth++; } catch (e) {}
 }
 
 // ── Mobile navigation drawer (hamburger) ────────────────────────────────────
@@ -5497,16 +5515,16 @@ window.addEventListener('popstate', () => {
     _closeMobileDrawerUI();                      // DOM-only, no extra history.go
     return;
   }
-  // Settings modal: detail screen → master list, then list → close. Checked
-  // before conv/modal because settings sits on top of everything when open.
-  if (_mcSettingsDetailHistoryActive) {
-    _mcSettingsDetailHistoryActive = false;      // L2 entry consumed by back
-    _settingsBackUI();                           // detail / search → master list
+  // Settings modal: step up one level per back (detail → subs → category list),
+  // then list → close. Checked before conv/modal because settings sits on top.
+  if (_mcSettingsNavDepth > 0) {
+    _mcSettingsNavDepth--;                        // one sub-nav entry consumed by back
+    _settingsUpUI();                             // up one level (detail → subs → list)
     return;
   }
   if (_mcSettingsHistoryActive) {
-    _mcSettingsHistoryActive = false;            // L1 entry consumed by back
-    closeModalById('__settings');                // master list → close settings
+    _mcSettingsHistoryActive = false;            // modal entry consumed by back
+    closeModalById('__settings');                // category list → close settings
     return;
   }
   // Then: drilled-in conversation → conversations list.
@@ -6696,10 +6714,10 @@ function closeModalById(modalId) {
   // — no double-close.
   if (openModals.size === 0) {
     const n = (_mcConvHistoryActive ? 1 : 0) + (_mcModalHistoryActive ? 1 : 0)
-            + (_mcSettingsDetailHistoryActive ? 1 : 0) + (_mcSettingsHistoryActive ? 1 : 0);
+            + _mcSettingsNavDepth + (_mcSettingsHistoryActive ? 1 : 0);
     _mcConvHistoryActive = false;
     _mcModalHistoryActive = false;
-    _mcSettingsDetailHistoryActive = false;
+    _mcSettingsNavDepth = 0;
     _mcSettingsHistoryActive = false;
     _mcUnwindHistory(n);
   }
@@ -16496,7 +16514,8 @@ function _renderProviderSettings(cfg) {
 // setting across all categories. _settingsActiveCat / _settingsView persist at
 // module scope so re-renders (setTone/setAccent/…) keep your place.
 let _settingsActiveCat = 'providers';
-let _settingsView = 'list'; // 'list' | 'detail' | 'search'
+let _settingsActiveSub = 0;
+let _settingsView = 'list'; // 'list' (categories) | 'subs' (sub-category list) | 'detail' | 'search'
 const _settingsIcon = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const SETTINGS_CATS = [
   { key:'providers',  group:1, label:'Providers',    sub:'Claude, Gemini, Codex — sign-in & API keys', icon:_settingsIcon('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="M17 5l2.5 2.5"/>') },
@@ -16520,8 +16539,37 @@ function _settingsCatLabel(key) {
   return c ? c.label : 'Settings';
 }
 
-// Apply the current view (list / detail / search) to the DOM. Called after every
-// _renderSettings rebuild and on every drill/back/search transition.
+// Direct .settings-section children of a category's detail pane — these are the
+// category's sub-items (one per layer-2 row, each its own layer-3 settings screen).
+function _settingsSectionEls(cat) {
+  const pane = document.querySelector('#settings-detail .settings-detail-pane[data-cat="' + cat + '"]');
+  if (!pane) return [];
+  return Array.from(pane.children).filter(el => el.classList && el.classList.contains('settings-section'));
+}
+
+// Build the layer-2 sub-category list for a category (one row per section title).
+function _renderSettingsSubList(cat) {
+  const rows = _settingsSectionEls(cat).map((s, i) => {
+    const titleEl = s.querySelector('.settings-section-title');
+    const t = titleEl ? titleEl.textContent.trim() : ('Section ' + (i + 1));
+    return `<button type="button" class="settings-sub-row" onclick="drillSettingsSub(${i})">`
+         + `<span class="settings-sub-title">${esc(t)}</span>`
+         + `<span class="settings-sub-chev">&#8250;</span></button>`;
+  }).join('');
+  return `<div class="settings-group">${rows}</div>`;
+}
+
+// Layer 3: show only the active section in the active pane. Extracted so the async
+// Remote/Push/Pair hydration can re-assert it after replacing a section via
+// outerHTML (which would otherwise drop its settings-hidden class and leak in).
+function _applySettingsSectionVisibility() {
+  if (_settingsView !== 'detail') return;
+  _settingsSectionEls(_settingsActiveCat).forEach((s, i) =>
+    s.classList.toggle('settings-hidden', i !== _settingsActiveSub));
+}
+
+// Apply the current view (list / subs / detail / search) to the DOM. Called after
+// every _renderSettings rebuild and on every drill/back/search transition.
 function _applySettingsView() {
   const body = document.getElementById('settings-body');
   if (!body) return;
@@ -16529,69 +16577,92 @@ function _applySettingsView() {
 
   const titleEl = document.getElementById('settings-title');
   const backBtn = document.getElementById('settings-back-btn');
-  if (_settingsView === 'detail') {
-    if (titleEl) titleEl.textContent = _settingsCatLabel(_settingsActiveCat);
-    if (backBtn) backBtn.classList.remove('settings-hidden');
-  } else {
-    if (titleEl) titleEl.textContent = 'Settings';
-    if (backBtn) backBtn.classList.add('settings-hidden');
+  const catLabel = _settingsCatLabel(_settingsActiveCat);
+  let title = 'Settings', showBack = false;
+  if (_settingsView === 'subs') {
+    title = catLabel; showBack = true;
+  } else if (_settingsView === 'detail') {
+    const sec = _settingsSectionEls(_settingsActiveCat)[_settingsActiveSub];
+    const t = sec ? (sec.querySelector('.settings-section-title') || {}).textContent : '';
+    title = (t && t.trim()) || catLabel;
+    showBack = true;
+  }
+  if (titleEl) titleEl.textContent = title;
+  if (backBtn) backBtn.classList.toggle('settings-hidden', !showBack);
+
+  // Layer-2 sub-list: rebuilt + shown only in 'subs'.
+  const subList = document.getElementById('settings-sub-list');
+  if (subList) {
+    if (_settingsView === 'subs') {
+      subList.innerHTML = _renderSettingsSubList(_settingsActiveCat);
+      subList.classList.remove('settings-hidden');
+    } else {
+      subList.classList.add('settings-hidden');
+    }
   }
 
+  const panes = document.querySelectorAll('#settings-detail .settings-detail-pane');
   if (_settingsView === 'detail') {
-    document.querySelectorAll('#settings-detail .settings-detail-pane').forEach(p =>
-      p.classList.toggle('settings-hidden', p.dataset.cat !== _settingsActiveCat));
-  }
-  if (_settingsView !== 'search') {
-    // Clear any row/section hiding left over from a previous search.
+    panes.forEach(p => p.classList.toggle('settings-hidden', p.dataset.cat !== _settingsActiveCat));
+    document.querySelectorAll('#settings-detail .settings-row').forEach(r => r.classList.remove('settings-hidden'));
+    _applySettingsSectionVisibility();
+  } else if (_settingsView !== 'search') {
+    // list or subs → hide every pane; clear leftover row/section hiding.
+    panes.forEach(p => p.classList.add('settings-hidden'));
     document.querySelectorAll('#settings-detail .settings-row, #settings-detail .settings-section')
       .forEach(el => el.classList.remove('settings-hidden'));
+  }
+
+  if (_settingsView !== 'search') {
     const noRes = document.getElementById('settings-no-results');
     if (noRes) noRes.classList.add('settings-hidden');
   }
   body.scrollTop = 0;
 }
 
-// Drill into a category's detail screen (forward nav → push a back sentinel so
-// hardware/UI back returns to the master list instead of closing the modal).
+// Layer 1 → drill a category. Multi-section → sub-list (layer 2); single-section →
+// straight to its settings (layer 3, no pointless one-item middle screen).
 function drillSettings(cat) {
   _settingsActiveCat = cat;
+  _settingsActiveSub = 0;
+  _settingsView = (_settingsSectionEls(cat).length > 1) ? 'subs' : 'detail';
+  const s = document.getElementById('settings-search'); if (s) s.value = '';
+  mcPushSettingsNav();
+  _applySettingsView();
+}
+
+// Layer 2 → drill a sub-category into its settings (layer 3).
+function drillSettingsSub(idx) {
+  _settingsActiveSub = idx;
   _settingsView = 'detail';
-  const s = document.getElementById('settings-search');
-  if (s) s.value = '';
-  mcPushSettingsDetailHistory();
+  mcPushSettingsNav();
   _applySettingsView();
 }
 
-// Pure UI: detail / search → master list. Also called by the popstate handler,
-// which has already consumed the L2 history entry — so do NOT touch history here.
-function _settingsBackUI() {
-  _settingsView = 'list';
-  const s = document.getElementById('settings-search');
-  if (s) s.value = '';
-  _applySettingsView();
-}
-
-// On-screen back arrow: same UI as _settingsBackUI, but also synthetically pops
-// the L2 sentinel so the hardware-back stack stays in sync (mirrors mcBackFromConv).
-function settingsBack() {
-  if (_mcSettingsDetailHistoryActive) {
-    _mcSettingsDetailHistoryActive = false;
-    _mcUnwindHistory(1);
+// Move up one level (detail → subs/list, subs/search → list). Pure UI; the
+// popstate handler calls this after it has consumed the history entry.
+function _settingsUpUI() {
+  if (_settingsView === 'detail') {
+    _settingsView = (_settingsSectionEls(_settingsActiveCat).length > 1) ? 'subs' : 'list';
+  } else {
+    _settingsView = 'list';
   }
-  _settingsBackUI();
+  const s = document.getElementById('settings-search'); if (s) s.value = '';
+  _applySettingsView();
 }
 
-// Live-filter every setting by label + hint text. A section-title match reveals
-// the whole section; otherwise only matching rows show. Empty query restores the
-// master list.
+// On-screen back arrow: move up one level + keep the hardware-back stack in sync.
+function settingsBack() {
+  if (_mcSettingsNavDepth > 0) { _mcSettingsNavDepth--; _mcUnwindHistory(1); }
+  _settingsUpUI();
+}
+
+// Live-filter every setting across all categories (flat results with category
+// headers). Empty query returns to the category list.
 function filterSettings(q) {
   q = (q || '').trim().toLowerCase();
   if (!q) {
-    // Leaving search → master list; unwind the sentinel if we pushed one.
-    if (_settingsView === 'search' && _mcSettingsDetailHistoryActive) {
-      _mcSettingsDetailHistoryActive = false;
-      _mcUnwindHistory(1);
-    }
+    if (_settingsView === 'search' && _mcSettingsNavDepth > 0) { _mcSettingsNavDepth--; _mcUnwindHistory(1); }
     _settingsView = 'list';
     _applySettingsView();
     const s = document.getElementById('settings-search');
@@ -16601,7 +16672,7 @@ function filterSettings(q) {
 
   if (_settingsView !== 'search') {
     _settingsView = 'search';
-    mcPushSettingsDetailHistory();  // hardware/UI back exits search → master list
+    mcPushSettingsNav();  // hardware/UI back exits search → category list
   }
   _applySettingsView();
   let anyMatch = false;
@@ -16649,7 +16720,9 @@ async function openSettings() {
   const win = document.createElement('div');
   win.className = 'modal-window mc-settings-window';
   win.dataset.modalId = modalId;
-  _settingsView = 'list'; // fresh open always lands on the master list
+  _settingsView = 'list'; // fresh open always lands on the category list
+  _settingsActiveSub = 0;
+  _mcSettingsNavDepth = 0;
   const content = document.createElement('div');
   content.className = 'modal-content mc-settings-modal';
   _clampModalSize(content, 480);
@@ -16785,6 +16858,7 @@ async function _renderSettings() {
       </div>
     </div>
     <div id="settings-detail">
+      <div id="settings-sub-list" class="settings-hidden"></div>
       <div class="settings-empty settings-hidden" id="settings-no-results">No settings match your search.</div>
 
       <div class="settings-detail-pane settings-hidden" data-cat="providers">
@@ -16872,7 +16946,7 @@ async function _renderSettings() {
       <div class="settings-detail-pane settings-hidden" data-cat="appearance">
       <div class="settings-cat-label">Appearance</div>
     <div class="settings-section">
-      <div class="settings-section-title">Appearance</div>
+      <div class="settings-section-title">Theme &amp; display</div>
       <div class="settings-row">
         <div><div class="settings-label">Theme</div><div class="settings-hint">Warm and Editorial are light themes.</div></div>
         <div class="mc-seg" id="mc-tone-seg">
@@ -17068,6 +17142,9 @@ async function refreshRemoteAccessSection() {
   window._remoteState = await fetchRemoteStatus();
   const el = document.getElementById('remote-access-section');
   if (el) el.outerHTML = remoteAccessSettingsHTML();
+  // outerHTML replacement drops the fresh section's settings-hidden class; if a
+  // settings detail screen is showing only one sub-item, re-assert that.
+  try { _applySettingsSectionVisibility(); } catch (_) {}
 
   // If we landed in the enrolled state, populate the devices list async.
   // (refreshRemoteDevices is a no-op when the #remote-devices-list anchor
