@@ -16434,7 +16434,7 @@ function _renderProviderSettings(cfg) {
         <button class="btn-add" style="background:var(--surface3);color:var(--text)" onclick="settingsClaudeAuthCheck()">Check</button>
       </div>`;
       authControls = `<div class="settings-hint" style="margin-top:6px">
-        Opens a terminal running <code>claude</code>; type <code>/login</code> to finish browser sign-in.
+        Opens a terminal; type <code>/login</code> to finish sign-in.
         <span id="claude-auth-status-line" style="display:inline-block;margin-left:6px"></span>
       </div>`;
     } else if (installed) {
@@ -16477,15 +16477,14 @@ function _renderProviderSettings(cfg) {
   const defaultRow = provs.length > 1 ? `
       <div class="settings-row">
         <div>
-          <div class="settings-label">Global Default</div>
-          <div class="settings-hint">Seeds the provider picker for new conversations. Each chat can still pick a different provider in the composer.</div>
+          <div class="settings-label">Default provider</div>
+          <div class="settings-hint">Used for new chats; change it per chat in the composer.</div>
         </div>
         <select class="settings-select" onchange="saveSetting('default_provider',this.value)">${provOpts}</select>
       </div>` : '';
 
   return `
     <div class="settings-section" id="settings-providers-section">
-      <div class="settings-section-title">Agent Provider</div>
       ${defaultRow}
       ${provRows}
     </div>`;
@@ -16707,15 +16706,20 @@ async function _renderSettings() {
     return;
   }
 
+  // "Auto" folds the old separate Auto-pick toggle into the model picker — one
+  // control for "which model", no duplication. saveModelChoice() handles the split.
+  const _autoModel = !!cfg.auto_model_enabled;
   const modelOptions = [
+    ['__auto__', 'Auto — pick per task'],
     ['', 'Default'],
-    ['claude-sonnet-4-6', 'Sonnet 4.6'],
     ['claude-opus-4-8', 'Opus 4.8'],
+    ['claude-sonnet-4-6', 'Sonnet 4.6'],
     ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
   ];
-  const modelSel = modelOptions.map(([v, l]) =>
-    `<option value="${v}" ${cfg.agent_model === v ? 'selected' : ''}>${l}</option>`
-  ).join('');
+  const modelSel = modelOptions.map(([v, l]) => {
+    const sel = v === '__auto__' ? _autoModel : (!_autoModel && (cfg.agent_model || '') === v);
+    return `<option value="${v}" ${sel ? 'selected' : ''}>${l}</option>`;
+  }).join('');
 
   const effortOptions = [
     ['', 'Default (CLI default)'],
@@ -16803,47 +16807,40 @@ async function _renderSettings() {
     </div>
 
     <div class="settings-section">
-      <div class="settings-section-title">Agent Defaults</div>
+      <div class="settings-section-title">Defaults</div>
       <div class="settings-row">
-        <div><div class="settings-label">Default Model</div><div class="settings-hint">Fallback when project has no override</div></div>
-        <select class="settings-select" onchange="saveSetting('agent_model',this.value)">${modelSel}</select>
+        <div><div class="settings-label">Model</div><div class="settings-hint">Default for new chats. Auto picks per task to save budget.</div></div>
+        <select class="settings-select" onchange="saveModelChoice(this.value)">${modelSel}</select>
       </div>
       <div class="settings-row">
-        <div><div class="settings-label">Effort Level</div><div class="settings-hint">How hard Opus thinks per request (<code>--effort</code>). Set once at dispatch — can't change mid-session. Default leaves the CLI's own default.</div></div>
+        <div><div class="settings-label">Effort</div><div class="settings-hint">How hard the model thinks per request.</div></div>
         <select class="settings-select" onchange="saveSetting('agent_effort',this.value)">${effortSel}</select>
       </div>
       <div class="settings-row">
-        <div>
-          <div class="settings-label">Auto-pick model <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:var(--accent-dim);color:var(--accent);margin-left:6px;letter-spacing:.3px">EXPERIMENTAL</span></div>
-          <div class="settings-hint">Let Clayrune pick the right model (Haiku / Sonnet / Opus) for each request based on task complexity — saves subscription budget by sending trivial prompts to Haiku and reserving Opus for hard work. The chat header shows an <b>AUTO</b> badge when the classifier picks; failures fall back to your default model with an <b>FB</b> badge. Off = always use your default.</div>
-        </div>
-        ${toggle('auto_model_enabled', cfg.auto_model_enabled)}
-      </div>
-      <div class="settings-row">
-        <div><div class="settings-label">Max Turns</div><div class="settings-hint">0 = unlimited</div></div>
+        <div><div class="settings-label">Max turns</div><div class="settings-hint">0 = unlimited.</div></div>
         ${numInput('agent_max_turns', cfg.agent_max_turns)}
       </div>
       <div class="settings-row">
-        <div><div class="settings-label">Permission Mode</div><div class="settings-hint">Controls agent tool permissions</div></div>
+        <div><div class="settings-label">Permissions</div><div class="settings-hint">Agent tool-permission mode.</div></div>
         <select class="settings-select" onchange="saveSetting('agent_permission_mode',this.value)">${permSel}</select>
       </div>
     </div>
 
     <div class="settings-section">
-      <div class="settings-section-title">Agent Integration</div>
+      <div class="settings-section-title">Integration</div>
       <div class="settings-row">
-        <div><div class="settings-label">Streaming Agent (Mode B)</div><div class="settings-hint">Persistent process with stdin messaging (Claude: native; other providers: synthetic)</div></div>
+        <div><div class="settings-label">Streaming (Mode B)</div><div class="settings-hint">One persistent process per chat.</div></div>
         ${toggle('use_streaming_agent', cfg.use_streaming_agent)}
       </div>
       <div class="settings-row">
         <div>
-          <div class="settings-label">Remote Control <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:var(--accent-dim);color:var(--accent);margin-left:6px;letter-spacing:.3px">EXPERIMENTAL</span></div>
-          <div class="settings-hint">Passes <code>--remote-control</code> to <code>claude</code>. The CLI accepts it but the discovery channel doesn't open for non-TTY sessions, so MC-managed sessions don't appear in claude.ai. Use "Push Notifications" below for now.</div>
+          <div class="settings-label">Remote control <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:var(--accent-dim);color:var(--accent);margin-left:6px;letter-spacing:.3px">EXPERIMENTAL</span></div>
+          <div class="settings-hint">Headless sessions don't reach claude.ai yet — use Push notifications.</div>
         </div>
         ${toggle('agent_remote_control', cfg.agent_remote_control)}
       </div>
       <div class="settings-row">
-        <div><div class="settings-label">Channels</div><div class="settings-hint">MCP plugin channels (e.g. plugin:telegram@...)</div></div>
+        <div><div class="settings-label">Channels</div><div class="settings-hint">MCP plugin channels (e.g. plugin:telegram@…).</div></div>
         ${textInput('agent_channels', cfg.agent_channels)}
       </div>
     </div>
@@ -16852,21 +16849,21 @@ async function _renderSettings() {
       <div class="settings-detail-pane settings-hidden" data-cat="memory">
       <div class="settings-cat-label">Memory</div>
     <div class="settings-section">
-      <div class="settings-section-title">Memory & Condensation</div>
+      <div class="settings-section-title">Condensation</div>
       <div class="settings-row">
-        <div><div class="settings-label">Auto-Condense</div><div class="settings-hint">Automatically condense large memory files</div></div>
+        <div><div class="settings-label">Auto-condense</div><div class="settings-hint">Condense large memory files automatically.</div></div>
         ${toggle('condense_enabled', cfg.condense_enabled)}
       </div>
       <div class="settings-row">
-        <div><div class="settings-label">Condense Threshold (KB)</div><div class="settings-hint">Trigger condensation when memory exceeds this</div></div>
+        <div><div class="settings-label">Threshold (KB)</div><div class="settings-hint">Condense when memory exceeds this.</div></div>
         ${numInput('condense_threshold_kb', cfg.condense_threshold_kb)}
       </div>
       <div class="settings-row">
-        <div><div class="settings-label">Condense Model</div><div class="settings-hint">Model for housekeeping (blank = default)</div></div>
+        <div><div class="settings-label">Model</div><div class="settings-hint">Housekeeping model (blank = default).</div></div>
         ${textInput('condense_model', cfg.condense_model)}
       </div>
       <div class="settings-row">
-        <div><div class="settings-label">Condense Executor</div><div class="settings-hint">Structured = one non-agentic JSON call applied server-side (no Write-tool agent, no turn budget). Flip back to Agent to revert.</div></div>
+        <div><div class="settings-label">Executor</div><div class="settings-hint">Structured = one server-side JSON call (no agent).</div></div>
         <select class="settings-select" onchange="saveSetting('condense_mode',this.value)">${condenseModeSel}</select>
       </div>
     </div>
@@ -16877,7 +16874,7 @@ async function _renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">Appearance</div>
       <div class="settings-row">
-        <div><div class="settings-label">Theme</div><div class="settings-hint">Warm and Editorial are light themes — some chrome may show dark accents (experimental)</div></div>
+        <div><div class="settings-label">Theme</div><div class="settings-hint">Warm and Editorial are light themes.</div></div>
         <div class="mc-seg" id="mc-tone-seg">
           <button class="${currentTone==='dark'?'active':''}" onclick="setTone('dark')">Dark</button>
           <button class="${currentTone==='warm'?'active':''}" onclick="setTone('warm')">Warm</button>
@@ -16923,7 +16920,7 @@ async function _renderSettings() {
       <div class="settings-row">
         <div>
           <div class="settings-label">Mobile brief replies</div>
-          <div class="settings-hint">When you message from a phone (≤960px viewport or the APK), the agent answers Telegram-style: short, conversational, one idea per message. Same agent — just a hint added to the dispatch so the reply matches the medium. Switch to PC and your next message gets the full-length treatment again.</div>
+          <div class="settings-hint">From a phone, replies come back short and conversational. Full length on desktop.</div>
         </div>
         ${toggle('mobile_brief_replies_enabled', cfg.mobile_brief_replies_enabled)}
       </div>
@@ -18545,6 +18542,26 @@ async function saveSetting(key, value) {
 function toggleSetting(el, key) {
   const isOn = el.classList.toggle('on');
   saveSetting(key, isOn);
+}
+
+// The model picker merges the old Default-Model dropdown and the Auto-pick
+// toggle into one control. "Auto" enables the classifier; any other value pins
+// that model. Writes both keys in a single PUT so there's one save toast.
+async function saveModelChoice(v) {
+  const body = (v === '__auto__')
+    ? { auto_model_enabled: true }
+    : { auto_model_enabled: false, agent_model: v };
+  try {
+    await fetch(API_BASE + '/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    try { Object.assign(_globalConfig, body); } catch (_) {}
+    showToast('Setting saved');
+  } catch (e) {
+    showToast('Failed to save setting');
+  }
 }
 
 // ── Process Manager ──────────────────────────────────────────────────────────
