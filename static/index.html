@@ -5410,6 +5410,21 @@ function mcPushDrawerHistory() {
   if (_mcDrawerHistoryActive) return;
   try { history.pushState({ mc: 'drawer' }, ''); _mcDrawerHistoryActive = true; } catch (e) {}
 }
+// Settings modal has its own two-level depth (master list ↔ detail screen), so
+// it gets its own sentinels: hardware back steps detail → list → close, instead
+// of tearing the whole modal down (the bug Ron hit). Gated to touch devices /
+// narrow viewports — desktop browser back is left alone, same as the others.
+let _mcSettingsHistoryActive = false;        // settings modal open (L1-equivalent)
+let _mcSettingsDetailHistoryActive = false;  // drilled into detail OR in search (L2)
+function _settingsWantsBackNav() { return _isMobileDevice || window.innerWidth <= 960; }
+function mcPushSettingsHistory() {
+  if (!_settingsWantsBackNav() || _mcSettingsHistoryActive) return;
+  try { history.pushState({ mc: 'settings' }, ''); _mcSettingsHistoryActive = true; } catch (e) {}
+}
+function mcPushSettingsDetailHistory() {
+  if (!_settingsWantsBackNav() || _mcSettingsDetailHistoryActive) return;
+  try { history.pushState({ mc: 'settings-detail' }, ''); _mcSettingsDetailHistoryActive = true; } catch (e) {}
+}
 
 // ── Mobile navigation drawer (hamburger) ────────────────────────────────────
 // Pure DOM toggle so closeMobileDrawer can be reused by the popstate handler
@@ -5467,6 +5482,18 @@ window.addEventListener('popstate', () => {
   if (_mcDrawerHistoryActive) {
     _mcDrawerHistoryActive = false;              // sentinel consumed by back
     _closeMobileDrawerUI();                      // DOM-only, no extra history.go
+    return;
+  }
+  // Settings modal: detail screen → master list, then list → close. Checked
+  // before conv/modal because settings sits on top of everything when open.
+  if (_mcSettingsDetailHistoryActive) {
+    _mcSettingsDetailHistoryActive = false;      // L2 entry consumed by back
+    _settingsBackUI();                           // detail / search → master list
+    return;
+  }
+  if (_mcSettingsHistoryActive) {
+    _mcSettingsHistoryActive = false;            // L1 entry consumed by back
+    closeModalById('__settings');                // master list → close settings
     return;
   }
   // Then: drilled-in conversation → conversations list.
@@ -6655,9 +6682,12 @@ function closeModalById(modalId) {
   // flag is already false (popstate cleared it), so n=0 and this is a no-op
   // — no double-close.
   if (openModals.size === 0) {
-    const n = (_mcConvHistoryActive ? 1 : 0) + (_mcModalHistoryActive ? 1 : 0);
+    const n = (_mcConvHistoryActive ? 1 : 0) + (_mcModalHistoryActive ? 1 : 0)
+            + (_mcSettingsDetailHistoryActive ? 1 : 0) + (_mcSettingsHistoryActive ? 1 : 0);
     _mcConvHistoryActive = false;
     _mcModalHistoryActive = false;
+    _mcSettingsDetailHistoryActive = false;
+    _mcSettingsHistoryActive = false;
     _mcUnwindHistory(n);
   }
 }
@@ -16509,21 +16539,34 @@ function _applySettingsView() {
   body.scrollTop = 0;
 }
 
-// Drill into a category's detail screen.
+// Drill into a category's detail screen (forward nav → push a back sentinel so
+// hardware/UI back returns to the master list instead of closing the modal).
 function drillSettings(cat) {
   _settingsActiveCat = cat;
   _settingsView = 'detail';
   const s = document.getElementById('settings-search');
   if (s) s.value = '';
+  mcPushSettingsDetailHistory();
   _applySettingsView();
 }
 
-// Return from a detail screen to the master list.
-function settingsBack() {
+// Pure UI: detail / search → master list. Also called by the popstate handler,
+// which has already consumed the L2 history entry — so do NOT touch history here.
+function _settingsBackUI() {
   _settingsView = 'list';
   const s = document.getElementById('settings-search');
   if (s) s.value = '';
   _applySettingsView();
+}
+
+// On-screen back arrow: same UI as _settingsBackUI, but also synthetically pops
+// the L2 sentinel so the hardware-back stack stays in sync (mirrors mcBackFromConv).
+function settingsBack() {
+  if (_mcSettingsDetailHistoryActive) {
+    _mcSettingsDetailHistoryActive = false;
+    _mcUnwindHistory(1);
+  }
+  _settingsBackUI();
 }
 
 // Live-filter every setting by label + hint text. A section-title match reveals
@@ -16532,6 +16575,11 @@ function settingsBack() {
 function filterSettings(q) {
   q = (q || '').trim().toLowerCase();
   if (!q) {
+    // Leaving search → master list; unwind the sentinel if we pushed one.
+    if (_settingsView === 'search' && _mcSettingsDetailHistoryActive) {
+      _mcSettingsDetailHistoryActive = false;
+      _mcUnwindHistory(1);
+    }
     _settingsView = 'list';
     _applySettingsView();
     const s = document.getElementById('settings-search');
@@ -16539,7 +16587,10 @@ function filterSettings(q) {
     return;
   }
 
-  _settingsView = 'search';
+  if (_settingsView !== 'search') {
+    _settingsView = 'search';
+    mcPushSettingsDetailHistory();  // hardware/UI back exits search → master list
+  }
   _applySettingsView();
   let anyMatch = false;
   document.querySelectorAll('#settings-detail .settings-detail-pane').forEach(pane => {
@@ -16612,6 +16663,11 @@ async function openSettings() {
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
   centerModalElement(win);
   focusModal(modalId);
+
+  // Mobile hardware-back support: this sentinel makes back close the settings
+  // modal once you're at the master list. drillSettings pushes a second one so
+  // back from a detail screen returns to the list first (Ron's reported bug).
+  mcPushSettingsHistory();
 
   await _renderSettings();
 }
