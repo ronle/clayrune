@@ -319,9 +319,27 @@ Backend build can proceed once condense is fixed (gate #1 still open).
 4. **v2.1 spec revision** — DONE 2026-05-29. All 14 must-fix-in-design
    conditions closed inline. Picks D2 (Option A: exact+1) and D3(ii)
    (Option B: lock-free retry) locked.
-5. **Build.** ~900–1200 LOC for v2.1 scope (up from v2's 700–900 due
-   to convergent condition edits). Single bundled PR. Gated only on
-   condense fix.
+5. **Backend build** — DONE 2026-05-29 (commit `d2dc8a6` on
+   `local/opus-effort`). `distiller.py` (~1600L) + server.py wiring +
+   3 Flask endpoints + 31 tests passing. Self-learning loop LIVE.
+
+**Self-learning system NOW OPERATIONAL.** End-to-end verified:
+- Session ends → daemon-thread `_distill_extract_and_aggregate` fires
+  parallel to Scribe (best-effort, never blocks completion).
+- Closed-vocab fingerprint (80 verbs, 123 nouns, 12 modifiers; D1
+  closure proven: subsystem terms `condense/scribe/distiller/hivemind/
+  pair/mobile-pair/github-sync/project-sync` are NOUNS, not modifiers).
+- Dual-layer recurrence (exact + coarse, threshold = N and N+1).
+- Three artifact kinds (SKILL/EXPLORATION/PREFERENCE) generated to
+  `data/skills/_proposed/{global,<project_id>}/<...>/`.
+- Cross-project inline aggregation, lock-free walk with 3-retry parse.
+- Suppression keyed on (fingerprint, kind); record-push endpoint live.
+- Cost cap with structured log including cap_value.
+
+**Polish deferred (separate work tracks):** Skills panel UI for the
+`_proposed/` queue (frontend), EXPLORATION.md read-floor injection
+into `_build_agent_context`, promotion-time UI flows, `auto` mode
+(Phase 5).
 
 **No backend learning-system code lands** until condense is fixed AND
 v2 has cleared committee. Same discipline as parent design v2 and
