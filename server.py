@@ -3301,6 +3301,27 @@ def _clayrune_api_reference() -> str:
     return ''
 
 
+_PLANS_DIR = Path.home() / '.claude' / 'plans'
+
+
+def _is_plan_path(fp: str) -> bool:
+    """True if fp is a .md file under ~/.claude/plans/.
+
+    Headless-safe plan detection: ExitPlanMode hangs without a TTY (agents are
+    told not to use it), so any markdown file written into ~/.claude/plans/ is
+    registered as the session's plan instead. Feeds session['plan_file'] → the
+    PLAN tab (/api/project/<id>/plans) and the in-chat plan link.
+    """
+    try:
+        p = Path(fp)
+        if p.suffix.lower() != '.md':
+            return False
+        p.resolve().relative_to(_PLANS_DIR.resolve())
+        return True
+    except Exception:
+        return False
+
+
 def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
     """Universal Clayrune-aware behaviors that apply to EVERY agent —
     regular project agents, hivemind workers, future agent types.
@@ -3319,11 +3340,17 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
     if port is None:
         port = PORT
     return [
-        # Plan mode hangs in headless Claude Code regardless of agent type.
-        "IMPORTANT — Plan Mode: Do NOT use EnterPlanMode or ExitPlanMode. "
-        "You are running headless without an interactive terminal, so plan "
-        "mode approval will hang indefinitely. Just describe your plan in a "
-        "text message and proceed directly with implementation.",
+        # Plan mode hangs in headless Claude Code regardless of agent type, so
+        # plans are captured as files instead (see _is_plan_path + the PLAN tab).
+        "IMPORTANT — Plans: Do NOT use EnterPlanMode or ExitPlanMode — you run "
+        "headless with no interactive terminal, so plan-mode approval hangs "
+        "indefinitely. Instead, when you form a non-trivial plan: (1) describe it "
+        "inline in your chat reply, AND (2) write the full plan as a markdown "
+        "file into your home directory's .claude/plans/ folder (an absolute "
+        "path, e.g. ~/.claude/plans/<short-descriptive-name>.md; create the "
+        "folder if needed). Clayrune auto-detects plans written there and shows "
+        "them in the project's PLAN tab with a link in the chat — there is no "
+        "approval step, just keep working after you write the file.",
 
         # Clayrune intercepts AskUserQuestion and renders it as an interactive form.
         "Questions: When you need to ask the user, use the AskUserQuestion "
@@ -3925,6 +3952,11 @@ def _read_agent_stream(proc, session):
                                 fp = tool_input.get('file_path', '')
                                 if fp.lower().endswith('.md'):
                                     session['_last_md_file'] = fp
+                                    # A plan written into ~/.claude/plans/
+                                    # registers immediately (headless-safe; no
+                                    # ExitPlanMode). Feeds the PLAN tab + link.
+                                    if _is_plan_path(fp):
+                                        session['plan_file'] = fp
                             elif tool_name == 'ExitPlanMode':
                                 if session.get('_last_md_file'):
                                     session['plan_file'] = session['_last_md_file']
@@ -4091,6 +4123,11 @@ def _read_agent_stream_b(proc, session):
                                 fp = tool_input.get('file_path', '')
                                 if fp.lower().endswith('.md'):
                                     session['_last_md_file'] = fp
+                                    # A plan written into ~/.claude/plans/
+                                    # registers immediately (headless-safe; no
+                                    # ExitPlanMode). Feeds the PLAN tab + link.
+                                    if _is_plan_path(fp):
+                                        session['plan_file'] = fp
                             elif tool_name == 'ExitPlanMode':
                                 if session.get('_last_md_file'):
                                     session['plan_file'] = session['_last_md_file']
