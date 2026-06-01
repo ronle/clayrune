@@ -191,6 +191,17 @@ def _pcfg(project, key, default=None):
 
 # Telemetry counters incremented by the fingerprint pure function.
 # Counter names are stable strings used as _skill_stats.json keys.
+# Extraction tail cap. Multi-MB session transcripts exceed haiku's
+# context window; Scribe handles this via map-reduce at 350KB, but
+# Distiller's "what happened here" extraction only needs the recent
+# activity. Empirically the cheap-model call's wall time grows linearly
+# above ~100KB and times out / errors around 250KB. 80KB (~20K tokens)
+# gives the model plenty of context while staying well under the limit.
+# Adds an `extraction_truncated` telemetry counter so operators can see
+# how often truncation fires — sustained high rates mean the cap may
+# want bumping if the cheap-model context grows.
+EXTRACTION_TAIL_CHARS = 80_000
+
 TELEM_VOCABULARY_MISS = 'vocabulary_miss'
 TELEM_EXTRA_TOKENS_DROPPED = 'extra_tokens_dropped'
 TELEM_WALK_SKIPPED_PROJECTS = 'walk_skipped_projects'
@@ -662,13 +673,27 @@ def _do_extract_aggregate(project_id: str, project: dict,
         return
     if not transcript or len(transcript.strip()) < 200:
         return  # too thin for meaningful extraction (skip silently)
+    # Tail-truncate to the most recent EXTRACTION_TAIL_CHARS so the cheap-
+    # model call doesn't choke on multi-MB session transcripts. The tail
+    # captures the salient "what happened" content — earlier exploration
+    # already produced its own session-end fire if it warranted distillation.
+    # This is the equivalent of Scribe's single/map-reduce branch at
+    # _SCRIBE_SINGLE_LIMIT=350K, but Distiller doesn't need full coverage —
+    # just recent activity — so a flat tail is sufficient.
+    if len(transcript) > EXTRACTION_TAIL_CHARS:
+        transcript = transcript[-EXTRACTION_TAIL_CHARS:]
+        _increment_counter(project_id, 'extraction_truncated')
     # Cheap-model extraction
     model = _cfg('distiller_model', '') or 'haiku'
     try:
         raw = _scribe_call(model, _extraction_prompt(project_id, project),
                            transcript)
-    except Exception:
+    except Exception as e:
         _increment_counter(project_id, 'extraction_error')
+        _structured_log(
+            f"extraction_error:project_id={project_id}:sid={sid}:"
+            f"transcript_chars={len(transcript)}:err={type(e).__name__}"
+        )
         return
     parsed = _parse_extraction(raw)
     if parsed is None:
