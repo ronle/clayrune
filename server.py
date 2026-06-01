@@ -10863,66 +10863,100 @@ def get_project_conversations(project_id):
     return jsonify(out)
 
 
+# ── PLAN tab load cache ───────────────────────────────────────────────────────
+# /api/project/<id>/plans re-read every plan file (read + regex for the title)
+# and re-parsed the whole agent log on every tab open — both are I/O that grows
+# with history, which is the slow tab load. Cache both by mtime. Payload assembly
+# is cheap in-memory CPU, so it's rebuilt each call → titles are always fresh (no
+# whole-payload staleness) while the I/O is skipped when nothing changed.
+# Best-effort: a cache error falls back to the direct log read, and
+# _plan_title_for is self-guarding. CPython dict ops are atomic under the GIL, so
+# these module-level caches need no lock for the threaded server.
+_plan_title_cache: dict = {}      # plan_file path -> (mtime, title)
+_plans_log_cache: dict = {}       # project_id  -> (log_mtime, parsed_log)
+
+
+def _plan_title_for(p: Path) -> str:
+    """First '# ' heading of a plan file, memoized by (path, mtime)."""
+    import re
+    key = str(p)
+    try:
+        mtime = p.stat().st_mtime
+    except Exception:
+        return p.stem
+    cached = _plan_title_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
+        content = p.read_text(encoding='utf-8')
+        m = re.match(r'^#\s+(.+)', content, re.MULTILINE)
+        title = m.group(1).strip() if m else p.stem
+    except Exception:
+        title = p.stem
+    _plan_title_cache[key] = (mtime, title)
+    return title
+
+
+def _plans_cached_log(project_id):
+    """_load_agent_log, but skip the JSON parse when the log file's mtime is unchanged."""
+    filepath = DATA_DIR / f'{project_id}_agent_log.json'
+    try:
+        mtime = filepath.stat().st_mtime
+    except Exception:
+        _plans_log_cache.pop(project_id, None)
+        return []
+    cached = _plans_log_cache.get(project_id)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    log = _load_agent_log(project_id)
+    _plans_log_cache[project_id] = (mtime, log)
+    return log
+
+
 @app.route('/api/project/<project_id>/plans')
 def get_project_plans(project_id):
-    """Return all plan files associated with this project from agent log + live sessions."""
-    import re
-    log = _load_agent_log(project_id)
-    plans = []
-    seen = set()
+    """Return all plan files for this project (live sessions + agent log).
 
-    # Include plans from currently running/idle sessions (not yet in log)
-    for sid, s in agent_sessions.items():
-        if s['project_id'] != project_id:
-            continue
-        pf = s.get('plan_file', '')
-        if not pf or pf in seen:
-            continue
-        p = Path(pf)
-        if not p.is_file():
-            continue
-        seen.add(pf)
-        try:
-            content = p.read_text(encoding='utf-8')
-            m = re.match(r'^#\s+(.+)', content, re.MULTILINE)
-            title = m.group(1).strip() if m else p.stem
-        except Exception:
-            title = p.stem
-        plans.append({
-            'plan_file': pf,
-            'filename': p.name,
-            'title': title,
-            'task': s.get('task', ''),
-            'ts': s.get('started_at', ''),
-            'ts_relative': time_ago(s.get('started_at')),
-            'session_id': s.get('session_id', ''),
-        })
+    Titles and the agent-log parse are cached by mtime (_plan_title_for /
+    _plans_cached_log) so repeated tab opens don't re-read unchanged files.
+    """
+    def _build(log):
+        plans = []
+        seen = set()
 
-    for entry in log:
-        pf = entry.get('plan_file', '')
-        if not pf or pf in seen:
-            continue
-        p = Path(pf)
-        if not p.is_file():
-            continue
-        seen.add(pf)
-        # Extract first heading from file
-        try:
-            content = p.read_text(encoding='utf-8')
-            m = re.match(r'^#\s+(.+)', content, re.MULTILINE)
-            title = m.group(1).strip() if m else p.stem
-        except Exception:
-            title = p.stem
-        plans.append({
-            'plan_file': pf,
-            'filename': p.name,
-            'title': title,
-            'task': entry.get('task', ''),
-            'ts': entry.get('ts', ''),
-            'ts_relative': time_ago(entry.get('ts')),
-            'session_id': entry.get('session_id', ''),
-        })
-    return jsonify(plans)
+        def _add(pf, task, ts, session_id):
+            if not pf or pf in seen:
+                return
+            p = Path(pf)
+            if not p.is_file():
+                return
+            seen.add(pf)
+            plans.append({
+                'plan_file': pf,
+                'filename': p.name,
+                'title': _plan_title_for(p),
+                'task': task or '',
+                'ts': ts or '',
+                'ts_relative': time_ago(ts),
+                'session_id': session_id or '',
+            })
+
+        # Live sessions first (may not be in the log yet)
+        for sid, s in agent_sessions.items():
+            if s.get('project_id') != project_id:
+                continue
+            _add(s.get('plan_file', ''), s.get('task', ''),
+                 s.get('started_at', ''), s.get('session_id', ''))
+        for entry in log:
+            _add(entry.get('plan_file', ''), entry.get('task', ''),
+                 entry.get('ts', ''), entry.get('session_id', ''))
+        return plans
+
+    try:
+        log = _plans_cached_log(project_id)
+    except Exception:
+        log = _load_agent_log(project_id)
+    return jsonify(_build(log))
 
 
 # ── Usage / token tracking ──────────────────────────────────────────────────
