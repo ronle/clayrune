@@ -125,6 +125,65 @@ Three planes:
 
 ---
 
+### 3.1 POC topology (small scale) — one host, many containers
+
+**The per-user-microVM fleet above is the scale-out target, not the starting
+point.** For the POC (a handful of *trusted* testers, not the public), spinning
+up a separate cloud instance per user is overkill and over-cost. Start with **one
+rented host** and isolate users *on* it:
+
+```
+   one host we rent (a single VPS / Fly machine / Hetzner box)
+   ├── user A container → MC on :5199 (own netns) + /data/A volume
+   ├── user B container → MC on :5199 (own netns) + /data/B volume
+   └── user C container → …
+                 │
+                 └── object-storage bucket  (durability + cold/archive)
+```
+
+- **One bill.** You pay for the single host, not N instances. At POC scale the
+  storage floor, the fleet orchestrator, and the ~$67 control plane all collapse
+  — the "orchestrator" is `docker compose` + a few commands.
+- **The single-instance invariant is preserved, not violated** (reconciles
+  §4.1). Each container has its own network namespace, so every user's MC binds
+  *its own* `localhost:5199` with no collision and **no code change** — exactly
+  the property §4.1 wants, achieved with containers instead of microVMs. Each
+  container still owns its `DATA_ROOT`, scheduler, and memory files.
+- **Isolation is a ladder, not a cliff.** For trusted testers, **plain Docker
+  containers** are enough today. When untrusted users arrive, swap the container
+  runtime to **gVisor / Kata / Firecracker** — each container then gets its own
+  kernel / micro-VM: *same topology, stronger walls, no app change.* Don't pay
+  for hardware-grade isolation against your own testers on day one; raise the bar
+  with the audience.
+- **Storage: local volume for live, bucket for durable** (answers "can we use
+  buckets?"). Do **not** run the live workspace off a bucket-fuse mount
+  (s3fs/gcsfuse): MC drives git working trees + thousands of small files, and git
+  over fuse is slow and flaky. Keep each user's *live* data on a **local volume**
+  (fast POSIX fs); **sync/snapshot to an object-storage bucket** (S3 / GCS /
+  Cloudflare R2) for durability, backup, and cold/archive. This is the
+  committee's archive-and-detach idea (§8 `[C:S3.2]`) pulled in early — and it is
+  the per-user durable asset if the host dies.
+- **Sleep/wake is optional at POC.** With a few users on one box, keep containers
+  warm (or `docker stop` idle ones — trivial, no scheduler mirror needed). The
+  whole §4.3/§4.4 sleep/wake machinery is a scale concern; defer it.
+
+**Committee conditions that *relax* at POC scale** (they were scale problems):
+the storage floor (trivial at N=few), runaway-compute (bounded by one host you
+watch — `docker stats` + a cap), the $67 control-plane reuse, and
+cold-start/sleep-wake (keep warm). **Conditions that still apply even at POC:**
+BYOK env-inheritance is still the wiring (§5 — verified, free); the
+`provider_env.json` plaintext-on-volume hazard (§5.3 `[C:S2.1]`) is real the
+moment a key is injected; per-container key isolation; and you still hold a
+user's key, so be honest about custody (§5) even with testers.
+
+**This *is* Phases 0–1, on one host.** The scale-out path is a swap, not a
+rewrite: container→microVM, one-host→fleet, local-volume→per-VM-volume,
+docker-compose→fleet-orchestrator. Write the control-plane seam (§9) so that swap
+is *configuration, not a second system* — the in-VM MC core is identical either
+way.
+
+---
+
 ## 4. The microVM and its lifecycle (the core of the sleep/wake decision)
 
 ### 4.1 Why one microVM per user (not multi-tenant)
@@ -140,6 +199,12 @@ their own microVM. The invariant becomes a *feature* — strong isolation,
 no blast radius across users, and **zero server code changes** for tenancy.
 MicroVMs (Firecracker-class) give us hardware-grade isolation, which is the
 right posture for running arbitrary agent code + holding a user's API key.
+
+**(POC note:** at small scale this same "one isolated instance per user"
+property is achieved with *containers on one host* — see §3.1. The per-microVM
+fleet here is the scale-out target. The argument below — lean into the
+single-instance invariant rather than refactor for multi-tenancy — holds
+identically for containers: each gets its own netns and its own `:5199`.)
 
 ### 4.2 Provider / mechanism
 
