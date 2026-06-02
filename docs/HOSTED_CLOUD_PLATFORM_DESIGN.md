@@ -640,19 +640,33 @@ decoupled from our (cheap, ~storage) cost of holding it — so it's the lever th
 lifts margin above thin cost-plus, *honestly*, because the user is paying to keep
 and reach their work, not for metered use.
 
-**Bucket structure (illustrative — set thresholds/prices from live GCP rates +
-margin).** Each workspace's bill is a transparent line-item sum the user can read:
+**Bucket prices — costed from GCP list rates** (`docs/poc/bucket_pricing.py`;
+illustrative, verify rates + region before launch). Each bucket price = our GCP
+cost at the bucket ceiling × a value-add markup (backup/DR, always-on hosting,
+control plane, support):
 
-| Dimension | Bucket examples | Note |
-|---|---|---|
-| Storage | S ≤10GB · M ≤50GB · L ≤200GB · XL custom | keep-driven; dominant cost |
-| Network / egress | S ≤20GB/mo · M ≤100GB · L ≤500GB | usage-correlated → generous + visible |
-| Compute / GCP | Sleep (scale-to-zero) · Warm-small · Warm-large / concurrent | always-on costs more |
+| Dimension | S | M | L |
+|---|---|---|---|
+| Storage (PD + backup) | ≤10GB → **$3** | ≤50GB → **$20** | ≤200GB → **$65** |
+| Network / egress | ≤20GB/mo → **$5** | ≤100GB → **$25** | ≤500GB → **$120** |
+| Compute | Sleep → **$4** | Warm-small → **$25** | Warm-large → **$100** |
 
-A base plan includes the entry bucket on each dimension (+ assisted key setup);
-crossing a bucket bumps just that one line, and we show it *before* it happens.
-The user always sees a plain breakdown — *"Storage M + Network S + Sleep = $N."*
-No tokens (BYOK), no metering, no surprise.
+Plus a **$5 base** (control plane + assisted key setup + backup infra). Example
+monthly bills:
+
+| Profile | Bill | Our cost | Margin |
+|---|---|---|---|
+| Casual (10GB / 20 / Sleep) | **$17** | $7 | 57% |
+| Regular (50GB / 100 / Sleep) | **$54** | $21 | 61% |
+| Power (200GB / 100 / Warm-S) | **$120** | $47 | 61% |
+| Studio (200GB / 500 / Warm-L) | **$290** | $132 | 55% |
+
+The user always sees the breakdown — *"$5 base + Storage M + Network S + Sleep."*
+A bucket changes only when they cross it, shown *before* it happens. No tokens
+(BYOK), no metering. **Storage** (keep-driven) carries the fattest margin (~70%);
+**egress** is the one usage-correlated line so its markup stays modest (~50%) and
+its buckets generous; **cold-tiering** old data to GCS Coldline/Archive is the
+lever to widen storage buckets cheaply for power users.
 
 **Value proposition:** *"Bring any AI key you like; we're the always-on,
 backed-up home for everything your agents build — on your phone, no machine to
