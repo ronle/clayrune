@@ -12,6 +12,71 @@ there and re-run (`python docs/poc/income_model.py`) to test your own numbers.
 
 ---
 
+## Decision brief — pricing & cost strategy
+
+**Recommendation (one line):** launch **managed-token** (we resell, one bill) on
+**flat phone-plan tiers with hard allowances**, **Sonnet-default / Opus held per
+session**, **prompt caching on**, **terse-by-default on mobile**, and **no
+automatic overage**. Base case **~35% gross margin**, **~46–55%** with the two
+experience-neutral levers (caching + output budgeting) fully used.
+
+**Why managed, not BYOK.** The launch buyer is non-technical and mobile-first.
+BYOK (paste your own Anthropic key) is a conversion-killer for them — they don't
+have a key and won't create one. Managed = "one signup, one bill, just works."
+The cost: we become a reseller and carry the token tail (mitigated by the levers
+below). BYOK stays as a power-user on-ramp / alternative, not the mainstream path.
+
+**The shape of the business** (illustrative — see §3):
+
+| Paying users | Gross/mo (base) | Gross/yr |
+|---|---|---|
+| 1,000 | ~$13K | ~$156K |
+| 10,000 | ~$131K | ~$1.6M |
+| 50,000 | ~$657K | ~$7.9M |
+
+Linear at ~35% gross; the levers lift that to ~46–55% **without raising price**.
+
+**The four levers that decide margin** (§4):
+
+| Lever | Effect | Type |
+|---|---|---|
+| Prompt caching | OFF = −27% (loss) → ON = +35% | make-or-break |
+| Allowance enforcement | 15% leakage → break-even | make-or-break |
+| Output budgeting (terse-on-mobile) | +11 pts (35→46%) | rescue, experience-neutral |
+| Usage mix | light 44% vs heavy 19% | positioning |
+
+Two can sink it (caching, allowance); two are upside. The two experience-neutral
+levers — caching + terse-on-mobile — carry most of the lift at zero quality cost.
+
+**Locked decisions:**
+- Managed tokens, flat tiers, hard allowances, **no automatic overage** (cap =
+  graceful slow / user-chosen top-up — a surprise bill must be structurally
+  impossible).
+- **Sonnet-default; Opus held per session** — never mid-thread model switching
+  (it breaks memory/continuity — the constraint we hit and reversed).
+- Show **friendly units** (tasks / agent-time), never tokens.
+- **Caching on**, with the per-turn verbosity hint in the **uncached tail** so it
+  stacks with (doesn't bust) the cache.
+
+**Open decisions (need your call):**
+1. **Price ladder** — base model uses $20 / $49 / $99. Power at $99 is a *loss* on
+   a true heavy user; reprice to ~$140–160 **or** cap its allowance to ~350–400
+   turns/mo. Pick one.
+2. **Free tier at launch?** Free COGS is a real P&L line (~$4.7K/mo at 1K payers).
+   Recommend invite-only or paid-only until archive-and-detach ships.
+3. **Token backend** — Anthropic-direct vs Google Vertex (GCP credits, but verify
+   caching parity first). Gated on the Phase-0 caching test.
+
+**Hard gates before build:** (a) prove **prompt caching** on the chosen backend in
+Phase 0 — it's a go/no-go (caching-off is a money-losing business); (b)
+**allowance enforcement** must be real, not cosmetic.
+
+**Biggest uncertainty → cheapest fix.** The model rests on three guesses —
+turns/month, context size/turn, cache-hit rate. A week of POC telemetry replaces
+all three and turns this brief from a framework into a forecast.
+
+---
+
 ## Scenario modeled
 
 The locked product shape from the design + pricing talks:
