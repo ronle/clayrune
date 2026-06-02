@@ -580,14 +580,20 @@ proprietary (a third proprietary citizen alongside `mc_remote/` and `mc_tunnel`)
 2. **Flat fee on storage.** Their data footprint — projects, repos, transcripts,
    memory on the volume. Flat $/GB or bucketed tiers. Cost-plus, predictable.
 
-3. **Flat fee on IP (intellectual property) — the margin layer.** We are the
-   durable, always-on, backed-up **home for the user's work**: projects, code,
-   content, automations, and the agent's accumulated memory — reachable from any
-   device, with agents that act on it. We charge a flat fee to *keep and host*
-   that IP. It is **decoupled from usage**: using the agent more never costs more;
-   only *keeping more* does. Our cost to hold IP ≈ storage (cheap, bounded); the
-   value to the user is high — **that gap is the margin**, and it monetizes the
-   data-gravity moat directly.
+3. **Workspace hosting fee (the margin layer) — bucketed & transparent.** The
+   billing unit is the **workspace** (which can hold many projects), not the
+   project. We are the durable, always-on, backed-up **home for the user's work**:
+   projects, code, content, automations, the agent's accumulated memory —
+   reachable from any device, with agents that act on it. The workspace's monthly
+   price is **bucketed across the real cost drivers** — storage (GB),
+   network/egress, and compute/other GCP — so the user sees **exactly what they're
+   paying for**, never metered, never surprised. You sit in a bucket on each
+   dimension and pay that bucket until you cross into the next (with a heads-up
+   *before* you do). Honest (it's your own footprint, transparently priced),
+   predictable (buckets, not per-unit meters), and cost-aligned (buckets track GCP
+   cost + margin). Storage is keep-driven and dominant; network is the one
+   usage-correlated dimension, so its buckets stay generous + visible to preserve
+   the no-surprise rule. This monetizes the data-gravity moat honestly.
 
 **Why this resolves what we hit:** nothing metered or hidden (no "con"); no
 runaway-token tail (it's the user's key/cost); our cost stays **bounded** —
@@ -634,12 +640,19 @@ decoupled from our (cheap, ~storage) cost of holding it — so it's the lever th
 lifts margin above thin cost-plus, *honestly*, because the user is paying to keep
 and reach their work, not for metered use.
 
-**The IP unit (the one open pricing decision).** "Charge on IP" needs a unit.
-Recommended: **per active project/workspace**, with a *generous base* (hosted
-agent + a few projects + N GB included) and flat step-ups — **not** per-unit
-nickel-and-diming, which would discourage creating (the opposite of the goal).
-Tier by IP footprint (projects + history depth), never by usage; casual users
-never feel it, power users with lots of retained work pay more.
+**Bucket structure (illustrative — set thresholds/prices from live GCP rates +
+margin).** Each workspace's bill is a transparent line-item sum the user can read:
+
+| Dimension | Bucket examples | Note |
+|---|---|---|
+| Storage | S ≤10GB · M ≤50GB · L ≤200GB · XL custom | keep-driven; dominant cost |
+| Network / egress | S ≤20GB/mo · M ≤100GB · L ≤500GB | usage-correlated → generous + visible |
+| Compute / GCP | Sleep (scale-to-zero) · Warm-small · Warm-large / concurrent | always-on costs more |
+
+A base plan includes the entry bucket on each dimension (+ assisted key setup);
+crossing a bucket bumps just that one line, and we show it *before* it happens.
+The user always sees a plain breakdown — *"Storage M + Network S + Sleep = $N."*
+No tokens (BYOK), no metering, no surprise.
 
 **Value proposition:** *"Bring any AI key you like; we're the always-on,
 backed-up home for everything your agents build — on your phone, no machine to
