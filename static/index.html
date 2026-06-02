@@ -4871,6 +4871,10 @@
       <span class="si-icon">&#x1F576;&#xFE0F;</span>
       <span class="si-label">Incognito</span>
     </div>
+    <div class="sidebar-item" data-nav="power" onclick="openPowerDialog()" title="Power — restart or shut down Clayrune">
+      <span class="si-icon">&#x23FB;</span>
+      <span class="si-label">Power</span>
+    </div>
     <div class="sidebar-divider"></div>
     <div class="sidebar-section-label">Projects</div>
     <div class="sidebar-projects" id="sidebar-projects"></div>
@@ -16125,12 +16129,13 @@ function _handleServerRestart() {
 // add another startup blocker — best-effort fire-and-forget.
 setTimeout(() => { _checkServerRestart(); }, 1500);
 
-// ── Restart Mission Control (with active-flow warning + reconnect overlay) ──
-// User triggers from Settings → "Restart server". We GET the live blocker list
-// first, render a warning modal, and only POST to /api/system/restart after
-// explicit confirmation. The frontend then shows a "Restarting..." overlay and
-// polls /api/projects until it 200s, at which point the page reloads — the
-// existing mc_open_modals localStorage snapshot brings back the conversations.
+// ── Power: restart / shut down Mission Control (active-flow warning) ────────
+// User triggers from the "Power" sidebar item or Settings → Server. openPowerDialog
+// GETs the live blocker list, renders a warning modal, and POSTs to
+// /api/system/restart or /api/system/shutdown only after explicit confirmation.
+// Restart shows a "Restarting..." overlay that polls heartbeat until the new
+// process answers, then reloads (the mc_open_modals snapshot restores the
+// conversations). Shutdown shows a terminal "powered off" overlay — no respawn.
 // ── Update Clayrune (Settings → Server → Update) ──────────────────────────
 
 async function refreshUpdateStatus() {
@@ -16207,7 +16212,7 @@ async function performClayruneUpdate() {
     btn.textContent = data.restart_recommended ? 'Restart now' : 'Done';
     btn.disabled = false;
     if (data.restart_recommended) {
-      btn.onclick = () => { closeModalById('__settings'); openRestartConfirmation(); };
+      btn.onclick = () => { closeModalById('__settings'); openPowerDialog(); };
     }
     // Update succeeded -- clear the sidebar dot + reset the dismissal markers
     // so the NEXT update gets a fresh toast cleanly.
@@ -16221,7 +16226,7 @@ async function performClayruneUpdate() {
   }
 }
 
-async function openRestartConfirmation() {
+async function openPowerDialog() {
   let status;
   try {
     const res = await fetch(API_BASE + '/api/system/restart/status');
@@ -16268,21 +16273,23 @@ async function openRestartConfirmation() {
   content.style.height = 'auto';
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
-      <span style="font-size:16px;font-weight:700;color:var(--text)">Restart Clayrune</span>
+      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x23FB;&nbsp; Restart or shut down</span>
       <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
         <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
       </div>
     </div>
     <div style="padding:8px 28px 20px;color:var(--text);font-size:13px;line-height:1.55">
-      <p style="margin:6px 0 4px">This restarts the Clayrune server process so it picks up new code or config.</p>
-      <p style="margin:4px 0 8px;color:var(--text-dim);font-size:12px">Your open conversation modals will be restored automatically once the server is back.</p>
+      <p style="margin:6px 0 4px"><strong>Restart</strong> reloads the server process (to pick up new code or config) and reconnects this dashboard automatically.</p>
+      <p style="margin:4px 0 8px"><strong>Shut down</strong> stops Clayrune completely — the dashboard goes offline until you relaunch it from the Clayrune shortcut.</p>
+      <p style="margin:4px 0 8px;color:var(--text-dim);font-size:12px">Open conversation modals are restored automatically after a restart.</p>
       ${listHTML}
       ${hasActive
-        ? '<p style="margin:10px 0 0;color:var(--text-dim);font-size:12px">The above flows will be stopped before the restart. Their progress so far is preserved on disk; they can be resumed afterward.</p>'
+        ? '<p style="margin:10px 0 0;color:var(--text-dim);font-size:12px">The above flows will be stopped first. Their progress so far is preserved on disk; they can be resumed afterward.</p>'
         : '<p style="margin:10px 0 0;color:var(--text-dim);font-size:12px">No active sessions — restart is safe.</p>'}
-      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap">
         <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="closeModalById('${modalId}')">Cancel</button>
-        <button class="btn-dispatch" id="restart-go-btn" style="background:var(--red-dim,#5a2828);border-color:var(--red,#e35858);color:var(--red-text,#ffd2d2)" onclick="performRestart(${hasActive ? 'true' : 'false'})">${hasActive ? 'Stop all and restart' : 'Restart'}</button>
+        <button class="btn-dispatch" id="restart-go-btn" style="background:var(--accent-dim,#22364a);border-color:var(--accent,#4ea1ff);color:var(--accent,#cfe6ff)" onclick="performRestart(${hasActive ? 'true' : 'false'})">${hasActive ? 'Stop all and restart' : 'Restart'}</button>
+        <button class="btn-dispatch" id="shutdown-go-btn" style="background:var(--red-dim,#5a2828);border-color:var(--red,#e35858);color:var(--red-text,#ffd2d2)" onclick="performShutdown(${hasActive ? 'true' : 'false'})">${hasActive ? 'Stop all and shut down' : 'Shut down'}</button>
       </div>
     </div>`;
   win.appendChild(content);
@@ -16322,7 +16329,7 @@ async function performRestart(force) {
     const data = await res.json().catch(() => ({}));
     closeModalById('__restart_confirm');
     showToast('New activity started — please confirm again', 4000);
-    setTimeout(() => openRestartConfirmation(), 300);
+    setTimeout(() => openPowerDialog(), 300);
     return;
   }
 
@@ -16424,6 +16431,69 @@ function showRestartingOverlay() {
     setTimeout(poll, 1000);
   };
   setTimeout(poll, 1200);
+}
+
+async function performShutdown(force) {
+  const btn = document.getElementById('shutdown-go-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Shutting down...'; }
+  let res;
+  try {
+    res = await fetch(API_BASE + '/api/system/shutdown', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ confirmed: true, force: !!force }),
+    });
+  } catch (e) {
+    // Network error usually means the server already started exiting — success.
+    closeModalById('__restart_confirm');
+    showPoweredOffOverlay();
+    return;
+  }
+
+  if (res.status === 202) {
+    closeModalById('__restart_confirm');
+    showPoweredOffOverlay();
+    return;
+  }
+
+  if (res.status === 409) {
+    // Race: a new session started after our GET. Re-prompt with current blockers.
+    await res.json().catch(() => ({}));
+    closeModalById('__restart_confirm');
+    showToast('New activity started — please confirm again', 4000);
+    setTimeout(() => openPowerDialog(), 300);
+    return;
+  }
+
+  // Other failure
+  const data = await res.json().catch(() => ({}));
+  showToast('Shutdown failed: ' + (data.error || 'HTTP ' + res.status), 5000);
+  if (btn) { btn.disabled = false; btn.textContent = force ? 'Stop all and shut down' : 'Shut down'; }
+}
+
+function showPoweredOffOverlay() {
+  // Flush UI snapshots before the connection drops (mirrors showRestartingOverlay)
+  // so a later manual relaunch restores the conversation layout.
+  try { _saveOpenModalsSnapshot(); } catch {}
+  try { _flushModalPrefs && _flushModalPrefs(); } catch {}
+
+  const id = 'mc-poweredoff-overlay';
+  if (document.getElementById(id)) return;
+  const overlay = document.createElement('div');
+  overlay.id = id;
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.72);' +
+    'display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)';
+  overlay.innerHTML =
+    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;' +
+    'padding:24px 32px;max-width:440px;text-align:center;color:var(--text);font-size:13px;line-height:1.55">' +
+    '<div style="font-size:30px;line-height:1;margin-bottom:10px">&#x23FB;</div>' +
+    '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Clayrune has shut down</div>' +
+    '<div style="color:var(--text-dim);font-size:12px">The server process has stopped. You can close this tab.<br>' +
+    'To start Clayrune again, open it from the <strong>Clayrune</strong> shortcut on your Desktop or Start Menu.</div>' +
+    '<div style="margin-top:16px"><button class="btn-dispatch" onclick="window.location.reload()" style="font-size:12px;padding:6px 12px">Try to reconnect</button></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
 }
 
 // ── Provider Settings section ─────────────────────────────────────────────
@@ -17077,8 +17147,8 @@ async function _renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">Server</div>
       <div class="settings-row">
-        <div><div class="settings-label">Restart Clayrune</div><div class="settings-hint">Picks up new code or config without needing local access. Open conversations are restored after reconnect.</div></div>
-        <button class="btn-dispatch" style="background:var(--red-dim,#5a2828);border-color:var(--red,#e35858);color:var(--red-text,#ffd2d2)" onclick="openRestartConfirmation()">Restart server</button>
+        <div><div class="settings-label">Power</div><div class="settings-hint">Restart to pick up new code or config (open conversations are restored after reconnect), or shut down the Clayrune server completely.</div></div>
+        <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="openPowerDialog()">Restart / shut down…</button>
       </div>
       <div class="settings-row" style="margin-top:8px">
         <div>

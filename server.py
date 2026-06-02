@@ -16012,6 +16012,51 @@ def _perform_server_restart_async(audit_entry):
     threading.Thread(target=_do_restart, daemon=True).start()
 
 
+def _perform_server_shutdown_async(audit_entry):
+    """Run after the HTTP response flushes: stop everything, then exit for good.
+
+    The power-off analog of _perform_server_restart_async — same bounded
+    graceful-stop + hard watchdog, but it does NOT spawn a replacement
+    process. The dashboard shows a terminal "powered off" overlay; the user
+    relaunches via the Clayrune shortcut.
+    """
+    def _do_shutdown():
+        # Hard watchdog: terminate within 10s no matter what (mirrors restart).
+        def _watchdog():
+            _time.sleep(10.0)
+            try: _log("[shutdown] watchdog tripped — forcing termination")
+            except Exception: pass
+            os._exit(0)
+        threading.Thread(target=_watchdog, daemon=True).start()
+
+        _time.sleep(0.4)  # let the HTTP 202 actually reach the client
+
+        # Best-effort graceful stop, bounded by a wall-clock timeout and run in
+        # its own thread so a deadlock cannot prevent the os._exit below.
+        stop_done = threading.Event()
+        def _bounded_stop():
+            try: _stop_all_sessions_for_restart()
+            except Exception as e:
+                try: _log(f"[shutdown] stop-all failed: {e}")
+                except Exception: pass
+            finally:
+                stop_done.set()
+        threading.Thread(target=_bounded_stop, daemon=True).start()
+        stop_done.wait(timeout=4.0)
+        if not stop_done.is_set():
+            try: _log("[shutdown] stop-all exceeded 4s — exiting anyway")
+            except Exception: pass
+
+        try: _append_restart_log(audit_entry)
+        except Exception: pass
+
+        try: _log("[shutdown] exiting — powered off by user request")
+        except Exception: pass
+        os._exit(0)
+
+    threading.Thread(target=_do_shutdown, daemon=True).start()
+
+
 @app.route('/api/system/restart/status')
 def system_restart_status():
     """Return what's currently active so the UI can warn before restarting."""
@@ -16338,6 +16383,40 @@ def system_restart():
     }
     _perform_server_restart_async(audit_entry)
     return jsonify({'ok': True, 'restarting': True}), 202
+
+
+@app.route('/api/system/shutdown', methods=['POST'])
+def system_shutdown():
+    """Shut down (power off) the Mission Control server process.
+
+    Same confirmation + active-flow blocker semantics as /api/system/restart,
+    but the process exits WITHOUT spawning a replacement. Body:
+    {"confirmed": true, "force": bool}. Not rate-limited — it's a one-way,
+    terminal action, so a double-submit is harmless (the process is already
+    on its way out).
+    """
+    data = request.get_json(silent=True) or {}
+    if not data.get('confirmed'):
+        return jsonify({'error': 'confirmation required (set "confirmed": true)'}), 400
+
+    blockers = _get_active_restart_blockers()
+    if (blockers['active_sessions'] or blockers['active_hiveminds']) and not data.get('force'):
+        return jsonify({
+            'error': 'active flows present; stop them or pass "force": true',
+            **blockers,
+        }), 409
+
+    audit_entry = {
+        'ts': datetime.now(timezone.utc).isoformat(),
+        'source_ip': request.remote_addr or '',
+        'user_agent': request.headers.get('User-Agent', ''),
+        'tunneled': _is_cf_tunneled_request(),
+        'blockers_at_request': blockers,
+        'forced': bool(data.get('force')),
+        'action': 'shutdown',
+    }
+    _perform_server_shutdown_async(audit_entry)
+    return jsonify({'ok': True, 'shutting_down': True}), 202
 
 
 # ── AgentRuntime hook registration ──────────────────────────────────────────
