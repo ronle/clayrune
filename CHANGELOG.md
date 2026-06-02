@@ -4,6 +4,42 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-02] — Windowless launch by default + power menu (restart / shut down)
+
+Two related launcher/runtime changes.
+
+**Windowless launch (Windows).** End users launching via the Desktop / Start
+Menu shortcut saw a cmd console streaming the Flask server log. The shortcut
+now targets a new `installer/start-hidden.vbs` (run via `wscript.exe`), which
+starts `start.bat` with a hidden window and sets `CLAYRUNE_HIDDEN=1`. In that
+mode `start.bat` redirects server output to `data/logs/clayrune.log` (no
+console exists to show it) and skips the icon-setting powershell flash + the
+otherwise-invisible `pause`. Developers still get a live console by running
+`start.bat` (or `python server.py`) directly — unchanged. `install.ps1` and
+`install-prompt.md` point both the `.lnk` and the post-install launch at the
+VBS via the absolute `System32\wscript.exe` path; both fall back to `start.bat`
+if the VBS is missing. `data/logs/` is gitignored.
+
+**Power menu.** With the launcher windowless there was no obvious way to stop
+the server, and restart was buried in Settings. A new **Power** sidebar item
+(⏻) and a Settings → Server "Restart / shut down…" button both open
+`openPowerDialog()` (refactor of `openRestartConfirmation`), which shows the
+shared active-session/hivemind warning plus **Restart** and **Shut down**
+actions. New `POST /api/system/shutdown` mirrors `/api/system/restart`'s
+confirm + 409-blocker semantics, then `_perform_server_shutdown_async` stops
+all sessions (bounded, hard-watchdog) and `os._exit()`s WITHOUT respawning.
+Shutdown renders a terminal "powered off" overlay (no reconnect poll); it is
+audited via the shared restart log (`action: "shutdown"`).
+
+Server changes need an MC restart; FE changes need a hard browser refresh.
+
+Files: `installer/start-hidden.vbs` (new), `installer/start.bat`,
+`installer/install.ps1`, `installer/install-prompt.md`, `installer/README.md`,
+`.gitignore`, `server.py` (`_perform_server_shutdown_async` +
+`/api/system/shutdown`), `static/index.html` (`openPowerDialog` /
+`performShutdown` / `showPoweredOffOverlay`, sidebar Power item, Settings
+Server row).
+
 ## [2026-06-02] — AskUserQuestion form not shown until a resync (SSE turn_complete race)
 
 Recurring bug: an agent calls `AskUserQuestion`, the chat shows **COMPLETED**
