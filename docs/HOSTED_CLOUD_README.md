@@ -18,7 +18,8 @@ built yet** (deliberate — committee gate). Everything below is on
 | 2 | [`HOSTED_CLOUD_COMMITTEE_BRIEF.md`](HOSTED_CLOUD_COMMITTEE_BRIEF.md) + [`_committee/HOSTED_CLOUD_seat{1..4}_*.md`](_committee/) | 4-seat adversarial review (lifecycle / custody / cost / platform) | RATIFY-WITH-CONDITIONS, 0 blockers |
 | 3 | [`HOSTED_CLOUD_POC_RUNBOOK.md`](HOSTED_CLOUD_POC_RUNBOOK.md) | Small-scale POC: one host, many containers, bucket-backed storage; how to stand it up | sketch |
 | 4 | [`HOSTED_CLOUD_KEY_ONBOARDING.md`](HOSTED_CLOUD_KEY_ONBOARDING.md) | Assisted BYOK key-creation flow (the non-technical onboarding crux) | spec v1 |
-| 5 | [`HOSTED_CLOUD_INVESTOR_BRIEF.md`](HOSTED_CLOUD_INVESTOR_BRIEF.md) | Business story, slide-mapped — for the investor deck | draft |
+| 5 | [`HOSTED_CLOUD_INVESTOR_BRIEF.md`](HOSTED_CLOUD_INVESTOR_BRIEF.md) | Business story, slide-mapped — source copy for the deck | draft |
+| 5b | [`HOSTED_CLOUD_INVESTOR_DECK.html`](HOSTED_CLOUD_INVESTOR_DECK.html) | **The deck** — open in a browser; arrow-key nav; Print → Save-as-PDF for a shareable file | draft |
 | — | [`HOSTED_CLOUD_INCOME_MODEL.md`](HOSTED_CLOUD_INCOME_MODEL.md) | **Explored & REJECTED** managed-token model — kept for the cost-lever findings | rejected |
 
 **Runnable models** (`docs/poc/`): `bucket_pricing.py` (tier prices from GCP
