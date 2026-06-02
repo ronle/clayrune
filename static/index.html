@@ -10246,6 +10246,18 @@ function connectAgentStream(projectId, sessionId) {
           // (which would prevent us from seeing the imminent turn_start).
           return;
         }
+        // Blocked-on-user guard: if this session is waiting on an
+        // AskUserQuestion / plan approval, the turn is NOT complete — the agent
+        // is parked waiting for input. Ignore turn_complete so we keep the SSE
+        // open (the `question` event is delivered/re-delivered on it) and don't
+        // clear the asking-state. The server now suppresses turn_complete in
+        // this state too; this guards event-ordering and old-server races that
+        // would otherwise drop the question form (chat shows "Completed" with
+        // no form until a resync). See server SSE loop `waiting_on_user`.
+        {
+          const _qc = agentStatusCache[sessionId];
+          if (_qc && (_qc.waitingForQuestion || _qc.waitingForPlanApproval)) return;
+        }
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Mode B: turn finished, process still alive. We close the SSE here to free
         // a browser per-origin connection slot (Chromium caps at 6 over HTTP/1.1).
@@ -10274,6 +10286,14 @@ function connectAgentStream(projectId, sessionId) {
         // staleness reasoning as turn_complete above).
         if (_sendInFlight[sessionId] && msg.status !== 'stopped') {
           return;
+        }
+        // A non-terminal 'idle' must not tear down a session that's blocked on
+        // a question / plan approval (would close SSE + clear asking-state and
+        // drop the form). Ignore it; the waiting state is resolved by
+        // turn_start (answer sent) or a real terminal status.
+        if (msg.status === 'idle') {
+          const _qc = agentStatusCache[sessionId];
+          if (_qc && (_qc.waitingForQuestion || _qc.waitingForPlanApproval)) return;
         }
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Terminal status — close SSE

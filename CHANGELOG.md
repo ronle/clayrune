@@ -4,6 +4,40 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-02] — AskUserQuestion form not shown until a resync (SSE turn_complete race)
+
+Recurring bug: an agent calls `AskUserQuestion`, the chat shows **COMPLETED**
+with no form, and the question only appears after some unrelated action (Ron's
+case: taking a screenshot → `visibilitychange` → `fetchAgentStatus` reconnects
+the stream and re-emits the form).
+
+Root cause is a TOCTOU race in the SSE generator. On `AskUserQuestion` the reader
+thread runs, in order (`server.py` Mode B reader): `pending_questions.append` →
+`waiting_for_question=True` → `status='idle'` → `proc.kill()`. The SSE generator
+runs on a separate thread and, within one poll, reads `pending_questions` (loop
+top) and *then* `status`. The reader can flip `status='idle'` *between* those two
+reads, so that iteration emits `turn_complete` (idle) **without** the `question`
+event. The FE `turn_complete` handler clears `waitingForQuestion` and calls
+`es.close()` — so the next poll that would carry the question never reaches the
+client. The form is lost until a reconnect re-emits it. Semantically the bug is
+broader: a session idle *only* because it's blocked on user input is not
+"turn complete".
+
+Fix — suppress the idle/`turn_complete` teardown while the session is blocked on
+user input (`waiting_for_question` or `waiting_for_plan_approval`), keeping the
+stream open so the `question` event is delivered/re-delivered:
+- `server.py` Mode B SSE loop: gate `turn_complete` on `not waiting_on_user`.
+- `server.py` Mode A SSE loop: don't close-on-idle while waiting (symmetric).
+- `static/index.html` `turn_complete` handler: ignore while the cache shows
+  waitingForQuestion/PlanApproval (guards event-ordering + old-server races).
+- `static/index.html` `status` handler: ignore a stray non-terminal `idle` while
+  waiting.
+
+Server change needs an MC restart; FE change needs a hard browser refresh.
+
+Files: `server.py` (SSE `generate()` Mode A/B branches), `static/index.html`
+(SSE `onmessage` `turn_complete` + `status` handlers).
+
 ## [2026-05-28] — Mobile resume wedge: heartbeat-probe + fail-fast send
 
 Android Doze / App Standby (worst on Samsung One UI / Z Fold) was parking

@@ -7330,7 +7330,22 @@ def agent_stream(project_id):
             last_emitted_status = status
 
             if is_mode_b:
-                if status == 'idle' and not idle_sent:
+                # A session that is idle ONLY because it is blocked on an
+                # AskUserQuestion (or plan approval) is NOT "turn complete" —
+                # the agent is parked waiting on the user. Suppress turn_complete
+                # in that state. The FE turn_complete handler closes the SSE and
+                # clears the asking-state, which races the `question` event
+                # emitted just above: there is a TOCTOU between the
+                # pending_questions read (loop top) and this status read — the
+                # reader thread can flip status to 'idle' in between, so an
+                # iteration emits turn_complete WITHOUT the question, the FE tears
+                # the stream down, and the form is lost until a resync reconnects
+                # (status shows "Completed" with no form). Keeping the stream
+                # open lets the question reach the client; the form is driven by
+                # the `question` event, never by turn_complete.
+                waiting_on_user = (session.get('waiting_for_question')
+                                   or session.get('waiting_for_plan_approval'))
+                if status == 'idle' and not idle_sent and not waiting_on_user:
                     # Turn finished but process is still alive
                     yield f"data: {json.dumps({'type': 'turn_complete', 'status': 'idle', **_session_usage_payload(session)})}\n\n"
                     idle_sent = True
@@ -7351,6 +7366,13 @@ def agent_stream(project_id):
                 elif status != 'running':
                     if session.get('guardian_state') == 'recovering':
                         pass  # Wait for guardian recovery to complete
+                    elif (session.get('waiting_for_question')
+                          or session.get('waiting_for_plan_approval')):
+                        # Blocked on user input — turn isn't complete. Keep the
+                        # stream open so the `question` form is (re)delivered
+                        # instead of closing on the idle status (same race the
+                        # Mode B branch above guards against).
+                        pass
                     elif not session.get('pending_followups') and not session.get('_dispatching_followup'):
                         # Eager-followup grace window: sendFollowup() opens the
                         # SSE BEFORE POSTing /agent/send, so the very first
