@@ -99,8 +99,11 @@ rounding error.
 | mix skews light (75/20/5) | $29,750 | $16,755 | $12,995 | 44% |
 | 5% allowance leakage → heavy | $36,600 | $28,017 | $8,583 | 23% |
 | **15% allowance leakage → heavy** | $36,600 | $36,831 | **−$231** | **−1%** |
+| **terse mobile default (prose ×0.4)** | $36,600 | $19,852 | **$16,748** | **46%** |
+| **caching 92% + terse** | $36,600 | $16,418 | **$20,182** | **55%** |
+| 15% leakage BUT terse | $36,600 | $31,994 | $4,606 | 13% |
 
-Three levers dominate, and two of them can sink the business outright:
+Four levers dominate; two can sink the business outright, two can rescue it:
 
 1. **Caching is make-or-break.** With caching OFF the model loses money
    (−27%). With caching it's +35%. This is the difference between a business and
@@ -113,6 +116,12 @@ Three levers dominate, and two of them can sink the business outright:
 3. **Mix matters.** Skew-light is healthy (44%); skew-heavy crushes it (19%).
    Marketing/positioning should attract light/medium users, and heavy users must
    be priced or capped — never silently subsidized.
+4. **Output budgeting is a free +11 margin points.** Terse-by-default on mobile
+   (trim the visible prose, leave tool/code alone) lifts margin 35% → **46%**,
+   stacks with caching to **55%**, and even *cushions the leakage risk* (the −1%
+   leakage case recovers to +13% under terse). Detail + how to do it on the fly
+   in §[6]. Nearly free, and it's the lever that turns "real business" into "good
+   business."
 
 ---
 
@@ -129,12 +138,59 @@ hits), so it disproportionately protects you exactly where the tail risk lives.
 
 ---
 
+## [6] Output budgeting — the third lever (adaptive reply length)
+
+Output tokens cost ~5x input, and once caching makes input cheap, **output is
+the majority of per-turn cost.** But only the *visible prose* is trimmable — tool
+calls, code, and file edits are not. So the model splits output into
+`prose` + `tool`, and a "be terse" instruction only shrinks the prose:
+
+| Pattern | prose/tool tokens | Full $/mo | Terse $/mo (prose ×0.4) | Saves |
+|---|---|---|---|---|
+| light | 1300 / 200 | $2.35 | $1.50 | **36%** |
+| medium | 1400 / 600 | $16.32 | $12.29 | **25%** |
+| heavy | 1000 / 2000 | $104.94 | $95.04 | **9%** |
+
+Terseness helps **conversational** users (light/medium — mostly prose) a lot, and
+**code-heavy** users (heavy — mostly tool output) barely. Since the launch
+persona is conversational + mobile, this lever is aimed exactly right — hence the
++11 margin points in §[4].
+
+### Doing it on the fly (adaptive output budgeting)
+
+You can decide reply length *per turn*, and — unlike model-switching — it's
+**safe**: it doesn't switch models or break continuity, it's just a varying
+instruction in the turn.
+
+- **The dial is prompt steering, not `max_tokens`.** `max_tokens` is a guillotine
+  (truncates mid-sentence); use it only as a backstop. The *target* comes from a
+  per-turn instruction ("1–2 sentences" / "full detail").
+- **Decide cheaply, in order:** (1) **surface signal** — mobile view → terse
+  default, desktop → fuller (free, MC already knows the client); (2)
+  **heuristics** — message length, "quick q" vs "explain", whether code/tools are
+  implicated (free); (3) a **tiny Haiku pre-classifier** for ambiguous turns →
+  terse/normal/detailed (~$0.0005, ~0.4s) — same shape as the dispatch router but
+  it picks *verbosity*, not model.
+- **CRITICAL caching interaction:** put the per-turn verbosity hint at the **end
+  of the turn** (user message / per-turn suffix), **never in the cached system
+  prompt.** Mutating the cached prefix each turn busts the prompt cache — and
+  §[4] shows caching is make-or-break. Hint-in-the-tail keeps the cache warm
+  *and* tunes each reply. (This is load-bearing — getting it wrong trades the
+  caching lever for the output lever instead of stacking them.)
+- **The one risk — don't under-answer.** Clip a reply that needed depth and the
+  user fires a follow-up; every new turn re-pays the full context on input. Three
+  clipped turns can cost more than one tight-but-complete answer. Bias "when
+  unsure, normal length."
+
+---
+
 ## Takeaways
 
 1. **The cost center flipped.** In the BYOK design, *storage* dominated COGS
    (committee `[C:S3.1]`). In the managed-token model, **tokens are ~90%+ of
    COGS** and storage/compute are a rounding error. The whole margin game is now
-   token cost, and the whole defense is **caching + Sonnet-default + allowance.**
+   token cost, and the whole defense is **caching + Sonnet-default + allowance +
+   output budgeting** (the four levers in §[4]).
 2. **Light users are gold, heavy users are a liability** at consumer prices.
    The business works by skewing the mix light and *capping* the heavy tail —
    not by pricing heavy use accurately (no consumer pays $300/mo).
@@ -148,9 +204,11 @@ hits), so it disproportionately protects you exactly where the tail risk lives.
 5. **Free-tier discipline is a P&L line, not UX polish.** Free COGS rivals the
    fixed control plane; pair the free tier with a small allowance + archive of
    dormant accounts (committee `[C:S3.2]`) and watch conversion.
-6. **At ~35% gross, this is a real but not fat business**, consistent with the
-   thin moat (Seat 4): you're selling convenience to people who can't self-host,
-   and the price ceiling that implies shows up as a ~35% — not ~80% — margin.
+6. **~35% gross in the base case, ~46–55% with caching + output budgeting fully
+   exploited.** Still not an 80%-margin SaaS — consistent with the thin moat
+   (Seat 4: convenience sold to people who can't self-host) — but the two
+   experience-neutral levers (caching, terse-on-mobile) are what move it from
+   "thin" to "healthy" without raising the price.
 
 **Next refinement:** the biggest uncertainty is **turns/month and context size**
 for the real persona. A week of POC telemetry (turns/session, tokens/turn, cache
