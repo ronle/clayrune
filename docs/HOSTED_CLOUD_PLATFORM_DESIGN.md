@@ -666,6 +666,23 @@ and **dormant-storage archiving** (GCS Coldline) are what protect it. Warm
 — negligible per-user at scale — and excludes China/Australia; Google can change
 free-tier limits with 30 days' notice, so don't price on it.)
 
+**Revenue forecast** (`docs/poc/revenue_forecast.py`; mix Lite 50 / Plus 30 /
+Pro 15 / Studio 5 → ARPU ~$20.5, **~30% blended margin** — BYOK, so cost is
+bounded and there's no token tail):
+
+| Paying users | Gross/mo | Gross/yr | Margin |
+|---|---|---|---|
+| 1,000 | $5.7K | $68K | 28% |
+| 10,000 | $61K | $734K | 30% |
+| 50,000 | $308K | $3.7M | 30% |
+| 100,000 | $616K | $7.4M | 30% |
+
+Two dials move it: **mix** (skew-premium ≈ +50% gross — $1.1M/yr vs $0.73M at
+10K; skew-light ≈ −28%) and **free-tier drag** — with no token revenue to offset
+it, each free user (~$2/mo storage+compute) bites: paid-only 30% → 1:1 free 19% →
+2:1 8% → **3:1 turns negative**. This confirms the committee call: **no open free
+tier until dormant-archiving ships** (invite-only / paid-only at GA, §10.3).
+
 **Value proposition:** *"Bring any AI key you like; we're the always-on,
 backed-up home for everything your agents build — on your phone, no machine to
 babysit."*
