@@ -24,6 +24,7 @@ data/grid_layout.json
 data/schedules.json
 data/restart_log.json
 data/memory/
+data/logs/
 # Claydo helper sandbox: server materializes USER_GUIDE.md as CLAUDE.md
 # under this dir on every /api/guide/* call so Claude auto-loads it as
 # project context. Regenerated; not source. (data/playdo/ is the same dir

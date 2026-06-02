@@ -56,7 +56,8 @@ A Claude-driven installer. The user runs one command; Claude executes the instal
 | `install-prompt.md` | The actual installer logic, written as a prescriptive prompt for Claude. The bootstrap fetches this and pipes it into `claude --dangerously-skip-permissions`. |
 | `start.sh` | Per-user launcher (Linux). Activates `.venv`, starts `python server.py`, opens the browser. The installer registers this as a `.desktop` file in `~/.local/share/applications/`. |
 | `start.command` | Per-user launcher (macOS). Same role as `start.sh`. The installer copies it to `~/Applications/Clayrune.command`. |
-| `start.bat` | Per-user launcher (Windows). Same role. The installer wraps it in a `.lnk` shortcut on the Desktop and in the Start Menu. |
+| `start.bat` | Per-user launcher (Windows). Same role. Run directly for a visible dev console (live logs). The `.lnk` shortcut does **not** target it directly — see `start-hidden.vbs`. |
+| `start-hidden.vbs` | Default Windows entry point. Runs `start.bat` with **no console window** (end users shouldn't see the server log console) and sets `CLAYRUNE_HIDDEN=1` so logs are written to `data\logs\clayrune.log` instead. The installer points the Desktop / Start Menu `.lnk` here (via `wscript.exe`). |
 
 ## Why this design
 

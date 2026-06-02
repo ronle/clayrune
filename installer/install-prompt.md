@@ -149,13 +149,22 @@ Make them executable and create a clickable launcher that points to them.
   saving the shortcut — belt + suspenders:
   ```powershell
   $target = "<INSTALL_DIR>\installer\start.bat"
+  $hidden = "<INSTALL_DIR>\installer\start-hidden.vbs"
   if (-not (Test-Path $target)) {
       throw "Cannot create shortcut: target $target does not exist."
   }
+  $wscriptExe = Join-Path $env:WINDIR 'System32\wscript.exe'
   $WshShell = New-Object -ComObject WScript.Shell
   function New-Shortcut($path) {
       $sc = $WshShell.CreateShortcut($path)
-      $sc.TargetPath = $target
+      if (Test-Path $hidden) {
+          # Launch windowless so the user never sees the server's log console.
+          # wscript runs the .vbs, which starts start.bat with a hidden window.
+          $sc.TargetPath = $wscriptExe
+          $sc.Arguments  = "`"$hidden`""
+      } else {
+          $sc.TargetPath = $target
+      }
       $sc.WorkingDirectory = "<INSTALL_DIR>"
       $iconPath = "<INSTALL_DIR>\assets\clayrune.ico"
       if (Test-Path $iconPath) { $sc.IconLocation = $iconPath }
@@ -206,7 +215,10 @@ Make them executable and create a clickable launcher that points to them.
 1. Spawn the platform-appropriate start script in the background:
    - macOS: `nohup <INSTALL_DIR>/installer/start.command >/dev/null 2>&1 &`
    - Linux: `nohup <INSTALL_DIR>/installer/start.sh >/dev/null 2>&1 &`
-   - Windows: `Start-Process -WindowStyle Minimized "<INSTALL_DIR>\installer\start.bat"`
+   - Windows (windowless — no console; logs go to `data\logs\clayrune.log`):
+     `Start-Process (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList '"<INSTALL_DIR>\installer\start-hidden.vbs"'`
+     (if `start-hidden.vbs` is missing, fall back to
+     `Start-Process -WindowStyle Minimized "<INSTALL_DIR>\installer\start.bat"`)
 2. Poll `http://localhost:5199/` every 1s for up to 30s. When it returns any
    HTTP response (even 404), the server is up.
 3. Open `http://localhost:5199` in the user's default browser:
