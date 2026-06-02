@@ -611,11 +611,17 @@ def _distill_extract_and_aggregate(project_id: str, sid: str,
     (Option A); outbox marker writes AFTER successful artifact land
     (D7 — Seat 3 Cond 4 extension).
     """
+    _structured_log(f"outer_entered:project_id={project_id}:sid={sid[:12]}:"
+                    f"jsonl_path={'set' if jsonl_path else 'none'}")
     try:
         # Per-project re-entrancy guard
         with _distilling_guard:
             if project_id in _distilling_projects:
-                return  # another thread is already on this project
+                _structured_log(
+                    f"outer_skip_reentrant:project_id={project_id}:sid={sid[:12]}"
+                )
+                _increment_counter(project_id, 'skipped_reentrant')
+                return
             _distilling_projects.add(project_id)
         try:
             _distill_extract_and_aggregate_inner(project_id, sid, jsonl_path)
@@ -626,25 +632,32 @@ def _distill_extract_and_aggregate(project_id: str, sid: str,
         _structured_log(
             f"daemon_thread_exception:project_id={project_id}:sid={sid}:err={e!r}"
         )
+        _increment_counter(project_id, 'daemon_thread_exception')
 
 
 def _distill_extract_and_aggregate_inner(project_id: str, sid: str,
                                          jsonl_path: str | None) -> None:
     """Inner: kill-switch gate → semaphore → extract → aggregate →
     per-kind generate → cross-project pass."""
+    _structured_log(f"inner_entered:project_id={project_id}:sid={sid[:12]}")
     project = _load_project(project_id)
     if project is None:
+        _structured_log(f"inner_skip_no_project:project_id={project_id}")
+        _increment_counter(project_id, 'skipped_no_project')
         return
     # Hard re-check the gate at the entry point (Cond 10 v2 discipline)
     if not _distiller_should_proceed(project_id, 'session_end_extract',
                                      session={'incognito': False,
                                               'housekeeping': False}):
+        _structured_log(f"inner_skip_gated:project_id={project_id}")
+        _increment_counter(project_id, 'skipped_gated')
         return
     # Non-blocking semaphore acquire (D8 — Seat 3 Cond 3)
     sem = _get_per_project_semaphore(project_id) if _get_per_project_semaphore \
         else None
     if sem is not None:
         if not sem.acquire(blocking=True, timeout=2.0):
+            _structured_log(f"inner_skip_semaphore:project_id={project_id}")
             _increment_counter(project_id, TELEM_SEMAPHORE_SKIP)
             return
     try:
@@ -661,18 +674,28 @@ def _do_extract_aggregate(project_id: str, project: dict,
                           sid: str, jsonl_path: str | None) -> None:
     # Cost cap check — early return if today's budget already blown
     if not _within_cost_cap(project_id, project):
+        _structured_log(f"do_skip_cost_cap:project_id={project_id}")
+        _increment_counter(project_id, 'skipped_cost_cap')
         return
     # Render transcript (reuses Scribe's renderer)
     if jsonl_path:
         try:
             transcript = _scribe_render_transcript(Path(jsonl_path))
-        except Exception:
+        except Exception as e:
+            _structured_log(f"do_skip_render_exc:project_id={project_id}:err={e!r}")
+            _increment_counter(project_id, 'skipped_render_exception')
             return
     else:
         # No transcript path → can't extract; skip cleanly
+        _structured_log(f"do_skip_no_jsonl:project_id={project_id}:sid={sid[:12]}")
+        _increment_counter(project_id, 'skipped_no_jsonl')
         return
     if not transcript or len(transcript.strip()) < 200:
-        return  # too thin for meaningful extraction (skip silently)
+        _structured_log(
+            f"do_skip_thin:project_id={project_id}:chars={len(transcript or '')}"
+        )
+        _increment_counter(project_id, 'skipped_thin_transcript')
+        return  # too thin for meaningful extraction
     # Tail-truncate to the most recent EXTRACTION_TAIL_CHARS so the cheap-
     # model call doesn't choke on multi-MB session transcripts. The tail
     # captures the salient "what happened" content — earlier exploration

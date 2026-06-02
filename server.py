@@ -5215,18 +5215,27 @@ def _write_session_memory(p, session, status, summary_fallback, ts_date):
     # entry point gates itself via _distiller_should_proceed at session_end_extract.
     try:
         csid = session.get('claude_session_id', '')
-        if csid:
+        sid = session.get('session_id') or session.get('id') or ''
+        if not csid:
+            _log(f"[distiller] dispatch SKIP project_id={project_id} sid={sid}: "
+                 f"no claude_session_id on session object")
+        else:
             tf = _find_transcript_file(p.get('project_path', ''), csid)
             jsonl_path = str(tf) if tf else None
+            _log(f"[distiller] dispatch FIRE project_id={project_id} sid={sid[:12]} "
+                 f"csid={csid[:8]} jsonl_path={'yes' if jsonl_path else 'no'}")
             threading.Thread(
                 target=_distiller._distill_extract_and_aggregate,
-                args=(project_id, session.get('session_id') or session.get('id') or '',
-                      jsonl_path),
+                args=(project_id, sid, jsonl_path),
                 daemon=True,
                 name=f"distiller-{project_id}",
             ).start()
-    except Exception:
-        pass  # best-effort: never block completion on Distiller dispatch
+    except Exception as _dist_disp_err:
+        # Was bare `except: pass` — silently swallowed any error in the dispatch
+        # path including AttributeError if _distiller wasn't registered. Log it
+        # so we can see if dispatch fails.
+        _log(f"[distiller] dispatch EXCEPTION project_id={project_id}: "
+             f"{type(_dist_disp_err).__name__}: {_dist_disp_err!r}")
     return True
 
 
