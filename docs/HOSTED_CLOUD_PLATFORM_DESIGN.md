@@ -557,26 +557,45 @@ proprietary (a third proprietary citizen alongside `mc_remote/` and `mc_tunnel`)
 
 ## 8. Revenue model
 
-> **Under revision (2026-06-02) — BYOK vs managed tokens.** This section was
-> written under the committee-era assumption of **BYOK** (user pays Anthropic;
-> we earn a hosting fee). The chosen launch buyer is now **non-technical,
-> mobile-first, no-PC users** — for whom BYOK is likely a conversion-killer (they
-> won't create and paste an Anthropic API key). That pushes toward a
-> **managed-token** model (one signup, one bill, "just works"), which
-> reintroduces token margin but makes us a reseller carrying the token tail.
-> A full forecast of the managed-token model — tiers, per-user COGS, scenarios,
-> sensitivity — lives in **`docs/HOSTED_CLOUD_INCOME_MODEL.md`** (computed by
-> `docs/poc/income_model.py`). Headlines: tokens become ~90% of COGS (storage
-> stops being the cost center); **prompt caching is make-or-break** (caching-off
-> = money-losing); the **allowance is the product** (heavy users are a loss
-> unless capped); ~35% gross margin at scale, consistent with the thin moat (§7).
-> The BYOK framing below is retained as the alternative / power-user on-ramp
-> until the model choice is finalized.
+> **Settled (2026-06-02) — provider-agnostic BYOK + flat fees on storage & IP.**
+> We explored a managed-token model (we resell tokens; metered / multiplier tiers)
+> and **rejected it** — metering feels like a "con" to the non-technical buyer and
+> makes us a token reseller carrying the tail. That analysis is preserved (not
+> deleted) in `docs/HOSTED_CLOUD_INCOME_MODEL.md` as the rejected alternative. The
+> model below is the chosen one.
 
-**(BYOK framing — retained as the alternative.)** **We do not earn on tokens**
-(BYOK — user pays Anthropic). We earn a **hosting/facilitation subscription**:
-the managed instance, persistent storage, sleep/wake orchestration, backups, and
-the convenience of "no PC required."
+**Three pillars:**
+
+1. **BYOK, any provider.** The user brings their own key(s) for whatever agent
+   platform they want — Claude, OpenAI/Codex, Gemini, etc. They pay that provider
+   directly; **we never touch tokens, never mark up, never meter.** MC already
+   abstracts providers (`agent_runtime.py`) and inherits keys from the process env
+   (§5), so this is low-build. We are honestly *just infrastructure* — which is
+   precisely why it can't feel like a con.
+   - **Assisted key creation** is the one real UX problem (a non-technical user
+     won't navigate a provider console alone). Solve it with a guided in-app
+     wizard + OAuth / delegated key creation where the provider supports it. This
+     is the make-or-break onboarding step (§10/§11).
+
+2. **Flat fee on storage.** Their data footprint — projects, repos, transcripts,
+   memory on the volume. Flat $/GB or bucketed tiers. Cost-plus, predictable.
+
+3. **Flat fee on IP (intellectual property) — the margin layer.** We are the
+   durable, always-on, backed-up **home for the user's work**: projects, code,
+   content, automations, and the agent's accumulated memory — reachable from any
+   device, with agents that act on it. We charge a flat fee to *keep and host*
+   that IP. It is **decoupled from usage**: using the agent more never costs more;
+   only *keeping more* does. Our cost to hold IP ≈ storage (cheap, bounded); the
+   value to the user is high — **that gap is the margin**, and it monetizes the
+   data-gravity moat directly.
+
+**Why this resolves what we hit:** nothing metered or hidden (no "con"); no
+runaway-token tail (it's the user's key/cost); our cost stays **bounded** —
+storage (dominant) + compute (toward zero on idle, §4.4), no token cost;
+provider-neutral = no single-provider ToS risk and broader appeal ("any model,
+hosted, on your phone").
+
+BYOK means **no token cost to us** — what remains is bounded infrastructure:
 
 **Our cost structure per user** (committee re-did the arithmetic; numbers are
 public-pricing estimates to be confirmed in Phase 0 `[C:S3.1]`):
@@ -609,23 +628,22 @@ polish — it is the economic precondition of any free/dormant tier.** Until it
 ships: **no free tier at GA** (invite-only or paid-only, mirroring the
 `06-rollout-plan.md` M5 invite gate).
 
-**Margin = subscription − (active compute + *storage floor, dominant* + egress +
-incremental orchestrator + amortized auth/relay).** Worked example at a $7/mo
-sub, 20GB power user ≈ $2.9 gross before control-plane amortization — positive,
-but **thinner than "tokens are the user's cost so our sub can be modest"
-implies**: the modesty is bounded by **storage**, not compute.
+**Margin = (storage fee + IP fee) − (storage cost + compute + egress + amortized
+control plane).** The storage fee is cost-plus; the **IP fee is value-based** —
+decoupled from our (cheap, ~storage) cost of holding it — so it's the lever that
+lifts margin above thin cost-plus, *honestly*, because the user is paying to keep
+and reach their work, not for metered use.
 
-**Pricing shapes to evaluate (Phase 3):**
-- Flat monthly per managed instance (simplest; predictable margin).
-- Tiered by resources (VM size / vCPU-hours cap / storage GB / concurrent
-  agents) for power users.
-- A free/cheap "dormant" tier (storage-only, wake-metered) to keep the floor
-  cost recoverable for inactive users.
+**The IP unit (the one open pricing decision).** "Charge on IP" needs a unit.
+Recommended: **per active project/workspace**, with a *generous base* (hosted
+agent + a few projects + N GB included) and flat step-ups — **not** per-unit
+nickel-and-diming, which would discourage creating (the opposite of the goal).
+Tier by IP footprint (projects + history depth), never by usage; casual users
+never feel it, power users with lots of retained work pay more.
 
-Because tokens are the user's cost (and usually their largest cost), our
-subscription can be modest and still margin-positive — the value proposition is
-"we make your own Claude key usable from a phone, 24/7, with no machine to
-babysit."
+**Value proposition:** *"Bring any AI key you like; we're the always-on,
+backed-up home for everything your agents build — on your phone, no machine to
+babysit."*
 
 ---
 

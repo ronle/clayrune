@@ -1,5 +1,13 @@
 # Hosted Clayrune — Managed-Token Income Model
 
+> ⛔ **EXPLORED & REJECTED (2026-06-02).** This models a *managed-token* business
+> (we resell tokens; metered / window-multiplier tiers). Ron rejected it —
+> metering feels like a "con" and makes us a token reseller carrying the tail.
+> **The chosen model is provider-agnostic BYOK + flat storage & IP fees** — see
+> `docs/HOSTED_CLOUD_PLATFORM_DESIGN.md` §8. This doc is kept as the analysis of
+> the path not taken; the cost-lever findings (caching, output budgeting) still
+> inform the BYOK build.
+
 **Status:** v1 (2026-06-02). Companion to `docs/HOSTED_CLOUD_PLATFORM_DESIGN.md`
 (the platform) and the 2026-06-02 pricing discussion. Computed by the
 parameterized model at **`docs/poc/income_model.py`** — edit the assumptions
