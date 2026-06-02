@@ -8511,6 +8511,31 @@ async function attFileSelected(e, projectId, itemId) {
   e.target.value = '';
 }
 
+// Upload a FormData via XMLHttpRequest, NOT fetch.
+//
+// On the Clayrune Android APK the injected fetch override (MainActivity
+// injectFetchOverride) reroutes every body-bearing fetch through a native
+// HTTP bridge that serializes the body with String(body) — turning a
+// FormData into the literal "[object FormData]" and silently dropping the
+// file (server sees no 'file' part → 400, the UI swallows it). XHR is only
+// header-decorated by that same override (CF-Access-* added in XP.send), so
+// the multipart body — boundary and all — reaches the server intact. On
+// desktop, where no override is installed, this is a plain XHR upload.
+function _xhrUploadForm(url, formData, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.timeout = timeoutMs;
+    xhr.onload = () => {
+      try { resolve(JSON.parse(xhr.responseText || '{}')); }
+      catch (e) { reject(new Error('bad upload response')); }
+    };
+    xhr.onerror = () => reject(new Error('network error'));
+    xhr.ontimeout = () => reject(new Error('timed out'));
+    xhr.send(formData);
+  });
+}
+
 async function uploadFile(projectId, itemId, file) {
   const listEl = document.getElementById('attlist-'+itemId);
   const uploading = document.createElement('div');
@@ -8520,15 +8545,17 @@ async function uploadFile(projectId, itemId, file) {
   try {
     const fd = new FormData();
     fd.append('file', file);
-    const res = await fetch(API_BASE + `/api/project/${projectId}/backlog/${itemId}/attachments`, {method:'POST', body: fd});
-    const data = await res.json();
-    uploading.remove();
-    if (data.ok) {
+    const data = await _xhrUploadForm(API_BASE + `/api/project/${projectId}/backlog/${itemId}/attachments`, fd);
+    if (data && data.ok) {
+      uploading.remove();
       openAttPanels.add(itemId);
       await refreshSilent();
+    } else {
+      uploading.textContent = 'Upload failed' + (data && data.error ? ': ' + data.error : '');
+      setTimeout(() => uploading.remove(), 3000);
     }
   } catch(err) {
-    uploading.textContent = 'Upload failed';
+    uploading.textContent = 'Upload failed — ' + (err.message || 'error');
     setTimeout(() => uploading.remove(), 3000);
   }
 }
@@ -10501,6 +10528,23 @@ function formatAgentText(raw) {
       return tok;
     });
 
+  // URLs → real clickable <a> links. Tokenized out BEFORE the path / code /
+  // bold regexes below so they can't shred the markup. The absolute-path
+  // regex in particular ("/seg/seg" ×2+) matches the "//host/path" tail of
+  // an https:// URL and steals its second slash, leaving "https:/…" which the
+  // URL pass can no longer recognise — which is why links *with a path*
+  // silently stopped being linkified. Swapped back in just before return;
+  // trailing sentence punctuation is kept outside the anchor.
+  const _urlTokens = [];
+  t = t.replace(/(https?:\/\/[^\s<]+)/g, (m) => {
+    let url = m, trail = '';
+    const tm = url.match(/[.,;:!?)\]]+$/);
+    if (tm) { trail = tm[0]; url = url.slice(0, -trail.length); }
+    const tok = '@@CLUrl' + _urlTokens.length + '@@';
+    _urlTokens.push('<a class="hl-url" href="' + url + '" target="_blank" rel="noopener">' + url + '</a>');
+    return tok + trail;
+  });
+
   // Numbered list items: 1. item, 2. item
   t = t.replace(/^(\d+\.)\s/, '<span class="hl-num">$1</span> ');
 
@@ -10520,12 +10564,12 @@ function formatAgentText(raw) {
   // Absolute paths: /path/to/file or C:\path\to\file
   t = t.replace(/((?:\/[\w.-]+){2,}|(?:[A-Z]:\\[\w.-\\]+))/g, '<span class="hl-path">$1</span>');
 
-  // URLs
-  t = t.replace(/(https?:\/\/[^\s<]+)/g, '<span class="hl-url">$1</span>');
-
-  // Swap image tokens back in (kept opaque through the regexes above)
+  // Swap image + URL tokens back in (kept opaque through the regexes above).
   if (_imgTokens.length) {
     t = t.replace(/@@CLImg(\d+)@@/g, (_, i) => _imgTokens[+i] || '');
+  }
+  if (_urlTokens.length) {
+    t = t.replace(/@@CLUrl(\d+)@@/g, (_, i) => _urlTokens[+i] || '');
   }
 
   return t;
@@ -12385,10 +12429,12 @@ async function uploadAgentImages(key) {
     const fname = img.fileName || img.file.name || 'screenshot.png';
     fd.append('file', img.file, fname);
     try {
-      const res = await fetch(API_BASE + '/api/agent/upload-image', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (data.ok) { img.serverPath = data.path; paths.push(data.path); }
-    } catch(e) {}
+      const data = await _xhrUploadForm(API_BASE + '/api/agent/upload-image', fd);
+      if (data && data.ok) { img.serverPath = data.path; paths.push(data.path); }
+      else { showToast('Image upload failed' + (data && data.error ? ': ' + data.error : ''), 5000); }
+    } catch(e) {
+      showToast('Image upload failed — ' + (e.message || 'network error'), 5000);
+    }
   }
   return paths;
 }
