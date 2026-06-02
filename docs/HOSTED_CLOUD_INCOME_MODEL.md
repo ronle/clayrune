@@ -15,10 +15,12 @@ there and re-run (`python docs/poc/income_model.py`) to test your own numbers.
 ## Decision brief — pricing & cost strategy
 
 **Recommendation (one line):** launch **managed-token** (we resell, one bill) on
-**flat phone-plan tiers with hard allowances**, **Sonnet-default / Opus held per
-session**, **prompt caching on**, **terse-by-default on mobile**, and **no
-automatic overage**. Base case **~35% gross margin**, **~46–55%** with the two
-experience-neutral levers (caching + output budgeting) fully used.
+**window + multiplier tiers** (Anthropic-style headroom — relative "~3×/~8×", no
+visible counts), **Sonnet-default / Opus held per session**, **prompt caching
+on**, **terse-by-default on mobile**, and **abuse-only throttling, no automatic
+overage**. With the cost levers on, the packaged tiers run **~75% margin at
+typical use with a ≥35% floor** by construction (§7); the underlying raw-cost
+view is ~35% (§§3–4).
 
 **Why managed, not BYOK.** The launch buyer is non-technical and mobile-first.
 BYOK (paste your own Anthropic key) is a conversion-killer for them — they don't
@@ -41,7 +43,7 @@ Linear at ~35% gross; the levers lift that to ~46–55% **without raising price*
 | Lever | Effect | Type |
 |---|---|---|
 | Prompt caching | OFF = −27% (loss) → ON = +35% | make-or-break |
-| Allowance enforcement | 15% leakage → break-even | make-or-break |
+| Cap / throttle enforcement | 15% leakage → break-even | make-or-break |
 | Output budgeting (terse-on-mobile) | +11 pts (35→46%) | rescue, experience-neutral |
 | Usage mix | light 44% vs heavy 19% | positioning |
 
@@ -49,9 +51,9 @@ Two can sink it (caching, allowance); two are upside. The two experience-neutral
 levers — caching + terse-on-mobile — carry most of the lift at zero quality cost.
 
 **Locked decisions:**
-- Managed tokens, flat tiers, hard allowances, **no automatic overage** (cap =
-  graceful slow / user-chosen top-up — a surprise bill must be structurally
-  impossible).
+- Managed tokens; **window + multiplier tiers** (no visible allowance/count);
+  **abuse-only throttling, no automatic overage** (sustained-burst → graceful slow
+  / user-chosen top-up; a surprise bill must be structurally impossible).
 - **Sonnet-default; Opus held per session** — never mid-thread model switching
   (it breaks memory/continuity — the constraint we hit and reversed).
 - Show **friendly units** (tasks / agent-time), never tokens.
@@ -59,9 +61,10 @@ levers — caching + terse-on-mobile — carry most of the lift at zero quality 
   stacks with (doesn't bust) the cache.
 
 **Open decisions (need your call):**
-1. **Price ladder** — base model uses $20 / $49 / $99. Power at $99 is a *loss* on
-   a true heavy user; reprice to ~$140–160 **or** cap its allowance to ~350–400
-   turns/mo. Pick one.
+1. **Which ladder (§7).** Window+multiplier resolves the "$99 loses money" problem
+   (the throttle bounds it). Pick: **3-rung** $29 / $79 / $189 (honest big jumps)
+   or **gentle 5-rung** $29 / $49 / $99 / $189 / $379 (~2× steps). Plus the entry
+   point — a cheaper $12–15 "Lite" on-ramp is a knob (smaller base headroom).
 2. **Free tier at launch?** Free COGS is a real P&L line (~$4.7K/mo at 1K payers).
    Recommend invite-only or paid-only until archive-and-detach ships.
 3. **Token backend** — Anthropic-direct vs Google Vertex (GCP credits, but verify
@@ -69,7 +72,7 @@ levers — caching + terse-on-mobile — carry most of the lift at zero quality 
 
 **Hard gates before build:** (a) prove **prompt caching** on the chosen backend in
 Phase 0 — it's a go/no-go (caching-off is a money-losing business); (b)
-**allowance enforcement** must be real, not cosmetic.
+the **window cap / throttle** must be real, not cosmetic.
 
 **Biggest uncertainty → cheapest fix.** The model rests on three guesses —
 turns/month, context size/turn, cache-hit rate. A week of POC telemetry replaces
@@ -249,6 +252,55 @@ instruction in the turn.
 
 ---
 
+## [7] Window + multiplier pricing — the chosen packaging
+
+> Computed by **`docs/poc/pricing_windows.py`**. Assumes the cost levers ON
+> (caching 85% + terse-on-mobile + Sonnet-default 8% Opus → product-wide
+> **~$0.049/turn**). This replaces the *visible monthly allowance* framing of
+> §§1–6 — those remain the correct **cost analysis**, but a visible count trains
+> users to ration, which is wrong for a "use more, create more" product.
+
+Package the tiers the way Anthropic does its consumer plans:
+- **Relative multipliers** the user sees ("~3× / ~8× headroom"), **never a count.**
+- A **rolling 5h window** (+ weekly cap) is the throttle — can't binge a month in
+  a day; abuse is bounded by *time*, not a monthly cliff.
+- Tiers buy **more turns of the same weight** (this is what makes a multiplier
+  honest — the first cut failed because higher tiers did *heavier* turns, so the
+  multipliers collapsed to ~1×).
+- The throttle point is **derived from price** so even maxed-out use keeps a
+  **≥35% floor margin**; at typical utilization (~35% of cap) margin is ~75–80%.
+
+**3-rung (Anthropic-style honest jumps):**
+
+| Tier | Headroom | Price | per 5h | Margin (typ / floor) |
+|---|---|---|---|---|
+| Plus | 1× (300/mo) | $29 | ~2 | ~78% / 35% |
+| Pro | 3× (900/mo) | $79 | ~6 | ~78% / 35% |
+| Max | 8× (2400/mo) | $189 | ~17 | ~80% / 35% |
+
+**5-rung (gentle ~2× steps — the fix for "jumps feel high"):**
+
+| Tier | Headroom | Price | Step |
+|---|---|---|---|
+| Starter | 1× | $29 | — |
+| Plus | 2× | $49 | ×1.7 |
+| Pro | 4× | $99 | ×2.0 |
+| Max | 8× | $189 | ×1.9 |
+| Studio | 16× | $379 | ×2.0 |
+
+**Two truths the math forces:**
+1. **Honest multipliers force real jumps** (8× headroom ≈ 8× price — it's why
+   Anthropic is $20/$100/$200). The fix for "jumps feel high" is **more rungs**,
+   not smaller ratios; the 5-rung lets the user land on a nearby step.
+2. **The top tier is only generous if it's Sonnet-mostly.** At $99, Sonnet-default
+   buys ~1,230 turns/mo; Opus-heavy only ~625. Opus (~5×) discipline is what makes
+   an affordable "power" tier — exactly the locked Sonnet-default/Opus-held policy.
+
+**Knobs:** entry price is set by `BASE_CAP` (1× headroom) and `FLOOR_MARGIN`. A
+cheaper on-ramp (a $12–15 "Lite") = a smaller base cap. Edit + re-run the script.
+
+---
+
 ## Takeaways
 
 1. **The cost center flipped.** In the BYOK design, *storage* dominated COGS
@@ -259,10 +311,11 @@ instruction in the turn.
 2. **Light users are gold, heavy users are a liability** at consumer prices.
    The business works by skewing the mix light and *capping* the heavy tail —
    not by pricing heavy use accurately (no consumer pays $300/mo).
-3. **The allowance is the product, derived from economics.** Set
-   `allowance = (price × (1 − target_margin) − infra) / blended_cost_per_turn`,
-   expose it in friendly units (tasks/agent-time, never tokens), and degrade
-   gracefully at the cap — no overage bill.
+3. **The cap is the product — but package it as headroom, not a count (§7).**
+   Derive the throttle point from `price × (1 − floor_margin)`, but show the user
+   a rolling-window *multiplier* ("~3× headroom"), never a visible allowance —
+   counting trains rationing, which is wrong for a create-more product. Degrade
+   gracefully at the window cap; never an overage bill.
 4. **Caching is a Phase-0 gating requirement**, not an optimization. Confirm it
    on your chosen token backend (Anthropic-direct or Vertex/Bedrock) before
    committing — caching-off is a money-losing business.
