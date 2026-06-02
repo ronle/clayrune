@@ -423,10 +423,14 @@ data-custody ToS clause — a **hard gate on Phase 1** (capturing the first real
 key). The legacy `07-licensing.md` ToS is binary-distribution/platform-access
 only and says nothing about custody of third-party keys or user code. See §10.
 
-**ToS note:** BYOK-with-an-API-key is the clean path. The user pays Anthropic
-directly under their own account; we are infrastructure. (This sidesteps the
-"running a personal Claude *subscription* through a hosted service" gray area
-that an OAuth-subscription model would raise.)
+**ToS note (hardened, verified 2026-06-02):** BYOK-with-an-**API-key** is the
+*only* clean path. The user pays the provider directly under their own account;
+we are infrastructure. This is no longer just a gray area: Anthropic's Feb-2026
+usage policy **bans using Claude Free/Pro/Max OAuth tokens in any third-party
+service** (OAuth is for Claude Code / claude.ai only). So hosted VMs run the CLI
+in **API-key mode** (`ANTHROPIC_API_KEY`), **never** `claude /login` subscription
+OAuth. The same posture applies to every provider. Onboarding design (how a
+non-technical user actually gets a key) → `docs/HOSTED_CLOUD_KEY_ONBOARDING.md`.
 
 ---
 
@@ -573,9 +577,11 @@ proprietary (a third proprietary citizen alongside `mc_remote/` and `mc_tunnel`)
    (§5), so this is low-build. We are honestly *just infrastructure* — which is
    precisely why it can't feel like a con.
    - **Assisted key creation** is the one real UX problem (a non-technical user
-     won't navigate a provider console alone). Solve it with a guided in-app
-     wizard + OAuth / delegated key creation where the provider supports it. This
-     is the make-or-break onboarding step (§10/§11).
+     won't navigate a provider console alone). No OAuth shortcut exists (verified
+     2026-06-02), so the answer is a **guided in-app wizard + paste-back +
+     instant validation**, with **Gemini (free, no card, ~2 min) as the
+     low-friction on-ramp** and Claude for top quality. Full spec:
+     `docs/HOSTED_CLOUD_KEY_ONBOARDING.md`. Make-or-break onboarding step (§11 Phase 1).
 
 2. **Flat fee on storage.** Their data footprint — projects, repos, transcripts,
    memory on the volume. Flat $/GB or bucketed tiers. Cost-plus, predictable.
