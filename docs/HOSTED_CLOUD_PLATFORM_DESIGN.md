@@ -557,10 +557,26 @@ proprietary (a third proprietary citizen alongside `mc_remote/` and `mc_tunnel`)
 
 ## 8. Revenue model
 
-**We do not earn on tokens** (BYOK — user pays Anthropic). We earn a
-**hosting/facilitation subscription**: the managed instance, persistent
-storage, sleep/wake orchestration, backups, and the convenience of "no PC
-required."
+> **Under revision (2026-06-02) — BYOK vs managed tokens.** This section was
+> written under the committee-era assumption of **BYOK** (user pays Anthropic;
+> we earn a hosting fee). The chosen launch buyer is now **non-technical,
+> mobile-first, no-PC users** — for whom BYOK is likely a conversion-killer (they
+> won't create and paste an Anthropic API key). That pushes toward a
+> **managed-token** model (one signup, one bill, "just works"), which
+> reintroduces token margin but makes us a reseller carrying the token tail.
+> A full forecast of the managed-token model — tiers, per-user COGS, scenarios,
+> sensitivity — lives in **`docs/HOSTED_CLOUD_INCOME_MODEL.md`** (computed by
+> `docs/poc/income_model.py`). Headlines: tokens become ~90% of COGS (storage
+> stops being the cost center); **prompt caching is make-or-break** (caching-off
+> = money-losing); the **allowance is the product** (heavy users are a loss
+> unless capped); ~35% gross margin at scale, consistent with the thin moat (§7).
+> The BYOK framing below is retained as the alternative / power-user on-ramp
+> until the model choice is finalized.
+
+**(BYOK framing — retained as the alternative.)** **We do not earn on tokens**
+(BYOK — user pays Anthropic). We earn a **hosting/facilitation subscription**:
+the managed instance, persistent storage, sleep/wake orchestration, backups, and
+the convenience of "no PC required."
 
 **Our cost structure per user** (committee re-did the arithmetic; numbers are
 public-pricing estimates to be confirmed in Phase 0 `[C:S3.1]`):
