@@ -640,33 +640,29 @@ decoupled from our (cheap, ~storage) cost of holding it — so it's the lever th
 lifts margin above thin cost-plus, *honestly*, because the user is paying to keep
 and reach their work, not for metered use.
 
-**Bucket prices — costed from GCP list rates** (`docs/poc/bucket_pricing.py`;
-illustrative, verify rates + region before launch). Each bucket price = our GCP
-cost at the bucket ceiling × a value-add markup (backup/DR, always-on hosting,
-control plane, support):
+**Named tiers — price-anchored, reduced margin** (Ron, 2026-06-02;
+`docs/poc/bucket_pricing.py`, GCP list rates — verify before launch). Tiers
+bundle a storage / egress / compute allocation at deliberately thin margins; the
+user sees the included buckets and moves up a tier (or adds egress) when they
+outgrow one:
 
-| Dimension | S | M | L |
-|---|---|---|---|
-| Storage (PD + backup) | ≤10GB → **$3** | ≤50GB → **$20** | ≤200GB → **$65** |
-| Network / egress | ≤20GB/mo → **$5** | ≤100GB → **$25** | ≤500GB → **$120** |
-| Compute | Sleep → **$4** | Warm-small → **$25** | Warm-large → **$100** |
+| Tier | Price | Storage | Egress/mo | Compute | Our cost | Margin |
+|---|---|---|---|---|---|---|
+| Lite | **$10** | 10GB | 20GB | Sleep | $7.3 | 27% |
+| Plus | **$19** | 50GB | 40GB | Sleep | $13.9 | 27% |
+| Pro | **$39** | 100GB | 75GB | Sleep | $23.3 | 40% |
+| Studio | **$79** | 250GB | 150GB | Warm | $58.1 | 26% |
 
-Plus a **$5 base** (control plane + assisted key setup + backup infra). Example
-monthly bills:
+Steps are ~2× ($10 → $19 → $39 → $79). No tokens (BYOK), no metering — each tier
+is a clear bundle, and crossing into the next is shown *before* it happens.
 
-| Profile | Bill | Our cost | Margin |
-|---|---|---|---|
-| Casual (10GB / 20 / Sleep) | **$17** | $7 | 57% |
-| Regular (50GB / 100 / Sleep) | **$54** | $21 | 61% |
-| Power (200GB / 100 / Warm-S) | **$120** | $47 | 61% |
-| Studio (200GB / 500 / Warm-L) | **$290** | $132 | 55% |
-
-The user always sees the breakdown — *"$5 base + Storage M + Network S + Sleep."*
-A bucket changes only when they cross it, shown *before* it happens. No tokens
-(BYOK), no metering. **Storage** (keep-driven) carries the fattest margin (~70%);
-**egress** is the one usage-correlated line so its markup stays modest (~50%) and
-its buckets generous; **cold-tiering** old data to GCS Coldline/Archive is the
-lever to widen storage buckets cheaply for power users.
+**The margin-sensitive line is egress.** 100GB of traffic costs us ~$12, so the
+low tiers keep egress modest (heavy-traffic users move up, or add an egress
+bump); storage + compute are cheap for us, so that's where the bundles are
+generous. At ~25–40% margin the buffer is thin, so the per-tier egress allocation
+and **dormant-storage archiving** (GCS Coldline) are what protect it. Warm
+(always-on) compute only fits the top tier; lower tiers stay on **Sleep**
+(scale-to-zero) or they go underwater.
 
 **Value proposition:** *"Bring any AI key you like; we're the always-on,
 backed-up home for everything your agents build — on your phone, no machine to
