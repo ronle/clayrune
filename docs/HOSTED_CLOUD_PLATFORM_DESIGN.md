@@ -182,6 +182,11 @@ docker-compose→fleet-orchestrator. Write the control-plane seam (§9) so that 
 is *configuration, not a second system* — the in-VM MC core is identical either
 way.
 
+**Concrete setup:** `docs/HOSTED_CLOUD_POC_RUNBOOK.md` — the container image
+(headless MC, slimmed deps), the per-user docker-compose + Caddy routing shape,
+how a new tester gets provisioned, the local-volume→bucket durability sync, and
+the code-grounded gotchas (inject the key via env not the in-app UI, etc.).
+
 ---
 
 ## 4. The microVM and its lifecycle (the core of the sleep/wake decision)
