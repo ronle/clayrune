@@ -641,10 +641,10 @@ lifts margin above thin cost-plus, *honestly*, because the user is paying to kee
 and reach their work, not for metered use.
 
 **Named tiers — price-anchored, reduced margin** (Ron, 2026-06-02;
-`docs/poc/bucket_pricing.py`, GCP list rates — verify before launch). Tiers
-bundle a storage / egress / compute allocation at deliberately thin margins; the
-user sees the included buckets and moves up a tier (or adds egress) when they
-outgrow one:
+`docs/poc/bucket_pricing.py`; **GCP rates verified 2026-06-02** — pd-balanced
+$0.10/GiB-mo, egress $0.12/GB, e2-medium $0.0335/hr). Tiers bundle a storage /
+egress / compute allocation at deliberately thin margins; the user sees the
+included buckets and moves up a tier (or adds egress) when they outgrow one:
 
 | Tier | Price | Storage | Egress/mo | Compute | Our cost | Margin |
 |---|---|---|---|---|---|---|
@@ -662,7 +662,9 @@ bump); storage + compute are cheap for us, so that's where the bundles are
 generous. At ~25–40% margin the buffer is thin, so the per-tier egress allocation
 and **dormant-storage archiving** (GCS Coldline) are what protect it. Warm
 (always-on) compute only fits the top tier; lower tiers stay on **Sleep**
-(scale-to-zero) or they go underwater.
+(scale-to-zero) or they go underwater. (GCP's 100GB free egress is *account-wide*
+— negligible per-user at scale — and excludes China/Australia; Google can change
+free-tier limits with 30 days' notice, so don't price on it.)
 
 **Value proposition:** *"Bring any AI key you like; we're the always-on,
 backed-up home for everything your agents build — on your phone, no machine to

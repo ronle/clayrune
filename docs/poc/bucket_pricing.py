@@ -8,10 +8,12 @@ metering) + a flat WORKSPACE fee. Pricing is PRICE-ANCHORED named tiers (Ron,
 bundles a storage / egress / compute allocation, and we check the margin our GCP
 cost leaves at that price.
 
-⚠️ GCP rates are approximate list prices (~us-central1, early-2026 knowledge).
-VERIFY current rates + region before trusting absolute dollars; egress varies by
-destination/volume. Structure + the "egress is the margin-sensitive line" finding
-are robust.
+✅ GCP rates VERIFIED 2026-06-02 (us-central1; sources in the commit message):
+pd-balanced $0.10/GiB-mo, GCS Coldline $0.004, internet egress $0.12/GB (premium,
+first TB; $0.11 next 9TB), e2-small $0.0168/hr · e2-medium $0.0335 · e2-standard-2
+$0.067. NOTE: the free-tier 100GB/mo egress is ACCOUNT-WIDE (North America, excl.
+China/Australia) — negligible per-user at scale, so we cost egress at full rate.
+Google can change free-tier limits with 30 days' notice.
 
 Run:  python docs/poc/bucket_pricing.py
 """
@@ -20,7 +22,7 @@ Run:  python docs/poc/bucket_pricing.py
 PD_BALANCED_GB_MO = 0.10     # live volume — Persistent Disk (Balanced)
 GCS_BACKUP_GB_MO  = 0.004    # backup copy — GCS Coldline
 EGRESS_GB         = 0.12     # internet egress (Premium tier, ~first TB)
-EGRESS_FREE_GB    = 1
+EGRESS_FREE_GB    = 1     # free-tier 100GB is ACCOUNT-WIDE → ~0 per-user at scale
 HRS_MO            = 730
 VM_HR = {
     "e2-small (2GB)":      0.01675,
