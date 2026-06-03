@@ -4,6 +4,36 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-03] — Resumed sessions keep their transcript across a process death (amnesia fix)
+
+A resumed (`-r`) Mode B session used to **reset to a fresh, context-less session**
+on its next process death — losing the entire conversation. This bit hardest with
+**AskUserQuestion**: in Mode B, asking a question deliberately `proc.kill()`s the
+process (the headless turn auto-resolves) and waits for the user's answer to respawn.
+For a session that had been resumed (every session revived from the agent_log after
+a restart carries `_resume_id`), the answer-followup hit the `was_resume` guard at
+`server.py` and started fresh — so the agent lost all in-flight context and had to
+retrace everything. Idle-eviction (just shipped) revives through the same path, so
+it would have triggered the same amnesia for any revived-then-idle session.
+
+Root cause: the guard meant to stop a resume **death-loop** (an `-r` that dies
+instantly) was over-broad — it treated *any* session that was ever a resume as
+"fragile," even one that resumed cleanly, ran many turns, and only died later.
+
+Fix — distinguish a genuinely fragile resume from a healthy one:
+- New `_resume_confirmed` flag, set the first time a (possibly resumed) process
+  produces assistant output. A resume that produced output has proven it loads.
+- `_resume_is_fragile(was_resume, resume_confirmed)` (pure, unit-tested): a dead
+  session is only abandoned-to-fresh if it was a resume that **never produced
+  output**. A confirmed resume that dies later (AskUserQuestion kill, idle-eviction,
+  or a crash) now **resumes with `-r`**, preserving the transcript (subject to the
+  existing 5 MB cap).
+- `_resume_confirmed` defaults `False` in both `_revive_from_agent_log` dicts.
+
+Tests: `tests/test_resume_revival.py` (5 cases — predicate truth table + the reader
+flips the flag on output + a no-output resume stays fragile). Activates on next MC
+restart (stream-reader + followup-path change).
+
 ## [2026-06-03] — Per-project MCP trimming: load only the servers a project needs (efficiency)
 
 Step 1 of cutting the per-session process fleet (companion to the idle-eviction

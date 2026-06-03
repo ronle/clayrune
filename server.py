@@ -460,6 +460,23 @@ def _long_session_advisory(s):
     return int(s.get('num_turns', 0) or 0) >= thr
 
 
+def _resume_is_fragile(was_resume, resume_confirmed):
+    """Decide whether a dead Mode B session that was a `-r` resume must be
+    abandoned (fresh restart, losing the transcript) vs. resumed again.
+
+    Only a resume that NEVER produced output is "fragile" — re-`-r`-ing it
+    would just loop, so we go fresh. A resume that produced output is healthy:
+    if it dies LATER (the AskUserQuestion `proc.kill()`, idle-eviction, or a
+    crash) it must be resumed with `-r` so the conversation is preserved.
+
+    Before this guard existed, ANY session that was ever a resume reset to a
+    fresh, context-less session on its next process death — which is why an
+    AskUserQuestion in a resumed session lost the whole conversation. See the
+    followup respawn path and tests/test_resume_revival.py.
+    """
+    return bool(was_resume) and not bool(resume_confirmed)
+
+
 def _extract_user_text(msg_field):
     """Extract plain user text from a jsonl message field, skipping tool_result blocks."""
     if not isinstance(msg_field, dict) or msg_field.get('role') != 'user':
@@ -4156,6 +4173,13 @@ def _read_agent_stream(proc, session):
                 _capture_system_init(msg)
                 _LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
                 if msg_type == 'assistant' and isinstance(msg.get('message'), dict):
+                    # First assistant output proves a `-r` resume loaded OK (not a
+                    # fragile resume that dies instantly), so a LATER process death
+                    # (the Mode-B AskUserQuestion proc.kill(), idle-eviction, or a
+                    # crash) re-resumes with -r instead of resetting to a context-
+                    # less fresh session. Harmless for Mode A (never consulted).
+                    # See _resume_is_fragile + the followup respawn path.
+                    session['_resume_confirmed'] = True
                     for block in msg['message'].get('content', []) or []:
                         if not isinstance(block, dict):
                             continue
@@ -4328,6 +4352,13 @@ def _read_agent_stream_b(proc, session):
                 _capture_system_init(msg)
                 _LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
                 if msg_type == 'assistant' and isinstance(msg.get('message'), dict):
+                    # First assistant output proves a `-r` resume loaded OK (not a
+                    # fragile resume that dies instantly), so a LATER process death
+                    # (the Mode-B AskUserQuestion proc.kill(), idle-eviction, or a
+                    # crash) re-resumes with -r instead of resetting to a context-
+                    # less fresh session. Harmless for Mode A (never consulted).
+                    # See _resume_is_fragile + the followup respawn path.
+                    session['_resume_confirmed'] = True
                     for block in msg['message'].get('content', []) or []:
                         if not isinstance(block, dict):
                             continue
@@ -5107,6 +5138,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
             'circuit_breaker_tripped': False,
             'claude_session_id': claude_sid,
             '_resume_id': claude_sid,
+            '_resume_confirmed': False,   # a just-spawned resume hasn't proven itself yet
             '_dispatch_time': _time.time(),
             'usage': entry.get('usage', {}),
             'cost_usd': entry.get('cost_usd', 0),
@@ -7761,18 +7793,21 @@ def agent_followup(project_id):
                     context = _build_agent_context(p)
                     message = (f"[Resumed session did not provide a continuable session ID. "
                                f"Starting fresh.]\n\n{message}")
-                elif was_resume:
-                    # Session was originally a resume that succeeded but process died.
-                    # Don't try to -r the same session again — it already proved fragile.
-                    # Start fresh to avoid the same failure loop.
-                    _log(f"[followup] {project_id}: resumed session {claude_sid[:12]} died after turn, starting fresh")
+                elif _resume_is_fragile(was_resume, existing.get('_resume_confirmed')):
+                    # The resume itself proved fragile — it died BEFORE producing any
+                    # output, so -r-ing it again would just loop. Start fresh.
+                    # (A resume that already produced output is healthy and falls
+                    # through to the -r path below, so an AskUserQuestion kill /
+                    # idle-eviction / later crash keeps the full transcript.)
+                    _log(f"[followup] {project_id}: resume {claude_sid[:12]} died before any output, starting fresh")
                     context = _build_agent_context(p)
                     existing['log_lines'].append(
-                        f'[Resumed session process exited — restarting fresh]')
+                        f'[Resume produced no output before exiting — restarting fresh]')
                     message = (f"[Continuing from a previous conversation (session {claude_sid}) whose "
                                f"process exited. Start fresh but continue the user's request.]\n\n{message}")
                 else:
-                    # Normal session — try to resume with -r
+                    # Normal session, OR a resume that already produced output
+                    # (healthy — it just died later). Resume with -r to keep context.
                     too_large, size_bytes = _session_too_large(pp, claude_sid)
                     if too_large:
                         size_mb = size_bytes / (1024 * 1024)
