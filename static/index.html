@@ -17044,6 +17044,17 @@ async function _renderSettings() {
         <div><div class="settings-label">Permissions</div><div class="settings-hint">Agent tool-permission mode.</div></div>
         <select class="settings-select" onchange="saveSetting('agent_permission_mode',this.value)">${permSel}</select>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Brief replies</div>
+          <div class="settings-hint">Short, conversational answers that elaborate only when you ask. Choose where it applies — code and file edits are never shortened.</div>
+        </div>
+        <div class="mc-seg">
+          <button class="${briefMode==='off'?'active':''}" onclick="setBriefRepliesMode('off')">Off</button>
+          <button class="${briefMode==='phone'?'active':''}" onclick="setBriefRepliesMode('phone')">Phone</button>
+          <button class="${briefMode==='all'?'active':''}" onclick="setBriefRepliesMode('all')">Everywhere</button>
+        </div>
+      </div>
     </div>
 
     <div class="settings-section">
@@ -17140,17 +17151,6 @@ async function _renderSettings() {
           <option value="ctrl-enter" ${enterKeyMode==='ctrl-enter'?'selected':''}>Ctrl+Enter sends</option>
           <option value="enter" ${enterKeyMode==='enter'?'selected':''}>Enter sends</option>
         </select>
-      </div>
-      <div class="settings-row">
-        <div>
-          <div class="settings-label">Brief replies</div>
-          <div class="settings-hint">Short, conversational answers that elaborate only when you ask. Choose where it applies — code and file edits are never shortened.</div>
-        </div>
-        <div class="mc-seg">
-          <button class="${briefMode==='off'?'active':''}" onclick="setBriefRepliesMode('off')">Off</button>
-          <button class="${briefMode==='phone'?'active':''}" onclick="setBriefRepliesMode('phone')">Phone</button>
-          <button class="${briefMode==='all'?'active':''}" onclick="setBriefRepliesMode('all')">Everywhere</button>
-        </div>
       </div>
     </div>
       </div>
