@@ -261,6 +261,12 @@ def _load_config():
         # one idea per message, no headers/bullets/long code blocks. The user's
         # chat bubble still shows the original message verbatim. Off by default.
         'mobile_brief_replies_enabled': False,
+        # Brief replies EVERYWHERE — same hidden-directive mechanism, but not
+        # gated on client="mobile". When on, every Claude dispatch (desktop
+        # included) gets a device-neutral brevity nudge so the agent answers
+        # short and elaborates only when asked. Supersedes the phone-only gate
+        # above. Off by default.
+        'brief_replies_always_enabled': False,
         # Auto model router (experimental, default OFF). When on, every dispatch
         # runs a cheap Haiku classifier on the prompt and picks Haiku/Sonnet/Opus
         # based on task complexity. When off, the user-selected model is used
@@ -6921,16 +6927,34 @@ _BRIEF_REPLY_DIRECTIVE = (
     "want more detail. This instruction is hidden from the user.]"
 )
 
+# Device-neutral variant for `brief_replies_always_enabled` (applies on desktop
+# too, so it can't say "from a phone" / "switch to PC"). Brevity targets PROSE
+# only — necessary code, file edits, and tool work are never truncated.
+_BRIEF_REPLY_DIRECTIVE_ALWAYS = (
+    "[Default to brief, conversational replies: lead with the answer in a "
+    "sentence or two, one main idea, minimal headers/bullets. Elaborate only "
+    "when the user explicitly asks for more detail. Brevity applies to prose "
+    "and explanation — never truncate necessary code, file edits, or tool "
+    "work. This instruction is hidden from the user.]"
+)
+
 
 def _apply_mobile_brief(message: str, request_data: dict) -> str:
-    """Return `message` augmented with the brief-reply directive if both the
-    server toggle (`mobile_brief_replies_enabled`) is on AND the request body
-    declared `client="mobile"`. Otherwise return `message` unchanged.
+    """Return `message` augmented with a hidden brief-reply directive.
+
+    Two independent server toggles drive this:
+      * `brief_replies_always_enabled` — when on, EVERY client (desktop too)
+        gets the device-neutral directive. Supersedes the phone-only gate.
+      * `mobile_brief_replies_enabled` — when on, only requests that declared
+        `client="mobile"` get the phone-worded directive.
+    If neither applies, `message` is returned unchanged.
 
     Callers MUST use the returned (augmented) string for whatever reaches
     claude (stdin write, spawn arg, _dispatch_agent_internal task) and keep
     the ORIGINAL `message` for anything user-visible (log_lines, telemetry).
     """
+    if CONFIG.get('brief_replies_always_enabled'):
+        return f"{_BRIEF_REPLY_DIRECTIVE_ALWAYS}\n\n{message}"
     if not CONFIG.get('mobile_brief_replies_enabled'):
         return message
     if not isinstance(request_data, dict):
@@ -12394,7 +12418,7 @@ _CONFIG_EDITABLE_KEYS = {
     'long_session_advisory_enabled', 'long_session_advisory_turns',
     'idle_eviction_enabled', 'idle_eviction_minutes',
     'projects_base', 'shared_rules_path', 'port', 'log_level',
-    'mobile_brief_replies_enabled',
+    'mobile_brief_replies_enabled', 'brief_replies_always_enabled',
     'auto_model_enabled', 'auto_model_classifier_model',
     'auto_model_classifier_timeout_secs',
     # Phase 4 Distiller (v2.1 §11 global keys).

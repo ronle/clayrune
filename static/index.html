@@ -16961,6 +16961,12 @@ async function _renderSettings() {
     `<option value="${v}" ${(cfg.condense_mode || 'agent') === v ? 'selected' : ''}>${l}</option>`
   ).join('');
 
+  // Brief-replies scope folds two server bools into one 3-way control.
+  // brief_replies_always_enabled supersedes the phone-only gate.
+  const briefMode = cfg.brief_replies_always_enabled
+    ? 'all'
+    : (cfg.mobile_brief_replies_enabled ? 'phone' : 'off');
+
   function toggle(key, val) {
     return `<div class="settings-toggle ${val ? 'on' : ''}" onclick="toggleSetting(this,'${key}')"></div>`;
   }
@@ -17137,10 +17143,14 @@ async function _renderSettings() {
       </div>
       <div class="settings-row">
         <div>
-          <div class="settings-label">Mobile brief replies</div>
-          <div class="settings-hint">From a phone, replies come back short and conversational. Full length on desktop.</div>
+          <div class="settings-label">Brief replies</div>
+          <div class="settings-hint">Short, conversational answers that elaborate only when you ask. Choose where it applies — code and file edits are never shortened.</div>
         </div>
-        ${toggle('mobile_brief_replies_enabled', cfg.mobile_brief_replies_enabled)}
+        <div class="mc-seg">
+          <button class="${briefMode==='off'?'active':''}" onclick="setBriefRepliesMode('off')">Off</button>
+          <button class="${briefMode==='phone'?'active':''}" onclick="setBriefRepliesMode('phone')">Phone</button>
+          <button class="${briefMode==='all'?'active':''}" onclick="setBriefRepliesMode('all')">Everywhere</button>
+        </div>
       </div>
     </div>
       </div>
@@ -18763,6 +18773,27 @@ async function saveSetting(key, value) {
 function toggleSetting(el, key) {
   const isOn = el.classList.toggle('on');
   saveSetting(key, isOn);
+}
+
+// Brief-replies scope: one 3-way control writes both server bools so exactly
+// one is true (or neither). 'all' supersedes the phone gate. One PUT, one toast.
+async function setBriefRepliesMode(mode) {
+  const body = {
+    mobile_brief_replies_enabled: (mode === 'phone'),
+    brief_replies_always_enabled: (mode === 'all'),
+  };
+  try {
+    await fetch(API_BASE + '/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    try { Object.assign(_globalConfig, body); } catch (_) {}
+    showToast('Setting saved');
+    if (document.getElementById('settings-body')) _renderSettings();
+  } catch (e) {
+    showToast('Failed to save setting', 4000);
+  }
 }
 
 // The model picker merges the old Default-Model dropdown and the Auto-pick

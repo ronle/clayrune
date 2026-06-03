@@ -4,6 +4,32 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-03] — Brief replies on desktop too (Settings → Interface → Brief replies)
+
+The "mobile brief replies" feature (hidden Telegram-style directive prepended to
+the Claude-bound copy of each message, user's chat bubble unchanged) was gated to
+phone-sized viewports only (`client="mobile"`, set when `innerWidth<=960`). Ron
+wanted it forced on desktop: answer short, elaborate only when asked.
+
+The single phone-only toggle is now a **3-way segmented control — Off / Phone /
+Everywhere** — backed by two server bools so it stays backward compatible:
+- `mobile_brief_replies_enabled` (existing) → **Phone** (only `client="mobile"`).
+- `brief_replies_always_enabled` (new, default off) → **Everywhere**: applies the
+  directive on every Claude dispatch, desktop included. **Supersedes** the phone gate.
+
+`_apply_mobile_brief()` is the single chokepoint all 8 dispatch paths flow through
+(including every auto-router branch — same-tier write, tier-switch respawn,
+router-off), so the new switch covers them all. The "Everywhere" path uses a
+**device-neutral** directive (`_BRIEF_REPLY_DIRECTIVE_ALWAYS`) — it can't say "from
+a phone" / "switch to PC" — and explicitly scopes brevity to **prose only**: code,
+file edits, and tool work are never truncated. Scope is the Claude path only (same
+as the original feature; non-claude providers are unaffected).
+
+Files: `server.py` (config default, neutral directive, gate logic, editable-keys
+whitelist), `static/index.html` (`briefMode` compute, seg control,
+`setBriefRepliesMode()` writer). **Activates on next MC restart + a hard tab reload**
+(server-side whitelist + SPA HTML).
+
 ## [2026-06-03] — Resumed sessions keep their transcript across a process death (amnesia fix)
 
 A resumed (`-r`) Mode B session used to **reset to a fresh, context-less session**
