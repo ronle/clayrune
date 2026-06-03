@@ -228,6 +228,12 @@ def _load_config():
         'scribe_checkpoint_kb': 0,     # mid-session cadence (KB new transcript); 0=disabled
         'long_session_advisory_enabled': False,  # soft "restart long Mode-B session" nudge
         'long_session_advisory_turns': 25,      # num_turns threshold for that nudge
+        # Idle-session eviction — reclaim a warm Mode B fleet (claude.exe + its
+        # MCP servers) after long inactivity; the next message transparently
+        # respawns it with `-r <csid>` (full context preserved). Default OFF;
+        # enable after validation, same posture as scribe_checkpoint. [2026-06-03]
+        'idle_eviction_enabled': False,
+        'idle_eviction_minutes': 30,    # idle minutes before a warm session is evicted
         # Phase 4 Distiller (v2.1 §11 global keys).
         # Self-learning observer parallel to Scribe — extracts cross-session
         # patterns into _proposed/ for human review. Best-effort, never load-
@@ -7709,6 +7715,7 @@ def agent_followup(project_id):
                 existing['status'] = 'running'
                 existing['last_status_change_time'] = _time.time()
                 existing['last_output_time'] = _time.time()
+                existing.pop('evicted', None)  # respawned from idle-eviction → clear the State-1 skip flag
                 # Clear the in-flight marker set by agent_send. Otherwise the
                 # flag leaks past status='running' and, once this turn
                 # completes (status flips back to idle/completed), Guardian
@@ -12271,6 +12278,7 @@ _CONFIG_EDITABLE_KEYS = {
     'scribe_reconcile_cap', 'scribe_checkpoint_enabled',
     'scribe_checkpoint_kb', 'read_floor_topk',
     'long_session_advisory_enabled', 'long_session_advisory_turns',
+    'idle_eviction_enabled', 'idle_eviction_minutes',
     'projects_base', 'shared_rules_path', 'port', 'log_level',
     'mobile_brief_replies_enabled',
     'auto_model_enabled', 'auto_model_classifier_model',
@@ -13313,6 +13321,33 @@ def _session_guardian_loop():
     return
 
 
+def _should_evict_idle_session(session, now, enabled, idle_minutes):
+    """Pure predicate for guardian idle-eviction (kept separate so it's unit-
+    testable without spawning real processes).
+
+    True iff this is a warm Mode B session with a live process that has been
+    `idle` (turn finished, waiting on the user) for longer than `idle_minutes`.
+    Evicting it kills the claude.exe + MCP-server fleet to free resources; the
+    next user message respawns it with `-r <csid>` (full context). Only `idle`
+    sessions qualify — a `running` session is mid-work and never evicted."""
+    if not enabled or not idle_minutes or idle_minutes <= 0:
+        return False
+    if session.get('status') != 'idle' or session.get('mode') != 'B':
+        return False
+    if session.get('evicted'):
+        return False
+    # Don't evict a session with queued work or one waiting on the user — those
+    # carry pending state the next turn needs; let them resolve first.
+    if (session.get('pending_followups') or session.get('_dispatching_followup')
+            or session.get('waiting_for_question')
+            or session.get('waiting_for_plan_approval')):
+        return False
+    proc = session.get('proc')
+    if proc is None or proc.poll() is not None:
+        return False
+    return (now - session.get('last_output_time', now)) > idle_minutes * 60
+
+
 def _guardian_check_session(sid, session, now):
     status = session['status']
     proc = session.get('proc')
@@ -13346,7 +13381,8 @@ def _guardian_check_session(sid, session, now):
             # plan approval), the process was killed intentionally by the reader
             # thread as part of that flow. Don't mark it 'error' — the follow-up
             # (user's answer) will respawn it.
-            if session.get('waiting_for_question') or session.get('waiting_for_plan_approval'):
+            if (session.get('waiting_for_question') or session.get('waiting_for_plan_approval')
+                    or session.get('evicted')):
                 return
             old_status = status
             _log(f"[guardian] Session {sid[:8]}: PID {proc.pid} dead, was {old_status}")
@@ -13385,6 +13421,34 @@ def _guardian_check_session(sid, session, now):
             # Snapshot pid; release lock before kill (process-tree walk can be slow on Windows)
             _kill_proc_background(proc)
             return
+
+    # State 8: idle-session eviction. Reclaim a warm Mode B fleet (claude.exe +
+    # its MCP-server tree) after long inactivity; the next user message respawns
+    # it via the followup path with `-r <csid>`, so context is preserved. The
+    # `evicted` flag makes State 1 skip the now-dead-proc session instead of
+    # flagging it 'error'; it is cleared on respawn. Default OFF.
+    if _should_evict_idle_session(session, now,
+                                  CONFIG.get('idle_eviction_enabled', False),
+                                  CONFIG.get('idle_eviction_minutes', 30)):
+        proc_to_kill = None
+        with get_manager(session['project_id']).lock:
+            # Re-check under lock — status/proc may have changed since the snapshot.
+            if _should_evict_idle_session(session, now,
+                                          CONFIG.get('idle_eviction_enabled', False),
+                                          CONFIG.get('idle_eviction_minutes', 30)):
+                idle_min = (now - session.get('last_output_time', now)) / 60
+                session['evicted'] = True
+                session['process_alive'] = False
+                session['last_status_change_time'] = now
+                session['log_lines'].append(
+                    f'[Guardian: idle {idle_min:.0f} min — process evicted to free '
+                    f'resources; next message resumes with full context]')
+                _unregister_process(proc.pid)
+                proc_to_kill = proc
+        if proc_to_kill is not None:
+            _log(f"[guardian] Session {sid[:8]}: evicted after idle timeout")
+            _kill_proc_background(proc_to_kill)
+        return
 
     proj_lock = get_manager(session['project_id']).lock
 

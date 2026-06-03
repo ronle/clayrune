@@ -4,6 +4,29 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-03] — Idle Mode-B sessions evicted to reclaim their MCP fleet (efficiency)
+
+Step 2 of cutting the steady-state process footprint: every warm Mode B session
+holds a `claude.exe` + a ~20-process MCP-server fleet, and they accumulate as
+projects are touched. A new guardian check (`_should_evict_idle_session` →
+"State 8" in `_guardian_check_session`) tears down a warm session's process tree
+after `idle_eviction_minutes` of inactivity; the next user message transparently
+respawns it via the existing followup path with `claude -r <csid>`, so the
+conversation continues with full context.
+
+- Only **`idle`** Mode B sessions with a live process are evicted — a `running`
+  session (mid-work), one with queued followups, or one waiting on the user
+  (question / plan approval) is never touched.
+- The `evicted` flag makes guardian State 1 skip the now-dead-process session
+  instead of marking it `error`; it's cleared on respawn so a genuine later
+  crash is still surfaced.
+- New config: `idle_eviction_enabled` (default **false**) + `idle_eviction_minutes`
+  (default 30). Ships off — same posture as `scribe_checkpoint`; enable live via
+  `/api/config` (no restart). Tests: `tests/test_idle_eviction.py` (12 cases).
+
+Step 1 (per-project MCP server trimming) and any shared-daemon reuse (step 3)
+are tracked separately.
+
 ## [2026-06-03] — Restart/crash no longer orphans child processes (leak fix)
 
 A process-leak audit found ~239 stray processes (~5.8 GB RAM) accumulated across
