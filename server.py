@@ -1272,6 +1272,7 @@ def _register_process(proc, name, proc_type, session_id, project_id, command_pre
             project_name = p.get('name', project_id)
     except Exception:
         pass
+    _img, _ct = _proc_identity(proc.pid)
     with process_tracker_lock:
         tracked_processes[proc.pid] = {
             'pid': proc.pid,
@@ -1282,14 +1283,151 @@ def _register_process(proc, name, proc_type, session_id, project_id, command_pre
             'project_name': project_name,
             'command_preview': (command_preview or '')[:80],
             'started_at': now_iso(),
+            'os_image': _img,
+            'create_time': _ct,
             'proc': proc,
         }
+    _persist_pid_ledger()
 
 
 def _unregister_process(pid):
     """Remove a process from the PID tracker."""
     with process_tracker_lock:
         tracked_processes.pop(pid, None)
+    _persist_pid_ledger()
+
+
+# ── MC-spawned child PID ledger + startup orphan reaper ──────────────────────
+# server.py restarts by re-exec'ing via os._exit(): any child not killed inside
+# the bounded graceful-stop window is orphaned, and the new instance never knew
+# its PIDs (tracked_processes is in-memory only). Net effect: claude.exe + their
+# MCP-server trees (node/cmd/engram) leak across every restart/crash. We persist
+# the live child PIDs to a ledger and, at the next startup, reap any that are
+# STILL alive AND still the same process (image-name + creation-time guard
+# defeats PID reuse, so we can never friendly-fire an unrelated process).
+# Everything here is best-effort: it never raises, never blocks a spawn or
+# startup, and degrades to a no-op if identity can't be confirmed. [2026-06-03]
+_PID_LEDGER_PATH = _DATA_ROOT / 'data' / 'mc_child_pids.json'
+
+
+def _proc_identity(pid):
+    """Return (image_basename_lower, creation_epoch_float) for a live PID, or
+    (None, None) if it can't be read. Dependency-free ctypes on Windows so the
+    reaper works without psutil; psutil elsewhere. Used purely as a PID-reuse
+    guard — a failure here just means "can't confirm", which is treated as
+    "don't reap"."""
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32
+            k32.OpenProcess.restype = wintypes.HANDLE
+            k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if not h:
+                return (None, None)
+            try:
+                name = None
+                buf = ctypes.create_unicode_buffer(32768)
+                size = wintypes.DWORD(32768)
+                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    name = buf.value.rsplit('\\', 1)[-1].lower()
+                ct = None
+                creation, exit_, kern, user = (wintypes.FILETIME(), wintypes.FILETIME(),
+                                               wintypes.FILETIME(), wintypes.FILETIME())
+                if k32.GetProcessTimes(h, ctypes.byref(creation), ctypes.byref(exit_),
+                                       ctypes.byref(kern), ctypes.byref(user)):
+                    ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+                    # FILETIME = 100ns ticks since 1601-01-01 → unix epoch seconds.
+                    ct = ticks / 1e7 - 11644473600.0
+                return (name, ct)
+            finally:
+                k32.CloseHandle(h)
+        except Exception:
+            return (None, None)
+    else:
+        try:
+            import psutil
+            p = psutil.Process(int(pid))
+            return (p.name().lower(), float(p.create_time()))
+        except Exception:
+            return (None, None)
+
+
+def _persist_pid_ledger():
+    """Snapshot the live tracked-process PIDs to disk (atomic, best-effort).
+    Called after every register/unregister; read once at the next startup by
+    _reap_prior_instance_strays(), then cleared. Lives in data/ (NOT
+    data/projects/) so load_projects() never sees it."""
+    try:
+        with process_tracker_lock:
+            entries = [{
+                'pid': e.get('pid'),
+                'name': e.get('name', ''),
+                'type': e.get('type', ''),
+                'os_image': e.get('os_image'),
+                'create_time': e.get('create_time'),
+            } for e in tracked_processes.values()]
+        _atomic_write_text(_PID_LEDGER_PATH, json.dumps(
+            {'mc_pid': os.getpid(), 'written_at': now_iso(), 'children': entries}))
+    except Exception:
+        pass  # ledger is best-effort; a write failure must never break a spawn
+
+
+def _should_reap_entry(entry, live_image, live_ct):
+    """Pure predicate: should the startup reaper kill this ledgered PID?
+
+    Reap ONLY if the PID is still the same process MC spawned — guarded by an
+    exact image-name match and, when both sides have it, a creation-time match
+    (within 2s). A reused PID (different image, or a creation time newer than
+    recorded) is skipped. Missing identity on either side → do not reap."""
+    rec_img = (entry.get('os_image') or '')
+    if not rec_img or not live_image:
+        return False
+    if rec_img.lower() != live_image.lower():
+        return False
+    rec_ct = entry.get('create_time')
+    if rec_ct is not None and live_ct is not None:
+        if abs(float(rec_ct) - float(live_ct)) > 2.0:
+            return False
+    return True
+
+
+def _reap_prior_instance_strays():
+    """Startup: kill child process trees orphaned by a prior MC instance that
+    exited (restart/crash) without tearing them down. Reads the prior instance's
+    PID ledger, reaps anything still alive AND still the same process, then
+    clears the ledger. Best-effort; never blocks startup."""
+    try:
+        if not _PID_LEDGER_PATH.exists():
+            return
+        data = json.loads(_PID_LEDGER_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        return
+    me = os.getpid()
+    prior_mc = data.get('mc_pid')
+    reaped = 0
+    for entry in (data.get('children') or []):
+        try:
+            pid = int(entry.get('pid'))
+        except Exception:
+            continue
+        if pid == me or pid == prior_mc or not _pid_is_alive(pid):
+            continue
+        live_image, live_ct = _proc_identity(pid)
+        if not _should_reap_entry(entry, live_image, live_ct):
+            continue
+        if _kill_pid(pid, tree=True):
+            reaped += 1
+    try:
+        if reaped:
+            _log(f"[reaper] killed {reaped} orphaned child tree(s) from a prior MC "
+                 f"instance (was PID {prior_mc})")
+        _atomic_write_text(_PID_LEDGER_PATH, json.dumps(
+            {'mc_pid': me, 'written_at': now_iso(), 'children': []}))
+    except Exception:
+        pass
 
 
 _ATTACHMENT_RUNTIME_FIELDS = ('_present',)
@@ -15922,6 +16060,18 @@ def _stop_all_sessions_for_restart(grace_seconds=3.0):
     for proc in procs:
         _kill_proc_background(proc)
 
+    # Stop the Cloudflare tunnel too. It's spawned outside the agent-session
+    # tracker, so without this every restart/shutdown orphans cloudflared.exe
+    # (observed: 29 leaked connectors accumulated across prior restarts).
+    # Best-effort + bounded; a missing/disabled remote-access build just no-ops.
+    # [leak fix 2026-06-03]
+    try:
+        from mc_remote import tunnel_supervisor as _tunnel_sup
+        _tunnel_sup.get().stop(timeout=3.0)
+    except Exception as e:
+        try: _log(f"[restart] tunnel stop skipped: {e}")
+        except Exception: pass
+
     # Brief wait so the children get a chance to die before exec replaces us.
     deadline = _time.time() + grace_seconds
     while _time.time() < deadline:
@@ -16596,6 +16746,14 @@ def _register_claude_runtime_hooks():
 if __name__ == '__main__':
     _register_claude_runtime_hooks()
     _check_port_conflict()
+    # Reap child process trees orphaned by a prior MC instance that exited
+    # (restart/crash) without killing them. Reads the PID ledger the prior
+    # instance persisted; identity-guarded so it can't friendly-fire. Must run
+    # before any subsystem spawns its own children. [leak fix 2026-06-03]
+    try:
+        _reap_prior_instance_strays()
+    except Exception as e:
+        _log(f"[reaper] startup reap failed: {e}")
     _start_scheduler()
     _start_hivemind_orchestrator()
     _start_session_guardian()

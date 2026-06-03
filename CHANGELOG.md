@@ -4,6 +4,36 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-03] — Restart/crash no longer orphans child processes (leak fix)
+
+A process-leak audit found ~239 stray processes (~5.8 GB RAM) accumulated across
+two weeks of MC restarts: orphaned `claude.exe` agent trees + their MCP servers
+(node/cmd/engram/conhost) and — worst — **29 of 30 `cloudflared.exe` connectors**,
+all with dead parents. Root cause: the restart path (`_perform_server_restart_async`
+→ `_stop_all_sessions_for_restart`) re-execs via `os._exit()`, and (a) never stopped
+the Cloudflare tunnel, (b) bounded the agent tree-kill to 4s before exiting, and
+(c) kept tracked child PIDs only in memory — so the new instance had no knowledge
+of, and no way to reap, whatever the old instance failed to kill.
+
+Three fixes (all best-effort, fail-safe, no new dependencies):
+
+- **Tunnel stop on restart/shutdown.** `_stop_all_sessions_for_restart` now calls
+  `tunnel_supervisor.get().stop()`, so `cloudflared.exe` is torn down instead of
+  orphaned on every restart/shutdown.
+- **Child PID ledger.** `_register_process` / `_unregister_process` persist the live
+  child PIDs (+ OS image name & creation time) to `data/mc_child_pids.json`
+  (atomic write, OUTSIDE `data/projects/` so `load_projects()` never sees it).
+- **Startup reaper.** `_reap_prior_instance_strays()` runs before any subsystem
+  spawns, tree-killing any ledgered PID still alive AND still the same process.
+  PID reuse is guarded by an image-name + creation-time (±2s) match, so it can
+  never friendly-fire an unrelated process — proven in `tests/test_pid_reaper.py`
+  (incl. the live MC surviving a mismatched-identity ledger entry). Identity uses
+  dependency-free ctypes (`OpenProcess` / `GetProcessTimes`); psutil not required.
+
+Rollout: activates from the NEXT restart onward — the currently-running old
+instance writes no ledger, so the first restart's reaper is a no-op; every restart
+after that reaps cleanly. Server changes need an MC restart.
+
 ## [2026-06-02] — Windowless launch by default + power menu (restart / shut down)
 
 Two related launcher/runtime changes.
