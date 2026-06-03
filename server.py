@@ -785,6 +785,84 @@ def _save_schedules(schedules):
     SCHEDULES_PATH.write_text(json.dumps(schedules, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
+# Built-in re-declaration for the engram memory plugin. engram is a *plugin*
+# (settings.json enabledPlugins), NOT an mcpServers entry — so --strict-mcp-config
+# drops it along with everything else. Re-declaring it here lets a trimmed project
+# keep memory. The `engram` binary is on PATH, so this spec is stable across
+# plugin-version bumps (verified 2026-06-03 against CC 2.1.158: this exact spec
+# restores mcp__engram__* under --strict-mcp-config). Mirrors the plugin's own
+# .mcp.json.
+_ENGRAM_MCP_SPEC = {'command': 'engram', 'args': ['mcp', '--tools=agent']}
+
+
+def _mcp_server_catalog(project):
+    """Merge every MCP server this project *could* load into {name: spec}.
+
+    Sources, later overriding earlier on name collision:
+      1. global  ~/.claude.json  → mcpServers
+      2. project <project_path>/.mcp.json → mcpServers
+      3. built-in `engram` re-declaration (so trimming can keep memory)
+
+    Best-effort: an unreadable / malformed source is skipped, never raised."""
+    catalog = {}
+    try:
+        gp = Path.home() / '.claude.json'
+        if gp.exists():
+            g = json.loads(gp.read_text(encoding='utf-8'))
+            for k, v in (g.get('mcpServers') or {}).items():
+                if isinstance(v, dict):
+                    catalog[k] = v
+    except Exception:
+        pass
+    try:
+        ppath = (project or {}).get('project_path')
+        if ppath:
+            mp = Path(ppath) / '.mcp.json'
+            if mp.exists():
+                pj = json.loads(mp.read_text(encoding='utf-8'))
+                for k, v in (pj.get('mcpServers') or {}).items():
+                    if isinstance(v, dict):
+                        catalog[k] = v
+    except Exception:
+        pass
+    catalog.setdefault('engram', dict(_ENGRAM_MCP_SPEC))
+    return catalog
+
+
+def _resolve_project_mcp_config(project):
+    """Per-project MCP trimming → a `--mcp-config` JSON string, or None.
+
+    None → the project did NOT opt in (`enabled_mcp_servers` absent or not a
+           list): no flags are emitted and the session inherits the full
+           global+project+plugin fleet, byte-identical to pre-trim behavior.
+           This is the default-off invariant — most projects hit this path.
+    str  → opt-in. A JSON `{"mcpServers": {…}}` naming exactly the selected
+           servers, paired by build_command with `--strict-mcp-config`. An
+           empty selection → `{"mcpServers": {}}` (loads nothing — a valid
+           maximal trim). Names not in the catalog are logged and skipped.
+
+    Best-effort: any failure returns None (fail-open to the full fleet) — MCP
+    trimming must never break a dispatch."""
+    try:
+        sel = (project or {}).get('enabled_mcp_servers')
+        if not isinstance(sel, list):
+            return None  # not opted in → unchanged behavior
+        catalog = _mcp_server_catalog(project)
+        chosen = {}
+        for name in sel:
+            if name in catalog:
+                chosen[name] = catalog[name]
+            else:
+                _log(f"[mcp-trim] {(project or {}).get('id', '?')}: unknown MCP "
+                     f"server '{name}' skipped (catalog: {sorted(catalog)})",
+                     level='warn')
+        return json.dumps({'mcpServers': chosen})
+    except Exception as e:
+        _log(f"[mcp-trim] resolve failed ({e!r}); inheriting full fleet",
+             level='warn')
+        return None
+
+
 def _build_claude_flags(project=None, streaming=False, model_override=None):
     """Build common Claude CLI flags from config, with optional per-project overrides.
     Delegates to ClaudeRuntime.build_command()[1:] — single source of truth.
@@ -809,6 +887,7 @@ def _build_claude_flags(project=None, streaming=False, model_override=None):
             CONFIG.get('agent_remote_control', False)
         ),
         effort=effort,
+        mcp_config_json=_resolve_project_mcp_config(project) or '',
     )[1:]  # strip binary — _build_claude_flags() contract is flags-only
 
 

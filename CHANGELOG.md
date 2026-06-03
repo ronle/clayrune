@@ -4,6 +4,48 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-03] — Per-project MCP trimming: load only the servers a project needs (efficiency)
+
+Step 1 of cutting the per-session process fleet (companion to the idle-eviction
+entry below). Until now MC passed **no** `--mcp-config` at dispatch, so every
+session inherited the *full* global+project+plugin MCP fleet regardless of the
+project — tradingview + sequential-thinking (global `~/.claude.json`), filesystem
+(project `.mcp.json`), the engram memory plugin, and the claude.ai remotes
+(Gmail/Calendar/Drive/Uber). A trading project that never opens a chart still
+spawned tradingview; a docs project still carried the lot.
+
+A project may now declare **`enabled_mcp_servers`** (a list of server names). When
+present, the dispatch builds an inline `--mcp-config` containing exactly those
+servers and adds `--strict-mcp-config`, so Claude Code loads **only** that subset.
+
+- **Default-OFF, opt-in, fail-open.** A project without a *list-valued*
+  `enabled_mcp_servers` resolves to `None` → no flags emitted → byte-identical to
+  the previous behavior (full fleet). Any error while resolving the config also
+  returns `None` — trimming can never break a dispatch. `_resolve_project_mcp_config`
+  (server.py) is the gate; `ClaudeRuntime.build_command(mcp_config_json=…)`
+  (agent_runtime.py) is the single flag-emit site.
+- **Catalog** = merge of global `~/.claude.json` mcpServers + the project's
+  `.mcp.json` + a built-in re-declaration of **engram**. `--strict-mcp-config`
+  drops *plugin* MCP servers too (verified: an empty config → engram tools report
+  `TOOL_MISSING`), so engram — a plugin, not an mcpServers entry — is re-declared
+  as `{"command":"engram","args":["mcp","--tools=agent"]}` (binary on PATH, stable
+  across plugin bumps) and is selectable by name. A trimmed project that lists
+  `engram` keeps full memory; its tools just move to the `mcp__engram__*` namespace.
+- **Empty list `[]`** is a valid maximal trim (`{"mcpServers":{}}` → no MCP servers).
+  Unknown names are logged at `warn` and skipped.
+- **Pilot (this deploy):** `mission_control` + `clayrune_website` →
+  `["filesystem","engram"]`; `engulfing-analyst` → `["pg","filesystem","engram"]`
+  (its Postgres MCP is load-bearing for the diagnostic skill). Each drops
+  tradingview + sequential-thinking + the four claude.ai remotes while keeping
+  memory. Reversible: delete the field to restore the full fleet.
+- Verified end-to-end against CC 2.1.158: a real `claude` run with the pilot
+  config reported `mcp_servers: [filesystem connected, engram connected]` (no TV /
+  seq-thinking / claude.ai) and successfully invoked both `mcp__filesystem__*` and
+  `mcp__engram__mem_search`. Tests: `tests/test_mcp_trim.py` (15 cases).
+
+The new code activates on the next MC restart (same restart that arms idle-eviction
+below); the per-project field itself is read live at dispatch.
+
 ## [2026-06-03] — Idle Mode-B sessions evicted to reclaim their MCP fleet (efficiency)
 
 Step 2 of cutting the steady-state process footprint: every warm Mode B session
