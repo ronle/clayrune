@@ -155,6 +155,11 @@ docs/remote-access/SETUP_CHECKLIST.md
 docs/remote-access/error_codes.md
 BUILD_INSTRUCTIONS.md
 
+# Hosted-cloud design docs + committee reviews (investor deck, income model,
+# platform design, onboarding) — internal/cloud, never publish (Ron, 2026-06-03).
+docs/HOSTED_CLOUD_*
+docs/_committee/HOSTED_CLOUD_*
+
 # ── Multi-provider runtime — local/runtime artifacts ───────────────────────
 # provider_env.json holds per-provider API keys / env-var overrides — secrets,
 # never commit. The rest are runtime-generated: the API reference is rebuilt by
