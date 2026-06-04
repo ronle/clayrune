@@ -47,7 +47,7 @@ Build it first:  pyinstaller build-macos.spec --noconfirm"
 
 command -v xcrun >/dev/null 2>&1 || die "Xcode Command Line Tools missing. Run: xcode-select --install"
 
-if ! security find-identity -v -p codesigning | grep -qF "$IDENTITY"; then
+if ! grep -qF "$IDENTITY" <<<"$(security find-identity -v -p codesigning)"; then
   die "Signing identity not found in your keychain:
   $IDENTITY
 Set up the Developer ID cert first — see docs/MACOS_NOTARIZATION.md"
@@ -79,7 +79,8 @@ codesign --force --deep --options runtime --timestamp \
 # alone is not enough — it passes on PyInstaller's pre-existing ad-hoc signature
 # and gives a false "valid on disk". The Authority line is the real proof.
 say "Verifying signature"
-codesign -dvv "$APP" 2>&1 | grep -qF "Authority=$IDENTITY" \
+SIG_INFO="$(codesign -dvv "$APP" 2>&1)"
+grep -qF "Authority=$IDENTITY" <<<"$SIG_INFO" \
   || die "App is not signed with the Developer ID identity after signing."
 codesign --verify --strict "$APP" || die "codesign --verify failed."
 
@@ -100,7 +101,8 @@ fi
 # ── 4. Staple the ticket + final Gatekeeper check ───────────────────────────
 say "Stapling ticket"
 xcrun stapler staple "$APP"
-spctl -a -t exec -vvv "$APP" 2>&1 | grep -q "source=Notarized Developer ID" \
+GK_INFO="$(spctl -a -t exec -vvv "$APP" 2>&1)"
+grep -q "source=Notarized Developer ID" <<<"$GK_INFO" \
   || die "Gatekeeper assessment did not report 'Notarized Developer ID'."
 
 # ── 5. Zip the STAPLED app for distribution ─────────────────────────────────
