@@ -281,6 +281,15 @@ def _load_config():
         # underlying claude oneshot's 180s timeout — diagnosed in the analysis
         # doc (docs/DISPATCH_AND_ROUTING_ANALYSIS.md §C.1 step 1).
         'auto_model_classifier_timeout_secs': 8,
+        # Sticky agent settings + respawn-on-flip (experimental, default OFF).
+        # When on: (a) the "brief replies everywhere" directive is baked into the
+        # spawn-time system prompt (cached, authoritative) instead of being
+        # re-prepended to every user turn, and (b) flipping any spawn-baked
+        # ("Tier-1") setting mid-session marks live Mode B sessions to resume via
+        # -r at the next turn boundary so the change actually takes effect. See
+        # _RESPAWN_TRIGGER_KEYS for the Tier-1 set and docs plan
+        # respawn-on-setting-flip.md.
+        'sticky_agent_settings': False,
     }
     if CONFIG_PATH.exists():
         try:
@@ -3725,6 +3734,13 @@ def _build_agent_context(project, incognito=False, task=''):
         parts.append(f"Your name is {agent_name}.")
     if user_name:
         parts.append(f"The user's name is {user_name}. Address them accordingly.")
+    # Sticky brevity: when sticky_agent_settings is on, the device-neutral brief
+    # directive lives HERE (cached, once per spawn) instead of being prepended to
+    # every user turn by _apply_mobile_brief. Flipping the toggle mid-session is
+    # handled by the respawn-on-flip path (see update_config / agent_followup).
+    if (CONFIG.get('sticky_agent_settings', False)
+            and CONFIG.get('brief_replies_always_enabled', False)):
+        parts.append(_BRIEF_REPLY_DIRECTIVE_SYSTEM)
     parts.append(f"You are working on {project.get('name', project['id'])}.")
     pp = project.get('project_path', '')
     if pp:
@@ -6938,6 +6954,19 @@ _BRIEF_REPLY_DIRECTIVE_ALWAYS = (
     "work. This instruction is hidden from the user.]"
 )
 
+# System-prompt variant of the device-neutral brevity nudge, used when
+# `sticky_agent_settings` is on: baked once into _build_agent_context (cached,
+# system-level authority) instead of re-prepended to every user turn. Hard caps
+# so it isn't weighed away as a soft suggestion. Governs PROSE only.
+_BRIEF_REPLY_DIRECTIVE_SYSTEM = (
+    "REPLY LENGTH (default for this session): keep prose brief — lead with the "
+    "answer in the first sentence; at most ~4 sentences of explanation; no "
+    "section headers; no bullet lists unless enumerating 3+ discrete items. "
+    "Elaborate only when the user explicitly asks for more detail. This governs "
+    "PROSE only — never truncate or abbreviate necessary code, file edits, or "
+    "tool calls."
+)
+
 
 def _apply_mobile_brief(message: str, request_data: dict) -> str:
     """Return `message` augmented with a hidden brief-reply directive.
@@ -6954,6 +6983,11 @@ def _apply_mobile_brief(message: str, request_data: dict) -> str:
     the ORIGINAL `message` for anything user-visible (log_lines, telemetry).
     """
     if CONFIG.get('brief_replies_always_enabled'):
+        # When sticky_agent_settings is on, this directive is baked into the
+        # spawn-time system prompt (_build_agent_context) — don't also prepend
+        # it per turn, or it doubles up.
+        if CONFIG.get('sticky_agent_settings', False):
+            return message
         return f"{_BRIEF_REPLY_DIRECTIVE_ALWAYS}\n\n{message}"
     if not CONFIG.get('mobile_brief_replies_enabled'):
         return message
@@ -7854,6 +7888,7 @@ def agent_followup(project_id):
                 existing['last_status_change_time'] = _time.time()
                 existing['last_output_time'] = _time.time()
                 existing.pop('evicted', None)  # respawned from idle-eviction → clear the State-1 skip flag
+                existing.pop('_needs_respawn', None)  # this respawn already rebuilds flags+context
                 # Clear the in-flight marker set by agent_send. Otherwise the
                 # flag leaks past status='running' and, once this turn
                 # completes (status flips back to idle/completed), Guardian
@@ -7898,7 +7933,40 @@ def agent_followup(project_id):
                 # the parallel respawn branch above for why this matters.
                 existing.pop('_dispatching_followup', None)
 
-                if CONFIG.get('auto_model_enabled', False) and message:
+                # Sticky-settings respawn: a spawn-baked (Tier-1) setting was
+                # flipped mid-session (see update_config). A live CLI can't see
+                # CLI/system-prompt changes, so resume it into a fresh process
+                # that rebuilds flags + context from current CONFIG. Mirrors the
+                # auto-router's alive-process respawn just below.
+                if (CONFIG.get('sticky_agent_settings', False)
+                        and existing.pop('_needs_respawn', None)):
+                    _sticky_sid = existing.get('claude_session_id')
+                    _sticky_resume = ['-r', _sticky_sid] if _sticky_sid else []
+                    _sticky_cmd = [_resolve_claude(), *_sticky_resume,
+                                   *_build_claude_flags(p, streaming=True)]
+                    _sticky_sp = None
+                    if not _sticky_resume:
+                        _sargs, _sticky_sp = _sysprompt_file_args(_build_agent_context(p))
+                        _sticky_cmd.extend(_sargs)
+                    existing['process_alive'] = False
+                    existing['log_lines'].append('[Settings changed — applying via resume]')
+                    _sticky_old = existing.get('proc')
+                    if _sticky_old:
+                        _unregister_process(_sticky_old.pid)
+                        try:
+                            _sticky_old.stdin.close()
+                        except Exception:
+                            pass
+                    _respawn_b = {
+                        'cmd': _sticky_cmd, 'pp': pp, 'message': message,
+                        'existing': existing, 'session_id': session_id,
+                        'project_id': project_id,
+                        'old_proc': _sticky_old,
+                        'sysprompt_path': _sticky_sp,
+                        'request_data': data,
+                    }
+                    # Fall through — spawn happens after lock release.
+                elif CONFIG.get('auto_model_enabled', False) and message:
                     # Defer stdin write — classify model post-lock to avoid
                     # blocking mgr.lock for the ~0.5s Haiku classifier call.
                     _model_route_state = {
@@ -12421,6 +12489,7 @@ _CONFIG_EDITABLE_KEYS = {
     'mobile_brief_replies_enabled', 'brief_replies_always_enabled',
     'auto_model_enabled', 'auto_model_classifier_model',
     'auto_model_classifier_timeout_secs',
+    'sticky_agent_settings',
     # Phase 4 Distiller (v2.1 §11 global keys).
     'distiller_enabled_global', 'distiller_cross_project_enabled',
     'distiller_model', 'distiller_window_days',
@@ -12428,6 +12497,20 @@ _CONFIG_EDITABLE_KEYS = {
     'distiller_proposal_dedupe_days',
     'distiller_cross_project_walk_debounce_session_count',
     'distiller_cross_project_walk_debounce_seconds',
+}
+
+# Spawn-baked ("Tier-1") settings: consumed at process launch (CLI flags or the
+# system prompt), so a live Mode B process can't see a change until it respawns.
+# When `sticky_agent_settings` is on, flipping any of these marks live sessions
+# to resume into a fresh process at the next turn boundary. Per-turn settings
+# (brief phone-mode, auto-router, scribe-checkpoint) are deliberately NOT here —
+# they already take effect on the next turn for free. agent_name/user_name are
+# also spawn-baked but omitted: they change rarely and aren't worth a forced
+# re-prefill. MCP set is per-project (not a global key here) — out of v1 scope.
+_RESPAWN_TRIGGER_KEYS = {
+    'agent_model', 'agent_effort', 'agent_max_turns', 'agent_permission_mode',
+    'agent_channels', 'agent_remote_control', 'use_streaming_agent',
+    'brief_replies_always_enabled', 'read_floor_topk',
 }
 
 @app.route('/api/config')
@@ -12450,7 +12533,25 @@ def update_config():
                 json.dump(CONFIG, f, indent=2, ensure_ascii=False)
         except Exception as e:
             return jsonify({'error': f'failed to save config: {e}'}), 500
-    return jsonify({'ok': True, 'updated': list(updated.keys())})
+    # Sticky settings: if a spawn-baked (Tier-1) key changed, flag live Mode B
+    # claude sessions to resume into a fresh process at their next turn boundary
+    # so the change actually takes effect (a running CLI can't see spawn-baked
+    # changes). Best-effort; agent_followup reads `_needs_respawn` under lock.
+    respawn_flagged = 0
+    if CONFIG.get('sticky_agent_settings', False):
+        flipped = [k for k in updated if k in _RESPAWN_TRIGGER_KEYS]
+        if flipped:
+            for _sess in list(agent_sessions.values()):
+                if (_sess.get('mode') == 'B'
+                        and (_sess.get('provider') or 'claude').lower() == 'claude'
+                        and _sess.get('process_alive')):
+                    _sess['_needs_respawn'] = True
+                    respawn_flagged += 1
+            if respawn_flagged:
+                _log(f"[sticky-settings] {flipped} changed → flagged "
+                     f"{respawn_flagged} live Mode B session(s) for respawn")
+    return jsonify({'ok': True, 'updated': list(updated.keys()),
+                    'respawn_flagged': respawn_flagged})
 
 
 # ── Folder browse (for project_path picker) ─────────────────────────────────
