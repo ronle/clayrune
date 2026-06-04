@@ -12072,6 +12072,25 @@ async function fetchAgentStatus(projectId) {
       // consumes it now. To bring the nudge back, render it somewhere
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
       agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual' };
+      // Question-form reconciliation (parity with _reconcileAgentBuffer). The
+      // wholesale cache rebuild above drops pendingQuestions on every poll. If we
+      // don't re-derive it here, a form that only ever lived in the cache — the
+      // question arrived while this session's panel wasn't in the DOM (a
+      // background agent tab, an unfocused or closed modal) — is lost on the next
+      // poll and never comes back: the SSE is already connected so it won't
+      // re-emit, and _rerenderPendingQuestions finds an empty cache when the tab
+      // is finally focused. Re-derive from server truth so the form restores on
+      // focus / tab-switch. renderAgentQuestion is DOM-dedup-safe and no-ops when
+      // the panel is absent or the qid was already answered this turn.
+      if (s.waiting_for_question) {
+        agentStatusCache[sid].pendingQuestions = (s.pending_questions || []).map(pq => ({
+          questions: pq.questions || [], question_id: pq.question_id || ''
+        }));
+        for (const pq of (s.pending_questions || [])) {
+          try { renderAgentQuestion(sid, projectId, pq.questions || [], pq.question_id || ''); }
+          catch (_) {}
+        }
+      }
       if (s.log_lines && s.log_lines.length > 0) {
         // Defensive: older / runtime-dispatched sessions may not have seeded
         // the user prompt into server-side log_lines, so a wholesale replace
@@ -12118,46 +12137,52 @@ async function fetchAgentStatus(projectId) {
         connectAgentStream(projectId, sid);
       }
     }
-    // Clean up stale sessions that the server no longer knows about
-    // (e.g., after server restart when in-memory sessions are lost)
+    // Sessions the server no longer lists — after a restart that cleared the
+    // in-memory agent_sessions, or the 30-min stale-purge in server.py. The
+    // conversation itself is NOT gone: its transcript is on disk + in the
+    // agent_log, and a follow-up transparently resumes it (`claude -r`). So we
+    // DETACH the tab instead of deleting it — keep the entry, its rendered
+    // buffer, and its status cache so the window stays put ("don't make the
+    // user feel the chat is gone"); only tear down the live stream and mark it
+    // 'stopped'. 'stopped' shows the "Type to resume conversation..." input,
+    // draws no Stop button, and isn't in the wantsLiveStream set, so it won't
+    // trigger a doomed SSE reconnect to a session the server forgot. The user
+    // can still ✕-close it deliberately (closeAgentTab). [keep-window-open]
     const serverSids = new Set(sessions.map(s => s.session_id));
     // Read-only reconstructed sessions (deep-link tap on a dead session) are
     // intentionally client-injected and will never be in serverSids — don't
-    // treat them as stale or a background poll would wipe the tab mid-read.
+    // touch them or a background poll would disturb the tab mid-read.
     // Temp sessions (_pending_*) are optimistic pre-POST entries — the server
     // doesn't know about them yet; exclude them so a concurrent fetchAgentStatus
-    // doesn't race-delete the temp session and cause a spurious BLOCKED flash.
+    // doesn't race-detach the temp session and cause a spurious BLOCKED flash.
     // Locally-running sessions are also protected: a fetchAgentStatus response
     // initiated BEFORE dispatch may arrive after the temp→real promotion and
-    // carry an empty session list, which would race-delete the newly promoted
+    // carry an empty session list, which would race-detach the newly promoted
     // real session ID (not _pending_ any more) and cause a BLOCKED flash.
     const _isInjectedRO = sid => !!(agentStatusCache[sid] || {})._readOnlyRevived;
     const _isPending = sid => (sid || '').startsWith('_pending_');
     const _isLocallyRunning = sid => (agentStatusCache[sid] || {}).status === 'running';
-    const _isStale = h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId) && !_isLocallyRunning(h.sessionId);
-    const staleEntries = agentHistory.filter(_isStale);
-    for (const stale of staleEntries) {
-      delete agentStatusCache[stale.sessionId];
-      delete agentOutputBuffers[stale.sessionId];
-      if (agentEventSources[stale.sessionId]) {
-        agentEventSources[stale.sessionId].close();
-        delete agentEventSources[stale.sessionId];
+    const _isDetached = h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId) && !_isLocallyRunning(h.sessionId);
+    const detachedEntries = agentHistory.filter(_isDetached);
+    for (const det of detachedEntries) {
+      // Tear down only the live resources; KEEP the entry, its output buffer,
+      // and its status cache (the latter holds claudeSessionId, needed to
+      // resume, and is what agentPanelHTML reads to render the active session).
+      if (agentEventSources[det.sessionId]) {
+        agentEventSources[det.sessionId].close();
+        delete agentEventSources[det.sessionId];
       }
-      if (agentSSEWatchdogs[stale.sessionId]) {
-        clearInterval(agentSSEWatchdogs[stale.sessionId]);
-        delete agentSSEWatchdogs[stale.sessionId];
+      if (agentSSEWatchdogs[det.sessionId]) {
+        clearInterval(agentSSEWatchdogs[det.sessionId]);
+        delete agentSSEWatchdogs[det.sessionId];
       }
+      det.status = 'stopped';
+      if (agentStatusCache[det.sessionId]) agentStatusCache[det.sessionId].status = 'stopped';
     }
-    if (staleEntries.length > 0) {
-      agentHistory = agentHistory.filter(h => !_isStale(h));
-    }
-    // Clear active tab if it points to a stale session (but keep an injected
-    // read-only tab the user is actively viewing, keep a _pending_ tab that
-    // is still mid-dispatch, and keep a locally-running session that a stale
-    // fetch may not yet know about).
-    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId]) && !_isInjectedRO(activeAgentTab[projectId]) && !_isPending(activeAgentTab[projectId]) && !_isLocallyRunning(activeAgentTab[projectId])) {
-      delete activeAgentTab[projectId];
-    }
+    // activeAgentTab is intentionally NOT cleared for a detached session — the
+    // user stays on the conversation they were reading; it just becomes
+    // resumable in place. (agentPanelHTML still drops a selection that points to
+    // a session no longer in the tab list, e.g. one the user ✕-closed.)
 
     // Auto-select a tab when none is active. DESKTOP: always (classic tab
     // strip — a tab should be open). MOBILE: only a single conversation
@@ -12172,7 +12197,7 @@ async function fetchAgentStatus(projectId) {
         activeAgentTab[projectId] = running ? running.session_id : (visible[0] || sessions[0]).session_id;
       }
     }
-    if (sessions.length > 0 || staleEntries.length > 0) {
+    if (sessions.length > 0 || detachedEntries.length > 0) {
       refreshModal();
       renderAgentConsole();
     }
