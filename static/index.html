@@ -10781,10 +10781,15 @@ function connectAgentStream(projectId, sessionId) {
           // Retry with increasing delay
           setTimeout(() => connectAgentStream(projectId, sessionId), retries * 2000);
         } else {
-          // Too many retries — server likely lost the session
-          cached.status = 'error';
+          // Too many retries — the server lost the live session (process died
+          // or was purged). That's not an error, it's a dropped/resumable
+          // session: mark it 'stopped' (resumable, no reconnect) to match the
+          // detach path, instead of 'error' which renders as a "Blocked" pill on
+          // the way to STOPPED. If the session is actually still alive
+          // server-side, the next status poll restores its real running/idle.
+          cached.status = 'stopped';
           const hist = agentHistory.find(h => h.sessionId === sessionId);
-          if (hist) hist.status = 'error';
+          if (hist) hist.status = 'stopped';
           delete sseRetryCount[sessionId];
           refreshModal();
           renderAgentConsole();
@@ -23413,10 +23418,13 @@ setInterval(async () => {
       for (const rh of running.filter(x => x.projectId === h.projectId)) {
         const ss = serverMap[rh.sessionId];
         if (!ss) {
-          // Session vanished from server (e.g. server restart) — mark as lost
+          // Session vanished from the server (30-min purge, or a desync). Not an
+          // error — a dropped/resumable session, same as the fetchAgentStatus
+          // detach path. Mark it 'stopped' (resumable) instead of 'error' so the
+          // tab goes straight to STOPPED without flashing a "Blocked" pill.
           if (!agentEventSources[rh.sessionId]) {
-            rh.status = 'error';
-            if (agentStatusCache[rh.sessionId]) agentStatusCache[rh.sessionId].status = 'error';
+            rh.status = 'stopped';
+            if (agentStatusCache[rh.sessionId]) agentStatusCache[rh.sessionId].status = 'stopped';
             delete agentLogCache[h.projectId];
             refreshModal();
             renderAgentConsole();

@@ -38,10 +38,22 @@ is reachable from the picker but isn't auto-restored into the chat view. Closing
 that gap (persist + restore the active conversation across a restart) is a separate,
 larger change.
 
+Follow-up — no "Blocked" flash on the way to STOPPED. A detaching window briefly
+showed a **"Blocked"** pill before settling on STOPPED, because two client paths
+marked a *dead-but-resumable* session `error` (which renders as "Blocked" via the
+`error → status_blocked` label map) just before the detach flipped it to `stopped`:
+the `es.onerror` retries-exhausted branch ("server lost the session") and the 15s
+watchdog's "session vanished" branch. Both now mark **`stopped`** directly —
+consistent with the detach — so a lost/resumable session goes straight to STOPPED.
+Genuine turn errors (server `status:error`, SSE `type:error`) are untouched and
+still surface as "Blocked". If a session is actually still alive (a transient SSE
+blip), the next status poll restores its real running/idle status.
+
 Files: `static/index.html` (the `fetchAgentStatus` stale-handler: `_isDetached`
 replaces `_isStale`; detach loop preserves entry/buffer/cache and sets `stopped`;
-`activeAgentTab` no longer cleared for these). **Activates on a hard tab reload**
-(SPA HTML only — no server restart needed).
+`activeAgentTab` no longer cleared for these; plus the `es.onerror` and 15s-watchdog
+"lost session" branches now set `stopped` instead of `error`). **Activates on a hard
+tab reload** (SPA HTML only — no server restart needed).
 
 ## [2026-06-03] — Brief replies on desktop too (Settings → Interface → Brief replies)
 
