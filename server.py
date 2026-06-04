@@ -201,7 +201,12 @@ def _load_config():
         'desktop_mode': False,
         'user_name': '',
         'agent_name': '',
-        'use_streaming_agent': False,
+        # Persistent agent process (Mode B). Default ON (2026-06-04) — streaming
+        # is the standard runtime: one long-lived `claude` per chat, follow-ups
+        # written to stdin. A fresh install gets Mode B. Existing config.json
+        # files keep their saved value (the merge below preserves it), so this
+        # flip only reaches new installs / configs that predate the key.
+        'use_streaming_agent': True,
         # P2-1/P2-2 upload limits. 0 = unlimited (default → no behavior
         # change; enforcement is opt-in). upload_quota_bytes caps a
         # project's cumulative backlog-attachment storage;
