@@ -24,6 +24,7 @@ data/grid_layout.json
 data/schedules.json
 data/restart_log.json
 data/memory/
+data/logs/
 # Claydo helper sandbox: server materializes USER_GUIDE.md as CLAUDE.md
 # under this dir on every /api/guide/* call so Claude auto-loads it as
 # project context. Regenerated; not source. (data/playdo/ is the same dir
@@ -83,6 +84,12 @@ data/session_labels.json
 data/push_vapid.json
 data/push_subscriptions.json
 data/system_status.json
+
+# SQLite state DB (docs/SQLITE_MIGRATION_SPEC.md) + its WAL/SHM sidecars.
+# Runtime state, rebuilt by backfill from the JSON during migration; never commit.
+data/mc.db
+data/mc.db-wal
+data/mc.db-shm
 
 # Firebase Admin SDK service-account key — used by server to send FCM pushes
 # to the native Android app. Contains a private RSA key; never commit.
@@ -153,6 +160,11 @@ docs/remote-access/RESUME_HERE.md
 docs/remote-access/SETUP_CHECKLIST.md
 docs/remote-access/error_codes.md
 BUILD_INSTRUCTIONS.md
+
+# Hosted-cloud design docs + committee reviews (investor deck, income model,
+# platform design, onboarding) — internal/cloud, never publish (Ron, 2026-06-03).
+docs/HOSTED_CLOUD_*
+docs/_committee/HOSTED_CLOUD_*
 
 # ── Multi-provider runtime — local/runtime artifacts ───────────────────────
 # provider_env.json holds per-provider API keys / env-var overrides — secrets,

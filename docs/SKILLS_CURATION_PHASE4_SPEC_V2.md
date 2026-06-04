@@ -1,8 +1,8 @@
 # Skills Curation — Phase 4 v2 Spec (Learning Layer)
 
-Status: **DRAFT v2 — RATIFIED WITH CONDITIONS (committee review
-2026-05-27)** · Author: redesign session 2026-05-27 (post
-locked-learning-definition). Companion to
+Status: **DRAFT v2.1 (post-committee-review 2026-05-27, revised
+2026-05-29)** · Author: redesign session 2026-05-27 (post
+locked-learning-definition); v2.1 revision 2026-05-29. Companion to
 `docs/SKILLS_CURATION_DESIGN.md` (v2 post-committee 2026-05-19) and
 **supersedes** `docs/SKILLS_CURATION_PHASE4_SPEC.md` (v1.1, now
 reference-only). The parent design's load-bearing rules and Conditions
@@ -11,11 +11,18 @@ lock pattern, kill-switch shape, atomic-write discipline,
 `distiller.py`-outside-server.py) carry forward verbatim where this
 spec does not override them.
 
-> **v2.1 revision required** before backend code lands: 14 must-fix-in-
-> design conditions to close + 5 must-fix-in-implementation conditions
-> to track against the backend commit + 2 soak-gate conditions to track
-> against default-flips. Committee synthesis at end of doc. No blockers;
-> no data-loss path; no inversion of a load-bearing rule.
+> **v2.1 changelog — closes 14 must-fix-in-design conditions from the
+> 2026-05-27 four-seat committee.** Architectural picks locked
+> 2026-05-29: (D2) coarse fingerprint threshold = exact + 1 (Option A,
+> no new config key); (D3 ii) cross-project walk is lock-free with
+> 3-retry parse, falling back to skip+log on persistent failure
+> (Option B, matches best-effort posture). Other 12 closures inline in
+> the relevant sections; condition tracking table preserved in §10.
+>
+> Full committee synthesis preserved at end of doc under
+> `## Committee review (2026-05-27)`. Five must-fix-in-implementation
+> conditions track against the backend commit, NOT v2.1; two soak-gate
+> conditions track against default-flips after backend ships.
 
 > **Why a v2 (not a v1.2 revision):** v1.1 was scoped against the
 > narrower "cross-session pattern detection on prompt-based skills,
@@ -188,6 +195,56 @@ This makes scope a first-class observable property with two human-
 auditable checkpoints, rather than an implicit consequence of where
 the file lives.
 
+### 1.5.1 Promotion UI affordance (D12 closure — Seat 4 Cond 3)
+
+The dual-checkpoint scope tag and the four artifact kinds together
+imply a non-trivial promotion UI. v2.1 commits to concrete surface
+shape before backend:
+
+**The `_proposed/` queue lives in the existing Skills panel** as a
+new section ("Proposed by Distiller — N awaiting review") above the
+installed skills list. Each row renders:
+
+```
+[kind-icon] <name>            scope: [cross-project ▾]
+  N sessions · age 4d · evidence: "<short verbatim quote>"
+                                            [Review] [Promote] [Reject]
+```
+
+- **kind-icon:** `🛠️` skill, `📝` update, `🔍` exploration, `👤` preference.
+- **scope dropdown:** click to override extraction-time tag. Options:
+  `cross-project | project-specific | ambiguous`. On change, the file
+  moves between `_proposed/global/` and `_proposed/<project_id>/`
+  staging directories (atomic rename; lock-acquired); frontmatter
+  `promoted_scope` field is set when actual promotion fires.
+- **Review:** opens a modal with the full artifact body + evidence
+  session links + the original extraction context.
+- **Promote:** for SKILL/UPDATE — copies to the destination implied by
+  current scope tag. For PREFERENCE — opens a target-picker modal
+  (feedback memory / project CLAUDE.md / global SKILL.md) with
+  feedback memory pre-selected as default (I3 closure — Seat 2
+  Cond 4). For EXPLORATION — copies to the explorations directory
+  (project or global per scope tag).
+- **Reject:** writes `(fingerprint, kind, rejected=true)` suppression
+  marker via the same `record-push` endpoint Phase 1 uses.
+
+**Scope-tag divergence handling.** When the operator overrides the
+extraction-time tag at promotion (e.g., extraction says `cross-project`,
+operator picks `project-specific`), the divergence is recorded:
+- Promoted artifact frontmatter contains BOTH `extraction_scope` and
+  `promoted_scope`.
+- Counter `distiller_scope_divergence:<extraction_scope>:<promoted_scope>`
+  increments on `/distiller-stats`.
+- The monthly audit (Phase 3) surfaces divergence rates; sustained
+  divergence on a specific axis (e.g., always overriding `ambiguous`
+  to `project-specific`) becomes a "scope-tag calibration" backlog
+  item.
+
+**Answer to v2 §12 Q5** (silent observation vs actionable surface):
+**both**. Silent observation via the counter; actionable via the
+monthly audit. No mid-flight notifications — the audit cadence is
+slow enough for trends to be the signal, not individual events.
+
 ---
 
 ## 2. Principles (inherits parent + locked-definition implications)
@@ -250,6 +307,41 @@ data/skills/_proposed/
           └── {SKILL.md | UPDATE.md | EXPLORATION.md | PREFERENCE.md}
 ```
 
+### 3.0 Migration and naming (D13 closure — Seat 4 Cond 4)
+
+The unified `_proposed/` layout introduces three concrete safety
+requirements absent from v2's original §3:
+
+**1. Legacy entries tolerance.** A v1.1-style flat `_proposed/<sid>/`
+entry (e.g., from a CR session running mid-deploy, or restored from
+backup) is tolerated by the lister: such entries surface under an
+"uncategorized" section in the Skills panel queue (§1.5.1) with a
+one-click "move to project / global" button that re-routes the entry
+into the new taxonomy. The lister never deletes uncategorized entries
+silently. The current state of `data/skills/_proposed/` is empty as of
+2026-05-29 (verified), so no batch-migration tooling is required at
+ship; the tolerance code path catches future stragglers only.
+
+**2. Project ID safe-listing.** Project IDs written to
+`_proposed/<project_id>/` are validated at write time against
+`^[a-z0-9_-]+$`. Writes with project IDs containing any other
+character (slash, NUL, dot, whitespace) are refused with a structured
+log line. Defense-in-depth against directory-escape via malformed
+project IDs.
+
+**3. `global` is reserved.** The string `global` cannot be a project
+ID. The existing project-create path
+(`POST /api/projects` / `/api/projects/<id>/rename`) adds an
+`if new_id == 'global': reject` check. The token `global` is a v2.1
+reserved word at the staging-dir level.
+
+The same three rules apply to the parallel `~/.claude/explorations/`
+and `<project>/.claude/explorations/` promotion targets for
+EXPLORATION.md artifacts (§3.1 table). The Skills panel queue listing
+endpoint (`GET /api/distiller/_proposed`) walks both subdir
+conventions and yields a flat list with frontmatter scope tags
+preserved for the UI to render.
+
 Frontmatter shape (all artifact types):
 
 ```yaml
@@ -258,12 +350,15 @@ kind: skill | update | exploration | preference
 name: <kebab-case-name>            # SKILL.md / EXPLORATION.md / PREFERENCE.md
 target_skill: <existing-name>      # UPDATE.md only
 extraction_scope: cross-project | project-specific | ambiguous
-extraction_fingerprint: <hash>     # closed-vocabulary, §5.3
+promoted_scope: cross-project | project-specific  # set at promotion; absent in _proposed/
+extraction_fingerprint_exact: <hash>   # closed-vocabulary, §5.3
+extraction_fingerprint_coarse: <hash>  # closed-vocabulary coarse layer, §5.3
 evidence_session_ids: [sid1, ...]  # 1..N
 evidence_window_days: 30           # for recurrence-gated kinds
-recurrence_count: <N>              # 1 for exploration; ≥distiller_min_recurrence for skill/update/preference
-provenance: distilled               # always for Phase 4; manual / interactive for older artifacts
-source_session: <first sid>         # the session that triggered the proposal
+recurrence_count_exact: <N>        # 1 for exploration; ≥distiller_min_recurrence for recurrence-gated kinds
+recurrence_count_coarse: <N>       # 1 for exploration; ≥distiller_min_recurrence+1 for recurrence-gated kinds
+provenance: distilled              # always for Phase 4; manual / interactive for older artifacts
+source_session: <first sid>        # the session that triggered the proposal
 created_at: <iso8601>
 ---
 ```
@@ -354,8 +449,16 @@ Cond 2):
 - **Granularity ceiling:** "Emit topics at the level of a *thing a
   future skill could be about*: a subsystem invariant, a recurring
   workflow, a gotcha class, a diagnostic procedure."
-- **K cap:** at most 3 topics per session. Force the model to choose
-  the most salient.
+- **K cap (per-class):** at most 3 topics, 3 preferences, AND 3
+  explorations per session — `distiller_max_topics_per_session`,
+  `distiller_max_preferences_per_session`,
+  `distiller_max_explorations_per_session`, all per-project, all
+  default 3. Force the model to choose the most salient in each class.
+  Beyond the cap, drop with `distiller_class_cap_dropped:<class>`
+  counter (D4 closure — Seat 2 Cond 1 + Seat 3 Cond 6 convergence;
+  EXPLORATION was uncapped in v2 because the topic K-cap was
+  topic-only, an oversight given the per-project lock cost of
+  serialized exploration-render calls).
 - **Closed-vocabulary topics only.** Topic `phrase` must match the
   verb-noun-modifier schema in §5.3. OOV → REFUSE the signal (don't
   emit a malformed one).
@@ -372,32 +475,110 @@ Cond 2):
 
 ### 4.2 Cross-session aggregation
 
-Session signals are appended to per-project `_skill_stats.json` under
-the per-project leaf lock. On each write, the Distiller checks gated
-artifact emission:
+Session signals are appended to per-project
+`data/projects/<pid>_skill_stats.json` (flat sidecar — D9 closure;
+matches the existing `_agent_log.json` / `_scribe_stats.json`
+precedent) under the per-project leaf lock. On each write, the
+Distiller checks gated artifact emission against the **dual-layer
+recurrence rule** (§5.3 — D2 closure):
 
-- **For each topic fingerprint:** count distinct sessions within the
-  rolling window (default 30 days, READ-TIME filter per Seat 1 v1.1
-  Cond 3 — never purge, just filter). If count ≥
-  `distiller_min_recurrence` AND no existing skill name match AND not
-  in suppression list AND not in per-(project, fingerprint, day)
-  dedupe window → emit SKILL.md candidate.
-- **For each preference fingerprint:** same recurrence check (default
-  threshold same as topics) → emit PREFERENCE.md candidate.
-- **For each exploration fingerprint:** check ONLY the per-
-  fingerprint suppression list AND per-(project, fingerprint, day)
-  dedupe. No recurrence gating. If unsuppressed and not duplicated
-  today → emit EXPLORATION.md candidate.
+- **For each topic fingerprint pair (exact, coarse):** count distinct
+  sessions within the rolling window (default 30 days, READ-TIME
+  filter per Seat 1 v1.1 Cond 3 — never purge, just filter). Candidate
+  is emitted iff:
+  - `exact_count >= distiller_min_recurrence` (default 3), OR
+  - `coarse_count >= distiller_min_recurrence + 1` (default 4)
+  
+  AND no existing skill name match AND not in suppression list (keyed
+  on `(fingerprint, kind)` per §4.7 — D6 closure) AND not in
+  per-(project, fingerprint, day) dedupe window AND no outbox marker
+  for `(fingerprint, kind)` within `distiller_proposal_dedupe_days`
+  (default 7 — D7 closure) → emit SKILL.md candidate.
+- **For each preference fingerprint pair:** same dual-layer rule →
+  emit PREFERENCE.md candidate.
+- **For each exploration fingerprint:** check ONLY the
+  `(fingerprint, exploration)` suppression list AND per-(project,
+  fingerprint, day) dedupe. No recurrence gating. Subject to the K
+  cap per §4.1. If unsuppressed and not duplicated today → emit
+  EXPLORATION.md candidate.
 
-**Cross-project aggregation runs as a second pass.** A separate
-function `_distill_cross_project_aggregate()` walks
-`data/projects/*/(_skill_stats.json)` (existing files only — no new
-global index, no new lock domain, per Seat 3 v1.1 out-of-scope flag).
-For each topic / preference fingerprint that appears in ≥1 project's
-recent signals, it checks: does this fingerprint recur across ≥2
-projects? If so, the artifact's `extraction_scope` defaults to
-`cross-project` regardless of any single-project tag; routed to the
-global staging directory.
+**After per-project aggregation completes, cross-project aggregation
+runs INLINE on the same daemon thread** (D3 closure — Seat 3 Cond 2:
+inline-after-per-project preserves cap=2 semaphore without adding a
+third thread).
+
+```python
+def _distill_extract_and_aggregate(project_id, sid, jsonl_path):
+    # ... per-project extract + aggregate + per-kind proposal-generate
+    if _distiller_should_proceed(project_id, "cross_project_aggregate"):
+        _distill_cross_project_aggregate(project_id)
+```
+
+`_distill_cross_project_aggregate()` walks
+`DATA_DIR.glob('*_skill_stats.json')` (flat-sidecar glob; D9 closure)
+**lock-free with 3-retry parse on JSON failure** (D3 ii closure —
+Seat 3 Cond 1, Option B locked 2026-05-29):
+
+```python
+def _read_skill_stats_with_retry(pid, attempts=3, spacing_ms=50):
+    """Lock-free read with bounded retry on parse failure.
+    Catches the dominant race: mid-rename atomic-write window.
+    Returns None on persistent failure; caller logs + skips."""
+    for attempt in range(attempts):
+        try:
+            return json.loads(path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError:
+            if attempt + 1 < attempts:
+                time.sleep(spacing_ms / 1000.0)
+                continue
+            log_structured(
+                f"distiller_walk_skip:project_id={pid}:reason=json_parse_failed"
+            )
+            increment_counter('walk_skipped_projects')
+            return None
+```
+
+Skipped projects are honestly reported via the
+`walk_skipped_projects` counter on `/distiller-stats`; the walk
+result includes the set of projects whose contribution was missed
+this pass. Cross-project aggregation is statistical (decisions need
+≥2 projects clearing thresholds), so occasional skips are
+self-healing on the next walk.
+
+**Cross-project recurrence composition rule** (D14 closure —
+Seat 4 Cond 5 + Seat 2 OOS + Seat 3 OOS convergence):
+
+> Each project's signal contribution to cross-project aggregation
+> must clear THAT project's own `distiller_min_recurrence` threshold.
+> A project whose threshold is not cleared contributes zero to the
+> cross-project count. Cross-project promotion requires ≥2 projects
+> each clearing their own per-project threshold (default ≥2 projects
+> × ≥3 recurrence each = 6 contributing sessions minimum).
+
+This honors operator intent: a project with `distiller_min_recurrence:
+5` set high because "this project is noisy" does not leak its
+sub-threshold signals into cross-project promotion. The operator's
+per-project setting fully isolates their project's contribution.
+
+**Bounded walk frequency** (D3 closure — Seat 1 Cond 5: cost shape).
+The cross-project walk runs AT MOST once per 5 session-ends OR once
+per 10 minutes per project, whichever fires first
+(`distiller_cross_project_walk_debounce_session_count` and
+`distiller_cross_project_walk_debounce_seconds`, both global, both
+operator-tunable). The cross-project signal is by definition
+slow-moving — sub-minute freshness is not the use case.
+
+**Per-project summary cache** (D3 closure — Seat 1 Cond 5). After
+each per-project aggregation completes, write a compact
+`data/projects/<pid>_skill_stats_summary.json` (also
+DATA_DIR-excluded — D9 + I2 closure) keyed by fingerprint pair →
+`(exact_count_in_window, coarse_count_in_window, last_ts)`. The
+cross-project walker reads summaries, not raw signal streams.
+Storage cost: ~150B × fingerprints, well under 100KB per project
+even at scale. The summary write uses the same per-project lock as
+the underlying `_skill_stats.json` write — atomically, in the same
+RMW span (§4.7), so the summary never drifts from the raw stream
+within the lock domain.
 
 **Window semantics:** READ-TIME filter only. `_skill_stats.json` is
 append-only (no purge). The aggregator computes recurrence at decision
@@ -466,7 +647,6 @@ recurrence_count: <N>
 provenance: distilled
 source_session: <earliest sid>
 created_at: <iso8601>
-suggested_target: feedback_memory | project_claude_md | global_skill
 ---
 
 # <The preference, as a one-line rule>
@@ -482,13 +662,20 @@ suggested_target: feedback_memory | project_claude_md | global_skill
 - Session <sid2> (<ts>): "<verbatim user quote>"
 - Session <sidN> (<ts>): "<verbatim user quote>"
 
-## Suggested promotion
-- **Default:** new feedback memory at
-  `~/.claude/projects/<...>/memory/feedback_<slug>.md` (cross-project)
-  OR
-  `<project>/CLAUDE.md` addendum (project-specific)
-- Operator may also promote as a global SKILL.md if the preference
-  contains an operating procedure rather than just a constraint.
+## Suggested promotion target
+- **Default at promotion-time** (I3 closure — Seat 2 Cond 4): new
+  feedback memory at
+  `~/.claude/projects/<...>/memory/feedback_<slug>.md`. Safest
+  default — adding a feedback file is reversible by deletion; the
+  curated-region MEMORY.md update via `mc-changelog-update`-style
+  append is also reversible.
+- **Promotion UI offers all three destinations** (§1.5.1):
+  feedback memory (default), project CLAUDE.md addendum
+  (project-specific), or global SKILL.md (operating procedure).
+- Extraction-time judgment **dropped** in v2.1 — the cheap-model
+  at session-end lacks the corpus context to route reliably between
+  three legitimate targets. The promotion UI replaces the extraction-
+  time `suggested_target` field.
 ```
 
 **Body structure mirrors the existing feedback memory shape**
@@ -507,9 +694,10 @@ promoted to a new feedback file get a one-line entry in MEMORY.md's
 ### 4.5 SKILL.md / UPDATE.md generation
 
 Same as v1.1 §3.4, with the proposal-generation prompt fully
-specified per Seat 2 v1.1 Cond 1:
+specified per Seat 2 v1.1 Cond 1 plus the two additional elements from
+v2 committee Seat 2 Cond 2 (D5 closure):
 
-**Required prompt elements:**
+**Required prompt elements (7):**
 
 1. **TRIGGER phrasing in description.** "Use when…" / "TRIGGER
    when…" — established built-in skill convention.
@@ -524,6 +712,23 @@ specified per Seat 2 v1.1 Cond 1:
    heterogeneous to form a single coherent skill, output `REFUSE`
    and no proposal is written. Mirrors `_scribe_extract` thin/refusal
    guards.
+6. **Anti-patterns section (D5 closure — Seat 2 Cond 2 element 6).**
+   If the aggregated evidence includes failed-approach observations
+   (the cheap model saw "tried X, didn't work" patterns), include them
+   under an `## Anti-patterns` heading mirroring EXPLORATION.md's
+   "what didn't work" discipline. The most useful skills tell you what
+   to STOP doing in addition to what to do. Reference gold-standard:
+   the `frontend-render-hang-diagnostic` skill's "Iterating on theories
+   without DOM/Network ground truth" anti-pattern.
+7. **Recognition-test phrasing (D5 closure — Seat 2 Cond 2 element 7).**
+   The TRIGGER description must include not just *when to call* the
+   skill but *how a future agent recognizes the trigger condition from
+   incoming context*. Concrete bar: rewrite the description to start
+   with "TRIGGER when [observable symptom user reports OR observable
+   file/error/screenshot characteristic]" — what does the agent SEE
+   that maps to this skill? This closes Seat 2 v1.1 Cond 4 (adversarial
+   post-debug specificity) at the Phase 4 layer, complementing §6.2's
+   closure at the Phase 1 layer.
 
 UPDATE.md generation reuses parent design Cond 2 v2 schema
 (`target_skill`, `target_files`, `target_action`, `target_rename`,
@@ -575,14 +780,58 @@ Inherits v1.1 §3.7 with the wording fix (Seat 3 v1.1 Cond 2):
 > write-incremented-signal RMW. A partial lock domain (writes only)
 > preserves the race Cond 6 v2 was added to prevent.
 
-**Cross-artifact suppression:** suppression markers are keyed on
-`(fingerprint)` alone (not on artifact kind). A user who says `No` to
-a SKILL.md proposal for fingerprint F also suppresses an
-EXPLORATION.md or PREFERENCE.md proposal for that same fingerprint
-— "no" means "this pattern is not worth bottling in any form," not
-"this specific artifact type." This matches user mental model and
-avoids the variant where saying `No` to a SKILL.md gets re-surfaced
-the next day as an EXPLORATION.md.
+**Cross-artifact suppression (D6 closure — Seat 2 Cond 3 + Seat 3
+Cond 5 convergence):** suppression markers are keyed on
+`(fingerprint, kind)` for `kind ∈ {skill, exploration, preference}`.
+UPDATE.md proposals targeting an existing skill inherit suppression
+from `(fingerprint, skill)`.
+
+> Rationale: a "no" to a skill proposal is a *quality* judgment ("this
+> pattern is too session-bound / not a reusable procedure"); a "no" to
+> an exploration is a *future-utility* judgment ("I don't need this
+> research path retained"); a "no" to a preference is a
+> *privacy/accuracy* judgment ("don't record that I prefer X — that
+> was situational"). These are not interchangeable; collapsing them
+> on `(fingerprint)` alone (v2's original design) produces both false
+> positives ("no to SKILL silenced a useful PREFERENCE") and false
+> negatives ("no to PREFERENCE silenced a useful SKILL").
+
+The `record_push` endpoint takes `(fingerprint, kind)` as required
+body parameters and writes the marker keyed on the pair. The Distiller
+honors `(fingerprint, kind)` independently across all four artifact
+generators.
+
+**Suppression check at artifact-generation time** (D6 closure
+extension — Seat 3 Cond 5 TOCTOU fix): the per-kind generator
+re-acquires `_get_skill_stats_lock(project_id)` immediately before
+the atomic-write of the artifact and re-reads the suppression list.
+If a marker for `(fingerprint, kind)` has been written since the
+generation decision (typical race: user clicks `No` during the ~10s
+model call), the artifact write is skipped. Model spend is paid but
+the artifact does not land in `_proposed/`. Telemetry:
+`distiller_suppressed_after_generate` counter on `/distiller-stats`
+so the operator can see when spend is being burned on suppressed
+artifacts.
+
+**In-session push fingerprint re-normalization** (Seat 1 OOS + Seat
+3 OOS convergence — C-G closure): `POST /api/project/<id>/distiller/
+record-push` body shape:
+
+```json
+{
+  "phrase": "fix-condense-timeout",
+  "kind": "skill" | "exploration" | "preference",
+  "decision": "no" | "later"
+}
+```
+
+The server runs `_fingerprint(phrase)` (§5.3) and keys the suppression
+marker on the server-derived `(exact, coarse, kind)` triple. The
+in-session agent does NOT submit a fingerprint; it submits the raw
+canonical phrase and the server is the single source of truth for
+fingerprint derivation. This closes the v1.1 Seat 1 OOS flag (in-session
+agent's fingerprint vs Distiller's fingerprint mismatch at the
+suppression seam) by eliminating the mismatch class entirely.
 
 **`Later` semantics:** `wait_until_recurrence: <current_count + 1>`
 stub (v1.1 §3.7 inherited). Honest about what the system can promise.
@@ -603,7 +852,7 @@ gap.
 **Daemon thread, not sequential** (Seat 3 v1.1 Cond 9):
 
 ```python
-# in _write_session_memory (server.py:4699), after Scribe dispatch
+# in _write_session_memory (server.py:5078), after Scribe dispatch
 if _distiller_should_proceed(project_id, "session_end_extract"):
     threading.Thread(
         target=_distill_extract_and_aggregate,
@@ -613,18 +862,70 @@ if _distiller_should_proceed(project_id, "session_end_extract"):
     ).start()
 ```
 
-Matches Step 6's `_checkpoint_worker` pattern at server.py:4808.
+Matches Step 6's `_checkpoint_worker` pattern at server.py:5193.
 Distiller hang/timeout/crash cannot delay Scribe's MEMORY.md write.
 
-**Hard-kill recovery ordering** (Seat 3 v1.1 Cond 10, Option A):
+**Distiller fires ONCE per session, at session-end** (Seat 3 OOS
+clarification). Mid-session checkpoints (§3.A.MID) do not trigger
+Distiller — the recurrence semantics need session boundaries to be
+meaningful, and mid-flight extractions would emit signals for
+incomplete work.
 
-Session signals commit to `_skill_stats.json` (under the lock)
-BEFORE the proposal-generate cheap-model call begins. Idempotent at
-the signal layer: each session contributes exactly one set of signals
-per fingerprint regardless of partial proposal-generate state. On
-hard-kill mid-proposal-generate, next-session aggregation re-evaluates
-the fingerprint and retries proposal generation if recurrence still
-meets the threshold. No startup reconciler required.
+**Semaphore policy** (D8 closure — Seat 3 Cond 3): the Distiller
+acquires the per-project semaphore (parent design BoundedSemaphore
+cap=2, shared with Scribe + Step 6 checkpoint) **non-blocking with a
+2-second timeout**:
+
+```python
+def _distill_extract_and_aggregate(project_id, sid, jsonl_path):
+    sem = _get_per_project_semaphore(project_id)
+    if not sem.acquire(blocking=True, timeout=2.0):
+        increment_counter('distiller_semaphore_skip', project_id)
+        return  # best-effort: skip this session's distillation
+    try:
+        # ... extract + aggregate + per-kind proposal-generate
+        # ... cross-project aggregation (inline)
+    finally:
+        sem.release()
+```
+
+Cap=2 is retained (parent design discipline). Backpressure sits on
+the best-effort path (Distiller skips with telemetry), NOT on the
+load-bearing path (Scribe + checkpoint always get their slot).
+
+**Hard-kill recovery ordering** (Seat 3 v1.1 Cond 10, Option A,
+extended by D7 — Seat 3 Cond 4: outbox marker):
+
+1. **Signal commit (under lock).** Per-session signals append to
+   `_skill_stats.json` under `_get_skill_stats_lock(project_id)`.
+   Idempotent at the signal layer: each session contributes exactly
+   one set of signals per fingerprint regardless of partial
+   proposal-generate state.
+2. **Proposal-generate (no lock).** Cheap-model call renders the
+   artifact body. Atomic-write of the artifact to
+   `_proposed/.../<artifact>.md` via `.tmp + rename`.
+3. **Outbox marker commit (under lock — D7 closure).** After
+   successful artifact write, re-acquire
+   `_get_skill_stats_lock(project_id)` and append
+   `(fingerprint_pair, kind, last_proposed_at, last_proposed_path)`
+   to the outbox section of `_skill_stats.json`.
+
+On hard-kill between (2) and (3): the artifact is on disk but no
+outbox marker exists. Next-session aggregation re-evaluates the
+fingerprint; the per-(project, fingerprint, kind, day) dedupe window
+catches it within the same day, but **across the 24h boundary**
+(without D7's marker) it would silently duplicate. With D7, the
+extended dedupe rule (`last_proposed_at > now -
+distiller_proposal_dedupe_days`, default 7 days) catches the
+boundary case from §4.2's recurrence check.
+
+On hard-kill between (1) and (2): the signal is durable; no proposal
+exists; next-session aggregation re-evaluates the fingerprint and
+retries proposal generation if recurrence still meets the threshold.
+Self-healing at the signal layer (Option A intent preserved).
+
+No startup reconciler required — both failure modes are recoverable
+via the next session's aggregation pass.
 
 ### 4.9 Atomic writes (substrate)
 
@@ -649,36 +950,52 @@ synonym-and-omission variance class that bag-of-tokens cannot.
 
 ### 5.1 The vocabulary
 
-**Verbs (closed list):** `add, archive, audit, backfill, build,
-cleanup, configure, debug, delete, deploy, design, diagnose, document,
-edit, enable, expose, extract, fix, gate, generate, ignore, index,
-inject, install, lint, migrate, monitor, normalize, package, parse,
-pin, propagate, propose, query, refactor, register, remove, rename,
-research, restore, retry, revert, route, run, schedule, scope, search,
-seed, send, ship, sign, simplify, skip, sort, split, sync, test,
-trace, unify, update, validate, write`
+> **D1 closure (Seat 1 Cond 1+2):** verb list enriched (+17 from the
+> ~200-commit corpus sample); subsystem terms promoted from MODIFIERS
+> to NOUNS (they are routinely the grammatical noun of topics about
+> them — leaving them as modifiers caused the strict positional parser
+> to silently reject `fix-condense-timeout` as OOV, losing exactly the
+> topics this design exists to detect).
 
-**Nouns (closed list, project-agnostic):** `agent, alert, artifact,
-audit-log, auth, backlog, binding, build, cache, callback, certificate,
-config, context, dashboard, dependency, deploy, diff, dispatch, doc,
-endpoint, env-var, error, event, exception, feature-flag, fingerprint,
-form, frontmatter, handler, hash, header, hivemind, hook, identity,
-incident, indicator, integration, lock, log, marker, memory, message,
-metadata, middleware, migration, mode, model, module, notification,
+**Verbs (closed list):** `add, archive, audit, backfill, bake, bundle,
+build, cleanup, configure, daemonize, debug, delete, deploy, design,
+diagnose, document, edit, enable, enrich, expose, extract, fix, gate,
+generate, harden, ignore, index, inject, install, instrument,
+interpret, lint, materialize, migrate, mint, monitor, normalize,
+package, paginate, parse, pin, polish, preflight, propagate, propose,
+query, rebrand, redact, refactor, register, remove, rename, replace,
+research, restore, retry, revert, revoke, route, run, schedule, scope,
+search, seed, send, ship, sign, simplify, skip, sort, split, swap,
+sync, test, trace, unify, update, validate, wire, write`
+
+**Nouns (closed list, project-agnostic; subsystem terms included):**
+`agent, alert, artifact, audit-log, auth, backlog, binding, build,
+cache, callback, certificate, condense, config, context, dashboard,
+dependency, deploy, diff, dispatch, distiller, doc, endpoint, env-var,
+error, event, exception, feature-flag, fingerprint, form, frontmatter,
+github-sync, handler, hash, header, hivemind, hook, identity, incident,
+indicator, integration, lock, log, marker, memory, message, metadata,
+middleware, migration, mobile-pair, mode, model, module, notification,
 output, package, pair, parser, path, payload, permission, pipeline,
-plan, prompt, provider, push, queue, race, read-floor, record, refresh,
-regex, render, report, request, resource, response, route, schema,
-schedule, scope, screenshot, script, secret, session, settings, signal,
-sidecar, signal, skill, sort-order, source, spec, state, status,
-stream, suppression, table, target, telemetry, template, terminal,
-test, threshold, throttle, timeout, token, tool, transcript, transport,
-trigger, ui, update, upload, user, validation, view, watermark, web,
-window, worker, workflow, write`
+plan, prompt, provider, project-sync, push, queue, race, read-floor,
+record, refresh, regex, render, report, request, resource, response,
+route, schedule, schema, scope, scribe, screenshot, script, secret,
+session, settings, sidecar, signal, skill, sort-order, source, spec,
+state, status, stream, suppression, table, target, telemetry, template,
+terminal, test, threshold, throttle, timeout, token, tool, transcript,
+transport, trigger, ui, update, upload, user, validation, view,
+watermark, web, window, worker, workflow, write`
 
-**Modifiers (optional, closed list, scope-narrowing):** `mobile,
-desktop, ios, android, web, cli, server, client, frontend, backend,
-agent-side, mc-side, condense, scribe, distiller, hivemind, schedule,
-pair, mobile-pair, github-sync, project-sync`
+**Modifiers (optional, closed list, surface-narrowing only — NOT
+subsystem names):** `mobile, desktop, ios, android, web, cli, server,
+client, frontend, backend, agent-side, mc-side`
+
+The principle separating nouns from modifiers: a **subsystem** is a
+noun (`condense`, `scribe`, `distiller`, `hivemind`, `pair`,
+`mobile-pair`, `github-sync`, `project-sync`); a **surface** is a
+modifier (`mobile`, `desktop`, `frontend`, `backend`). Subsystems can
+be the *thing the topic is about*; surfaces only narrow which
+implementation of a noun is being discussed.
 
 **Project-name modifiers:** rejected. A topic that requires a
 project-name modifier to be disambiguated is project-specific by
@@ -704,23 +1021,68 @@ checklist surfaces a "vocabulary tune" backlog item. Vocabulary
 revisions are a deliberate human action, propagated via the same
 file-hash-marker pattern `mc-distill/SKILL.md` uses.
 
-### 5.3 Stage 2 normalization
+### 5.3 Stage 2 normalization — dual-layer fingerprint
 
-Deterministic, testable, pure function:
+> **D2 closure (Seat 1 Cond 3, Option A locked 2026-05-29):** add a
+> coarse set-based fingerprint alongside the exact positional one.
+> Coarse threshold derives from exact: `coarse = exact + 1`. No new
+> config key — `distiller_min_recurrence` controls both layers.
+
+Each signal carries TWO fingerprints derived from the same phrase:
 
 ```python
-def fingerprint(phrase: str) -> str:
+def fingerprint(phrase: str) -> tuple[str, str] | None:
+    """Returns (exact, coarse) fingerprints, or None on OOV."""
     parts = phrase.lower().strip().split('-')
+    if len(parts) > 3:
+        # Over-emission — drop excess tokens, increment telemetry
+        # (extra_tokens_dropped counter — I1 closure)
+        parts = parts[:3]
     verb = parts[0]
     noun = parts[1] if len(parts) > 1 else ''
     modifier = parts[2] if len(parts) > 2 else ''
     if verb not in VERBS or noun not in NOUNS:
         return None  # OOV → caller increments vocabulary_miss
     if modifier and modifier not in MODIFIERS:
-        modifier = ''  # ignore unknown modifier; don't fail
-    canonical = f"{verb}-{noun}" + (f"-{modifier}" if modifier else "")
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+        modifier = ''  # unknown modifier discarded; don't fail the signal
+
+    # Exact: positional, ordering-sensitive
+    exact_canonical = f"{verb}-{noun}" + (f"-{modifier}" if modifier else "")
+    exact = hashlib.sha256(exact_canonical.encode()).hexdigest()[:16]
+
+    # Coarse: set-based, ignores slot order
+    # (catches cheap-model variance in verb choice: `propose-skill-distiller`
+    # vs `gate-skill-distiller` are distinct exact but same coarse)
+    tokens = sorted(t for t in (verb, noun, modifier) if t)
+    coarse_canonical = '-'.join(tokens)
+    coarse = hashlib.sha256(coarse_canonical.encode()).hexdigest()[:16]
+
+    return (exact, coarse)
 ```
+
+**Recurrence decision rule** (extends §4.2):
+
+```
+proposal_candidate = (
+    exact_recurrence_count >= distiller_min_recurrence
+    OR
+    coarse_recurrence_count >= distiller_min_recurrence + 1
+)
+```
+
+Coarse threshold is one higher than exact because looser matching
+admits more false positives; the higher threshold compensates. With
+the default `distiller_min_recurrence: 3`, coarse threshold is 4.
+
+**What this fixes vs v1.1's bag-of-tokens approach** (Seat 1 Cond 1):
+v1.1 hashed a sorted bag with stopword stripping; the worked example
+(`use-edit-block-for-surgical-changes` ≡ `prefer-edit-block-over-write-file-for-small-edits`)
+*still produced different hashes* because synonym variance (`use` vs
+`prefer`) and omission variance (B has `write file`, A doesn't) weren't
+collapsed. v2.1's closed vocabulary collapses synonym variance at
+*extraction* time (model picks from a fixed list); the dual-layer
+hash collapses residual *slot* variance (model picks the right tokens
+but uses them in different positional roles).
 
 **Why this collapses the synonym variance that bag-of-tokens missed:**
 the vocabulary IS the synonym normalization layer. `use` and `prefer`
@@ -937,7 +1299,12 @@ incremental, not multiplicative.
 - mc-distill v2 SKILL.md edit (consistency + cap restoration +
   record-push + rollback subsection) per §6.
 - DATA_DIR regression test (Seat 4 v1.1 Cond 3 placement).
-- Cost-cap structured log + counter (Seat 4 v1.1 Cond 1).
+- Cost-cap structured log + counter (Seat 4 v1.1 Cond 1). Log shape
+  (I4 closure — Seat 4 v2 Cond 7 fix to include cap value):
+  `distiller_cost_cap_hit:<project_id>:<date>:<tokens_used>:<cap_value>`.
+  `/distiller-stats` response includes `cap` field alongside `cap_hits`
+  and `cost.<date>` so operator can interpret cap-hit events without
+  cross-referencing `/api/config`.
 - EXPLORATION.md read-floor injection at dispatch (`_build_agent_context`).
 
 **Out of scope (deliberately deferred):**
@@ -1032,7 +1399,13 @@ addresses each:
 | # | v1.1 condition | v2 status |
 |---|---|---|
 | 19 | Recurrence threshold default = 3 | INHERITED. `fingerprints_near_threshold` telemetry shipped. Revisit at 4-week soak. |
-| 20 | Adversarial post-debug spurious-specificity | RESOLVED at design level in §6.2 (strengthened specificity bar). Still soak-gate the empirical specimens at 4-week mark. |
+| 20 | Adversarial post-debug spurious-specificity | RESOLVED at design level in §6.2 (Phase 1 layer) + §4.5 element 7 (Phase 4 layer, D5 closure). Still soak-gate the empirical specimens at 4-week mark. |
+
+**Parent design (DESIGN §256–344) Conditions inheritance — forward-protection:**
+
+| # | Parent condition | v2.1 status |
+|---|---|---|
+| Parent Cond 11 v2 | Auto-mode rollback discovery surface (endpoint + UI badge + filter + audit history) | INHERITED — gates Phase 5. Discovery surface MUST ship in same commit as `auto` mode default-on. Cannot ship `auto` mode without it (D11 closure — Seat 4 Cond 2: forward-protection, not v2 backend gate). Phase 5 spec author MUST inherit this requirement when drafting; v2.1 cross-references it explicitly so it cannot be missed. |
 
 ---
 
@@ -1049,13 +1422,30 @@ Per-project vs global, addressing Seat 4 v1.1 Cond 6:
 - `distiller_window_days` (default `30`) — recurrence rolling window.
 - `distiller_cost_cap_tokens_per_project_per_day` (default `100000`,
   parent Cond 9 v2).
+- `distiller_proposal_dedupe_days` (default `7`) — extended outbox
+  dedupe window catching the across-24h-boundary duplicate-proposal
+  case (D7 closure).
+- `distiller_cross_project_walk_debounce_session_count` (default `5`) —
+  cross-project walk fires at most once per this many session-ends
+  per project (D3 closure — cost bound).
+- `distiller_cross_project_walk_debounce_seconds` (default `600`) —
+  OR once per this many seconds per project, whichever fires first.
 
 **Per-project (stored on project record, project Settings modal):**
 
 - `distiller_mode` (default `'proposed'`) — `off | proposed | auto`
   (auto reserved for Phase 5).
 - `distiller_min_recurrence` (default `3`) — for skill/update/preference
-  artifact kinds (exploration not gated).
+  artifact kinds (exploration not gated). Controls BOTH layers of the
+  dual fingerprint: exact threshold = this value, coarse threshold =
+  this value + 1 (D2 closure, Option A locked 2026-05-29).
+- `distiller_max_topics_per_session` (default `3`) — extraction K cap
+  for topic signals (D4 closure).
+- `distiller_max_preferences_per_session` (default `3`) — extraction
+  K cap for preference signals (D4 closure).
+- `distiller_max_explorations_per_session` (default `3`) — extraction
+  K cap for exploration signals (D4 closure — Seat 2 Cond 1 + Seat 3
+  Cond 6 convergence; closes the unbounded-fan-out failure mode).
 - `distiller_min_turns` (default `5`) — minimum session length to
   trigger.
 - `distiller_skip_errors` (default `true`) — skip `_(error)_` and
@@ -1063,17 +1453,26 @@ Per-project vs global, addressing Seat 4 v1.1 Cond 6:
 
 **Implementation anchors:**
 
-| Anchor | Site | v2 change |
+> **Line numbers verified against `server.py` HEAD 2026-05-29.** Drift is
+> expected; grep for the symbol name before patching. (v1.1's cited
+> line numbers had drifted 49–95 lines off by the time the v1.1
+> committee audited — D10 closure.)
+
+| Anchor | Site | v2.1 change |
 |---|---|---|
-| `_write_session_memory` | server.py:4699 | Add daemon-thread dispatch to `_distill_extract_and_aggregate`, gated. |
-| `load_projects` exclusion | server.py:1158 | Append `_skill_stats.json` to the tuple. |
-| Lock pattern | `_get_mem_write_lock` server.py:849 | Mirror as `_get_skill_stats_lock`. |
-| Atomic writer | `_atomic_write_text` server.py:859 | Reuse verbatim. |
-| Cheap-model wrapper | `_scribe_call` server.py:5244 | Reuse verbatim. |
-| Telemetry endpoint | `/scribe-stats` server.py:1809 | Mirror as `/distiller-stats`. |
+| `_write_session_memory` | server.py:5078 | Add daemon-thread dispatch to `_distill_extract_and_aggregate`, gated. |
+| Daemon-thread dispatch pattern | `_checkpoint_worker` server.py:5193 | Mirror. |
+| `load_projects` sidecar exclusion | server.py:1331 (inside `load_projects` at server.py:1322) | Replace inlined tuple with `EXCLUDED_SIDECAR_SUFFIXES` constant (new); append `_skill_stats.json` (flat sidecar — D9) and `_skill_stats_summary.json` (D3 cache). |
+| Lock pattern | `_get_mem_write_lock` server.py:1007 | Mirror as `_get_skill_stats_lock`. |
+| Atomic writer | `_atomic_write_text` server.py:1017 | Reuse verbatim. |
+| Counter writer SHAPE (not I/O) | `_scribe_stat` server.py:5525 | Mirror; route I/O through `_atomic_write_text`, NOT through `_scribe_stat`'s direct `write_text`. |
+| Transcript reader | `_scribe_render_transcript` server.py:5663 | Reuse verbatim. |
+| Cheap-model wrapper | `_scribe_call` server.py:5702 | Reuse verbatim. |
+| Extraction/render guards | `_scribe_extract` server.py:5823 | Mirror REFUSE / thin-output discipline. |
+| Telemetry endpoint | `/scribe-stats` server.py:1983 | Mirror as `/distiller-stats`. |
 | Read-floor injection | `_build_agent_context` | Add EXPLORATION.md top-K alongside memory read-floor. |
-| Global config | `_CONFIG_EDITABLE_KEYS` server.py:11115 | Add the 5 global keys above. |
-| Project record | project JSON schema | Add the 4 per-project keys above. |
+| Global config | `_CONFIG_EDITABLE_KEYS` server.py:11910 | Add the 5 global keys above. |
+| Project record | project JSON schema | Add the 4 per-project keys above; `load_projects()` `setdefault` block extended; write-through on first Settings-modal open or first session-end (mirrors `current_task` / `next_action` precedent — I5 closure). |
 
 New module: `distiller.py` (mirrors `project_sync.py` / `github_sync.py`
 pattern — born outside `server.py` per `MAINTENANCE_PROTOCOL.md` Rule 1).

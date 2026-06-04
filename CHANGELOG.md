@@ -4,6 +4,264 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-04] — v2.0.0 (major release)
+
+First major version since v1.5.1. Headline themes: a redesigned settings
+surface, sticky/cheaper agent behavior, and runtime efficiency for long-lived
+sessions.
+
+**Highlights**
+- **Settings, redesigned.** WhatsApp-style three-level drill-down (categories →
+  sub-list → settings) with live search and depth-aware hardware-back.
+- **Sticky agent settings (default on for new installs).** Brief-replies
+  "Everywhere" is baked into each chat's spawn system prompt — cached and
+  authoritative instead of re-sent every turn. Flipping a CLI-flag setting
+  (model/effort/…) mid-session resumes the live session so it takes effect.
+  (System-prompt settings apply to fresh chats only — `claude -r` restores the
+  original prompt; verified.)
+- **Brief replies on desktop** — 3-way Off / Phone / Everywhere, prose-only
+  brevity (code, edits, and tool work are never shortened).
+- **Search past chats by transcript content** (project-scoped).
+- **PLAN tab revived** — detects plan docs without needing plan mode.
+- **`--effort` knob** — per-agent + per-project effort control.
+- **Self-learning skills (Phase 4) + SQLite migration foundation (Phase 0)** land
+  as new internal subsystems (`distiller.py`, `db.py`) with test coverage.
+
+**Efficiency**
+- **Per-project MCP trimming** — load only the servers a project needs.
+- **Idle-eviction of warm Mode B sessions** to reclaim their MCP fleet.
+- Windowless launch by default on Windows; restart + shut-down power menu.
+
+**Fixes**
+- Keep SSE open while blocked on AskUserQuestion (turn_complete race); the form
+  no longer silently fails to reappear after a DOM wipe.
+- Resumed sessions keep their transcript across a process death.
+- Restart/crash no longer orphans child processes.
+- Mobile uploads + agent-text URL linkification.
+- Modal no longer re-docks to the right after you drag it free; settings modal
+  sizes to its content.
+
+## [2026-06-03] — Brief replies on desktop too (Settings → Interface → Brief replies)
+
+The "mobile brief replies" feature (hidden Telegram-style directive prepended to
+the Claude-bound copy of each message, user's chat bubble unchanged) was gated to
+phone-sized viewports only (`client="mobile"`, set when `innerWidth<=960`). Ron
+wanted it forced on desktop: answer short, elaborate only when asked.
+
+The single phone-only toggle is now a **3-way segmented control — Off / Phone /
+Everywhere** — backed by two server bools so it stays backward compatible:
+- `mobile_brief_replies_enabled` (existing) → **Phone** (only `client="mobile"`).
+- `brief_replies_always_enabled` (new, default off) → **Everywhere**: applies the
+  directive on every Claude dispatch, desktop included. **Supersedes** the phone gate.
+
+`_apply_mobile_brief()` is the single chokepoint all 8 dispatch paths flow through
+(including every auto-router branch — same-tier write, tier-switch respawn,
+router-off), so the new switch covers them all. The "Everywhere" path uses a
+**device-neutral** directive (`_BRIEF_REPLY_DIRECTIVE_ALWAYS`) — it can't say "from
+a phone" / "switch to PC" — and explicitly scopes brevity to **prose only**: code,
+file edits, and tool work are never truncated. Scope is the Claude path only (same
+as the original feature; non-claude providers are unaffected).
+
+Files: `server.py` (config default, neutral directive, gate logic, editable-keys
+whitelist), `static/index.html` (`briefMode` compute, seg control,
+`setBriefRepliesMode()` writer). **Activates on next MC restart + a hard tab reload**
+(server-side whitelist + SPA HTML).
+
+## [2026-06-03] — Resumed sessions keep their transcript across a process death (amnesia fix)
+
+A resumed (`-r`) Mode B session used to **reset to a fresh, context-less session**
+on its next process death — losing the entire conversation. This bit hardest with
+**AskUserQuestion**: in Mode B, asking a question deliberately `proc.kill()`s the
+process (the headless turn auto-resolves) and waits for the user's answer to respawn.
+For a session that had been resumed (every session revived from the agent_log after
+a restart carries `_resume_id`), the answer-followup hit the `was_resume` guard at
+`server.py` and started fresh — so the agent lost all in-flight context and had to
+retrace everything. Idle-eviction (just shipped) revives through the same path, so
+it would have triggered the same amnesia for any revived-then-idle session.
+
+Root cause: the guard meant to stop a resume **death-loop** (an `-r` that dies
+instantly) was over-broad — it treated *any* session that was ever a resume as
+"fragile," even one that resumed cleanly, ran many turns, and only died later.
+
+Fix — distinguish a genuinely fragile resume from a healthy one:
+- New `_resume_confirmed` flag, set the first time a (possibly resumed) process
+  produces assistant output. A resume that produced output has proven it loads.
+- `_resume_is_fragile(was_resume, resume_confirmed)` (pure, unit-tested): a dead
+  session is only abandoned-to-fresh if it was a resume that **never produced
+  output**. A confirmed resume that dies later (AskUserQuestion kill, idle-eviction,
+  or a crash) now **resumes with `-r`**, preserving the transcript (subject to the
+  existing 5 MB cap).
+- `_resume_confirmed` defaults `False` in both `_revive_from_agent_log` dicts.
+
+Tests: `tests/test_resume_revival.py` (5 cases — predicate truth table + the reader
+flips the flag on output + a no-output resume stays fragile). Activates on next MC
+restart (stream-reader + followup-path change).
+
+## [2026-06-03] — Per-project MCP trimming: load only the servers a project needs (efficiency)
+
+Step 1 of cutting the per-session process fleet (companion to the idle-eviction
+entry below). Until now MC passed **no** `--mcp-config` at dispatch, so every
+session inherited the *full* global+project+plugin MCP fleet regardless of the
+project — tradingview + sequential-thinking (global `~/.claude.json`), filesystem
+(project `.mcp.json`), the engram memory plugin, and the claude.ai remotes
+(Gmail/Calendar/Drive/Uber). A trading project that never opens a chart still
+spawned tradingview; a docs project still carried the lot.
+
+A project may now declare **`enabled_mcp_servers`** (a list of server names). When
+present, the dispatch builds an inline `--mcp-config` containing exactly those
+servers and adds `--strict-mcp-config`, so Claude Code loads **only** that subset.
+
+- **Default-OFF, opt-in, fail-open.** A project without a *list-valued*
+  `enabled_mcp_servers` resolves to `None` → no flags emitted → byte-identical to
+  the previous behavior (full fleet). Any error while resolving the config also
+  returns `None` — trimming can never break a dispatch. `_resolve_project_mcp_config`
+  (server.py) is the gate; `ClaudeRuntime.build_command(mcp_config_json=…)`
+  (agent_runtime.py) is the single flag-emit site.
+- **Catalog** = merge of global `~/.claude.json` mcpServers + the project's
+  `.mcp.json` + a built-in re-declaration of **engram**. `--strict-mcp-config`
+  drops *plugin* MCP servers too (verified: an empty config → engram tools report
+  `TOOL_MISSING`), so engram — a plugin, not an mcpServers entry — is re-declared
+  as `{"command":"engram","args":["mcp","--tools=agent"]}` (binary on PATH, stable
+  across plugin bumps) and is selectable by name. A trimmed project that lists
+  `engram` keeps full memory; its tools just move to the `mcp__engram__*` namespace.
+- **Empty list `[]`** is a valid maximal trim (`{"mcpServers":{}}` → no MCP servers).
+  Unknown names are logged at `warn` and skipped.
+- **Pilot (this deploy):** `mission_control` + `clayrune_website` →
+  `["filesystem","engram"]`; `engulfing-analyst` → `["pg","filesystem","engram"]`
+  (its Postgres MCP is load-bearing for the diagnostic skill). Each drops
+  tradingview + sequential-thinking + the four claude.ai remotes while keeping
+  memory. Reversible: delete the field to restore the full fleet.
+- Verified end-to-end against CC 2.1.158: a real `claude` run with the pilot
+  config reported `mcp_servers: [filesystem connected, engram connected]` (no TV /
+  seq-thinking / claude.ai) and successfully invoked both `mcp__filesystem__*` and
+  `mcp__engram__mem_search`. Tests: `tests/test_mcp_trim.py` (15 cases).
+
+The new code activates on the next MC restart (same restart that arms idle-eviction
+below); the per-project field itself is read live at dispatch.
+
+## [2026-06-03] — Idle Mode-B sessions evicted to reclaim their MCP fleet (efficiency)
+
+Step 2 of cutting the steady-state process footprint: every warm Mode B session
+holds a `claude.exe` + a ~20-process MCP-server fleet, and they accumulate as
+projects are touched. A new guardian check (`_should_evict_idle_session` →
+"State 8" in `_guardian_check_session`) tears down a warm session's process tree
+after `idle_eviction_minutes` of inactivity; the next user message transparently
+respawns it via the existing followup path with `claude -r <csid>`, so the
+conversation continues with full context.
+
+- Only **`idle`** Mode B sessions with a live process are evicted — a `running`
+  session (mid-work), one with queued followups, or one waiting on the user
+  (question / plan approval) is never touched.
+- The `evicted` flag makes guardian State 1 skip the now-dead-process session
+  instead of marking it `error`; it's cleared on respawn so a genuine later
+  crash is still surfaced.
+- New config: `idle_eviction_enabled` (default **false**) + `idle_eviction_minutes`
+  (default 30). Ships off — same posture as `scribe_checkpoint`; enable live via
+  `/api/config` (no restart). Tests: `tests/test_idle_eviction.py` (12 cases).
+
+Step 1 (per-project MCP server trimming) and any shared-daemon reuse (step 3)
+are tracked separately.
+
+## [2026-06-03] — Restart/crash no longer orphans child processes (leak fix)
+
+A process-leak audit found ~239 stray processes (~5.8 GB RAM) accumulated across
+two weeks of MC restarts: orphaned `claude.exe` agent trees + their MCP servers
+(node/cmd/engram/conhost) and — worst — **29 of 30 `cloudflared.exe` connectors**,
+all with dead parents. Root cause: the restart path (`_perform_server_restart_async`
+→ `_stop_all_sessions_for_restart`) re-execs via `os._exit()`, and (a) never stopped
+the Cloudflare tunnel, (b) bounded the agent tree-kill to 4s before exiting, and
+(c) kept tracked child PIDs only in memory — so the new instance had no knowledge
+of, and no way to reap, whatever the old instance failed to kill.
+
+Three fixes (all best-effort, fail-safe, no new dependencies):
+
+- **Tunnel stop on restart/shutdown.** `_stop_all_sessions_for_restart` now calls
+  `tunnel_supervisor.get().stop()`, so `cloudflared.exe` is torn down instead of
+  orphaned on every restart/shutdown.
+- **Child PID ledger.** `_register_process` / `_unregister_process` persist the live
+  child PIDs (+ OS image name & creation time) to `data/mc_child_pids.json`
+  (atomic write, OUTSIDE `data/projects/` so `load_projects()` never sees it).
+- **Startup reaper.** `_reap_prior_instance_strays()` runs before any subsystem
+  spawns, tree-killing any ledgered PID still alive AND still the same process.
+  PID reuse is guarded by an image-name + creation-time (±2s) match, so it can
+  never friendly-fire an unrelated process — proven in `tests/test_pid_reaper.py`
+  (incl. the live MC surviving a mismatched-identity ledger entry). Identity uses
+  dependency-free ctypes (`OpenProcess` / `GetProcessTimes`); psutil not required.
+
+Rollout: activates from the NEXT restart onward — the currently-running old
+instance writes no ledger, so the first restart's reaper is a no-op; every restart
+after that reaps cleanly. Server changes need an MC restart.
+
+## [2026-06-02] — Windowless launch by default + power menu (restart / shut down)
+
+Two related launcher/runtime changes.
+
+**Windowless launch (Windows).** End users launching via the Desktop / Start
+Menu shortcut saw a cmd console streaming the Flask server log. The shortcut
+now targets a new `installer/start-hidden.vbs` (run via `wscript.exe`), which
+starts `start.bat` with a hidden window and sets `CLAYRUNE_HIDDEN=1`. In that
+mode `start.bat` redirects server output to `data/logs/clayrune.log` (no
+console exists to show it) and skips the icon-setting powershell flash + the
+otherwise-invisible `pause`. Developers still get a live console by running
+`start.bat` (or `python server.py`) directly — unchanged. `install.ps1` and
+`install-prompt.md` point both the `.lnk` and the post-install launch at the
+VBS via the absolute `System32\wscript.exe` path; both fall back to `start.bat`
+if the VBS is missing. `data/logs/` is gitignored.
+
+**Power menu.** With the launcher windowless there was no obvious way to stop
+the server, and restart was buried in Settings. A new **Power** sidebar item
+(⏻) and a Settings → Server "Restart / shut down…" button both open
+`openPowerDialog()` (refactor of `openRestartConfirmation`), which shows the
+shared active-session/hivemind warning plus **Restart** and **Shut down**
+actions. New `POST /api/system/shutdown` mirrors `/api/system/restart`'s
+confirm + 409-blocker semantics, then `_perform_server_shutdown_async` stops
+all sessions (bounded, hard-watchdog) and `os._exit()`s WITHOUT respawning.
+Shutdown renders a terminal "powered off" overlay (no reconnect poll); it is
+audited via the shared restart log (`action: "shutdown"`).
+
+Server changes need an MC restart; FE changes need a hard browser refresh.
+
+Files: `installer/start-hidden.vbs` (new), `installer/start.bat`,
+`installer/install.ps1`, `installer/install-prompt.md`, `installer/README.md`,
+`.gitignore`, `server.py` (`_perform_server_shutdown_async` +
+`/api/system/shutdown`), `static/index.html` (`openPowerDialog` /
+`performShutdown` / `showPoweredOffOverlay`, sidebar Power item, Settings
+Server row).
+
+## [2026-06-02] — AskUserQuestion form not shown until a resync (SSE turn_complete race)
+
+Recurring bug: an agent calls `AskUserQuestion`, the chat shows **COMPLETED**
+with no form, and the question only appears after some unrelated action (Ron's
+case: taking a screenshot → `visibilitychange` → `fetchAgentStatus` reconnects
+the stream and re-emits the form).
+
+Root cause is a TOCTOU race in the SSE generator. On `AskUserQuestion` the reader
+thread runs, in order (`server.py` Mode B reader): `pending_questions.append` →
+`waiting_for_question=True` → `status='idle'` → `proc.kill()`. The SSE generator
+runs on a separate thread and, within one poll, reads `pending_questions` (loop
+top) and *then* `status`. The reader can flip `status='idle'` *between* those two
+reads, so that iteration emits `turn_complete` (idle) **without** the `question`
+event. The FE `turn_complete` handler clears `waitingForQuestion` and calls
+`es.close()` — so the next poll that would carry the question never reaches the
+client. The form is lost until a reconnect re-emits it. Semantically the bug is
+broader: a session idle *only* because it's blocked on user input is not
+"turn complete".
+
+Fix — suppress the idle/`turn_complete` teardown while the session is blocked on
+user input (`waiting_for_question` or `waiting_for_plan_approval`), keeping the
+stream open so the `question` event is delivered/re-delivered:
+- `server.py` Mode B SSE loop: gate `turn_complete` on `not waiting_on_user`.
+- `server.py` Mode A SSE loop: don't close-on-idle while waiting (symmetric).
+- `static/index.html` `turn_complete` handler: ignore while the cache shows
+  waitingForQuestion/PlanApproval (guards event-ordering + old-server races).
+- `static/index.html` `status` handler: ignore a stray non-terminal `idle` while
+  waiting.
+
+Server change needs an MC restart; FE change needs a hard browser refresh.
+
+Files: `server.py` (SSE `generate()` Mode A/B branches), `static/index.html`
+(SSE `onmessage` `turn_complete` + `status` handlers).
+
 ## [2026-05-28] — Mobile resume wedge: heartbeat-probe + fail-fast send
 
 Android Doze / App Standby (worst on Samsung One UI / Z Fold) was parking
