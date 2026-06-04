@@ -281,15 +281,18 @@ def _load_config():
         # underlying claude oneshot's 180s timeout — diagnosed in the analysis
         # doc (docs/DISPATCH_AND_ROUTING_ANALYSIS.md §C.1 step 1).
         'auto_model_classifier_timeout_secs': 8,
-        # Sticky agent settings + respawn-on-flip (experimental, default OFF).
+        # Sticky agent settings + respawn-on-flip. Default ON (2026-06-04).
         # When on: (a) the "brief replies everywhere" directive is baked into the
         # spawn-time system prompt (cached, authoritative) instead of being
-        # re-prepended to every user turn, and (b) flipping any spawn-baked
-        # ("Tier-1") setting mid-session marks live Mode B sessions to resume via
-        # -r at the next turn boundary so the change actually takes effect. See
-        # _RESPAWN_TRIGGER_KEYS for the Tier-1 set and docs plan
-        # respawn-on-setting-flip.md.
-        'sticky_agent_settings': False,
+        # re-prepended to every user turn, and (b) flipping a CLI-flag Tier-1
+        # setting (model/effort/…) mid-session resumes live Mode B sessions via -r
+        # at the next turn boundary so the change takes effect. System-prompt
+        # settings (brief directive, read-floor) apply to FRESH chats only — see
+        # _RESPAWN_TRIGGER_KEYS and docs plan respawn-on-setting-flip.md.
+        # NOTE: a True default also reaches existing installs whose config.json
+        # predates this key (defaults merge under saved values); set it false in
+        # config.json to opt out.
+        'sticky_agent_settings': True,
     }
     if CONFIG_PATH.exists():
         try:
