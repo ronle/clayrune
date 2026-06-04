@@ -2628,6 +2628,60 @@
   }
   .resume-indicator .ri-clear:hover { color: var(--text); }
 
+  /* Inline preview of the selected resume conversation (fills the dead space
+     below the composer on the +New / dispatch screen). */
+  .conv-preview {
+    margin-top: 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .conv-preview-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px 7px 12px; background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+  .conv-preview-title {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--text-faint); flex-shrink: 0;
+  }
+  .conv-preview-sub {
+    font-size: 12px; color: var(--text); flex: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .conv-preview-open {
+    flex-shrink: 0; font-size: 11px; padding: 3px 9px; cursor: pointer;
+    background: transparent; border: 1px solid var(--border);
+    border-radius: 4px; color: var(--text-faint); transition: all 0.12s;
+  }
+  .conv-preview-open:hover { color: var(--text); border-color: var(--accent); }
+  .conv-preview-body { padding: 10px 12px; max-height: 42vh; overflow-y: auto; }
+  .conv-preview-empty {
+    padding: 22px 12px; text-align: center; color: var(--text-faint);
+    font-size: 12px; font-style: italic;
+  }
+  .cp-trunc {
+    font-size: 10px; color: var(--text-faint); text-align: center;
+    padding: 2px 0 8px; border-bottom: 1px dashed var(--border); margin-bottom: 10px;
+  }
+  .cp-msg { margin-bottom: 10px; }
+  .cp-msg:last-child { margin-bottom: 0; }
+  .cp-msg-label {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.4px; color: var(--text-faint); margin-bottom: 3px;
+  }
+  .cp-msg.user .cp-msg-label { color: var(--accent); }
+  .cp-msg-text {
+    font-size: 12.5px; color: var(--text); line-height: 1.5;
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .cp-msg.user .cp-msg-text {
+    background: var(--surface2); padding: 7px 9px; border-radius: 6px;
+  }
+  .cp-raw {
+    white-space: pre-wrap; word-break: break-word;
+    font-size: 12px; line-height: 1.5; color: var(--text); margin: 0;
+  }
+
   .btn-stop {
     background: var(--red-dim); border: 1px solid var(--red);
     color: var(--red-text); font-family: 'Inter', sans-serif;
@@ -7502,6 +7556,11 @@ function refreshModalById(modalId) {
   const content = entry.element.querySelector('.modal-content');
   const scrollBody = content.querySelector('.modal-scroll-body');
   const savedScroll = scrollBody ? scrollBody.scrollTop : 0;
+  // Preserve the resume-preview's inner scroll across the innerHTML rebuild so
+  // a refresh tick doesn't yank the user back to the latest message mid-read.
+  const cpBodyOld = content.querySelector('.conv-preview-body');
+  const savedCpScroll = cpBodyOld ? cpBodyOld.scrollTop : null;
+  const savedCpCsid = cpBodyOld ? (cpBodyOld.dataset.csid || '') : null;
   const saved = {};
   let focusedId = null, selStart = 0, selEnd = 0;
   content.querySelectorAll('textarea, input[type="text"]').forEach(ta => {
@@ -7556,6 +7615,15 @@ function refreshModalById(modalId) {
   _skipAgentOutput = !!savedOutput;
   content.innerHTML = modalContentHTML(p);
   _skipAgentOutput = false;
+
+  // Restore the resume-preview's inner scroll (only when the same conversation
+  // is still selected; loadConvPreview repopulates content asynchronously).
+  if (savedCpScroll != null) {
+    const cpBodyNew = content.querySelector('.conv-preview-body');
+    if (cpBodyNew && (cpBodyNew.dataset.csid || '') === savedCpCsid) {
+      cpBodyNew.scrollTop = savedCpScroll;
+    }
+  }
 
   // Re-attach preserved agent output (replacing the freshly rendered empty one)
   if (savedOutput) {
@@ -9371,6 +9439,9 @@ function agentPanelHTML(p) {
 
   // Dispatch row (only shown on the +New screen, not when viewing an active session)
   const dispatchPreviews = noActiveTab ? renderAgentImagePreviews(p.id) : '';
+  // Inline chat preview of the selected resume conversation (fills the dead
+  // space below the composer). Same gate as the picker.
+  const convPreview = (noActiveTab && _pcaps.supports_session_resume) ? convPreviewHTML(p.id) : '';
   const incOn = getIncognitoFor(p.id);
   const incForced = isIncognitoProject(p);
   const incognitoChip = noActiveTab ? `<div class="incognito-toggle ${incOn ? 'on' : ''} ${incForced ? 'forced' : ''}"
@@ -9401,7 +9472,7 @@ function agentPanelHTML(p) {
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
   <div class="composer-controls-row">${_composerProviderPicker(p)}${incognitoChip}</div>
-  ${dispatchPreviews}` : '';
+  ${dispatchPreviews}${convPreview}` : '';
 
   // Active tab content
   let tabContent = '';
@@ -9783,6 +9854,115 @@ function selectResumeSession(projectId, claudeSessionId) {
   pendingResumeId[projectId] = claudeSessionId || null;
   refreshModal();
   setTimeout(() => document.getElementById(`agent-task-${projectId}`)?.focus(), 50);
+}
+
+// ── Resume-conversation inline preview ───────────────────────────────────────
+// Shows the selected prior conversation's chat in the dead space below the
+// composer on the +New / dispatch screen. Reuses the transcript endpoint and
+// the shared _transcriptCache (same data the pop-out viewer uses).
+const _convPreviewLoading = new Set();   // csids with an in-flight fetch
+const _convPreviewScrolled = new Set();  // `${projectId}|${csid}` already auto-scrolled to latest
+
+function _convPreviewBodyHTML(data) {
+  if (!data) return '<div class="conv-preview-empty">No preview available.</div>';
+  if (data.__error) return `<div class="conv-preview-empty">Couldn't load preview: ${esc(data.__error)}</div>`;
+  const all = (data.messages || []).filter(m => m.role === 'user' || m.role === 'assistant');
+  if (!all.length) {
+    // Non-JSONL providers return raw log_lines instead of structured messages.
+    if (data.log_lines && data.log_lines.length) {
+      return `<pre class="cp-raw">${esc(data.log_lines.join('\n'))}</pre>`;
+    }
+    return '<div class="conv-preview-empty">Empty conversation.</div>';
+  }
+  const CAP = 40;
+  const truncated = all.length > CAP;
+  const msgs = truncated ? all.slice(-CAP) : all;
+  const head = truncated
+    ? `<div class="cp-trunc">Showing the last ${CAP} of ${all.length} messages — Open ↗ for the full transcript</div>`
+    : '';
+  return head + msgs.map(m => {
+    const who = m.role === 'user' ? 'You' : 'Agent';
+    return `<div class="cp-msg ${m.role === 'user' ? 'user' : 'assistant'}">
+      <div class="cp-msg-label">${who}</div>
+      <div class="cp-msg-text">${esc(m.text || '')}</div>
+    </div>`;
+  }).join('');
+}
+
+// Resolve a human label for a conversation from whatever cache has it.
+function _convPreviewLabel(projectId, csid) {
+  const convo = (conversationsCache[projectId] || []).find(c => c.claude_session_id === csid);
+  if (convo) {
+    const l = (convo.label || convo.last_user || convo.first_user || '').trim();
+    if (l) return l;
+  }
+  const entry = (agentLogCache[projectId] || []).find(e => e.claude_session_id === csid);
+  return entry ? (entry.task || '').trim() : '';
+}
+
+function convPreviewHTML(projectId) {
+  const csid = pendingResumeId[projectId] || null;
+  if (!csid) return '';  // Fresh session selected → no preview, dead space returns
+  const label = _convPreviewLabel(projectId, csid);
+  const cached = _transcriptCache[csid];
+  const bodyHTML = cached ? _convPreviewBodyHTML(cached) : '<div class="conv-preview-empty">Loading preview…</div>';
+  // After paint: fetch if needed, then repaint + scroll to latest.
+  setTimeout(() => loadConvPreview(projectId, csid), 0);
+  // data-painted is set ONLY when the body already holds this csid's content,
+  // so loadConvPreview / refreshModalById can tell a real paint from a "Loading…"
+  // placeholder and avoid a redundant repaint that would reset the scroll.
+  return `<div class="conv-preview">
+    <div class="conv-preview-head">
+      <span class="conv-preview-title">Preview</span>
+      <span class="conv-preview-sub" title="${esc(label)}">${esc(label.substring(0, 100)) || '(empty conversation)'}</span>
+      <button class="conv-preview-open" onclick="previewOpenFull('${esc(projectId)}','${esc(csid)}')" title="Open full transcript">Open &#8599;</button>
+    </div>
+    <div class="conv-preview-body" id="conv-preview-body-${esc(projectId)}"
+      data-csid="${esc(csid)}"${cached ? ` data-painted="${esc(csid)}"` : ''}>${bodyHTML}</div>
+  </div>`;
+}
+
+async function loadConvPreview(projectId, csid) {
+  if ((pendingResumeId[projectId] || null) !== csid) return;  // selection moved on
+  if (!_transcriptCache[csid]) {
+    if (_convPreviewLoading.has(csid)) return;  // a fetch is already in flight
+    _convPreviewLoading.add(csid);
+    try {
+      const res = await fetch(API_BASE + `/api/project/${encodeURIComponent(projectId)}/transcript/${encodeURIComponent(csid)}`);
+      if (res.ok) {
+        _transcriptCache[csid] = await res.json();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        _transcriptCache[csid] = { __error: err.error || res.statusText || 'not found' };
+      }
+    } catch (e) {
+      _transcriptCache[csid] = { __error: 'load failed' };
+    } finally {
+      _convPreviewLoading.delete(csid);
+    }
+  }
+  if ((pendingResumeId[projectId] || null) !== csid) return;  // re-check after await
+  const body = document.getElementById(`conv-preview-body-${projectId}`);
+  if (!body) return;
+  // Repaint only when the body isn't already showing this csid's content
+  // (placeholder → loaded, or csid changed). Skipping the no-op repaint keeps
+  // the user's scroll position intact across the frequent refreshModal ticks.
+  if (body.dataset.painted !== csid) {
+    body.innerHTML = _convPreviewBodyHTML(_transcriptCache[csid]);
+    body.dataset.painted = csid;
+  }
+  // Auto-scroll to the latest exchange once per selection — that's the
+  // "where we left off" context you want when resuming.
+  const sk = projectId + '|' + csid;
+  if (!_convPreviewScrolled.has(sk)) {
+    body.scrollTop = body.scrollHeight;
+    _convPreviewScrolled.add(sk);
+  }
+}
+
+// "Open ↗" — hand off to the full pop-out transcript viewer.
+function previewOpenFull(projectId, csid) {
+  openTranscriptViewer(projectId, csid, _convPreviewLabel(projectId, csid));
 }
 
 function sessionPickerHTML(projectId) {
