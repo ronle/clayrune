@@ -11167,6 +11167,150 @@ def api_recent_runs():
     })
 
 
+def _extract_msg_text_from_raw(raw):
+    """Pull the human-readable text from one transcript JSONL line.
+
+    Returns the user/assistant text content ('' for tool/meta/attachment lines).
+    Mirrors the extraction in ClaudeRuntime.parse_transcript_file but works on a
+    single raw line so the search scanner can parse only the lines it needs.
+    """
+    try:
+        o = json.loads(raw)
+    except Exception:
+        return ''
+    msg = o.get('message')
+    if not isinstance(msg, dict):
+        return ''
+    content = msg.get('content', '')
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        texts = [str(b.get('text', '')) for b in content
+                 if isinstance(b, dict) and b.get('type') == 'text']
+        return ' '.join(t.strip() for t in texts if t).strip()
+    return ''
+
+
+def _make_search_snippet(display_text, raw, query, window=90):
+    """Build a context window around `query`. Prefer clean display text; fall
+    back to a whitespace-collapsed window of the raw line when the hit was in
+    text we don't normally surface (tool results / thinking)."""
+    ql = query.lower()
+    src = display_text if (display_text and ql in display_text.lower()) else None
+    if src is None:
+        # Fall back to the raw line, lightly de-noised.
+        src = ' '.join(raw.split())
+    low = src.lower()
+    i = low.find(ql)
+    if i < 0:
+        return (display_text or src)[:window * 2].strip()
+    start = max(0, i - window)
+    end = min(len(src), i + len(query) + window)
+    s = src[start:end].strip()
+    if start > 0:
+        s = '… ' + s
+    if end < len(src):
+        s = s + ' …'
+    return s
+
+
+def _search_project_transcripts(project, query, limit=50):
+    """Full-text scan of a project's Claude .jsonl transcripts.
+
+    Returns [{csid, label, snippet, matches, mtime, ts_relative}] sorted by
+    recency. A fast raw-substring pass picks matching lines; only the first user
+    line (for the label) and the first matching line (for the snippet) are
+    JSON-parsed, so the whole project scans in ~scan-cost (benchmarked ~2s on a
+    195 MB / 181-file project, sub-second elsewhere). Read-only, no locks.
+    """
+    pp = (project or {}).get('project_path', '')
+    q = (query or '').strip()
+    if not pp or len(q) < 2:
+        return []
+    ql = q.lower()
+    encoded = _encode_project_path(pp)
+    if not encoded:
+        return []
+    dirs = [CLAUDE_HOME / encoded]
+    alt = encoded.replace('_', '-')
+    if alt != encoded:
+        dirs.append(CLAUDE_HOME / alt)
+
+    seen = set()
+    files = []
+    for d in dirs:
+        try:
+            if not d.exists():
+                continue
+            for f in d.glob('*.jsonl'):
+                if f.name in seen:
+                    continue
+                seen.add(f.name)
+                try:
+                    files.append((f, f.stat().st_mtime))
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    files.sort(key=lambda x: x[1], reverse=True)
+
+    from datetime import datetime, timezone
+    results = []
+    for f, mtime in files:
+        match_count = 0
+        snippet = ''
+        first_user = ''
+        try:
+            with open(f, 'r', encoding='utf-8', errors='ignore') as fh:
+                for raw in fh:
+                    if not first_user and '"type":"user"' in raw:
+                        first_user = _extract_msg_text_from_raw(raw)[:200]
+                    if ql in raw.lower():
+                        match_count += 1
+                        if not snippet:
+                            snippet = _make_search_snippet(
+                                _extract_msg_text_from_raw(raw), raw, q)
+        except Exception:
+            continue
+        if not match_count:
+            continue
+        try:
+            ts_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            ts_iso = ''
+        results.append({
+            'csid': f.stem,
+            'label': ' '.join((first_user or '').split()) or '(no label)',
+            'snippet': snippet,
+            'matches': match_count,
+            'mtime': mtime,
+            'ts_relative': time_ago(ts_iso) if ts_iso else '',
+        })
+    results.sort(key=lambda r: r['mtime'], reverse=True)
+    return results[:limit]
+
+
+@app.route('/api/project/<project_id>/search-chats')
+def search_project_chats(project_id):
+    """Search a project's prior conversations by transcript content.
+
+    Query: ?q=<text>&limit=<N>. Returns {query, count, results:[...]}.
+    """
+    q = (request.args.get('q', '') or '').strip()
+    try:
+        limit = int(request.args.get('limit', 50))
+    except Exception:
+        limit = 50
+    limit = max(1, min(limit, 100))
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    if len(q) < 2:
+        return jsonify({'query': q, 'count': 0, 'results': []})
+    results = _search_project_transcripts(p, q, limit=limit)
+    return jsonify({'query': q, 'count': len(results), 'results': results})
+
+
 @app.route('/api/project/<project_id>/conversations')
 def get_project_conversations(project_id):
     """Return recent Claude Code conversations for a project, read from .jsonl transcripts.
