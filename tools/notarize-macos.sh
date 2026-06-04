@@ -6,9 +6,9 @@
 # after building the app:
 #
 #     pyinstaller build-macos.spec --noconfirm     # produces dist/Clayrune.app
-#     tools/notarize-macos.sh                        # -> MissionControl-macOS.zip
+#     tools/notarize-macos.sh                        # -> Clayrune-macOS.zip
 #
-# The output MissionControl-macOS.zip is the notarized, Gatekeeper-clean
+# The output Clayrune-macOS.zip is the notarized, Gatekeeper-clean
 # artifact to upload to the website / GitHub release. It is a drop-in
 # replacement for the UNSIGNED zip that .github/workflows/build-macos.yml
 # currently produces and auto-attaches to releases — always replace that one.
@@ -36,7 +36,7 @@ set -euo pipefail
 APP="${1:-dist/Clayrune.app}"
 IDENTITY="${CLAYRUNE_SIGN_IDENTITY:-Developer ID Application: Ron Levy (ZN4RFW9K5T)}"
 PROFILE="${CLAYRUNE_NOTARY_PROFILE:-clayrune-notary}"
-OUT_ZIP="${CLAYRUNE_OUT_ZIP:-MissionControl-macOS.zip}"
+OUT_ZIP="${CLAYRUNE_OUT_ZIP:-Clayrune-macOS.zip}"
 
 say() { printf '\n\033[1;36m==>\033[0m %s\n' "$1"; }
 die() { printf '\n\033[1;31mERROR:\033[0m %s\n' "$1" >&2; exit 1; }
