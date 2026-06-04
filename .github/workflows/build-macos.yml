@@ -6,9 +6,12 @@ name: Build macOS .app
 # Mac users can download → unzip → right-click → Open (Gatekeeper one-time)
 # without a Terminal step.
 #
-# No code signing (project policy: [[feedback-no-paid-code-signing]]) — users
-# see "unidentified developer" on first open, same UX bucket as Windows
-# SmartScreen.
+# This CI build is UNSIGNED. The release-ready artifact is signed + notarized
+# manually post-build via tools/notarize-macos.sh (see docs/MACOS_NOTARIZATION.md),
+# which produces a Gatekeeper-clean MissionControl-macOS.zip. Folding signing
+# into this workflow is a deferred follow-up. Until then: do NOT ship the zip
+# this workflow attaches to a release — replace it with the script's output, or
+# users hit the "Apple could not verify…" block.
 
 on:
   workflow_dispatch:

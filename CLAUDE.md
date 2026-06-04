@@ -1,5 +1,25 @@
 # Clayrune — Claude Code project notes
 
+## macOS code-signing & notarization (added 2026-06-04)
+
+The Mac `.app` is now **signed (Developer ID) + notarized + stapled** so fresh
+downloads open without the Gatekeeper "Apple could not verify… Move to Trash"
+block. This reverses [[feedback-no-paid-code-signing]] **for the Mac app only**
+(the Rust `mc-tunnel` moat is unaffected). Ron enrolled in the Apple Developer
+Program 2026-06-03; first signed build done 2026-06-04.
+
+- **Per release:** `pyinstaller build-macos.spec --noconfirm` →
+  `tools/notarize-macos.sh` → upload the resulting `MissionControl-macOS.zip`.
+- **CRITICAL:** `build-macos.yml` auto-attaches an *unsigned* zip to every
+  release. You MUST replace it with the script's output or users still hit the
+  warning. (CI signing is a deferred follow-up.)
+- Identity: `Developer ID Application: Ron Levy (ZN4RFW9K5T)`; Team ID
+  `ZN4RFW9K5T`; notarytool keychain profile `clayrune-notary`. Bundle id
+  `io.clayrune.app`.
+- Full playbook + gotchas: `docs/MACOS_NOTARIZATION.md`. Gotcha headline:
+  `codesign --verify` passes on PyInstaller's ad-hoc sig (false "valid") — only
+  the `Authority=` line from `codesign -dvv` proves Developer ID signing took.
+
 ## Video attachments — use the frame extractor
 
 Claude (this model) doesn't read videos natively. When the user attaches an
