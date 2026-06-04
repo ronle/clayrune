@@ -85,6 +85,12 @@ data/push_vapid.json
 data/push_subscriptions.json
 data/system_status.json
 
+# SQLite state DB (docs/SQLITE_MIGRATION_SPEC.md) + its WAL/SHM sidecars.
+# Runtime state, rebuilt by backfill from the JSON during migration; never commit.
+data/mc.db
+data/mc.db-wal
+data/mc.db-shm
+
 # Firebase Admin SDK service-account key — used by server to send FCM pushes
 # to the native Android app. Contains a private RSA key; never commit.
 data/firebase_admin.json
