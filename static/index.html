@@ -7755,6 +7755,9 @@ function refreshModalById(modalId) {
   _renderAllMermaidPlaceholders(content);
   if (sid && curTab === 'agent') {
     sizeAgentChat(entry.element, sid);
+    // The rebuild creates a fresh agent-output unless the node was preserved;
+    // restore any unanswered question form so it survives tab switches / reopens.
+    _rerenderPendingQuestions(entry.projectId, sid);
     // Observe non-chat panel children (status bar, tab bar, etc.) so
     // sizeAgentChat re-fires when the badge/timer text causes the status
     // row to wrap to a 2nd line during streaming. Without this, the
@@ -10454,6 +10457,11 @@ async function _reconcileAgentBuffer(projectId, sessionId) {
       cached.waitingForQuestion = true;
       const _hQ = agentHistory.find(h => h.sessionId === sessionId);
       if (_hQ) _hQ.waitingForQuestion = true;
+      // Cache the question payloads so a panel rebuild (tab switch / reopen) can
+      // re-render the form immediately instead of waiting for the next poll.
+      cached.pendingQuestions = (sess.pending_questions || []).map(pq => ({
+        questions: pq.questions || [], question_id: pq.question_id || ''
+      }));
       for (const pq of (sess.pending_questions || [])) {
         try { renderAgentQuestion(sessionId, projectId, pq.questions || [], pq.question_id || ''); }
         catch (_) {}
@@ -10600,6 +10608,7 @@ function connectAgentStream(projectId, sessionId) {
         // provider-agnostic. Render it directly; renderAgentQuestion dedupes by
         // question_id so SSE reconnects don't stack duplicate cards.
         renderAgentQuestion(sessionId, projectId, msg.questions, msg.question_id || '');
+        _cachePendingQuestion(sessionId, msg.questions, msg.question_id || '');
         refreshModal();
       } else if (msg.type === 'turn_start') {
         // Phase 2 (2026-04-27): server tells us a new turn started so we can
@@ -10612,7 +10621,9 @@ function connectAgentStream(projectId, sessionId) {
           agentStatusCache[sessionId].status = 'running';
           agentStatusCache[sessionId].waitingForPlanApproval = false;
           agentStatusCache[sessionId].waitingForQuestion = false;
+          agentStatusCache[sessionId].pendingQuestions = [];
         }
+        delete _answeredQuestionIds[sessionId];  // new turn → answered-set is moot
         updateHistoryStatus(sessionId, 'running');
         updateAgentStatusUI(sessionId, 'running');
         // NOTE: deliberately NO refreshModal() here. It does
@@ -11591,17 +11602,52 @@ function approvePlan(projectId, sessionId) {
 }
 
 let _aqCounter = 0;
-// Per-session set of question_ids we've already rendered. Server re-emits the
-// question on SSE reconnect (so late-joiners see it); the set prevents double
-// rendering. Cleared in submitQuestionAnswer when the user answers.
-const _renderedQuestionIds = {};
+// Question_ids the user has answered THIS turn. The server keeps mirroring the
+// question until it processes the follow-up, so a poll/reconnect can land in
+// the gap between answering and turn_start; this stops the re-render path from
+// resurrecting an answered (and possibly DOM-wiped) form. Cleared on turn_start.
+const _answeredQuestionIds = {};
+const _EMPTY_SET = new Set();  // shared read-only fallback for the answered-id lookup
+
+// Cache a pending question on the session so a later panel rebuild can restore
+// the form without waiting for the /agent/status poll. Deduped by question_id.
+function _cachePendingQuestion(sessionId, questions, questionId) {
+  const c = agentStatusCache[sessionId];
+  if (!c) return;
+  const list = c.pendingQuestions || (c.pendingQuestions = []);
+  if (questionId && list.some(p => p.question_id === questionId)) return;
+  list.push({ questions: questions || [], question_id: questionId || '' });
+}
+
+// Re-render any unanswered question forms for a session after its panel was
+// rebuilt. Idempotent: renderAgentQuestion dedupes against the DOM, so this is
+// a no-op when the form's still on screen and restores it when it isn't.
+function _rerenderPendingQuestions(projectId, sessionId) {
+  const c = agentStatusCache[sessionId];
+  if (!c || !c.waitingForQuestion) return;
+  for (const pq of (c.pendingQuestions || [])) {
+    try { renderAgentQuestion(sessionId, projectId, pq.questions || [], pq.question_id || ''); }
+    catch (_) {}
+  }
+}
+
+// Render an AskUserQuestion form into the session's chat. The server re-emits
+// the question on every SSE reconnect AND mirrors it on /agent/status, so this
+// is called repeatedly for the same question — dedupe against the DOM, never a
+// persistent set. A set that outlived the element WAS the "question silently
+// never comes back" bug: once the card got wiped (modal reopen, tab switch,
+// conversation-list nav — anything that rebuilds agent-output without the
+// preserved node), the set still said "already rendered" and suppressed every
+// re-delivery, so the agent sat waiting with no form on screen.
 function renderAgentQuestion(sessionId, projectId, questions, questionId) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el || !questions || !questions.length) return;
-  const seen = _renderedQuestionIds[sessionId] || (_renderedQuestionIds[sessionId] = new Set());
   if (questionId) {
-    if (seen.has(questionId)) return;
-    seen.add(questionId);
+    // Don't resurrect a form the user already answered this turn…
+    if ((_answeredQuestionIds[sessionId] || _EMPTY_SET).has(questionId)) return;
+    // …and skip only if THIS card is actually on screen right now. (question_id
+    // is uuid hex → safe to interpolate into the attribute selector.)
+    if (el.querySelector(`.agent-question[data-qid="${questionId}"]`)) return;
   }
   const wasPinned = _isAgentOutputPinned(el);
   const formId = `aq-${sessionId}-${_aqCounter++}`;
@@ -11609,6 +11655,7 @@ function renderAgentQuestion(sessionId, projectId, questions, questionId) {
   const container = document.createElement('div');
   container.className = 'agent-question';
   container.id = formId;
+  if (questionId) container.dataset.qid = questionId;
 
   let html = '';
   questions.forEach((q, qi) => {
@@ -11698,8 +11745,12 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
     a.question ? `Q: ${a.question}\nA: ${a.answer}` : a.answer
   ).join('\n\n');
 
-  // Mark the form as answered
+  // Mark the form as answered (both in the DOM and in the per-turn answered-set
+  // so a rebuild-after-answer can't re-render it from cache before turn_start).
   container.classList.add('answered');
+  if (container.dataset.qid) {
+    (_answeredQuestionIds[sessionId] || (_answeredQuestionIds[sessionId] = new Set())).add(container.dataset.qid);
+  }
   const actionsEl = container.querySelector('.agent-question-actions');
   if (actionsEl) actionsEl.innerHTML = `<div class="agent-question-answer">Answered: ${esc(answers.map(a => a.answer).join(', '))}</div>`;
   // Disable inputs
@@ -11709,10 +11760,10 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
   if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForQuestion = false;
   const _hAns = agentHistory.find(h => h.sessionId === sessionId);
   if (_hAns) _hAns.waitingForQuestion = false;
-  // Clear the rendered-question dedup set — server clears pending_questions on
-  // followup, but if SSE has a transient retry between here and there we don't
-  // want a fresh question for a new turn to be suppressed.
-  delete _renderedQuestionIds[sessionId];
+  // Drop the cached pending question(s) so a post-rebuild re-render can't
+  // resurrect this now-answered form. (Dedup is DOM-based and the answered card
+  // keeps its data-qid, so a stray re-delivery is a no-op regardless.)
+  if (agentStatusCache[sessionId]) agentStatusCache[sessionId].pendingQuestions = [];
 
   // Send as follow-up
   const input = document.getElementById(`agent-followup-${sessionId}`);
