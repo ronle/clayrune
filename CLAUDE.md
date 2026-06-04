@@ -1,5 +1,25 @@
 # Clayrune — Claude Code project notes
 
+## macOS code-signing & notarization (added 2026-06-04)
+
+The Mac `.app` is now **signed (Developer ID) + notarized + stapled** so fresh
+downloads open without the Gatekeeper "Apple could not verify… Move to Trash"
+block. This reverses [[feedback-no-paid-code-signing]] **for the Mac app only**
+(the Rust `mc-tunnel` moat is unaffected). Ron enrolled in the Apple Developer
+Program 2026-06-03; first signed build done 2026-06-04.
+
+- **Per release:** `pyinstaller build-macos.spec --noconfirm` →
+  `tools/notarize-macos.sh` → upload the resulting `MissionControl-macOS.zip`.
+- **CRITICAL:** `build-macos.yml` auto-attaches an *unsigned* zip to every
+  release. You MUST replace it with the script's output or users still hit the
+  warning. (CI signing is a deferred follow-up.)
+- Identity: `Developer ID Application: Ron Levy (ZN4RFW9K5T)`; Team ID
+  `ZN4RFW9K5T`; notarytool keychain profile `clayrune-notary`. Bundle id
+  `io.clayrune.app`.
+- Full playbook + gotchas: `docs/MACOS_NOTARIZATION.md`. Gotcha headline:
+  `codesign --verify` passes on PyInstaller's ad-hoc sig (false "valid") — only
+  the `Authority=` line from `codesign -dvv` proves Developer ID signing took.
+
 ## Video attachments — use the frame extractor
 
 Claude (this model) doesn't read videos natively. When the user attaches an
@@ -299,11 +319,13 @@ closed-vocab lists under-fitted to this codebase + subsystem terms
 in wrong slot (Seat 1); in-session push fingerprint needs server-side
 re-normalization (Seats 1+3).
 
-**v2.1 revision required** before backend lands. Two open architectural
-picks need Ron's input first: (D2) `coarse_fingerprint` recurrence
-threshold = `exact+1` OR separate per-project config key? (D3(ii))
-cross-project aggregation walk uses serial per-project locks OR
-lock-free with 3-retry parse?
+**v2.1 DRAFTED 2026-05-29** — all 14 must-fix-in-design conditions
+closed inline in the spec. Architectural picks locked: D2 coarse
+fingerprint threshold = exact + 1 (Option A, no new config key); D3(ii)
+cross-project walk = lock-free with 3-retry parse (Option B, matches
+best-effort posture). Status header on the spec is now
+"DRAFT v2.1 (post-committee-review 2026-05-27, revised 2026-05-29)".
+Backend build can proceed once condense is fixed (gate #1 still open).
 
 **Revised build order:**
 
@@ -314,10 +336,30 @@ lock-free with 3-retry parse?
 2. **Redesign Phase 4 as v2** — DONE 2026-05-27. See
    `docs/SKILLS_CURATION_PHASE4_SPEC_V2.md`.
 3. **Committee review of v2** — DONE 2026-05-27. RATIFY-WITH-CONDITIONS.
-4. **v2.1 spec revision** — addresses 14 must-fix-in-design conditions.
-   Gated on Ron picking D2 + D3(ii) architectural alternatives.
-5. **Build.** ~900–1200 LOC for v2.1 scope (up from v2's 700–900 due
-   to convergent condition edits). Single bundled PR.
+4. **v2.1 spec revision** — DONE 2026-05-29. All 14 must-fix-in-design
+   conditions closed inline. Picks D2 (Option A: exact+1) and D3(ii)
+   (Option B: lock-free retry) locked.
+5. **Backend build** — DONE 2026-05-29 (commit `d2dc8a6` on
+   `local/opus-effort`). `distiller.py` (~1600L) + server.py wiring +
+   3 Flask endpoints + 31 tests passing. Self-learning loop LIVE.
+
+**Self-learning system NOW OPERATIONAL.** End-to-end verified:
+- Session ends → daemon-thread `_distill_extract_and_aggregate` fires
+  parallel to Scribe (best-effort, never blocks completion).
+- Closed-vocab fingerprint (80 verbs, 123 nouns, 12 modifiers; D1
+  closure proven: subsystem terms `condense/scribe/distiller/hivemind/
+  pair/mobile-pair/github-sync/project-sync` are NOUNS, not modifiers).
+- Dual-layer recurrence (exact + coarse, threshold = N and N+1).
+- Three artifact kinds (SKILL/EXPLORATION/PREFERENCE) generated to
+  `data/skills/_proposed/{global,<project_id>}/<...>/`.
+- Cross-project inline aggregation, lock-free walk with 3-retry parse.
+- Suppression keyed on (fingerprint, kind); record-push endpoint live.
+- Cost cap with structured log including cap_value.
+
+**Polish deferred (separate work tracks):** Skills panel UI for the
+`_proposed/` queue (frontend), EXPLORATION.md read-floor injection
+into `_build_agent_context`, promotion-time UI flows, `auto` mode
+(Phase 5).
 
 **No backend learning-system code lands** until condense is fixed AND
 v2 has cleared committee. Same discipline as parent design v2 and

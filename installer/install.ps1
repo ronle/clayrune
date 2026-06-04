@@ -553,7 +553,11 @@ Write-Host ''
 
 # -- [STEP 3/5] Desktop + Start Menu shortcut ------------------------------
 Write-Host '[STEP 3/5] Creating Desktop + Start Menu shortcut...' -ForegroundColor White
-$startBat = Join-Path $installDir 'installer\start.bat'
+$startBat  = Join-Path $installDir 'installer\start.bat'
+$hiddenVbs = Join-Path $installDir 'installer\start-hidden.vbs'
+# Full path to the Windows Script Host. A bare 'wscript.exe' usually resolves,
+# but a shortcut stored with the absolute System32 path is more reliable.
+$wscriptExe = Join-Path $env:WINDIR 'System32\wscript.exe'
 if (-not (Test-Path $startBat)) {
     Write-Host "[STEP 3/5] FAIL $startBat not found in checkout" -ForegroundColor Red
     [Environment]::Exit(2)
@@ -567,7 +571,16 @@ $lnks = @(
 foreach ($lnk in $lnks) {
     try {
         $sc = $wsh.CreateShortcut($lnk)
-        $sc.TargetPath = $startBat
+        if (Test-Path $hiddenVbs) {
+            # Launch windowless so end users never see the server's log console.
+            # wscript runs the .vbs, which starts start.bat with a hidden window.
+            # IconLocation is set explicitly below so the shortcut still shows
+            # the Clayrune icon rather than wscript.exe's.
+            $sc.TargetPath = $wscriptExe
+            $sc.Arguments  = "`"$hiddenVbs`""
+        } else {
+            $sc.TargetPath = $startBat
+        }
         $sc.WorkingDirectory = $installDir
         if (Test-Path $iconPath) { $sc.IconLocation = $iconPath }
         $sc.Description = 'Clayrune'
@@ -583,9 +596,15 @@ foreach ($lnk in $lnks) {
 Write-Host '[STEP 3/5] OK' -ForegroundColor Green
 Write-Host ''
 
-# -- [STEP 4/5] Launch the server in a background window -------------------
-Write-Host '[STEP 4/5] Launching server in a minimized window...' -ForegroundColor White
-Start-Process -WindowStyle Minimized -FilePath $startBat -WorkingDirectory $installDir
+# -- [STEP 4/5] Launch the server (windowless) ----------------------------
+Write-Host '[STEP 4/5] Launching server (windowless)...' -ForegroundColor White
+if (Test-Path $hiddenVbs) {
+    # Match the shortcut: no visible console for end users. Server logs are
+    # written to data\logs\clayrune.log.
+    Start-Process -FilePath $wscriptExe -ArgumentList "`"$hiddenVbs`"" -WorkingDirectory $installDir
+} else {
+    Start-Process -WindowStyle Minimized -FilePath $startBat -WorkingDirectory $installDir
+}
 Write-Host '  Polling http://localhost:5199/ for up to 30s...'
 $serverUp = $false
 for ($i = 0; $i -lt 30; $i++) {

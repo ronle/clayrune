@@ -195,6 +195,7 @@ def _load_config():
         'projects_base': str(Path.home()),
         'auto_workspace_base': str(Path.home() / 'MissionControl'),
         'agent_model': '',
+        'agent_effort': '',
         'agent_max_turns': 0,
         'agent_permission_mode': '',
         'desktop_mode': False,
@@ -227,6 +228,26 @@ def _load_config():
         'scribe_checkpoint_kb': 0,     # mid-session cadence (KB new transcript); 0=disabled
         'long_session_advisory_enabled': False,  # soft "restart long Mode-B session" nudge
         'long_session_advisory_turns': 25,      # num_turns threshold for that nudge
+        # Idle-session eviction — reclaim a warm Mode B fleet (claude.exe + its
+        # MCP servers) after long inactivity; the next message transparently
+        # respawns it with `-r <csid>` (full context preserved). Default OFF;
+        # enable after validation, same posture as scribe_checkpoint. [2026-06-03]
+        'idle_eviction_enabled': False,
+        'idle_eviction_minutes': 30,    # idle minutes before a warm session is evicted
+        # Phase 4 Distiller (v2.1 §11 global keys).
+        # Self-learning observer parallel to Scribe — extracts cross-session
+        # patterns into _proposed/ for human review. Best-effort, never load-
+        # bearing. Default ON; flip distiller_enabled_global=False to kill all
+        # paths. distiller_cross_project_enabled gates only the cross-project
+        # walk independently. See docs/SKILLS_CURATION_PHASE4_SPEC_V2.md.
+        'distiller_enabled_global': True,
+        'distiller_cross_project_enabled': True,
+        'distiller_model': '',                  # '' → haiku
+        'distiller_window_days': 30,
+        'distiller_cost_cap_tokens_per_project_per_day': 100000,
+        'distiller_proposal_dedupe_days': 7,
+        'distiller_cross_project_walk_debounce_session_count': 5,
+        'distiller_cross_project_walk_debounce_seconds': 600,
         'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor
         'agent_channels': '',
         'agent_remote_control': False,
@@ -240,6 +261,12 @@ def _load_config():
         # one idea per message, no headers/bullets/long code blocks. The user's
         # chat bubble still shows the original message verbatim. Off by default.
         'mobile_brief_replies_enabled': False,
+        # Brief replies EVERYWHERE — same hidden-directive mechanism, but not
+        # gated on client="mobile". When on, every Claude dispatch (desktop
+        # included) gets a device-neutral brevity nudge so the agent answers
+        # short and elaborates only when asked. Supersedes the phone-only gate
+        # above. Off by default.
+        'brief_replies_always_enabled': False,
         # Auto model router (experimental, default OFF). When on, every dispatch
         # runs a cheap Haiku classifier on the prompt and picks Haiku/Sonnet/Opus
         # based on task complexity. When off, the user-selected model is used
@@ -254,6 +281,18 @@ def _load_config():
         # underlying claude oneshot's 180s timeout — diagnosed in the analysis
         # doc (docs/DISPATCH_AND_ROUTING_ANALYSIS.md §C.1 step 1).
         'auto_model_classifier_timeout_secs': 8,
+        # Sticky agent settings + respawn-on-flip. Default ON (2026-06-04).
+        # When on: (a) the "brief replies everywhere" directive is baked into the
+        # spawn-time system prompt (cached, authoritative) instead of being
+        # re-prepended to every user turn, and (b) flipping a CLI-flag Tier-1
+        # setting (model/effort/…) mid-session resumes live Mode B sessions via -r
+        # at the next turn boundary so the change takes effect. System-prompt
+        # settings (brief directive, read-floor) apply to FRESH chats only — see
+        # _RESPAWN_TRIGGER_KEYS and docs plan respawn-on-setting-flip.md.
+        # NOTE: a True default also reaches existing installs whose config.json
+        # predates this key (defaults merge under saved values); set it false in
+        # config.json to opt out.
+        'sticky_agent_settings': True,
     }
     if CONFIG_PATH.exists():
         try:
@@ -437,6 +476,23 @@ def _long_session_advisory(s):
         return False  # only a live session can be usefully restarted
     thr = int(CONFIG.get('long_session_advisory_turns', 25) or 25)
     return int(s.get('num_turns', 0) or 0) >= thr
+
+
+def _resume_is_fragile(was_resume, resume_confirmed):
+    """Decide whether a dead Mode B session that was a `-r` resume must be
+    abandoned (fresh restart, losing the transcript) vs. resumed again.
+
+    Only a resume that NEVER produced output is "fragile" — re-`-r`-ing it
+    would just loop, so we go fresh. A resume that produced output is healthy:
+    if it dies LATER (the AskUserQuestion `proc.kill()`, idle-eviction, or a
+    crash) it must be resumed with `-r` so the conversation is preserved.
+
+    Before this guard existed, ANY session that was ever a resume reset to a
+    fresh, context-less session on its next process death — which is why an
+    AskUserQuestion in a resumed session lost the whole conversation. See the
+    followup respawn path and tests/test_resume_revival.py.
+    """
+    return bool(was_resume) and not bool(resume_confirmed)
 
 
 def _extract_user_text(msg_field):
@@ -764,6 +820,84 @@ def _save_schedules(schedules):
     SCHEDULES_PATH.write_text(json.dumps(schedules, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
+# Built-in re-declaration for the engram memory plugin. engram is a *plugin*
+# (settings.json enabledPlugins), NOT an mcpServers entry — so --strict-mcp-config
+# drops it along with everything else. Re-declaring it here lets a trimmed project
+# keep memory. The `engram` binary is on PATH, so this spec is stable across
+# plugin-version bumps (verified 2026-06-03 against CC 2.1.158: this exact spec
+# restores mcp__engram__* under --strict-mcp-config). Mirrors the plugin's own
+# .mcp.json.
+_ENGRAM_MCP_SPEC = {'command': 'engram', 'args': ['mcp', '--tools=agent']}
+
+
+def _mcp_server_catalog(project):
+    """Merge every MCP server this project *could* load into {name: spec}.
+
+    Sources, later overriding earlier on name collision:
+      1. global  ~/.claude.json  → mcpServers
+      2. project <project_path>/.mcp.json → mcpServers
+      3. built-in `engram` re-declaration (so trimming can keep memory)
+
+    Best-effort: an unreadable / malformed source is skipped, never raised."""
+    catalog = {}
+    try:
+        gp = Path.home() / '.claude.json'
+        if gp.exists():
+            g = json.loads(gp.read_text(encoding='utf-8'))
+            for k, v in (g.get('mcpServers') or {}).items():
+                if isinstance(v, dict):
+                    catalog[k] = v
+    except Exception:
+        pass
+    try:
+        ppath = (project or {}).get('project_path')
+        if ppath:
+            mp = Path(ppath) / '.mcp.json'
+            if mp.exists():
+                pj = json.loads(mp.read_text(encoding='utf-8'))
+                for k, v in (pj.get('mcpServers') or {}).items():
+                    if isinstance(v, dict):
+                        catalog[k] = v
+    except Exception:
+        pass
+    catalog.setdefault('engram', dict(_ENGRAM_MCP_SPEC))
+    return catalog
+
+
+def _resolve_project_mcp_config(project):
+    """Per-project MCP trimming → a `--mcp-config` JSON string, or None.
+
+    None → the project did NOT opt in (`enabled_mcp_servers` absent or not a
+           list): no flags are emitted and the session inherits the full
+           global+project+plugin fleet, byte-identical to pre-trim behavior.
+           This is the default-off invariant — most projects hit this path.
+    str  → opt-in. A JSON `{"mcpServers": {…}}` naming exactly the selected
+           servers, paired by build_command with `--strict-mcp-config`. An
+           empty selection → `{"mcpServers": {}}` (loads nothing — a valid
+           maximal trim). Names not in the catalog are logged and skipped.
+
+    Best-effort: any failure returns None (fail-open to the full fleet) — MCP
+    trimming must never break a dispatch."""
+    try:
+        sel = (project or {}).get('enabled_mcp_servers')
+        if not isinstance(sel, list):
+            return None  # not opted in → unchanged behavior
+        catalog = _mcp_server_catalog(project)
+        chosen = {}
+        for name in sel:
+            if name in catalog:
+                chosen[name] = catalog[name]
+            else:
+                _log(f"[mcp-trim] {(project or {}).get('id', '?')}: unknown MCP "
+                     f"server '{name}' skipped (catalog: {sorted(catalog)})",
+                     level='warn')
+        return json.dumps({'mcpServers': chosen})
+    except Exception as e:
+        _log(f"[mcp-trim] resolve failed ({e!r}); inheriting full fleet",
+             level='warn')
+        return None
+
+
 def _build_claude_flags(project=None, streaming=False, model_override=None):
     """Build common Claude CLI flags from config, with optional per-project overrides.
     Delegates to ClaudeRuntime.build_command()[1:] — single source of truth.
@@ -776,6 +910,7 @@ def _build_claude_flags(project=None, streaming=False, model_override=None):
     model = model_override or (
         (project or {}).get('agent_model', '') or CONFIG.get('agent_model', '')
     )
+    effort = (project or {}).get('agent_effort', '') or CONFIG.get('agent_effort', '')
     return _agent_runtime.get_runtime('claude').build_command(
         model=model,
         max_turns=CONFIG.get('agent_max_turns', 0),
@@ -786,6 +921,8 @@ def _build_claude_flags(project=None, streaming=False, model_override=None):
             (project or {}).get('agent_remote_control', False) or
             CONFIG.get('agent_remote_control', False)
         ),
+        effort=effort,
+        mcp_config_json=_resolve_project_mcp_config(project) or '',
     )[1:]  # strip binary — _build_claude_flags() contract is flags-only
 
 
@@ -1255,6 +1392,7 @@ def _register_process(proc, name, proc_type, session_id, project_id, command_pre
             project_name = p.get('name', project_id)
     except Exception:
         pass
+    _img, _ct = _proc_identity(proc.pid)
     with process_tracker_lock:
         tracked_processes[proc.pid] = {
             'pid': proc.pid,
@@ -1265,14 +1403,151 @@ def _register_process(proc, name, proc_type, session_id, project_id, command_pre
             'project_name': project_name,
             'command_preview': (command_preview or '')[:80],
             'started_at': now_iso(),
+            'os_image': _img,
+            'create_time': _ct,
             'proc': proc,
         }
+    _persist_pid_ledger()
 
 
 def _unregister_process(pid):
     """Remove a process from the PID tracker."""
     with process_tracker_lock:
         tracked_processes.pop(pid, None)
+    _persist_pid_ledger()
+
+
+# ── MC-spawned child PID ledger + startup orphan reaper ──────────────────────
+# server.py restarts by re-exec'ing via os._exit(): any child not killed inside
+# the bounded graceful-stop window is orphaned, and the new instance never knew
+# its PIDs (tracked_processes is in-memory only). Net effect: claude.exe + their
+# MCP-server trees (node/cmd/engram) leak across every restart/crash. We persist
+# the live child PIDs to a ledger and, at the next startup, reap any that are
+# STILL alive AND still the same process (image-name + creation-time guard
+# defeats PID reuse, so we can never friendly-fire an unrelated process).
+# Everything here is best-effort: it never raises, never blocks a spawn or
+# startup, and degrades to a no-op if identity can't be confirmed. [2026-06-03]
+_PID_LEDGER_PATH = _DATA_ROOT / 'data' / 'mc_child_pids.json'
+
+
+def _proc_identity(pid):
+    """Return (image_basename_lower, creation_epoch_float) for a live PID, or
+    (None, None) if it can't be read. Dependency-free ctypes on Windows so the
+    reaper works without psutil; psutil elsewhere. Used purely as a PID-reuse
+    guard — a failure here just means "can't confirm", which is treated as
+    "don't reap"."""
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32
+            k32.OpenProcess.restype = wintypes.HANDLE
+            k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if not h:
+                return (None, None)
+            try:
+                name = None
+                buf = ctypes.create_unicode_buffer(32768)
+                size = wintypes.DWORD(32768)
+                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    name = buf.value.rsplit('\\', 1)[-1].lower()
+                ct = None
+                creation, exit_, kern, user = (wintypes.FILETIME(), wintypes.FILETIME(),
+                                               wintypes.FILETIME(), wintypes.FILETIME())
+                if k32.GetProcessTimes(h, ctypes.byref(creation), ctypes.byref(exit_),
+                                       ctypes.byref(kern), ctypes.byref(user)):
+                    ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+                    # FILETIME = 100ns ticks since 1601-01-01 → unix epoch seconds.
+                    ct = ticks / 1e7 - 11644473600.0
+                return (name, ct)
+            finally:
+                k32.CloseHandle(h)
+        except Exception:
+            return (None, None)
+    else:
+        try:
+            import psutil
+            p = psutil.Process(int(pid))
+            return (p.name().lower(), float(p.create_time()))
+        except Exception:
+            return (None, None)
+
+
+def _persist_pid_ledger():
+    """Snapshot the live tracked-process PIDs to disk (atomic, best-effort).
+    Called after every register/unregister; read once at the next startup by
+    _reap_prior_instance_strays(), then cleared. Lives in data/ (NOT
+    data/projects/) so load_projects() never sees it."""
+    try:
+        with process_tracker_lock:
+            entries = [{
+                'pid': e.get('pid'),
+                'name': e.get('name', ''),
+                'type': e.get('type', ''),
+                'os_image': e.get('os_image'),
+                'create_time': e.get('create_time'),
+            } for e in tracked_processes.values()]
+        _atomic_write_text(_PID_LEDGER_PATH, json.dumps(
+            {'mc_pid': os.getpid(), 'written_at': now_iso(), 'children': entries}))
+    except Exception:
+        pass  # ledger is best-effort; a write failure must never break a spawn
+
+
+def _should_reap_entry(entry, live_image, live_ct):
+    """Pure predicate: should the startup reaper kill this ledgered PID?
+
+    Reap ONLY if the PID is still the same process MC spawned — guarded by an
+    exact image-name match and, when both sides have it, a creation-time match
+    (within 2s). A reused PID (different image, or a creation time newer than
+    recorded) is skipped. Missing identity on either side → do not reap."""
+    rec_img = (entry.get('os_image') or '')
+    if not rec_img or not live_image:
+        return False
+    if rec_img.lower() != live_image.lower():
+        return False
+    rec_ct = entry.get('create_time')
+    if rec_ct is not None and live_ct is not None:
+        if abs(float(rec_ct) - float(live_ct)) > 2.0:
+            return False
+    return True
+
+
+def _reap_prior_instance_strays():
+    """Startup: kill child process trees orphaned by a prior MC instance that
+    exited (restart/crash) without tearing them down. Reads the prior instance's
+    PID ledger, reaps anything still alive AND still the same process, then
+    clears the ledger. Best-effort; never blocks startup."""
+    try:
+        if not _PID_LEDGER_PATH.exists():
+            return
+        data = json.loads(_PID_LEDGER_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        return
+    me = os.getpid()
+    prior_mc = data.get('mc_pid')
+    reaped = 0
+    for entry in (data.get('children') or []):
+        try:
+            pid = int(entry.get('pid'))
+        except Exception:
+            continue
+        if pid == me or pid == prior_mc or not _pid_is_alive(pid):
+            continue
+        live_image, live_ct = _proc_identity(pid)
+        if not _should_reap_entry(entry, live_image, live_ct):
+            continue
+        if _kill_pid(pid, tree=True):
+            reaped += 1
+    try:
+        if reaped:
+            _log(f"[reaper] killed {reaped} orphaned child tree(s) from a prior MC "
+                 f"instance (was PID {prior_mc})")
+        _atomic_write_text(_PID_LEDGER_PATH, json.dumps(
+            {'mc_pid': me, 'written_at': now_iso(), 'children': []}))
+    except Exception:
+        pass
 
 
 _ATTACHMENT_RUNTIME_FIELDS = ('_present',)
@@ -1316,17 +1591,25 @@ def save_project(project_id, data):
     filepath.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
+# LOAD-BEARING: every per-project sidecar file MUST be listed here, OR be
+# moved outside DATA_DIR entirely. A stray non-project JSON here 500s
+# _get_active_restart_blockers and the restart endpoints. See CLAUDE.md
+# "LOAD-BEARING RULE — DATA_DIR pollution" and the parametric regression
+# test at tests/test_load_projects_sidecar_exclusions.py (Seat 4 v2 Cond 6
+# closure — single source of truth, parametric + next-sidecar canary).
+EXCLUDED_SIDECAR_SUFFIXES = (
+    '_agent_log.json',
+    '_scribe_stats.json',
+    '_router_stats.json',
+    '_skill_stats.json',           # Phase 4 Distiller — D9 closure
+    '_skill_stats_summary.json',   # Phase 4 Distiller cache — D3 closure
+)
+
+
 def load_projects():
     projects = []
     for f in DATA_DIR.glob('*.json'):
-        # Sibling data files co-located in DATA_DIR that are NOT project
-        # records (mirror the _agent_log.json precedent; _scribe_stats.json
-        # added with SPEC §8 telemetry; _router_stats.json added with the
-        # auto-router. LOAD-BEARING per CLAUDE.md — a stray non-project
-        # JSON here 500s _get_active_restart_blockers and the restart
-        # endpoints. Every new sidecar MUST be excluded here.
-        if f.name.endswith(('_agent_log.json', '_scribe_stats.json',
-                            '_router_stats.json')):
+        if f.name.endswith(EXCLUDED_SIDECAR_SUFFIXES):
             continue
         try:
             p = json.loads(f.read_text(encoding='utf-8'))
@@ -1341,6 +1624,16 @@ def load_projects():
             p.setdefault('blocked_reason', None)
             p.setdefault('backlog', [])
             p.setdefault('project_path', '')
+            # Phase 4 Distiller per-project defaults (v2.1 §11 — I5 closure).
+            # Mirrors the current_task / next_action precedent. Written through
+            # on first session-end touch or first Settings-modal open via save_project.
+            p.setdefault('distiller_mode', 'proposed')
+            p.setdefault('distiller_min_recurrence', 3)
+            p.setdefault('distiller_max_topics_per_session', 3)
+            p.setdefault('distiller_max_preferences_per_session', 3)
+            p.setdefault('distiller_max_explorations_per_session', 3)
+            p.setdefault('distiller_min_turns', 5)
+            p.setdefault('distiller_skip_errors', True)
             _decorate_attachments(p)
             projects.append(p)
         except Exception as e:
@@ -1986,6 +2279,45 @@ def get_scribe_stats(project_id):
         return jsonify({})
     try:
         return jsonify(json.loads(fp.read_text(encoding='utf-8') or '{}'))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Phase 4 Distiller endpoints (v2.1 §7) ────────────────────────────────────
+
+@app.route('/api/project/<project_id>/distiller-stats', methods=['GET'])
+def get_distiller_stats(project_id):
+    """Distiller telemetry — mirrors /scribe-stats shape. Includes recurrence
+    `fingerprints_near_threshold` so operator can see whether the threshold
+    is plausibly reachable (Seat 1 v1.1 Cond 3 inherited)."""
+    try:
+        return jsonify(_distiller.get_distiller_stats(project_id))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/project/<project_id>/distiller/record-push',
+           methods=['POST'])
+def post_distiller_record_push(project_id):
+    """In-session mc-distill calls this on No / Later. Body:
+      {phrase, kind, decision}. Server re-normalizes the phrase
+    through closed-vocab fingerprint (single source of truth — C-G
+    closure)."""
+    body = request.get_json(silent=True) or {}
+    try:
+        result, status = _distiller.record_push(project_id, body)
+        return jsonify(result), status
+    except Exception as e:
+        return jsonify({'accepted': False, 'reason': str(e)}), 500
+
+
+@app.route('/api/distiller/_proposed', methods=['GET'])
+def get_distiller_proposed():
+    """Unified _proposed/ queue lister. Walks global/ + <project_id>/
+    subdirs AND tolerates legacy flat _proposed/<sid>/ entries (§3.0
+    D13 closure). Newest first."""
+    try:
+        return jsonify(_distiller.list_proposed())
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -3227,6 +3559,27 @@ def _clayrune_api_reference() -> str:
     return ''
 
 
+_PLANS_DIR = Path.home() / '.claude' / 'plans'
+
+
+def _is_plan_path(fp: str) -> bool:
+    """True if fp is a .md file under ~/.claude/plans/.
+
+    Headless-safe plan detection: ExitPlanMode hangs without a TTY (agents are
+    told not to use it), so any markdown file written into ~/.claude/plans/ is
+    registered as the session's plan instead. Feeds session['plan_file'] → the
+    PLAN tab (/api/project/<id>/plans) and the in-chat plan link.
+    """
+    try:
+        p = Path(fp)
+        if p.suffix.lower() != '.md':
+            return False
+        p.resolve().relative_to(_PLANS_DIR.resolve())
+        return True
+    except Exception:
+        return False
+
+
 def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
     """Universal Clayrune-aware behaviors that apply to EVERY agent —
     regular project agents, hivemind workers, future agent types.
@@ -3245,11 +3598,17 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
     if port is None:
         port = PORT
     return [
-        # Plan mode hangs in headless Claude Code regardless of agent type.
-        "IMPORTANT — Plan Mode: Do NOT use EnterPlanMode or ExitPlanMode. "
-        "You are running headless without an interactive terminal, so plan "
-        "mode approval will hang indefinitely. Just describe your plan in a "
-        "text message and proceed directly with implementation.",
+        # Plan mode hangs in headless Claude Code regardless of agent type, so
+        # plans are captured as files instead (see _is_plan_path + the PLAN tab).
+        "IMPORTANT — Plans: Do NOT use EnterPlanMode or ExitPlanMode — you run "
+        "headless with no interactive terminal, so plan-mode approval hangs "
+        "indefinitely. Instead, when you form a non-trivial plan: (1) describe it "
+        "inline in your chat reply, AND (2) write the full plan as a markdown "
+        "file into your home directory's .claude/plans/ folder (an absolute "
+        "path, e.g. ~/.claude/plans/<short-descriptive-name>.md; create the "
+        "folder if needed). Clayrune auto-detects plans written there and shows "
+        "them in the project's PLAN tab with a link in the chat — there is no "
+        "approval step, just keep working after you write the file.",
 
         # Clayrune intercepts AskUserQuestion and renders it as an interactive form.
         "Questions: When you need to ask the user, use the AskUserQuestion "
@@ -3378,6 +3737,13 @@ def _build_agent_context(project, incognito=False, task=''):
         parts.append(f"Your name is {agent_name}.")
     if user_name:
         parts.append(f"The user's name is {user_name}. Address them accordingly.")
+    # Sticky brevity: when sticky_agent_settings is on, the device-neutral brief
+    # directive lives HERE (cached, once per spawn) instead of being prepended to
+    # every user turn by _apply_mobile_brief. Flipping the toggle mid-session is
+    # handled by the respawn-on-flip path (see update_config / agent_followup).
+    if (CONFIG.get('sticky_agent_settings', False)
+            and CONFIG.get('brief_replies_always_enabled', False)):
+        parts.append(_BRIEF_REPLY_DIRECTIVE_SYSTEM)
     parts.append(f"You are working on {project.get('name', project['id'])}.")
     pp = project.get('project_path', '')
     if pp:
@@ -3832,6 +4198,13 @@ def _read_agent_stream(proc, session):
                 _capture_system_init(msg)
                 _LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
                 if msg_type == 'assistant' and isinstance(msg.get('message'), dict):
+                    # First assistant output proves a `-r` resume loaded OK (not a
+                    # fragile resume that dies instantly), so a LATER process death
+                    # (the Mode-B AskUserQuestion proc.kill(), idle-eviction, or a
+                    # crash) re-resumes with -r instead of resetting to a context-
+                    # less fresh session. Harmless for Mode A (never consulted).
+                    # See _resume_is_fragile + the followup respawn path.
+                    session['_resume_confirmed'] = True
                     for block in msg['message'].get('content', []) or []:
                         if not isinstance(block, dict):
                             continue
@@ -3851,6 +4224,11 @@ def _read_agent_stream(proc, session):
                                 fp = tool_input.get('file_path', '')
                                 if fp.lower().endswith('.md'):
                                     session['_last_md_file'] = fp
+                                    # A plan written into ~/.claude/plans/
+                                    # registers immediately (headless-safe; no
+                                    # ExitPlanMode). Feeds the PLAN tab + link.
+                                    if _is_plan_path(fp):
+                                        session['plan_file'] = fp
                             elif tool_name == 'ExitPlanMode':
                                 if session.get('_last_md_file'):
                                     session['plan_file'] = session['_last_md_file']
@@ -3999,6 +4377,13 @@ def _read_agent_stream_b(proc, session):
                 _capture_system_init(msg)
                 _LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
                 if msg_type == 'assistant' and isinstance(msg.get('message'), dict):
+                    # First assistant output proves a `-r` resume loaded OK (not a
+                    # fragile resume that dies instantly), so a LATER process death
+                    # (the Mode-B AskUserQuestion proc.kill(), idle-eviction, or a
+                    # crash) re-resumes with -r instead of resetting to a context-
+                    # less fresh session. Harmless for Mode A (never consulted).
+                    # See _resume_is_fragile + the followup respawn path.
+                    session['_resume_confirmed'] = True
                     for block in msg['message'].get('content', []) or []:
                         if not isinstance(block, dict):
                             continue
@@ -4017,6 +4402,11 @@ def _read_agent_stream_b(proc, session):
                                 fp = tool_input.get('file_path', '')
                                 if fp.lower().endswith('.md'):
                                     session['_last_md_file'] = fp
+                                    # A plan written into ~/.claude/plans/
+                                    # registers immediately (headless-safe; no
+                                    # ExitPlanMode). Feeds the PLAN tab + link.
+                                    if _is_plan_path(fp):
+                                        session['plan_file'] = fp
                             elif tool_name == 'ExitPlanMode':
                                 if session.get('_last_md_file'):
                                     session['plan_file'] = session['_last_md_file']
@@ -4773,6 +5163,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
             'circuit_breaker_tripped': False,
             'claude_session_id': claude_sid,
             '_resume_id': claude_sid,
+            '_resume_confirmed': False,   # a just-spawned resume hasn't proven itself yet
             '_dispatch_time': _time.time(),
             'usage': entry.get('usage', {}),
             'cost_usd': entry.get('cost_usd', 0),
@@ -5099,6 +5490,32 @@ def _write_session_memory(p, session, status, summary_fallback, ts_date):
         wm_remove_sid=session.get('session_id') or session.get('id'))
     if do_condense:
         _dispatch_condense(p)
+    # Phase 4 Distiller — daemon-thread dispatch parallel to Scribe (v2.1 §4.8).
+    # Best-effort: failure NEVER blocks Scribe / MEMORY.md / completion. The
+    # entry point gates itself via _distiller_should_proceed at session_end_extract.
+    try:
+        csid = session.get('claude_session_id', '')
+        sid = session.get('session_id') or session.get('id') or ''
+        if not csid:
+            _log(f"[distiller] dispatch SKIP project_id={project_id} sid={sid}: "
+                 f"no claude_session_id on session object")
+        else:
+            tf = _find_transcript_file(p.get('project_path', ''), csid)
+            jsonl_path = str(tf) if tf else None
+            _log(f"[distiller] dispatch FIRE project_id={project_id} sid={sid[:12]} "
+                 f"csid={csid[:8]} jsonl_path={'yes' if jsonl_path else 'no'}")
+            threading.Thread(
+                target=_distiller._distill_extract_and_aggregate,
+                args=(project_id, sid, jsonl_path),
+                daemon=True,
+                name=f"distiller-{project_id}",
+            ).start()
+    except Exception as _dist_disp_err:
+        # Was bare `except: pass` — silently swallowed any error in the dispatch
+        # path including AttributeError if _distiller wasn't registered. Log it
+        # so we can see if dispatch fails.
+        _log(f"[distiller] dispatch EXCEPTION project_id={project_id}: "
+             f"{type(_dist_disp_err).__name__}: {_dist_disp_err!r}")
     return True
 
 
@@ -5817,6 +6234,32 @@ def _extract_transcript_telemetry(path):
         return {}
 
 
+# ── Phase 4 Distiller registration ───────────────────────────────────────────
+# distiller.py is the cross-session learning observer (v2.1 spec). Registered
+# here AFTER _scribe_call and _scribe_render_transcript are defined so the
+# module can call them directly. Best-effort; failure to register doesn't
+# break the rest of server startup.
+import distiller as _distiller
+try:
+    _SKILLS_ROOT = Path(__file__).parent / 'data' / 'skills'
+    _distiller.register(
+        data_root=DATA_DIR,
+        skills_root=_SKILLS_ROOT,
+        atomic_write_text=_atomic_write_text,
+        scribe_call=_scribe_call,
+        scribe_render_transcript=_scribe_render_transcript,
+        log=_log,
+        load_project=load_project,
+        save_project=save_project,
+        now_iso=now_iso,
+        config_get=lambda k, d=None: CONFIG.get(k, d),
+        get_per_project_semaphore=_get_checkpoint_sema,
+    )
+except Exception as _distiller_reg_err:
+    _log(f"[distiller] registration failed: {_distiller_reg_err!r} — "
+         f"Distiller will be inert this run")
+
+
 def _scribe_extract(project, session):
     """Leg A scribe. Returns (entry_text, outcome_reason).
 
@@ -6503,16 +6946,52 @@ _BRIEF_REPLY_DIRECTIVE = (
     "want more detail. This instruction is hidden from the user.]"
 )
 
+# Device-neutral variant for `brief_replies_always_enabled` (applies on desktop
+# too, so it can't say "from a phone" / "switch to PC"). Brevity targets PROSE
+# only — necessary code, file edits, and tool work are never truncated.
+_BRIEF_REPLY_DIRECTIVE_ALWAYS = (
+    "[Default to brief, conversational replies: lead with the answer in a "
+    "sentence or two, one main idea, minimal headers/bullets. Elaborate only "
+    "when the user explicitly asks for more detail. Brevity applies to prose "
+    "and explanation — never truncate necessary code, file edits, or tool "
+    "work. This instruction is hidden from the user.]"
+)
+
+# System-prompt variant of the device-neutral brevity nudge, used when
+# `sticky_agent_settings` is on: baked once into _build_agent_context (cached,
+# system-level authority) instead of re-prepended to every user turn. Hard caps
+# so it isn't weighed away as a soft suggestion. Governs PROSE only.
+_BRIEF_REPLY_DIRECTIVE_SYSTEM = (
+    "REPLY LENGTH (default for this session): keep prose brief — lead with the "
+    "answer in the first sentence; at most ~4 sentences of explanation; no "
+    "section headers; no bullet lists unless enumerating 3+ discrete items. "
+    "Elaborate only when the user explicitly asks for more detail. This governs "
+    "PROSE only — never truncate or abbreviate necessary code, file edits, or "
+    "tool calls."
+)
+
 
 def _apply_mobile_brief(message: str, request_data: dict) -> str:
-    """Return `message` augmented with the brief-reply directive if both the
-    server toggle (`mobile_brief_replies_enabled`) is on AND the request body
-    declared `client="mobile"`. Otherwise return `message` unchanged.
+    """Return `message` augmented with a hidden brief-reply directive.
+
+    Two independent server toggles drive this:
+      * `brief_replies_always_enabled` — when on, EVERY client (desktop too)
+        gets the device-neutral directive. Supersedes the phone-only gate.
+      * `mobile_brief_replies_enabled` — when on, only requests that declared
+        `client="mobile"` get the phone-worded directive.
+    If neither applies, `message` is returned unchanged.
 
     Callers MUST use the returned (augmented) string for whatever reaches
     claude (stdin write, spawn arg, _dispatch_agent_internal task) and keep
     the ORIGINAL `message` for anything user-visible (log_lines, telemetry).
     """
+    if CONFIG.get('brief_replies_always_enabled'):
+        # When sticky_agent_settings is on, this directive is baked into the
+        # spawn-time system prompt (_build_agent_context) — don't also prepend
+        # it per turn, or it doubles up.
+        if CONFIG.get('sticky_agent_settings', False):
+            return message
+        return f"{_BRIEF_REPLY_DIRECTIVE_ALWAYS}\n\n{message}"
     if not CONFIG.get('mobile_brief_replies_enabled'):
         return message
     if not isinstance(request_data, dict):
@@ -7176,7 +7655,22 @@ def agent_stream(project_id):
             last_emitted_status = status
 
             if is_mode_b:
-                if status == 'idle' and not idle_sent:
+                # A session that is idle ONLY because it is blocked on an
+                # AskUserQuestion (or plan approval) is NOT "turn complete" —
+                # the agent is parked waiting on the user. Suppress turn_complete
+                # in that state. The FE turn_complete handler closes the SSE and
+                # clears the asking-state, which races the `question` event
+                # emitted just above: there is a TOCTOU between the
+                # pending_questions read (loop top) and this status read — the
+                # reader thread can flip status to 'idle' in between, so an
+                # iteration emits turn_complete WITHOUT the question, the FE tears
+                # the stream down, and the form is lost until a resync reconnects
+                # (status shows "Completed" with no form). Keeping the stream
+                # open lets the question reach the client; the form is driven by
+                # the `question` event, never by turn_complete.
+                waiting_on_user = (session.get('waiting_for_question')
+                                   or session.get('waiting_for_plan_approval'))
+                if status == 'idle' and not idle_sent and not waiting_on_user:
                     # Turn finished but process is still alive
                     yield f"data: {json.dumps({'type': 'turn_complete', 'status': 'idle', **_session_usage_payload(session)})}\n\n"
                     idle_sent = True
@@ -7197,6 +7691,13 @@ def agent_stream(project_id):
                 elif status != 'running':
                     if session.get('guardian_state') == 'recovering':
                         pass  # Wait for guardian recovery to complete
+                    elif (session.get('waiting_for_question')
+                          or session.get('waiting_for_plan_approval')):
+                        # Blocked on user input — turn isn't complete. Keep the
+                        # stream open so the `question` form is (re)delivered
+                        # instead of closing on the idle status (same race the
+                        # Mode B branch above guards against).
+                        pass
                     elif not session.get('pending_followups') and not session.get('_dispatching_followup'):
                         # Eager-followup grace window: sendFollowup() opens the
                         # SSE BEFORE POSTing /agent/send, so the very first
@@ -7353,18 +7854,21 @@ def agent_followup(project_id):
                     context = _build_agent_context(p)
                     message = (f"[Resumed session did not provide a continuable session ID. "
                                f"Starting fresh.]\n\n{message}")
-                elif was_resume:
-                    # Session was originally a resume that succeeded but process died.
-                    # Don't try to -r the same session again — it already proved fragile.
-                    # Start fresh to avoid the same failure loop.
-                    _log(f"[followup] {project_id}: resumed session {claude_sid[:12]} died after turn, starting fresh")
+                elif _resume_is_fragile(was_resume, existing.get('_resume_confirmed')):
+                    # The resume itself proved fragile — it died BEFORE producing any
+                    # output, so -r-ing it again would just loop. Start fresh.
+                    # (A resume that already produced output is healthy and falls
+                    # through to the -r path below, so an AskUserQuestion kill /
+                    # idle-eviction / later crash keeps the full transcript.)
+                    _log(f"[followup] {project_id}: resume {claude_sid[:12]} died before any output, starting fresh")
                     context = _build_agent_context(p)
                     existing['log_lines'].append(
-                        f'[Resumed session process exited — restarting fresh]')
+                        f'[Resume produced no output before exiting — restarting fresh]')
                     message = (f"[Continuing from a previous conversation (session {claude_sid}) whose "
                                f"process exited. Start fresh but continue the user's request.]\n\n{message}")
                 else:
-                    # Normal session — try to resume with -r
+                    # Normal session, OR a resume that already produced output
+                    # (healthy — it just died later). Resume with -r to keep context.
                     too_large, size_bytes = _session_too_large(pp, claude_sid)
                     if too_large:
                         size_mb = size_bytes / (1024 * 1024)
@@ -7386,6 +7890,8 @@ def agent_followup(project_id):
                 existing['status'] = 'running'
                 existing['last_status_change_time'] = _time.time()
                 existing['last_output_time'] = _time.time()
+                existing.pop('evicted', None)  # respawned from idle-eviction → clear the State-1 skip flag
+                existing.pop('_needs_respawn', None)  # this respawn already rebuilds flags+context
                 # Clear the in-flight marker set by agent_send. Otherwise the
                 # flag leaks past status='running' and, once this turn
                 # completes (status flips back to idle/completed), Guardian
@@ -7430,7 +7936,40 @@ def agent_followup(project_id):
                 # the parallel respawn branch above for why this matters.
                 existing.pop('_dispatching_followup', None)
 
-                if CONFIG.get('auto_model_enabled', False) and message:
+                # Sticky-settings respawn: a spawn-baked (Tier-1) setting was
+                # flipped mid-session (see update_config). A live CLI can't see
+                # CLI/system-prompt changes, so resume it into a fresh process
+                # that rebuilds flags + context from current CONFIG. Mirrors the
+                # auto-router's alive-process respawn just below.
+                if (CONFIG.get('sticky_agent_settings', False)
+                        and existing.pop('_needs_respawn', None)):
+                    _sticky_sid = existing.get('claude_session_id')
+                    _sticky_resume = ['-r', _sticky_sid] if _sticky_sid else []
+                    _sticky_cmd = [_resolve_claude(), *_sticky_resume,
+                                   *_build_claude_flags(p, streaming=True)]
+                    _sticky_sp = None
+                    if not _sticky_resume:
+                        _sargs, _sticky_sp = _sysprompt_file_args(_build_agent_context(p))
+                        _sticky_cmd.extend(_sargs)
+                    existing['process_alive'] = False
+                    existing['log_lines'].append('[Settings changed — applying via resume]')
+                    _sticky_old = existing.get('proc')
+                    if _sticky_old:
+                        _unregister_process(_sticky_old.pid)
+                        try:
+                            _sticky_old.stdin.close()
+                        except Exception:
+                            pass
+                    _respawn_b = {
+                        'cmd': _sticky_cmd, 'pp': pp, 'message': message,
+                        'existing': existing, 'session_id': session_id,
+                        'project_id': project_id,
+                        'old_proc': _sticky_old,
+                        'sysprompt_path': _sticky_sp,
+                        'request_data': data,
+                    }
+                    # Fall through — spawn happens after lock release.
+                elif CONFIG.get('auto_model_enabled', False) and message:
                     # Defer stdin write — classify model post-lock to avoid
                     # blocking mgr.lock for the ~0.5s Haiku classifier call.
                     _model_route_state = {
@@ -10631,6 +11170,150 @@ def api_recent_runs():
     })
 
 
+def _extract_msg_text_from_raw(raw):
+    """Pull the human-readable text from one transcript JSONL line.
+
+    Returns the user/assistant text content ('' for tool/meta/attachment lines).
+    Mirrors the extraction in ClaudeRuntime.parse_transcript_file but works on a
+    single raw line so the search scanner can parse only the lines it needs.
+    """
+    try:
+        o = json.loads(raw)
+    except Exception:
+        return ''
+    msg = o.get('message')
+    if not isinstance(msg, dict):
+        return ''
+    content = msg.get('content', '')
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        texts = [str(b.get('text', '')) for b in content
+                 if isinstance(b, dict) and b.get('type') == 'text']
+        return ' '.join(t.strip() for t in texts if t).strip()
+    return ''
+
+
+def _make_search_snippet(display_text, raw, query, window=90):
+    """Build a context window around `query`. Prefer clean display text; fall
+    back to a whitespace-collapsed window of the raw line when the hit was in
+    text we don't normally surface (tool results / thinking)."""
+    ql = query.lower()
+    src = display_text if (display_text and ql in display_text.lower()) else None
+    if src is None:
+        # Fall back to the raw line, lightly de-noised.
+        src = ' '.join(raw.split())
+    low = src.lower()
+    i = low.find(ql)
+    if i < 0:
+        return (display_text or src)[:window * 2].strip()
+    start = max(0, i - window)
+    end = min(len(src), i + len(query) + window)
+    s = src[start:end].strip()
+    if start > 0:
+        s = '… ' + s
+    if end < len(src):
+        s = s + ' …'
+    return s
+
+
+def _search_project_transcripts(project, query, limit=50):
+    """Full-text scan of a project's Claude .jsonl transcripts.
+
+    Returns [{csid, label, snippet, matches, mtime, ts_relative}] sorted by
+    recency. A fast raw-substring pass picks matching lines; only the first user
+    line (for the label) and the first matching line (for the snippet) are
+    JSON-parsed, so the whole project scans in ~scan-cost (benchmarked ~2s on a
+    195 MB / 181-file project, sub-second elsewhere). Read-only, no locks.
+    """
+    pp = (project or {}).get('project_path', '')
+    q = (query or '').strip()
+    if not pp or len(q) < 2:
+        return []
+    ql = q.lower()
+    encoded = _encode_project_path(pp)
+    if not encoded:
+        return []
+    dirs = [CLAUDE_HOME / encoded]
+    alt = encoded.replace('_', '-')
+    if alt != encoded:
+        dirs.append(CLAUDE_HOME / alt)
+
+    seen = set()
+    files = []
+    for d in dirs:
+        try:
+            if not d.exists():
+                continue
+            for f in d.glob('*.jsonl'):
+                if f.name in seen:
+                    continue
+                seen.add(f.name)
+                try:
+                    files.append((f, f.stat().st_mtime))
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    files.sort(key=lambda x: x[1], reverse=True)
+
+    from datetime import datetime, timezone
+    results = []
+    for f, mtime in files:
+        match_count = 0
+        snippet = ''
+        first_user = ''
+        try:
+            with open(f, 'r', encoding='utf-8', errors='ignore') as fh:
+                for raw in fh:
+                    if not first_user and '"type":"user"' in raw:
+                        first_user = _extract_msg_text_from_raw(raw)[:200]
+                    if ql in raw.lower():
+                        match_count += 1
+                        if not snippet:
+                            snippet = _make_search_snippet(
+                                _extract_msg_text_from_raw(raw), raw, q)
+        except Exception:
+            continue
+        if not match_count:
+            continue
+        try:
+            ts_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            ts_iso = ''
+        results.append({
+            'csid': f.stem,
+            'label': ' '.join((first_user or '').split()) or '(no label)',
+            'snippet': snippet,
+            'matches': match_count,
+            'mtime': mtime,
+            'ts_relative': time_ago(ts_iso) if ts_iso else '',
+        })
+    results.sort(key=lambda r: r['mtime'], reverse=True)
+    return results[:limit]
+
+
+@app.route('/api/project/<project_id>/search-chats')
+def search_project_chats(project_id):
+    """Search a project's prior conversations by transcript content.
+
+    Query: ?q=<text>&limit=<N>. Returns {query, count, results:[...]}.
+    """
+    q = (request.args.get('q', '') or '').strip()
+    try:
+        limit = int(request.args.get('limit', 50))
+    except Exception:
+        limit = 50
+    limit = max(1, min(limit, 100))
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    if len(q) < 2:
+        return jsonify({'query': q, 'count': 0, 'results': []})
+    results = _search_project_transcripts(p, q, limit=limit)
+    return jsonify({'query': q, 'count': len(results), 'results': results})
+
+
 @app.route('/api/project/<project_id>/conversations')
 def get_project_conversations(project_id):
     """Return recent Claude Code conversations for a project, read from .jsonl transcripts.
@@ -10709,66 +11392,100 @@ def get_project_conversations(project_id):
     return jsonify(out)
 
 
+# ── PLAN tab load cache ───────────────────────────────────────────────────────
+# /api/project/<id>/plans re-read every plan file (read + regex for the title)
+# and re-parsed the whole agent log on every tab open — both are I/O that grows
+# with history, which is the slow tab load. Cache both by mtime. Payload assembly
+# is cheap in-memory CPU, so it's rebuilt each call → titles are always fresh (no
+# whole-payload staleness) while the I/O is skipped when nothing changed.
+# Best-effort: a cache error falls back to the direct log read, and
+# _plan_title_for is self-guarding. CPython dict ops are atomic under the GIL, so
+# these module-level caches need no lock for the threaded server.
+_plan_title_cache: dict = {}      # plan_file path -> (mtime, title)
+_plans_log_cache: dict = {}       # project_id  -> (log_mtime, parsed_log)
+
+
+def _plan_title_for(p: Path) -> str:
+    """First '# ' heading of a plan file, memoized by (path, mtime)."""
+    import re
+    key = str(p)
+    try:
+        mtime = p.stat().st_mtime
+    except Exception:
+        return p.stem
+    cached = _plan_title_cache.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
+        content = p.read_text(encoding='utf-8')
+        m = re.match(r'^#\s+(.+)', content, re.MULTILINE)
+        title = m.group(1).strip() if m else p.stem
+    except Exception:
+        title = p.stem
+    _plan_title_cache[key] = (mtime, title)
+    return title
+
+
+def _plans_cached_log(project_id):
+    """_load_agent_log, but skip the JSON parse when the log file's mtime is unchanged."""
+    filepath = DATA_DIR / f'{project_id}_agent_log.json'
+    try:
+        mtime = filepath.stat().st_mtime
+    except Exception:
+        _plans_log_cache.pop(project_id, None)
+        return []
+    cached = _plans_log_cache.get(project_id)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    log = _load_agent_log(project_id)
+    _plans_log_cache[project_id] = (mtime, log)
+    return log
+
+
 @app.route('/api/project/<project_id>/plans')
 def get_project_plans(project_id):
-    """Return all plan files associated with this project from agent log + live sessions."""
-    import re
-    log = _load_agent_log(project_id)
-    plans = []
-    seen = set()
+    """Return all plan files for this project (live sessions + agent log).
 
-    # Include plans from currently running/idle sessions (not yet in log)
-    for sid, s in agent_sessions.items():
-        if s['project_id'] != project_id:
-            continue
-        pf = s.get('plan_file', '')
-        if not pf or pf in seen:
-            continue
-        p = Path(pf)
-        if not p.is_file():
-            continue
-        seen.add(pf)
-        try:
-            content = p.read_text(encoding='utf-8')
-            m = re.match(r'^#\s+(.+)', content, re.MULTILINE)
-            title = m.group(1).strip() if m else p.stem
-        except Exception:
-            title = p.stem
-        plans.append({
-            'plan_file': pf,
-            'filename': p.name,
-            'title': title,
-            'task': s.get('task', ''),
-            'ts': s.get('started_at', ''),
-            'ts_relative': time_ago(s.get('started_at')),
-            'session_id': s.get('session_id', ''),
-        })
+    Titles and the agent-log parse are cached by mtime (_plan_title_for /
+    _plans_cached_log) so repeated tab opens don't re-read unchanged files.
+    """
+    def _build(log):
+        plans = []
+        seen = set()
 
-    for entry in log:
-        pf = entry.get('plan_file', '')
-        if not pf or pf in seen:
-            continue
-        p = Path(pf)
-        if not p.is_file():
-            continue
-        seen.add(pf)
-        # Extract first heading from file
-        try:
-            content = p.read_text(encoding='utf-8')
-            m = re.match(r'^#\s+(.+)', content, re.MULTILINE)
-            title = m.group(1).strip() if m else p.stem
-        except Exception:
-            title = p.stem
-        plans.append({
-            'plan_file': pf,
-            'filename': p.name,
-            'title': title,
-            'task': entry.get('task', ''),
-            'ts': entry.get('ts', ''),
-            'ts_relative': time_ago(entry.get('ts')),
-            'session_id': entry.get('session_id', ''),
-        })
-    return jsonify(plans)
+        def _add(pf, task, ts, session_id):
+            if not pf or pf in seen:
+                return
+            p = Path(pf)
+            if not p.is_file():
+                return
+            seen.add(pf)
+            plans.append({
+                'plan_file': pf,
+                'filename': p.name,
+                'title': _plan_title_for(p),
+                'task': task or '',
+                'ts': ts or '',
+                'ts_relative': time_ago(ts),
+                'session_id': session_id or '',
+            })
+
+        # Live sessions first (may not be in the log yet)
+        for sid, s in agent_sessions.items():
+            if s.get('project_id') != project_id:
+                continue
+            _add(s.get('plan_file', ''), s.get('task', ''),
+                 s.get('started_at', ''), s.get('session_id', ''))
+        for entry in log:
+            _add(entry.get('plan_file', ''), entry.get('task', ''),
+                 entry.get('ts', ''), entry.get('session_id', ''))
+        return plans
+
+    try:
+        log = _plans_cached_log(project_id)
+    except Exception:
+        log = _load_agent_log(project_id)
+    return jsonify(_build(log))
 
 
 # ── Usage / token tracking ──────────────────────────────────────────────────
@@ -11905,7 +12622,7 @@ def mcp_url_install():
 # ── Global config endpoints ────────────────────────────────────────────────
 
 _CONFIG_EDITABLE_KEYS = {
-    'user_name', 'agent_name', 'agent_model', 'agent_max_turns',
+    'user_name', 'agent_name', 'agent_model', 'agent_effort', 'agent_max_turns',
     'agent_permission_mode', 'agent_channels', 'agent_remote_control',
     'use_streaming_agent', 'condense_enabled', 'condense_threshold_kb',
     'condense_model', 'condense_mode', 'index_line_budget',
@@ -11914,10 +12631,43 @@ _CONFIG_EDITABLE_KEYS = {
     'scribe_reconcile_cap', 'scribe_checkpoint_enabled',
     'scribe_checkpoint_kb', 'read_floor_topk',
     'long_session_advisory_enabled', 'long_session_advisory_turns',
+    'idle_eviction_enabled', 'idle_eviction_minutes',
     'projects_base', 'shared_rules_path', 'port', 'log_level',
-    'mobile_brief_replies_enabled',
+    'mobile_brief_replies_enabled', 'brief_replies_always_enabled',
     'auto_model_enabled', 'auto_model_classifier_model',
     'auto_model_classifier_timeout_secs',
+    'sticky_agent_settings',
+    # Phase 4 Distiller (v2.1 §11 global keys).
+    'distiller_enabled_global', 'distiller_cross_project_enabled',
+    'distiller_model', 'distiller_window_days',
+    'distiller_cost_cap_tokens_per_project_per_day',
+    'distiller_proposal_dedupe_days',
+    'distiller_cross_project_walk_debounce_session_count',
+    'distiller_cross_project_walk_debounce_seconds',
+}
+
+# Respawn-trigger ("Tier-1a") settings: passed as CLI FLAGS at process launch and
+# re-applied on a `-r` respawn, so flipping one mid-session and resuming actually
+# changes behavior (this is exactly how the auto-router switches --model live).
+# When `sticky_agent_settings` is on, flipping any of these marks live Mode B
+# sessions to resume into a fresh process at the next turn boundary.
+#
+# DELIBERATELY EXCLUDED — system-prompt ("Tier-1b") settings (brief-reply
+# directive `brief_replies_always_enabled`, `read_floor_topk`, rules-file edits):
+# these live in --append-system-prompt-file, and a canary test (2026-06-04, Haiku)
+# proved `claude -r` RESTORES the session's original system prompt and IGNORES a
+# resume-time append (fresh+append → applied; -r+append → ignored, 0/4 trials;
+# continuity probe confirmed -r really resumed). So a respawn can't apply them to
+# a resumed chat — they only take effect on a FRESH spawn. Including them would
+# just burn a re-prefill for no behavior change. See discovery memory
+# claude-resume-ignores-append-system-prompt.
+#
+# Also excluded: per-turn settings (brief phone-mode, auto-router,
+# scribe-checkpoint) take effect next turn for free; agent_name/user_name change
+# rarely; MCP set is per-project (not a global key here).
+_RESPAWN_TRIGGER_KEYS = {
+    'agent_model', 'agent_effort', 'agent_max_turns', 'agent_permission_mode',
+    'agent_channels', 'agent_remote_control', 'use_streaming_agent',
 }
 
 @app.route('/api/config')
@@ -11940,7 +12690,25 @@ def update_config():
                 json.dump(CONFIG, f, indent=2, ensure_ascii=False)
         except Exception as e:
             return jsonify({'error': f'failed to save config: {e}'}), 500
-    return jsonify({'ok': True, 'updated': list(updated.keys())})
+    # Sticky settings: if a spawn-baked (Tier-1) key changed, flag live Mode B
+    # claude sessions to resume into a fresh process at their next turn boundary
+    # so the change actually takes effect (a running CLI can't see spawn-baked
+    # changes). Best-effort; agent_followup reads `_needs_respawn` under lock.
+    respawn_flagged = 0
+    if CONFIG.get('sticky_agent_settings', False):
+        flipped = [k for k in updated if k in _RESPAWN_TRIGGER_KEYS]
+        if flipped:
+            for _sess in list(agent_sessions.values()):
+                if (_sess.get('mode') == 'B'
+                        and (_sess.get('provider') or 'claude').lower() == 'claude'
+                        and _sess.get('process_alive')):
+                    _sess['_needs_respawn'] = True
+                    respawn_flagged += 1
+            if respawn_flagged:
+                _log(f"[sticky-settings] {flipped} changed → flagged "
+                     f"{respawn_flagged} live Mode B session(s) for respawn")
+    return jsonify({'ok': True, 'updated': list(updated.keys()),
+                    'respawn_flagged': respawn_flagged})
 
 
 # ── Folder browse (for project_path picker) ─────────────────────────────────
@@ -12949,6 +13717,33 @@ def _session_guardian_loop():
     return
 
 
+def _should_evict_idle_session(session, now, enabled, idle_minutes):
+    """Pure predicate for guardian idle-eviction (kept separate so it's unit-
+    testable without spawning real processes).
+
+    True iff this is a warm Mode B session with a live process that has been
+    `idle` (turn finished, waiting on the user) for longer than `idle_minutes`.
+    Evicting it kills the claude.exe + MCP-server fleet to free resources; the
+    next user message respawns it with `-r <csid>` (full context). Only `idle`
+    sessions qualify — a `running` session is mid-work and never evicted."""
+    if not enabled or not idle_minutes or idle_minutes <= 0:
+        return False
+    if session.get('status') != 'idle' or session.get('mode') != 'B':
+        return False
+    if session.get('evicted'):
+        return False
+    # Don't evict a session with queued work or one waiting on the user — those
+    # carry pending state the next turn needs; let them resolve first.
+    if (session.get('pending_followups') or session.get('_dispatching_followup')
+            or session.get('waiting_for_question')
+            or session.get('waiting_for_plan_approval')):
+        return False
+    proc = session.get('proc')
+    if proc is None or proc.poll() is not None:
+        return False
+    return (now - session.get('last_output_time', now)) > idle_minutes * 60
+
+
 def _guardian_check_session(sid, session, now):
     status = session['status']
     proc = session.get('proc')
@@ -12982,7 +13777,8 @@ def _guardian_check_session(sid, session, now):
             # plan approval), the process was killed intentionally by the reader
             # thread as part of that flow. Don't mark it 'error' — the follow-up
             # (user's answer) will respawn it.
-            if session.get('waiting_for_question') or session.get('waiting_for_plan_approval'):
+            if (session.get('waiting_for_question') or session.get('waiting_for_plan_approval')
+                    or session.get('evicted')):
                 return
             old_status = status
             _log(f"[guardian] Session {sid[:8]}: PID {proc.pid} dead, was {old_status}")
@@ -13021,6 +13817,34 @@ def _guardian_check_session(sid, session, now):
             # Snapshot pid; release lock before kill (process-tree walk can be slow on Windows)
             _kill_proc_background(proc)
             return
+
+    # State 8: idle-session eviction. Reclaim a warm Mode B fleet (claude.exe +
+    # its MCP-server tree) after long inactivity; the next user message respawns
+    # it via the followup path with `-r <csid>`, so context is preserved. The
+    # `evicted` flag makes State 1 skip the now-dead-proc session instead of
+    # flagging it 'error'; it is cleared on respawn. Default OFF.
+    if _should_evict_idle_session(session, now,
+                                  CONFIG.get('idle_eviction_enabled', False),
+                                  CONFIG.get('idle_eviction_minutes', 30)):
+        proc_to_kill = None
+        with get_manager(session['project_id']).lock:
+            # Re-check under lock — status/proc may have changed since the snapshot.
+            if _should_evict_idle_session(session, now,
+                                          CONFIG.get('idle_eviction_enabled', False),
+                                          CONFIG.get('idle_eviction_minutes', 30)):
+                idle_min = (now - session.get('last_output_time', now)) / 60
+                session['evicted'] = True
+                session['process_alive'] = False
+                session['last_status_change_time'] = now
+                session['log_lines'].append(
+                    f'[Guardian: idle {idle_min:.0f} min — process evicted to free '
+                    f'resources; next message resumes with full context]')
+                _unregister_process(proc.pid)
+                proc_to_kill = proc
+        if proc_to_kill is not None:
+            _log(f"[guardian] Session {sid[:8]}: evicted after idle timeout")
+            _kill_proc_background(proc_to_kill)
+        return
 
     proj_lock = get_manager(session['project_id']).lock
 
@@ -15696,6 +16520,18 @@ def _stop_all_sessions_for_restart(grace_seconds=3.0):
     for proc in procs:
         _kill_proc_background(proc)
 
+    # Stop the Cloudflare tunnel too. It's spawned outside the agent-session
+    # tracker, so without this every restart/shutdown orphans cloudflared.exe
+    # (observed: 29 leaked connectors accumulated across prior restarts).
+    # Best-effort + bounded; a missing/disabled remote-access build just no-ops.
+    # [leak fix 2026-06-03]
+    try:
+        from mc_remote import tunnel_supervisor as _tunnel_sup
+        _tunnel_sup.get().stop(timeout=3.0)
+    except Exception as e:
+        try: _log(f"[restart] tunnel stop skipped: {e}")
+        except Exception: pass
+
     # Brief wait so the children get a chance to die before exec replaces us.
     deadline = _time.time() + grace_seconds
     while _time.time() < deadline:
@@ -15793,6 +16629,51 @@ def _perform_server_restart_async(audit_entry):
         os._exit(0 if spawned else 1)
 
     threading.Thread(target=_do_restart, daemon=True).start()
+
+
+def _perform_server_shutdown_async(audit_entry):
+    """Run after the HTTP response flushes: stop everything, then exit for good.
+
+    The power-off analog of _perform_server_restart_async — same bounded
+    graceful-stop + hard watchdog, but it does NOT spawn a replacement
+    process. The dashboard shows a terminal "powered off" overlay; the user
+    relaunches via the Clayrune shortcut.
+    """
+    def _do_shutdown():
+        # Hard watchdog: terminate within 10s no matter what (mirrors restart).
+        def _watchdog():
+            _time.sleep(10.0)
+            try: _log("[shutdown] watchdog tripped — forcing termination")
+            except Exception: pass
+            os._exit(0)
+        threading.Thread(target=_watchdog, daemon=True).start()
+
+        _time.sleep(0.4)  # let the HTTP 202 actually reach the client
+
+        # Best-effort graceful stop, bounded by a wall-clock timeout and run in
+        # its own thread so a deadlock cannot prevent the os._exit below.
+        stop_done = threading.Event()
+        def _bounded_stop():
+            try: _stop_all_sessions_for_restart()
+            except Exception as e:
+                try: _log(f"[shutdown] stop-all failed: {e}")
+                except Exception: pass
+            finally:
+                stop_done.set()
+        threading.Thread(target=_bounded_stop, daemon=True).start()
+        stop_done.wait(timeout=4.0)
+        if not stop_done.is_set():
+            try: _log("[shutdown] stop-all exceeded 4s — exiting anyway")
+            except Exception: pass
+
+        try: _append_restart_log(audit_entry)
+        except Exception: pass
+
+        try: _log("[shutdown] exiting — powered off by user request")
+        except Exception: pass
+        os._exit(0)
+
+    threading.Thread(target=_do_shutdown, daemon=True).start()
 
 
 @app.route('/api/system/restart/status')
@@ -16123,6 +17004,40 @@ def system_restart():
     return jsonify({'ok': True, 'restarting': True}), 202
 
 
+@app.route('/api/system/shutdown', methods=['POST'])
+def system_shutdown():
+    """Shut down (power off) the Mission Control server process.
+
+    Same confirmation + active-flow blocker semantics as /api/system/restart,
+    but the process exits WITHOUT spawning a replacement. Body:
+    {"confirmed": true, "force": bool}. Not rate-limited — it's a one-way,
+    terminal action, so a double-submit is harmless (the process is already
+    on its way out).
+    """
+    data = request.get_json(silent=True) or {}
+    if not data.get('confirmed'):
+        return jsonify({'error': 'confirmation required (set "confirmed": true)'}), 400
+
+    blockers = _get_active_restart_blockers()
+    if (blockers['active_sessions'] or blockers['active_hiveminds']) and not data.get('force'):
+        return jsonify({
+            'error': 'active flows present; stop them or pass "force": true',
+            **blockers,
+        }), 409
+
+    audit_entry = {
+        'ts': datetime.now(timezone.utc).isoformat(),
+        'source_ip': request.remote_addr or '',
+        'user_agent': request.headers.get('User-Agent', ''),
+        'tunneled': _is_cf_tunneled_request(),
+        'blockers_at_request': blockers,
+        'forced': bool(data.get('force')),
+        'action': 'shutdown',
+    }
+    _perform_server_shutdown_async(audit_entry)
+    return jsonify({'ok': True, 'shutting_down': True}), 202
+
+
 # ── AgentRuntime hook registration ──────────────────────────────────────────
 # Wire ClaudeRuntime delegates back into server.py so external callers (future
 # workstreams, tests) can use get_runtime('claude').dispatch() etc. and have
@@ -16291,6 +17206,14 @@ def _register_claude_runtime_hooks():
 if __name__ == '__main__':
     _register_claude_runtime_hooks()
     _check_port_conflict()
+    # Reap child process trees orphaned by a prior MC instance that exited
+    # (restart/crash) without killing them. Reads the PID ledger the prior
+    # instance persisted; identity-guarded so it can't friendly-fire. Must run
+    # before any subsystem spawns its own children. [leak fix 2026-06-03]
+    try:
+        _reap_prior_instance_strays()
+    except Exception as e:
+        _log(f"[reaper] startup reap failed: {e}")
     _start_scheduler()
     _start_hivemind_orchestrator()
     _start_session_guardian()

@@ -606,6 +606,9 @@ class ClaudeRuntime(AgentRuntime):
     name = 'claude'
     display_name = 'Claude Code'
 
+    # Valid --effort levels accepted by the CLI (`claude --effort <level>`).
+    EFFORT_LEVELS = ('low', 'medium', 'high', 'xhigh', 'max')
+
     # ── Path helpers ──────────────────────────────────────────────────────────
 
     @staticmethod
@@ -690,7 +693,8 @@ class ClaudeRuntime(AgentRuntime):
 
     def build_command(self, *, model: str = '', max_turns: int = 0,
                       streaming: bool = False, perm_mode: str = '',
-                      channels: str = '', remote_control: bool = False) -> List[str]:
+                      channels: str = '', remote_control: bool = False,
+                      effort: str = '', mcp_config_json: str = '') -> List[str]:
         """Return [binary, *flags]. Equivalent to _build_claude_flags() in server.py.
 
         Config values are passed explicitly (not read from server.py CONFIG) so
@@ -701,6 +705,10 @@ class ClaudeRuntime(AgentRuntime):
             channels   = project.get('agent_channels') or CONFIG.get('agent_channels')
             remote_control = project.get('agent_remote_control') or CONFIG.get(...)
             streaming  = True for Mode B (--input-format stream-json)
+            mcp_config_json = per-project MCP trim (see _resolve_project_mcp_config
+                              in server.py). '' / empty → omit the flags entirely,
+                              so the session inherits the full global+project fleet
+                              exactly as before (default-off invariant).
 
         The returned list is [binary, '--print', '--verbose', ...] — callers extend
         with -p <task>, --append-system-prompt <ctx>, -r <csid>, etc.
@@ -715,6 +723,8 @@ class ClaudeRuntime(AgentRuntime):
             cmd.extend(['--input-format', 'stream-json'])
         if model:
             cmd.extend(['--model', model])
+        if effort and str(effort).strip().lower() in self.EFFORT_LEVELS:
+            cmd.extend(['--effort', str(effort).strip().lower()])
         if max_turns and int(max_turns) > 0:
             cmd.extend(['--max-turns', str(int(max_turns))])
         if perm_mode:
@@ -723,6 +733,12 @@ class ClaudeRuntime(AgentRuntime):
             cmd.extend(['--channels', channels])
         if remote_control:
             cmd.append('--remote-control')
+        # Per-project MCP trimming: when a non-empty config JSON is supplied,
+        # load ONLY those servers (--strict-mcp-config ignores ~/.claude.json,
+        # .mcp.json AND plugin MCP servers, so the JSON must re-declare anything
+        # to keep — e.g. engram). Empty string → no flags → full fleet, unchanged.
+        if mcp_config_json and mcp_config_json.strip():
+            cmd.extend(['--strict-mcp-config', '--mcp-config', mcp_config_json])
         return cmd
 
     # ── JSONL event parser — lifted from _read_agent_stream in server.py ──────
