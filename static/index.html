@@ -23553,6 +23553,11 @@ function modalDragMove(x, y) {
         content.style.height = ps.height + 'px';
       }
       entry.preSnap = null;
+      // Tear-off must clear the persisted snap too, else the per-project pref
+      // (mc_modal_prefs) re-snaps the modal on every reopen. Mirrors unSnap().
+      if (entry.projectId && modalDrag.modalId && !modalDrag.modalId.startsWith('__')) {
+        _setModalPref(entry.projectId, { snap: null, preSnap: null });
+      }
     }
     // Recenter the un-snapped window under the cursor so it tracks naturally.
     const w = modalDrag.element.offsetWidth;
