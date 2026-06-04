@@ -12643,18 +12643,28 @@ _CONFIG_EDITABLE_KEYS = {
     'distiller_cross_project_walk_debounce_seconds',
 }
 
-# Spawn-baked ("Tier-1") settings: consumed at process launch (CLI flags or the
-# system prompt), so a live Mode B process can't see a change until it respawns.
-# When `sticky_agent_settings` is on, flipping any of these marks live sessions
-# to resume into a fresh process at the next turn boundary. Per-turn settings
-# (brief phone-mode, auto-router, scribe-checkpoint) are deliberately NOT here —
-# they already take effect on the next turn for free. agent_name/user_name are
-# also spawn-baked but omitted: they change rarely and aren't worth a forced
-# re-prefill. MCP set is per-project (not a global key here) — out of v1 scope.
+# Respawn-trigger ("Tier-1a") settings: passed as CLI FLAGS at process launch and
+# re-applied on a `-r` respawn, so flipping one mid-session and resuming actually
+# changes behavior (this is exactly how the auto-router switches --model live).
+# When `sticky_agent_settings` is on, flipping any of these marks live Mode B
+# sessions to resume into a fresh process at the next turn boundary.
+#
+# DELIBERATELY EXCLUDED — system-prompt ("Tier-1b") settings (brief-reply
+# directive `brief_replies_always_enabled`, `read_floor_topk`, rules-file edits):
+# these live in --append-system-prompt-file, and a canary test (2026-06-04, Haiku)
+# proved `claude -r` RESTORES the session's original system prompt and IGNORES a
+# resume-time append (fresh+append → applied; -r+append → ignored, 0/4 trials;
+# continuity probe confirmed -r really resumed). So a respawn can't apply them to
+# a resumed chat — they only take effect on a FRESH spawn. Including them would
+# just burn a re-prefill for no behavior change. See discovery memory
+# claude-resume-ignores-append-system-prompt.
+#
+# Also excluded: per-turn settings (brief phone-mode, auto-router,
+# scribe-checkpoint) take effect next turn for free; agent_name/user_name change
+# rarely; MCP set is per-project (not a global key here).
 _RESPAWN_TRIGGER_KEYS = {
     'agent_model', 'agent_effort', 'agent_max_turns', 'agent_permission_mode',
     'agent_channels', 'agent_remote_control', 'use_streaming_agent',
-    'brief_replies_always_enabled', 'read_floor_topk',
 }
 
 @app.route('/api/config')
