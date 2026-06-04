@@ -4,6 +4,45 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-04] — Keep a conversation's window open after its process dies (detach, don't delete)
+
+A conversation tab used to **vanish on its own** once the server stopped listing
+its session in `/agent/status`. That happens in normal operation: the guardian
+**purges any non-running/non-idle session from the in-memory `agent_sessions`
+after 30 min** (`server.py` "Purge stale sessions from memory"), and a restart
+clears the dict entirely (revival is lazy, on the next message). The frontend
+treated "absent from `/agent/status`" as **stale** and *deleted* the entry from
+`agentHistory` — so a finished chat the user might still want to continue would
+silently disappear ~30 min later, with no restart and no warning. The
+conversation itself was never gone (transcript on disk + `agent_log`; a follow-up
+resumes it via `claude -r`), but the open window was — which "feels like it's
+gone."
+
+Fix is frontend-only: the stale-handler now **detaches instead of deletes**. For a
+session the server no longer lists we keep the `agentHistory` entry, its rendered
+output buffer, and its status cache; we tear down only the live SSE + watchdog and
+mark the entry **`stopped`**. `stopped` is already a first-class status — it shows
+the "Type to resume conversation…" input, draws no Stop button, and is *not* in the
+`wantsLiveStream` set, so it never triggers a doomed SSE reconnect to a session the
+server forgot. Manual conversations stay visible as a tab (automated schedule/
+hivemind runs still drop to the Runs panel when terminal); the user can still
+✕-close one deliberately. Typing in the detached tab routes through the existing
+`/agent/send` → `_revive_from_agent_log` → `claude -r` path (same session_id), so
+it reactivates in place with full context.
+
+Scope note: this covers the common "window vanishes while the dashboard stays open"
+case (the 30-min purge, transient desync). A **server restart** still reloads the
+page (heartbeat detects `started_at` changed), and the `mc_open_modals` snapshot
+restores modal position but not the active chat — after a restart the conversation
+is reachable from the picker but isn't auto-restored into the chat view. Closing
+that gap (persist + restore the active conversation across a restart) is a separate,
+larger change.
+
+Files: `static/index.html` (the `fetchAgentStatus` stale-handler: `_isDetached`
+replaces `_isStale`; detach loop preserves entry/buffer/cache and sets `stopped`;
+`activeAgentTab` no longer cleared for these). **Activates on a hard tab reload**
+(SPA HTML only — no server restart needed).
+
 ## [2026-06-03] — Brief replies on desktop too (Settings → Interface → Brief replies)
 
 The "mobile brief replies" feature (hidden Telegram-style directive prepended to
