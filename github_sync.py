@@ -76,21 +76,25 @@ _RE_CONTROL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 _MAX_TEXT_LEN = 1000
 
 
-def sanitize(text: str) -> str:
+def sanitize(text) -> str:
     """Strip dangerous content from GitHub-sourced text."""
     if not text:
         return ''
+    if not isinstance(text, str):
+        text = str(text)
     text = _RE_HTML_TAG.sub('', text)
     text = _RE_DANGEROUS.sub('', text)
     text = _RE_CONTROL.sub('', text)
     return text[:_MAX_TEXT_LEN].strip()
 
 
-def sanitize_body(text: str) -> str:
+def sanitize_body(text) -> str:
     """Sanitize an issue body. Same rules as sanitize() but allows the
     full GitHub body length (sanitize()'s 1000-char cap is for titles)."""
     if not text:
         return ''
+    if not isinstance(text, str):
+        text = str(text)
     text = _RE_HTML_TAG.sub('', text)
     text = _RE_DANGEROUS.sub('', text)
     text = _RE_CONTROL.sub('', text)
@@ -329,70 +333,103 @@ def _push_items(project: dict, repo: str) -> int:
     project_id = project.get('id', '')
 
     for item in backlog:
-        if item.get('github_issue_number'):
-            # P0-3: only push a state change when the LOCAL status actually
-            # diverged from the last synced base. Previously every linked
-            # item ate a close/reopen call every cycle.
-            num = item['github_issue_number']
-            status = item.get('status', 'open')
-            base = item.get('last_synced_state') or {}
-            base_status = base.get('status')
-            if status == base_status:
-                continue  # in sync — no API call
-            if status == 'done':
-                ok, _ = gh_run(['issue', 'close', '-R', repo, str(num)])
-            elif status == 'open':
-                ok, _ = gh_run(['issue', 'reopen', '-R', repo, str(num)])
-            else:
-                ok = False
-            if ok:
-                # Reflect the push in the base so we don't re-push next cycle.
-                item.setdefault('last_synced_state', {})['status'] = status
+        # RUNAWAY-DUP GUARD: never let one malformed item abort the whole
+        # push cycle. The 2026-06-05 Keegan blow-up (~9,250 identical issues)
+        # was exactly this — a create succeeded on GitHub, then a later item
+        # raised in sanitize_body ("got 'list'"), the cycle-end _save_project
+        # never ran, the new issue number was never persisted, and every
+        # subsequent cycle re-created the same issue. Per-item isolation +
+        # save-on-create (below) makes that impossible.
+        try:
+            if item.get('github_issue_number'):
+                # P0-3: only push a state change when the LOCAL status actually
+                # diverged from the last synced base. Previously every linked
+                # item ate a close/reopen call every cycle.
+                num = item['github_issue_number']
+                status = item.get('status', 'open')
+                base = item.get('last_synced_state') or {}
+                base_status = base.get('status')
+                if status == base_status:
+                    continue  # in sync — no API call
+                if status == 'done':
+                    ok, _ = gh_run(['issue', 'close', '-R', repo, str(num)])
+                elif status == 'open':
+                    ok, _ = gh_run(['issue', 'reopen', '-R', repo, str(num)])
+                else:
+                    ok = False
+                if ok:
+                    # Reflect the push in the base so we don't re-push next cycle.
+                    item.setdefault('last_synced_state', {})['status'] = status
+                continue
+
+            if item.get('github_deleted'):
+                continue  # P0-4: unlinked zombie — don't recreate it
+
+            # New local item → create GitHub issue.
+            text = sanitize((item.get('text') or '').strip())  # P0-5: symmetric
+            if not text:
+                continue
+
+            # P0-7: bound creates per cycle so the per-project lock isn't held
+            # for minutes on a bulk first sync.
+            if created_this_cycle >= _MAX_PUSH_CREATES_PER_CYCLE:
+                deferred += 1
+                continue
+
+            # P0-6: push a real body (was always --body '').
+            # `notes` is a list of note dicts ({text, agent_code, ts}), not a
+            # string — flatten it before sanitizing. (sanitize_body now also
+            # coerces non-str defensively, but keep the readable flatten.)
+            notes = item.get('notes')
+            if isinstance(notes, list):
+                notes = '\n'.join(
+                    (n.get('text', '') if isinstance(n, dict) else str(n))
+                    for n in notes
+                )
+            body = sanitize_body(
+                item.get('body') or notes or item.get('description') or ''
+            )
+            ok, result = gh_run([
+                'issue', 'create', '-R', repo,
+                '--title', text, '--body', body,
+            ])
+            created_this_cycle += 1
+            new_num = None
+            if ok and isinstance(result, dict) and result.get('number'):
+                new_num = result['number']
+            elif ok and isinstance(result, str):
+                m = re.search(r'/issues/(\d+)', result)
+                if m:
+                    new_num = int(m.group(1))
+            if new_num is not None:
+                item['github_issue_number'] = new_num
+                item['text'] = text  # store sanitized so future compares converge
+                item['github_synced_at'] = _now_iso()
+                item['last_synced_state'] = _snapshot(item)
+                push_count += 1
+
+                # ATOMICITY FIX (load-bearing): persist the new link RIGHT NOW,
+                # before anything else can raise. The issue already exists on
+                # GitHub; if we don't durably record its number a crash later
+                # this cycle would orphan it and re-create it next cycle. This
+                # single save is what structurally prevents the runaway.
+                try:
+                    _save_project(project_id, project)
+                except Exception:
+                    pass
+
+                priority = item.get('priority', 'normal')
+                if priority != 'normal':
+                    gh_run([
+                        'issue', 'edit', '-R', repo, str(new_num),
+                        '--add-label', f'priority:{priority}',
+                    ])
+        except Exception as e:
+            # Isolate the failure to this item; the cycle continues and the
+            # links created so far are already persisted (save-on-create).
+            _log_activity(project_id,
+                          f"GitHub: push skipped one item after error: {e}")
             continue
-
-        if item.get('github_deleted'):
-            continue  # P0-4: unlinked zombie — don't recreate it
-
-        # New local item → create GitHub issue.
-        text = sanitize((item.get('text') or '').strip())  # P0-5: symmetric
-        if not text:
-            continue
-
-        # P0-7: bound creates per cycle so the per-project lock isn't held
-        # for minutes on a bulk first sync.
-        if created_this_cycle >= _MAX_PUSH_CREATES_PER_CYCLE:
-            deferred += 1
-            continue
-
-        # P0-6: push a real body (was always --body '').
-        body = sanitize_body(
-            item.get('body') or item.get('notes') or item.get('description') or ''
-        )
-        ok, result = gh_run([
-            'issue', 'create', '-R', repo,
-            '--title', text, '--body', body,
-        ])
-        created_this_cycle += 1
-        new_num = None
-        if ok and isinstance(result, dict) and result.get('number'):
-            new_num = result['number']
-        elif ok and isinstance(result, str):
-            m = re.search(r'/issues/(\d+)', result)
-            if m:
-                new_num = int(m.group(1))
-        if new_num is not None:
-            item['github_issue_number'] = new_num
-            item['text'] = text  # store sanitized so future compares converge
-            item['github_synced_at'] = _now_iso()
-            item['last_synced_state'] = _snapshot(item)
-            push_count += 1
-
-            priority = item.get('priority', 'normal')
-            if priority != 'normal':
-                gh_run([
-                    'issue', 'edit', '-R', repo, str(new_num),
-                    '--add-label', f'priority:{priority}',
-                ])
 
     if push_count > 0:
         _log_activity(project_id,
