@@ -1,6 +1,6 @@
 ---
 name: mc-distill
-description: Propose a reusable SKILL.md from the current session when a hard-won novel insight has emerged. TRIGGER on explicit user request ("/distill", "propose a skill", "do we have a pattern here") OR proactively at a natural breakpoint (end of task, after commit, wrap-up) when a single in-the-moment insight is worth bottling NOW. Cross-session recurrence is the silent Distiller's job (Phase 4). Writes only to data/skills/_proposed/ for human review; never auto-installs.
+description: Propose a reusable SKILL.md from the current session when a hard-won insight — or a newly-discovered capability worth reusing — has emerged. TRIGGER on explicit user request ("/distill", "propose a skill", "do we have a pattern here") OR proactively at a natural breakpoint (end of task, after commit, wrap-up) when a single in-the-moment insight is worth bottling NOW. Cross-session recurrence is the silent Distiller's job (Phase 4). Writes only to data/skills/_proposed/ for human review; never auto-installs.
 ---
 
 # Distill a SKILL.md proposal from the current session
@@ -70,6 +70,8 @@ Bar for a new-skill proposal:
 - **Pattern-bound** — a future agent in a different session would recognize the trigger condition from incoming context.
 - **Not already part of Claude Code's default behavior.**
 - **A future agent reading the description would know when to apply it** — the TRIGGER phrasing describes what the agent SEES (an error, a symptom, a file shape), not "when debugging X."
+
+**Capability discoveries count too — memorize features, not just bugfixes.** "How an existing capability works" — especially something you learned by reading MC's own source, or that contradicted a reasonable assumption — is worth bottling *even when nothing broke*. "Hard-won" does NOT mean "hours of debugging"; non-obvious-enough-that-you-had-to-read-the-source qualifies. Frame it as a procedure ("to do X, use Y"), not a war story. Example: *to show the user an image in MC chat, output its absolute path — `formatAgentText` inlines it via `/api/serve-image`; markdown `![]()` does not render.*
 
 If nothing meets the bar, say so plainly and stop:
 

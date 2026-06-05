@@ -39,6 +39,16 @@ clips: `tools/extract-frames.sh video.mp4 4 48` (4 fps, up to 48 frames).
 ffmpeg must be installed (`winget install Gyan.FFmpeg` / `apt install ffmpeg`
 / `brew install ffmpeg`). The script tells the user how to install if missing.
 
+## Showing the user an image in chat
+
+To display an image to the user, **output its absolute path on its own line** —
+the agent-chat renderer (`formatAgentText` → `/api/serve-image`) turns it into an
+inline thumbnail (click to enlarge). The file must resolve under the repo root,
+`data/uploads/`, or a registered project path (the `/api/serve-image` allowlist).
+**Markdown `![](...)` does NOT render** — the generic "your output is GitHub
+markdown in a terminal" framing is misleading for MC's web chat. Full detail +
+gotchas: memory `reference-show-image-in-chat`.
+
 ## Live test environments
 
 Two VMs are kept clean for end-to-end install testing:
