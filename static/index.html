@@ -23569,6 +23569,23 @@ async function _resyncOpenModalsFromServer() {
   for (const [, entry] of openModals) {
     if (!entry || entry.minimized || !entry.projectId) continue;
     pids.add(entry.projectId);
+    // Resurface heal for the chat the user is actually looking at. A desktop
+    // browser tab that was backgrounded (e.g. while you were on the mobile app)
+    // has its EventSource PARKED by Chromium without firing onerror — the object
+    // still reports "open" but delivers nothing. The heartbeat probe above is a
+    // SEPARATE fetch, so it can't detect that, and fetchAgentStatus()'s
+    // render-gap repaint + SSE reconnect are BOTH gated on
+    // `!agentEventSources[sid]` — so the zombie blocked both and new replies
+    // stayed invisible until a full reload. Drop the active session's stream
+    // here so the fetchAgentStatus() below repaints the missed lines and
+    // reconnects a live one. Scoped to resurface (focus/visibility/pageshow),
+    // so actively-streaming chats are never churned mid-use.
+    const asid = activeAgentTab[entry.projectId];
+    if (asid && agentEventSources[asid]) {
+      try { agentEventSources[asid].close(); } catch (_) {}
+      delete agentEventSources[asid];
+      if (agentSSEWatchdogs[asid]) { clearInterval(agentSSEWatchdogs[asid]); delete agentSSEWatchdogs[asid]; }
+    }
   }
   for (const pid of pids) fetchAgentStatus(pid);
 }
