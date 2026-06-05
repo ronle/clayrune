@@ -4,6 +4,41 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-05] — Fix the macOS app: broken Claydo images + the Claude-CLI dead-end (winget on Mac)
+
+Two macOS-only bugs in the frozen `.app`, both fixed in shared source so every
+future Mac build inherits them. (Surfaced by a user whose fresh download bounced
+in the Dock and never opened.) Windows behavior is unchanged.
+
+**Broken Claydo images.** The UI loads the mascot from `/assets/claydo-*.webp`
+(the floating "Ask Claydo" button + the agent avatar), but `build-macos.spec`
+only bundled `static/` and `installer/clayrune.png` — the `assets/` dir was never
+shipped, so `/assets/...` returned **404** inside the bundle and the WebView drew
+its broken-image placeholder. (Verified live against the shipped build:
+`/assets/claydo-idle.webp` → 404 while `/` → 200.) Fix: bundle `assets/` in the
+spec, and serve the `/assets/<file>` route from `_APP_DIR` (== `sys._MEIPASS`
+when frozen) instead of `Path(__file__).parent`, which resolves into the PYZ
+archive in a frozen app.
+
+**"Claude CLI not found → Installing Node.js via winget…".** `_install_claude_cli()`
+hardcoded `winget` (a *Windows* package manager) when npm was missing — a
+guaranteed dead-end on macOS/Linux. Worse, the real problem was usually **PATH**,
+not a missing CLI: macOS GUI apps launched from Finder/Dock inherit launchd's
+minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so a `claude` in `~/.local/bin`
+and a `node` in `/opt/homebrew/bin` are invisible — both to our `claude --version`
+check and to the `claude` Node shim when it tries to exec `node`. Fixes:
+- New `_augment_unix_path()` prepends the standard user binary dirs that actually
+  exist (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.claude/bin`,
+  `~/.npm-global/bin`, `~/.nvm/current/bin`); called at startup on macOS/Linux.
+- `_install_claude_cli()` now dispatches per platform: Windows keeps winget→npm;
+  macOS/Linux use npm when present, else Anthropic's official native installer
+  (`curl -fsSL https://claude.ai/install.sh | bash`) — no Node or Homebrew
+  required. winget is never invoked off Windows.
+
+**Rollout.** These are source fixes; the installed `.app` is frozen, so users
+only get them via a **new signed + notarized macOS build** (`pyinstaller
+build-macos.spec` → `tools/notarize-macos.sh`; see `docs/MACOS_NOTARIZATION.md`).
+
 ## [2026-06-04] — Keep a conversation's window open after its process dies (detach, don't delete)
 
 A conversation tab used to **vanish on its own** once the server stopped listing

@@ -1684,8 +1684,13 @@ def file_type(filename):
 
 @app.route('/assets/<path:filename>')
 def serve_asset(filename):
-    """Serve files from the repo's assets/ dir (mascot icon, etc.)."""
-    assets_dir = Path(__file__).parent / 'assets'
+    """Serve files from the assets/ dir (Claydo mascot, etc.).
+
+    Uses _APP_DIR so it resolves both in dev (repo root) and in a frozen
+    PyInstaller bundle (sys._MEIPASS), where assets/ is bundled via the
+    build spec's datas. Path(__file__).parent would point into the PYZ
+    archive in the frozen app and 404 → broken images in the UI."""
+    assets_dir = _APP_DIR / 'assets'
     return send_from_directory(str(assets_dir), filename)
 
 
