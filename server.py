@@ -4628,22 +4628,41 @@ def _auto_recover_failed_resume(session):
         _log(f"[dispatch] Fresh retry failed for {project_id}: {e}")
 
 
-def _log_agent_activity(project_id, msg):
-    """Add an entry to the project's activity_log."""
+def _log_agent_activity(project_id, msg, bump_updated=True):
+    """Add an entry to the project's activity_log.
+
+    bump_updated: when True (default) also refresh `last_updated`, which drives
+    the recency sort in both the desktop list and the mobile chat list. Pass
+    False for background machinery (e.g. GitHub auto-sync) that should be
+    *logged* without floating the project to the top of the recency sort.
+    """
     p = load_project(project_id)
     if not p:
         return
     log = p.setdefault('activity_log', [])
     log.insert(0, {'ts': now_iso(), 'msg': msg})
     p['activity_log'] = log[:20]
-    p['last_updated'] = now_iso()
+    if bump_updated:
+        p['last_updated'] = now_iso()
     save_project(project_id, p)
+
+
+def _log_github_sync_activity(project_id, msg):
+    """Log a GitHub-sync event WITHOUT bumping `last_updated`.
+
+    GitHub auto-sync runs every 5 min (incl. error cycles like an unreachable
+    repo). Routing those through `_log_agent_activity` bumped `last_updated`
+    each cycle, floating the project to the top of the mobile recency sort with
+    no real conversation. Sync events still appear in the activity log; they no
+    longer affect time-placement. (Ron, 2026-06-05)
+    """
+    _log_agent_activity(project_id, msg, bump_updated=False)
 
 
 # ── GitHub sync module ───────────────────────────────────────────────────────
 import github_sync as _gh_sync
 _gh_sync.register(_POPEN_FLAGS, _STARTUPINFO,
-                   _log_agent_activity, load_project, save_project, now_iso)
+                   _log_github_sync_activity, load_project, save_project, now_iso)
 
 
 # ── Project (code) sync module — spike: read-only fetch + status ────────────
