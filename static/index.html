@@ -9864,6 +9864,17 @@ function switchAgentTab(projectId, sessionId) {
     mcPushConvHistory();
   }
   refreshModal();
+  // Recover anything this conversation missed while it was inactive: its SSE may
+  // have closed (turn_complete, the Chromium 6-connection cap, or Doze parking),
+  // so the buffer can be stale and a plain tab switch otherwise never re-fetches
+  // — the agent's later output stays silently missing until a hard refresh.
+  // fetchAgentStatus refills the buffer from server truth, idempotently repaints
+  // the now-visible panel (the render-gap fix inside it), and reconnects the live
+  // stream for a running or active-idle session. We deliberately use it rather
+  // than a direct _reconcileAgentBuffer append: the append could race a
+  // concurrent background poll's repaint and render the recovered lines twice,
+  // whereas the clear-and-rebuild repaint is idempotent.
+  fetchAgentStatus(projectId);
 }
 
 function newAgentTab(projectId) {
@@ -10494,6 +10505,23 @@ async function _reconcileAgentBuffer(projectId, sessionId) {
   } finally {
     _reconcileBusy[sessionId] = false;
   }
+}
+
+// Repaint a session's agent-output element from its full buffer. Fixes a render
+// gap: when lines are recovered into the buffer wholesale (a /agent/status sync)
+// while refreshModal has PRESERVED the existing agent-output node for scroll/perf,
+// the node is never rebuilt from the grown buffer and the recovered lines stay
+// invisible ("agent text didn't appear even though there was progress"). A
+// clear-and-reappend brings the DOM back in sync with the buffer. Call only on
+// buffer growth for a non-streaming session — never on the hot incremental path.
+function _repaintAgentOutput(sessionId) {
+  const el = document.getElementById(`agent-output-${sessionId}`);
+  if (!el) return false;
+  const buf = agentOutputBuffers[sessionId] || [];
+  el.innerHTML = '';
+  delete el.dataset.scrollInitialized;
+  for (const line of buf) appendAgentLine(sessionId, line);
+  return true;
 }
 
 function connectAgentStream(projectId, sessionId) {
@@ -12097,6 +12125,7 @@ async function fetchAgentStatus(projectId) {
         }
       }
       if (s.log_lines && s.log_lines.length > 0) {
+        const _prevBufLen = (agentOutputBuffers[sid] || []).length;
         // Defensive: older / runtime-dispatched sessions may not have seeded
         // the user prompt into server-side log_lines, so a wholesale replace
         // would wipe the locally-echoed `> {task}` prefix and the user's
@@ -12113,6 +12142,18 @@ async function fetchAgentStatus(projectId) {
         // of replaying all log_lines from 0 (which would double the buffer
         // and double-render every line in the DOM).
         agentServerLines[sid] = s.log_lines.length;
+        // Render-gap recovery: if the buffer just GREW here (lines arrived while
+        // this panel was inactive/backgrounded and its SSE was parked), the
+        // refreshModal() at the end of this function PRESERVES the existing
+        // agent-output node (scroll/perf) and won't repaint it from the grown
+        // buffer — so the recovered lines stay invisible. Repaint from the buffer
+        // now. Gated on (a) growth and (b) no live SSE, so the actively-streaming
+        // chat (kept in sync incrementally by appendAgentLine) never flickers.
+        if ((agentOutputBuffers[sid] || []).length > _prevBufLen
+            && !agentEventSources[sid]
+            && document.getElementById(`agent-output-${sid}`)) {
+          _repaintAgentOutput(sid);
+        }
       }
       const existingHist = agentHistory.find(h => h.sessionId === sid);
       if (!existingHist) {

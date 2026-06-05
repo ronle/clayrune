@@ -1,0 +1,13 @@
+{
+  "name": "clayrune-mobile-test",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Android emulator E2E harness for Clayrune mobile chat-switching release tests (CDP over adb).",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node run.js"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.33.3"
+  }
+}
