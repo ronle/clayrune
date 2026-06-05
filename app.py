@@ -167,8 +167,108 @@ def _refresh_path():
         pass
 
 
+def _augment_unix_path():
+    """Make Homebrew/npm/native-installer binaries visible on macOS/Linux.
+
+    GUI apps launched from Finder/Dock inherit launchd's minimal PATH
+    (/usr/bin:/bin:/usr/sbin:/sbin), so node/npm/claude installed under
+    Homebrew, ~/.local/bin or ~/.claude/bin are invisible — both to our own
+    `claude --version` check and to the `claude` shim when it execs `node`.
+    Prepend the standard user binary dirs that actually exist. No-op on
+    Windows (PATH there is refreshed from the registry by _refresh_path)."""
+    if sys.platform == 'win32':
+        return
+    home = Path(os.environ.get('HOME', str(Path.home())))
+    candidates = [
+        '/opt/homebrew/bin',                  # Homebrew (Apple Silicon)
+        '/usr/local/bin',                     # Homebrew (Intel) / npm default
+        str(home / '.local' / 'bin'),         # native installer / pipx
+        str(home / '.claude' / 'bin'),        # Claude native installer
+        str(home / '.npm-global' / 'bin'),    # npm custom prefix
+        str(home / '.nvm' / 'current' / 'bin'),
+    ]
+    parts = os.environ.get('PATH', '').split(os.pathsep)
+    changed = False
+    for d in candidates:
+        if d and os.path.isdir(d) and d not in parts:
+            parts.insert(0, d)
+            changed = True
+    if changed:
+        os.environ['PATH'] = os.pathsep.join(p for p in parts if p)
+
+
 def _install_claude_cli(status_callback=None):
-    """Attempt to install Claude CLI. Returns (success: bool, message: str)."""
+    """Attempt to install the Claude CLI. Returns (success: bool, message: str).
+
+    Dispatches per platform: winget+npm on Windows; npm-or-native-installer
+    on macOS/Linux (winget does not exist there)."""
+    if sys.platform == 'win32':
+        return _install_claude_cli_windows(status_callback)
+    return _install_claude_cli_unix(status_callback)
+
+
+def _install_claude_cli_unix(status_callback=None):
+    """macOS/Linux: prefer npm when present, else Anthropic's official native
+    installer (needs neither Node nor Homebrew). Never calls winget."""
+    def _status(msg):
+        if status_callback:
+            status_callback(msg)
+
+    _augment_unix_path()
+
+    # 1. npm path — respects an existing Node toolchain.
+    if _check_npm():
+        _status('Installing Claude CLI via npm...')
+        try:
+            r = _run_silent(
+                ['npm', 'install', '-g', '@anthropic-ai/claude-code'],
+                timeout=180,
+            )
+            if r.returncode == 0:
+                _augment_unix_path()
+                if _check_claude_cli():
+                    return True, 'Claude CLI installed successfully.'
+            # npm present but install failed — fall through to native installer.
+        except subprocess.TimeoutExpired:
+            pass
+
+    # 2. Native installer — no Node required. Installs to ~/.local/bin or
+    #    ~/.claude/bin, both of which _augment_unix_path() and _resolve_claude()
+    #    already look in.
+    _status('Installing Claude CLI (native installer)...')
+    install_cmd = 'curl -fsSL https://claude.ai/install.sh | bash'
+    try:
+        r = _run_silent(['/bin/bash', '-lc', install_cmd], timeout=300)
+        if r.returncode != 0:
+            detail = (r.stderr or r.stdout or '').strip()[:500]
+            return False, (
+                'Could not install the Claude CLI automatically.\n\n'
+                'Install it manually in Terminal, then relaunch Clayrune:\n'
+                f'  {install_cmd}'
+                + (f'\n\nDetails:\n{detail}' if detail else '')
+            )
+    except FileNotFoundError:
+        return False, (
+            'Could not run the installer (bash or curl missing).\n'
+            f'Install manually, then relaunch Clayrune:\n  {install_cmd}'
+        )
+    except subprocess.TimeoutExpired:
+        return False, (
+            'Claude CLI installation timed out.\n'
+            f'Install manually, then relaunch Clayrune:\n  {install_cmd}'
+        )
+
+    _augment_unix_path()
+    if _check_claude_cli():
+        return True, 'Claude CLI installed successfully.'
+    return False, (
+        'Claude CLI was installed but is not yet on PATH.\n'
+        'Quit and relaunch Clayrune.'
+    )
+
+
+def _install_claude_cli_windows(status_callback=None):
+    """Windows: winget for Node if needed, then npm install -g."""
     def _status(msg):
         if status_callback:
             status_callback(msg)
@@ -409,6 +509,11 @@ if __name__ == '__main__':
     # Ensure UTF-8 output (Windows console fix)
     if sys.platform == 'win32':
         os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    else:
+        # GUI launch (Finder/Dock) gives a minimal PATH — surface Homebrew/npm/
+        # native-installer binaries (node, npm, claude) before the CLI check
+        # and before we spawn the agent.
+        _augment_unix_path()
 
     _ensure_data_dirs()
     _port = _load_port()

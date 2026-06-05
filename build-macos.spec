@@ -34,6 +34,10 @@ hidden += collect_submodules('google')
 # binary sees the same layout as `python app.py`.
 datas = [
     ('static', 'static'),
+    # Claydo mascot webp/icons live in assets/ and are served by the
+    # /assets/<file> Flask route. Bundle them or the UI shows broken images
+    # (the FAB + the agent avatar) in the frozen app.
+    ('assets', 'assets'),
     ('installer/clayrune.png', 'installer'),
 ]
 
