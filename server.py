@@ -15609,14 +15609,17 @@ def _local_auth_gate():
     path = request.path or '/'
     # The auth pages + their API + favicon must stay reachable while locked.
     if (path.startswith('/api/local-auth/')
-            or path == '/_mc/local-setup'
+            or path == '/_mc/local-locked'
             or path == '/_mc/local-login'
             or path == '/favicon.ico'):
         return None
-    state = 'login' if _local_auth_is_configured() else 'setup'
+    # When a passcode exists → login page. When none is set, a LAN device gets
+    # an informational "locked" page (NOT a setup form) — it can never bootstrap
+    # a passcode; only the host (exempt) can, via Settings.
+    state = 'login' if _local_auth_is_configured() else 'locked'
     if path.startswith('/api/'):
         return jsonify({'error': 'auth_required', 'auth_state': state}), 401
-    return redirect('/_mc/local-setup' if state == 'setup' else '/_mc/local-login', code=302)
+    return redirect('/_mc/local-login' if state == 'login' else '/_mc/local-locked', code=302)
 
 
 @app.route('/api/local-auth/status', methods=['GET'])
@@ -15632,15 +15635,22 @@ def local_auth_status():
 
 @app.route('/api/local-auth/set', methods=['POST'])
 def local_auth_set():
-    """Set or change the LAN passcode. Allowed when: (a) none is set yet
-    (bootstrapping — no worse than today's wide-open default), (b) the caller is
-    exempt (host/loopback or CF-tunneled), or (c) the caller proves the current
-    passcode. On success the caller is logged in (cookie set)."""
+    """Set or change the LAN passcode.
+
+    The FIRST passcode can be set ONLY from an exempt context — the host
+    (loopback) or a CF-tunneled session — via Settings → Network access. A LAN
+    device can never bootstrap a passcode on an unprotected dashboard (otherwise
+    the first stranger to reach it could claim it). A LAN device may *change* an
+    existing passcode only by proving the current one. On success the caller is
+    logged in (cookie set)."""
     body = request.get_json(silent=True) or {}
     new_pass = (body.get('passcode') or '').strip()
     if len(new_pass) < _LOCAL_AUTH_MIN_LEN:
         return jsonify({'error': 'passcode_too_short', 'min': _LOCAL_AUTH_MIN_LEN}), 400
-    if _local_auth_is_configured() and not _local_auth_exempt():
+    if not _local_auth_exempt():
+        if not _local_auth_is_configured():
+            # No LAN bootstrapping — the owner sets the first passcode on the host.
+            return jsonify({'error': 'setup_requires_host'}), 403
         if not _local_auth_verify_passcode((body.get('current') or '').strip()):
             return jsonify({'error': 'bad_current_passcode'}), 403
     _local_auth_set_passcode(new_pass)
@@ -15662,24 +15672,29 @@ def local_auth_login():
     return _local_auth_set_cookie(jsonify({'ok': True}))
 
 
-@app.route('/_mc/local-setup')
-def mc_local_setup_page():
+@app.route('/_mc/local-locked')
+def mc_local_locked_page():
     # If already past the gate, no reason to show the lock page.
     if _local_auth_request_ok():
         return redirect('/', code=302)
-    return _render_local_auth_page('setup')
+    # A passcode exists → the login page is the right place.
+    if _local_auth_is_configured():
+        return redirect('/_mc/local-login', code=302)
+    return _render_local_auth_page('locked')
 
 
 @app.route('/_mc/local-login')
 def mc_local_login_page():
     if _local_auth_request_ok():
         return redirect('/', code=302)
-    # If somehow not configured yet, send to setup.
-    return _render_local_auth_page('login' if _local_auth_is_configured() else 'setup')
+    # No passcode yet → there's nothing to log in to; show the locked page.
+    if not _local_auth_is_configured():
+        return redirect('/_mc/local-locked', code=302)
+    return _render_local_auth_page('login')
 
 
 def _render_local_auth_page(mode: str) -> str:
-    safe_mode = 'setup' if mode == 'setup' else 'login'
+    safe_mode = 'login' if mode == 'login' else 'locked'
     html = """<!doctype html>
 <html lang="en">
 <head>
@@ -15731,16 +15746,6 @@ def _render_local_auth_page(mode: str) -> str:
       i.addEventListener('keydown', function(e){ if(e.key==='Enter'){ var b=document.getElementById('go'); if(b) b.click(); }});
     });
   }
-  function doSetup(){
-    var p1=(document.getElementById('p1').value||''), p2=(document.getElementById('p2').value||'');
-    if(p1.length<4){ setErr('Passcode must be at least 4 characters.'); return; }
-    if(p1!==p2){ setErr('Passcodes do not match.'); return; }
-    var b=document.getElementById('go'); b.disabled=true; setErr('');
-    fetch('/api/local-auth/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:p1})})
-      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
-      .then(function(res){ if(res.ok){ location.replace('/'); } else { b.disabled=false; setErr(msgFor(res.j)); } })
-      .catch(function(){ b.disabled=false; setErr('Network error — try again.'); });
-  }
   function doLogin(){
     var p1=(document.getElementById('p1').value||'');
     if(!p1){ setErr('Enter your passcode.'); return; }
@@ -15750,27 +15755,14 @@ def _render_local_auth_page(mode: str) -> str:
       .then(function(res){
         if(res.ok){ location.replace('/'); return; }
         b.disabled=false;
-        if(res.j && res.j.error==='not_configured'){ render('setup'); return; }
+        // A passcode was removed on the host since this page loaded → back to locked.
+        if(res.j && res.j.error==='not_configured'){ render('locked'); return; }
         setErr(msgFor(res.j));
       })
       .catch(function(){ b.disabled=false; setErr('Network error — try again.'); });
   }
   function render(mode){
-    if(mode==='setup'){
-      root.innerHTML =
-        '<h1>Protect this dashboard</h1>'
-      + '<p class="lead">Other devices on your network can reach this Clayrune dashboard. Set a passcode so only people who know it can open it from another device. This computer itself never needs the passcode.</p>'
-      + '<div class="card">'
-      + '<label for="p1">New passcode</label>'
-      + '<input id="p1" type="password" autocomplete="new-password" placeholder="At least 4 characters" autofocus>'
-      + '<label for="p2">Confirm passcode</label>'
-      + '<input id="p2" type="password" autocomplete="new-password" placeholder="Re-enter passcode">'
-      + '<button id="go">Set passcode &amp; continue</button>'
-      + '<p class="err" id="err"></p>'
-      + '</div>'
-      + '<p class="hint">You can change or remove this later in Settings → Network access on the host computer. Remote access through the secure tunnel keeps its own sign-in.</p>';
-      document.getElementById('go').onclick = doSetup;
-    } else {
+    if(mode==='login'){
       root.innerHTML =
         '<h1>Enter passcode</h1>'
       + '<p class="lead">This Clayrune dashboard is protected. Enter the passcode to continue.</p>'
@@ -15781,8 +15773,19 @@ def _render_local_auth_page(mode: str) -> str:
       + '<p class="err" id="err"></p>'
       + '</div>';
       document.getElementById('go').onclick = doLogin;
+      bindEnter();
+    } else {
+      // No passcode is set. A network device CANNOT create one here — that would
+      // let the first stranger to reach the dashboard claim it. Point them to
+      // the host, where the owner sets it in Settings.
+      root.innerHTML =
+        '<h1>Dashboard locked</h1>'
+      + '<p class="lead">This Clayrune dashboard is not open to your network yet. The owner needs to set a passcode on the host computer &mdash; open Clayrune there and go to <b>Settings &rarr; Connectivity &rarr; Network access</b>. Once a passcode is set, you can sign in here.</p>'
+      + '<div class="card">'
+      + '<button id="go">Try again</button>'
+      + '</div>';
+      document.getElementById('go').onclick = function(){ location.reload(); };
     }
-    bindEnter();
   }
   render(MODE);
 })();

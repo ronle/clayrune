@@ -17779,10 +17779,10 @@ function localAccessSettingsHTML() {
   if (!configured) {
     body = `
       <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
-        No passcode is set yet. Devices on your local network are locked out and
-        prompted to create one before they can open this dashboard. This computer
-        is always exempt, and remote access through the secure tunnel keeps its
-        own sign-in. Set the passcode here to choose it yourself.
+        No passcode is set yet, so devices on your local network are locked out
+        (they can't create one — only you can, here). Set one to let them sign
+        in. This computer is always exempt, and remote access through the secure
+        tunnel keeps its own sign-in.
       </div>
       <div id="local-auth-form-row">
         <button class="btn-dispatch" onclick="showLocalAuthForm('set')">Set a passcode</button>
@@ -17843,6 +17843,7 @@ async function submitLocalAuth(mode) {
     } else {
       setErr(j.error === 'bad_current_passcode' ? 'Current passcode is incorrect.'
            : j.error === 'passcode_too_short' ? 'Passcode must be at least 4 characters.'
+           : j.error === 'setup_requires_host' ? 'The first passcode must be set on the host computer.'
            : 'Could not save passcode.');
     }
   } catch (_) { setErr('Network error — try again.'); }

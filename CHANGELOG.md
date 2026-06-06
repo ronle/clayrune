@@ -33,21 +33,25 @@ passcode gate (`@app.before_request` in `server.py`):
 - **Gated:** every other origin (a real LAN IP). `request.remote_addr` is the
   real TCP peer — we deliberately ignore `X-Forwarded-For` so a LAN client can't
   forge a loopback source.
-- **Locked by default.** Until a passcode is set, LAN devices are locked out and
-  shown a self-contained *set-a-passcode* page; once set, they get a *login*
-  page. Auth is a 30-day HMAC-signed `httponly` cookie; changing the passcode
-  rotates the signing secret and invalidates every existing session. Light
-  per-IP brute-force throttle. PBKDF2-SHA256 (200k) passcode hash.
-- **Host control:** Settings → Connectivity → **Network access** lets the host
-  set/change the passcode (the host is exempt, so no current-passcode needed).
+- **Locked by default, no LAN bootstrapping.** Until a passcode is set, LAN
+  devices are locked out and shown an informational *"set it on the host"* page
+  — they can **not** create the first passcode (otherwise the first stranger to
+  reach the dashboard could claim it). Only an exempt context (the host, or a
+  CF-tunneled session) can set the first passcode. Once one exists, LAN devices
+  get a *login* page. Auth is a 30-day HMAC-signed `httponly` cookie; changing
+  the passcode rotates the signing secret and invalidates every existing
+  session. Light per-IP brute-force throttle. PBKDF2-SHA256 (200k) passcode hash.
+- **Host control:** Settings → Connectivity → **Network access** is where the
+  owner sets/changes the passcode (the host is exempt, so no current-passcode
+  needed). This is the *only* way to set the first one.
 - Storage: `data/local_auth.json` (gitignored — holds the hash + signing
   secret; lives in `data/`, not `data/projects/`, so `load_projects()` ignores
-  it). Endpoints: `/api/local-auth/{status,set,login}`; pages `/_mc/local-{setup,login}`.
+  it). Endpoints: `/api/local-auth/{status,set,login}`; pages `/_mc/local-{locked,login}`.
 
   **Requires a server restart to activate** (it's a `before_request` gate + new
-  routes). On restart, LAN devices that previously had open access will be asked
-  to create/enter a passcode — the host (localhost) and phone (tunnel) are
-  unaffected.
+  routes). On restart, LAN devices that previously had open access are locked
+  until the owner sets a passcode on the host — the host (localhost) and phone
+  (tunnel) are unaffected.
 
 ## [2026-06-05] — Fix the macOS app: broken Claydo images + the Claude-CLI dead-end (winget on Mac)
 
