@@ -254,6 +254,13 @@ def _load_config():
         'distiller_cross_project_walk_debounce_session_count': 5,
         'distiller_cross_project_walk_debounce_seconds': 600,
         'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor
+        # Exploration read-floor — surfaces the Distiller's captured
+        # EXPLORATION.md proposals back into a new session's context (the
+        # learning-loop closer). Ships default-ON; flip enabled=false to
+        # revert to write-only _proposed/ behavior. Kept small (topk=2) so
+        # the cache-warmed context stays lean.
+        'exploration_readback_enabled': True,
+        'exploration_read_floor_topk': 2,
         'agent_channels': '',
         'agent_remote_control': False,
         'agent_revive_from_log': True,
@@ -3869,6 +3876,27 @@ def _build_agent_context(project, incognito=False, task=''):
             parts.append(
                 "--- RELEVANT MEMORY (auto-surfaced for this task; "
                 "use the mc-memory-search skill to dig deeper) ---\n" + rl)
+
+    # Exploration read-floor — closes the learning loop by feeding the
+    # Distiller's captured EXPLORATION.md proposals back into context. Without
+    # this, _proposed/ explorations are write-only and never change behavior.
+    # Best-effort, gated, and never load-bearing (same posture as the Distiller
+    # write side). Skipped for incognito sessions (no memory leakage).
+    if task and not incognito and CONFIG.get('exploration_readback_enabled', True):
+        try:
+            expl = _distiller.exploration_read_floor(
+                project['id'], task,
+                int(CONFIG.get('exploration_read_floor_topk', 2) or 2))
+        except Exception:
+            expl = []
+        if expl:
+            el = "\n".join(
+                f"  • [{e['scope']}] {e['snippet']}  (full: {e['path']})"
+                for e in expl)
+            parts.append(
+                "--- RELEVANT PAST EXPLORATIONS (a prior session already "
+                "investigated something like this; read the full file before "
+                "re-deriving) ---\n" + el)
 
     # Recent activity — Claude-only: a non-Claude agent reads these past
     # "Agent dispatched: <task>" lines as things it still has to do.

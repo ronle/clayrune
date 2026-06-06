@@ -1248,6 +1248,21 @@ def _proposal_target(project_id: str, scope_tag: str, kind: str,
     return base / kind_to_file.get(kind, 'SKILL.md')
 
 
+def _is_refusal(out: str) -> bool:
+    """True if the model declined to author an artifact (REFUSE path).
+
+    MUST be checked against the RAW model output, before _wrap_skill_body
+    prepends frontmatter — otherwise the wrapped body starts with `---` and
+    the downstream `body.strip() == 'REFUSE'` guard never matches, leaking
+    the refusal to disk as a bogus artifact (the clayrune_website
+    `distilled-969b3b91` SKILL.md body == "REFUSE" bug, 2026-06-05).
+    """
+    if not out:
+        return True
+    t = out.strip()
+    return t == 'REFUSE' or (t.upper().startswith('REFUSE') and len(t) <= 12)
+
+
 def _render_skill(project_id: str, project: dict,
                   candidate: dict) -> tuple[str | None, Path]:
     """Render a SKILL.md proposal. Returns (body, target_path) or (None, _)."""
@@ -1272,7 +1287,7 @@ def _render_skill(project_id: str, project: dict,
         out = _scribe_call(model, instruction, body_in)
     except Exception:
         return None, Path()
-    if not out:
+    if _is_refusal(out):
         return None, Path()
     name_slug = _extract_name_from_frontmatter(out) or f"distilled-{candidate['exact'][:8]}"
     body = _wrap_skill_body(out, project_id, candidate, kind='skill',
@@ -1298,7 +1313,7 @@ def _render_exploration(project_id: str, project: dict,
         out = _scribe_call(model, instruction, body_in)
     except Exception:
         return None, Path()
-    if not out:
+    if _is_refusal(out):
         return None, Path()
     q = sig.get('question', '') or candidate['exact']
     name_slug = _slug(q.split('?')[0][:60]) or f"exploration-{candidate['exact'][:8]}"
@@ -1331,7 +1346,7 @@ def _render_preference(project_id: str, project: dict,
         out = _scribe_call(model, instruction, body_in)
     except Exception:
         return None, Path()
-    if not out:
+    if _is_refusal(out):
         return None, Path()
     name_slug = _extract_name_from_frontmatter(out) or f"preference-{candidate['exact'][:8]}"
     body = _wrap_skill_body(out, project_id, candidate, kind='preference',
@@ -1579,6 +1594,102 @@ def list_proposed() -> list[dict]:
     # Sort newest first by created_at
     out.sort(key=lambda d: d.get('created_at', ''), reverse=True)
     return out
+
+
+_RE_EXPL_STOP = frozenset((
+    'the', 'and', 'for', 'why', 'are', 'was', 'were', 'how', 'does', 'did',
+    'what', 'when', 'with', 'this', 'that', 'from', 'into', 'has', 'have',
+    'not', 'all', 'any', 'but', 'can', 'its', 'our', 'out', 'use', 'using',
+    'a', 'an', 'is', 'it', 'in', 'on', 'of', 'to', 'do', 'be',
+))
+
+
+def _expl_tokens(s: str) -> set[str]:
+    """Lowercased content tokens (len ≥ 3, stopwords dropped) for overlap
+    scoring. Used by the exploration read-floor ranker."""
+    out = set()
+    for w in re.split(r'[^a-z0-9]+', (s or '').lower()):
+        if len(w) >= 3 and w not in _RE_EXPL_STOP:
+            out.add(w)
+    return out
+
+
+def exploration_read_floor(project_id: str, task: str,
+                           topk: int = 2) -> list[dict]:
+    """Rank past EXPLORATION.md proposals by keyword overlap with `task` and
+    return the top-K as {name, path, snippet} for read-floor injection into
+    _build_agent_context.
+
+    This is the loop-closer: explorations the Distiller captured are otherwise
+    write-only in _proposed/. Surfacing the relevant ones back into a new
+    session's context is what turns the pipeline from a journal into learning
+    (the agent reuses prior exploration instead of re-deriving it).
+
+    Scope: the project's own explorations PLUS cross-project (global) ones —
+    matching the cross-project-default learning philosophy. Best-effort;
+    never raises (returns [] on any failure).
+    """
+    if _skills_root is None or not task or topk < 1:
+        return []
+    try:
+        qt = _expl_tokens(task)
+        if not qt:
+            return []
+        scored = []
+        for meta in list_proposed():
+            if meta.get('kind') != 'exploration':
+                continue
+            if meta.get('scope') not in (project_id, 'cross-project'):
+                continue
+            name = meta.get('name', '') or ''
+            score = len(qt & _expl_tokens(name.replace('-', ' ')))
+            if score <= 0:
+                continue
+            scored.append((score, meta.get('created_at', ''), meta))
+        if not scored:
+            return []
+        # Highest overlap first, recency as tie-breaker.
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        out = []
+        for _score, _ts, meta in scored[:topk]:
+            out.append({
+                'name': meta.get('name', ''),
+                'path': meta.get('path', ''),
+                'scope': meta.get('scope', ''),
+                'snippet': _exploration_snippet(meta.get('path', '')),
+            })
+        return out
+    except Exception:
+        return []
+
+
+def _exploration_snippet(path: str, limit: int = 320) -> str:
+    """Compact gist from an EXPLORATION.md body: the title line plus the start
+    of the first prose paragraph, frontmatter stripped. Capped at `limit`."""
+    try:
+        text = Path(path).read_text(encoding='utf-8', errors='replace')
+    except Exception:
+        return ''
+    if text.startswith('---'):
+        end = text.find('\n---', 4)
+        if end >= 0:
+            text = text[end + 4:]
+    title = ''
+    body_lines = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith('#') and not title:
+            title = s.lstrip('# ').strip()
+            continue
+        if not s.startswith('#'):
+            body_lines.append(s)
+        if len(' '.join(body_lines)) > limit:
+            break
+    gist = ' '.join(body_lines)[:limit]
+    parts = [p for p in (title, gist) if p]
+    return ' | '.join(parts)
 
 
 _RE_PROJECT_ID = re.compile(r'^[a-z0-9_-]+$')
