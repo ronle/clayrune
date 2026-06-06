@@ -1635,6 +1635,11 @@ def exploration_read_floor(project_id: str, task: str,
         qt = _expl_tokens(task)
         if not qt:
             return []
+        # Loop-health telemetry: count every real readback query (task with
+        # content tokens) and, below, every query that actually injects a hit.
+        # hit_rate = readback_hit / readback_query proves the loop-closer earns
+        # its context cost. Best-effort; _increment_counter never raises.
+        _increment_counter(project_id, 'readback_query')
         scored = []
         for meta in list_proposed():
             if meta.get('kind') != 'exploration':
@@ -1648,6 +1653,7 @@ def exploration_read_floor(project_id: str, task: str,
             scored.append((score, meta.get('created_at', ''), meta))
         if not scored:
             return []
+        _increment_counter(project_id, 'readback_hit')
         # Highest overlap first, recency as tie-breaker.
         scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
         out = []
@@ -1690,6 +1696,126 @@ def _exploration_snippet(path: str, limit: int = 320) -> str:
     gist = ' '.join(body_lines)[:limit]
     parts = [p for p in (title, gist) if p]
     return ' | '.join(parts)
+
+
+_ARTIFACT_KINDS = ('skill', 'exploration', 'preference', 'update')
+
+
+def loop_health() -> dict:
+    """Global learning-loop health snapshot — the self-detection layer.
+
+    Aggregates the per-project _skill_stats.json counters and the _proposed/
+    queue census into the four loop-health signals we agreed to watch
+    (2026-06-05): generation rate, refuse rate, readback hit-rate, and queue
+    staleness. Emits an ``alerts`` list of human-readable flags so a degraded
+    leg surfaces on its own instead of being found by hand (the REFUSE bug sat
+    undetected precisely because nothing watched these numbers).
+
+    Read-only: never writes _skill_stats.json, never raises (returns a partial
+    snapshot with an error note on failure). Caller (server endpoint) may
+    enrich queue timestamps with day-age math.
+    """
+    snap = {
+        'generation': {},      # per kind: {proposed, refused, refuse_rate}
+        'readback': {'queries': 0, 'hits': 0, 'hit_rate': None},
+        'queue': {'total': 0, 'by_kind': {}, 'by_scope': {},
+                  'oldest_created_at': None, 'newest_created_at': None},
+        'extraction': {'errors': 0, 'vocabulary_miss': 0},
+        'projects_seen': 0,
+        'alerts': [],
+    }
+    # ── Sum counters across every project sidecar ────────────────────────────
+    agg: Counter = Counter()
+    try:
+        if _data_root is not None:
+            for p in _data_root.glob('*_skill_stats.json'):
+                snap['projects_seen'] += 1
+                try:
+                    stats = json.loads(p.read_text(encoding='utf-8') or '{}')
+                except Exception:
+                    continue
+                for k, v in (stats.get('counters', {}) or {}).items():
+                    try:
+                        agg[k] += int(v)
+                    except Exception:
+                        pass
+    except Exception as e:
+        snap['alerts'].append(f"counter aggregation failed: {e!r}")
+
+    for kind in _ARTIFACT_KINDS:
+        proposed = agg.get(f'proposed:{kind}', 0)
+        refused = agg.get(f'render_refuse:{kind}', 0)
+        denom = proposed + refused
+        snap['generation'][kind] = {
+            'proposed': proposed,
+            'refused': refused,
+            'refuse_rate': round(refused / denom, 3) if denom else None,
+        }
+    snap['readback']['queries'] = agg.get('readback_query', 0)
+    snap['readback']['hits'] = agg.get('readback_hit', 0)
+    if snap['readback']['queries']:
+        snap['readback']['hit_rate'] = round(
+            snap['readback']['hits'] / snap['readback']['queries'], 3)
+    snap['extraction']['errors'] = (
+        agg.get('extraction_error', 0) + agg.get('extraction_parse_error', 0))
+    snap['extraction']['vocabulary_miss'] = agg.get('vocabulary_miss', 0)
+
+    # ── _proposed/ queue census ──────────────────────────────────────────────
+    try:
+        proposed_items = list_proposed()
+    except Exception:
+        proposed_items = []
+    snap['queue']['total'] = len(proposed_items)
+    for it in proposed_items:
+        k = it.get('kind', 'unknown')
+        sc = it.get('scope', 'unknown')
+        snap['queue']['by_kind'][k] = snap['queue']['by_kind'].get(k, 0) + 1
+        snap['queue']['by_scope'][sc] = snap['queue']['by_scope'].get(sc, 0) + 1
+        ca = it.get('created_at', '') or ''
+        if ca:
+            if (snap['queue']['oldest_created_at'] is None
+                    or ca < snap['queue']['oldest_created_at']):
+                snap['queue']['oldest_created_at'] = ca
+            if (snap['queue']['newest_created_at'] is None
+                    or ca > snap['queue']['newest_created_at']):
+                snap['queue']['newest_created_at'] = ca
+
+    # ── Derived alerts (the self-detection signal) ───────────────────────────
+    gen = snap['generation']
+    expl_proposed = gen['exploration']['proposed']
+    pipeline_alive = expl_proposed > 0 or snap['queue']['total'] > 0
+    # A whole artifact kind never being produced while explorations flow is the
+    # structural signal — SKILL flatline was the REFUSE-bug signature; PREFERENCE
+    # has never once fired (recurrence-3 bar likely too high for single-task
+    # sessions, the same problem that killed Phase 1).
+    for kind in ('skill', 'preference'):
+        if gen[kind]['proposed'] == 0 and pipeline_alive:
+            snap['alerts'].append(
+                f"{kind} generation flatlined: 0 {kind.upper()} artifacts "
+                f"proposed globally while {expl_proposed} explorations flowed "
+                f"- check render_refuse:{kind} and the recurrence threshold.")
+    # High refuse rate on any kind with enough samples to be real.
+    for kind in _ARTIFACT_KINDS:
+        g = gen[kind]
+        if g['refuse_rate'] is not None and g['refuse_rate'] >= 0.5 \
+                and g['refused'] >= 3:
+            snap['alerts'].append(
+                f"high refuse rate for {kind}: "
+                f"{int(g['refuse_rate'] * 100)}% ({g['refused']} refused / "
+                f"{g['proposed'] + g['refused']} attempts).")
+    # Readback rarely hitting — the loop-closer isn't earning its context cost.
+    rb = snap['readback']
+    if rb['queries'] >= 10 and rb['hit_rate'] is not None and rb['hit_rate'] < 0.2:
+        snap['alerts'].append(
+            f"readback hit-rate low: {int(rb['hit_rate'] * 100)}% over "
+            f"{rb['queries']} queries - explorations rarely match live tasks.")
+    # Promotion backlog: artifacts accumulate with no promotion surface yet.
+    if snap['queue']['total'] >= 10:
+        snap['alerts'].append(
+            f"promotion backlog: {snap['queue']['total']} artifacts queued in "
+            f"_proposed/ (oldest {snap['queue']['oldest_created_at']}); no "
+            "promotion UI exists yet, so nothing leaves the queue.")
+    return snap
 
 
 _RE_PROJECT_ID = re.compile(r'^[a-z0-9_-]+$')

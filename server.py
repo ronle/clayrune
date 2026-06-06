@@ -2339,6 +2339,35 @@ def get_distiller_proposed():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/distiller/loop-health', methods=['GET'])
+def get_distiller_loop_health():
+    """Learning-loop health snapshot — the self-detection layer (step 2 of the
+    2026-06-05 plan). Aggregates per-project counters + the _proposed/ queue
+    into generation/refuse/readback/queue signals with an `alerts` list, so a
+    degraded leg surfaces on its own. Enriches queue timestamps with day-age.
+    Read-only; never mutates state."""
+    try:
+        snap = _distiller.loop_health()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    # Enrich queue staleness with day-age (datetime lives server-side; the
+    # distiller deliberately stays datetime-free, using only ISO strings).
+    try:
+        now = datetime.now(timezone.utc)
+        for key in ('oldest_created_at', 'newest_created_at'):
+            ca = snap.get('queue', {}).get(key)
+            if ca:
+                try:
+                    dt = datetime.fromisoformat(ca.replace('Z', '+00:00'))
+                    snap['queue'][key.replace('_created_at', '_age_days')] = \
+                        round((now - dt).total_seconds() / 86400, 1)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return jsonify(snap)
+
+
 @app.route('/api/router/stats', methods=['GET'])
 def get_router_stats_aggregate():
     """Cross-project auto-router counters. Sums totals and by_pair across
