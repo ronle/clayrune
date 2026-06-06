@@ -20655,10 +20655,16 @@ function _distillerKindBadge(kind) {
 }
 
 let _distillerDiagOpen = false;
+// Cache the proposals so click handlers reference them BY INDEX. Embedding the
+// artifact directory (a Windows path with backslashes) into an onclick JS
+// string literal eats the backslashes (\U -> U), corrupting the path — so we
+// never serialize it into HTML; we look it up from this array at click time.
+let _distillerQueueItems = [];
 
 function renderDistillerQueue(el, items, health) {
   const alerts = (health && Array.isArray(health.alerts)) ? health.alerts : [];
   if (!items.length && !alerts.length) { el.innerHTML = ''; return; }
+  _distillerQueueItems = items;
 
   // Diagnostics (the loop-health alerts) are developer-facing — tuck them
   // behind a disclosure so they don't crowd out the actual proposals.
@@ -20678,15 +20684,15 @@ function renderDistillerQueue(el, items, health) {
     const isCross = scope === 'cross-project';
     const recur = it.recurrence_count_exact || it.recurrence_count_coarse || '';
     const where = isCross ? 'seen across projects' : ('in ' + esc(scope));
-    const dirAttr = esc(dir).replace(/'/g, "\\'");
     const title = esc(it.title || it.name || '(unnamed)');
     const snippet = it.snippet ? esc(it.snippet) : '';
     // Promote: project-scoped artifacts can go to their project or global;
     // cross-project ones can only go global (project promote needs a project_id).
+    // Handlers take the row index and read the (un-serialized) path from cache.
     const promoteBtns = isCross
-      ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposed('${dirAttr}','global',null)">Promote &#x2192; Global</button>`
-      : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill in this project only" onclick="promoteProposed('${dirAttr}','project','${esc(scope)}')">Promote &#x2192; Project</button>
-         <button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposed('${dirAttr}','global',null)">Global</button>`;
+      ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Promote &#x2192; Global</button>`
+      : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill in this project only" onclick="promoteProposedByIdx(${i},'project')">Promote &#x2192; Project</button>
+         <button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Global</button>`;
     return `
       <div style="padding:10px 4px;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:flex-start;gap:10px">
@@ -20695,13 +20701,13 @@ function renderDistillerQueue(el, items, health) {
             <div style="font-size:12px;font-weight:600;color:var(--text);word-break:break-word">${title}</div>
             ${snippet ? `<div style="font-size:11px;color:var(--text-muted, var(--text-faint));margin-top:3px;line-height:1.4">${snippet}</div>` : ''}
             <div style="font-size:10px;color:var(--text-faint);margin-top:4px">${where}${recur ? ' &#x2022; seen &#xD7;' + esc(String(recur)) : ''}
-              &#x2022; <span style="cursor:pointer;text-decoration:underline" onclick="toggleProposedRead('${dirAttr}', 'pa-${i}')">read full</span></div>
+              &#x2022; <span style="cursor:pointer;text-decoration:underline" onclick="toggleProposedReadByIdx(${i}, 'pa-${i}')">read full</span></div>
             <div id="pa-${i}" style="display:none;margin-top:8px;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text);white-space:pre-wrap;max-height:300px;overflow:auto;line-height:1.5"></div>
           </div>
         </div>
         <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;margin-top:7px">
           ${promoteBtns}
-          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:#c0556b;border-color:#c0556b55" title="Discard and stop suggesting this" onclick="rejectProposed('${dirAttr}')">Reject</button>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:#c0556b;border-color:#c0556b55" title="Discard and stop suggesting this" onclick="rejectProposedByIdx(${i})">Reject</button>
         </div>
       </div>`;
   }).join('');
@@ -20758,6 +20764,22 @@ async function _distillerPost(url, payload) {
     showToast('Network error');
     return false;
   }
+}
+
+// Index-based handlers — read the artifact path from the cached item so the
+// (backslash-laden, Windows) directory never passes through an HTML/JS string.
+function promoteProposedByIdx(i, scope) {
+  const it = _distillerQueueItems[i];
+  if (!it) return;
+  promoteProposed(it.directory, scope, scope === 'project' ? it.scope : null);
+}
+function rejectProposedByIdx(i) {
+  const it = _distillerQueueItems[i];
+  if (it) rejectProposed(it.directory);
+}
+function toggleProposedReadByIdx(i, rowId) {
+  const it = _distillerQueueItems[i];
+  if (it) toggleProposedRead(it.directory, rowId);
 }
 
 async function promoteProposed(directory, scope, projectId) {
