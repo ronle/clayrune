@@ -7136,9 +7136,14 @@ async function openIncognito() {
 
 function sidebarNav(target) {
   if (target === 'dashboard') {
-    // On mobile, "Home" = back to project grid → close any open modals
-    if (window.innerWidth <= 960 && typeof openModals !== 'undefined' && openModals.size) {
-      Array.from(openModals.keys()).forEach(id => closeModalById(id));
+    if (window.innerWidth <= 960) {
+      // On mobile, "Home" = back to project grid → close any open modals
+      if (typeof openModals !== 'undefined' && openModals.size) {
+        Array.from(openModals.keys()).forEach(id => closeModalById(id));
+      }
+    } else if (typeof showDesktop === 'function') {
+      // On desktop, "Dashboard" = show the desktop → minimize all open chats
+      showDesktop();
     }
   }
   else if (target === 'scheduler') openScheduler();
@@ -17362,6 +17367,13 @@ async function openSettings() {
   win.style.zIndex = z;
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
   centerModalElement(win);
+  // The Settings panel renders its body async (it shows "Loading…" first, then
+  // grows), so dead-center — measured against the short loading state — left it
+  // sitting low and running off the bottom once filled. Seat it near the top so
+  // the tall panel stays fully on-screen. Desktop only; mobile is full-screen.
+  if (!(_isMobileDevice || window.innerWidth <= 960)) {
+    win.style.top = Math.max(16, Math.round(window.innerHeight * 0.1)) + 'px';
+  }
   focusModal(modalId);
 
   // Mobile hardware-back support: this sentinel makes back close the settings
@@ -17381,6 +17393,8 @@ async function _renderSettings() {
   // Refresh remote-access status alongside config so the panel renders with
   // live state (no provider / not enrolled / enrolled).
   fetchRemoteStatus().then(s => { window._remoteState = s; refreshRemoteAccessSection(); });
+  // Hydrate the local-network passcode section with live state.
+  refreshLocalAccessSection();
   // Hydrate push notifications section (permission, VAPID key, subscriptions).
   // NOTE: these used to fire via setTimeout BEFORE body.innerHTML was set,
   // which raced — refreshPushSection's early-return-on-missing-element left
@@ -17643,6 +17657,8 @@ async function _renderSettings() {
 
       <div class="settings-detail-pane settings-hidden" data-cat="connect">
       <div class="settings-cat-label">Connectivity</div>
+    ${localAccessSettingsHTML()}
+
     ${remoteAccessSettingsHTML()}
 
     ${pushNotificationsSettingsHTML()}
@@ -17726,6 +17742,110 @@ async function _renderSettings() {
   // Restore the master/detail/search view (persisted across re-renders so that
   // setTone/setAccent/etc. don't bounce you back to the list mid-edit).
   _applySettingsView();
+}
+
+// ── Local network access (LAN passcode) ─────────────────────────────────────
+// The dashboard binds 0.0.0.0, so any device on the same network can reach it.
+// Loopback (this PC) and tunneled (CF Access) traffic is always exempt; this
+// section lets the host set / change the passcode that gates direct LAN access.
+// Locked by default: until a passcode is set, LAN devices see a setup page.
+// Backend: /api/local-auth/{status,set,login}.
+window._localAuthState = window._localAuthState || null;
+
+async function fetchLocalAuthStatus() {
+  try {
+    const r = await fetch(API_BASE + '/api/local-auth/status');
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) { return null; }
+}
+
+async function refreshLocalAccessSection() {
+  window._localAuthState = await fetchLocalAuthStatus();
+  const el = document.getElementById('local-access-section');
+  if (el) el.outerHTML = localAccessSettingsHTML();
+  // outerHTML replacement drops the settings-hidden class; re-assert it so a
+  // single-sub-item detail screen stays correct.
+  try { _applySettingsSectionVisibility(); } catch (_) {}
+}
+
+function localAccessSettingsHTML() {
+  const st = window._localAuthState;
+  const configured = !!(st && st.configured);
+  const pill = configured
+    ? `<span style="font-size:11px;font-weight:600;padding:3px 8px;border-radius:8px;background:#10b98122;color:#059669;border:1px solid #10b98155;letter-spacing:.3px;margin-left:8px">On</span>`
+    : `<span style="font-size:11px;font-weight:600;padding:3px 8px;border-radius:8px;background:#f59e0b22;color:#d97706;border:1px solid #f59e0b55;letter-spacing:.3px;margin-left:8px">Set a passcode</span>`;
+  let body;
+  if (!configured) {
+    body = `
+      <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
+        No passcode is set yet. Devices on your local network are locked out and
+        prompted to create one before they can open this dashboard. This computer
+        is always exempt, and remote access through the secure tunnel keeps its
+        own sign-in. Set the passcode here to choose it yourself.
+      </div>
+      <div id="local-auth-form-row">
+        <button class="btn-dispatch" onclick="showLocalAuthForm('set')">Set a passcode</button>
+      </div>`;
+  } else {
+    body = `
+      <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
+        Devices on your local network must enter the passcode to open this
+        dashboard. This computer is always exempt.
+      </div>
+      <div id="local-auth-form-row">
+        <button class="btn-dispatch" onclick="showLocalAuthForm('change')">Change passcode</button>
+      </div>`;
+  }
+  return `<div class="settings-section" id="local-access-section">
+    <div class="settings-section-title">Network access${pill}</div>
+    ${body}
+  </div>`;
+}
+
+function showLocalAuthForm(mode) {
+  const row = document.getElementById('local-auth-form-row');
+  if (!row) return;
+  const st = window._localAuthState || {};
+  // The host (loopback) and tunneled callers are exempt and don't need the
+  // current passcode to change it; an authed LAN device does.
+  const needCurrent = (mode === 'change') && st.configured && !st.exempt;
+  row.innerHTML = `
+    ${needCurrent ? `<input class="settings-input" id="la-cur" type="password" placeholder="Current passcode" autocomplete="current-password" style="margin-bottom:8px">` : ''}
+    <input class="settings-input" id="la-p1" type="password" placeholder="New passcode (at least 4 characters)" autocomplete="new-password" style="margin-bottom:8px">
+    <input class="settings-input" id="la-p2" type="password" placeholder="Confirm passcode" autocomplete="new-password" style="margin-bottom:8px">
+    <div style="display:flex;gap:8px">
+      <button class="btn-dispatch" onclick="submitLocalAuth('${mode}')">Save passcode</button>
+      <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="refreshLocalAccessSection()">Cancel</button>
+    </div>
+    <div class="settings-hint" id="la-err" style="color:var(--red,#c0392b);min-height:16px;margin-top:6px"></div>`;
+  const f = document.getElementById('la-p1'); if (f) f.focus();
+}
+
+async function submitLocalAuth(mode) {
+  const p1 = (document.getElementById('la-p1') || {}).value || '';
+  const p2 = (document.getElementById('la-p2') || {}).value || '';
+  const curEl = document.getElementById('la-cur');
+  const err = document.getElementById('la-err');
+  const setErr = (m) => { if (err) err.textContent = m || ''; };
+  if (p1.length < 4) { setErr('Passcode must be at least 4 characters.'); return; }
+  if (p1 !== p2) { setErr('Passcodes do not match.'); return; }
+  const payload = { passcode: p1 };
+  if (curEl) payload.current = curEl.value || '';
+  try {
+    const r = await fetch(API_BASE + '/api/local-auth/set', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      showToast(mode === 'change' ? 'Passcode changed' : 'Passcode set — local network access is now protected');
+      refreshLocalAccessSection();
+    } else {
+      setErr(j.error === 'bad_current_passcode' ? 'Current passcode is incorrect.'
+           : j.error === 'passcode_too_short' ? 'Passcode must be at least 4 characters.'
+           : 'Could not save passcode.');
+    }
+  } catch (_) { setErr('Network error — try again.'); }
 }
 
 // ── Remote Access ────────────────────────────────────────────────────────────

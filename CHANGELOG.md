@@ -4,6 +4,51 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-06] — Three user-reported fixes: LAN passcode gate, Dashboard = minimize all, Settings opens higher
+
+Three pieces of user feedback, smallest to largest.
+
+**1. The sidebar "Dashboard" button now does something (desktop).** It was a
+no-op on desktop. Clicking it now minimizes every open chat/modal to the tray
+(`showDesktop()` — the same action behind the command-palette "Minimize All"),
+giving you a clean board. Mobile is unchanged (there "Home" still closes modals
+back to the project grid).
+
+**2. The Settings panel opens higher.** It rendered its body async ("Loading…"
+first, then grew), so dead-center — measured against the short loading state —
+left it sitting low and running off the bottom once filled. It now seats near
+the top (~10% of viewport height) so the tall panel stays fully on-screen.
+Desktop only; mobile Settings is full-screen.
+
+**3. Direct LAN access now requires a passcode (the security gap).** The
+dashboard binds `0.0.0.0:PORT`, so any device on the same Wi-Fi could open
+`http://<host-ip>:PORT` and get **full control with no authentication** — the
+only gate was Cloudflare Access on the *remote* tunnel. Closed with a local
+passcode gate (`@app.before_request` in `server.py`):
+
+- **Always exempt:** loopback (this machine) and CF-tunneled requests. The
+  tunnel terminates at cloudflared on localhost, so remote traffic both arrives
+  as `127.0.0.1` *and* carries `Cf-Access-*` headers, and has already passed CF
+  Access OTP. Remote access is unchanged.
+- **Gated:** every other origin (a real LAN IP). `request.remote_addr` is the
+  real TCP peer — we deliberately ignore `X-Forwarded-For` so a LAN client can't
+  forge a loopback source.
+- **Locked by default.** Until a passcode is set, LAN devices are locked out and
+  shown a self-contained *set-a-passcode* page; once set, they get a *login*
+  page. Auth is a 30-day HMAC-signed `httponly` cookie; changing the passcode
+  rotates the signing secret and invalidates every existing session. Light
+  per-IP brute-force throttle. PBKDF2-SHA256 (200k) passcode hash.
+- **Host control:** Settings → Connectivity → **Network access** lets the host
+  set/change the passcode (the host is exempt, so no current-passcode needed).
+- Storage: `data/local_auth.json` (gitignored — holds the hash + signing
+  secret; lives in `data/`, not `data/projects/`, so `load_projects()` ignores
+  it). Endpoints: `/api/local-auth/{status,set,login}`; pages `/_mc/local-{setup,login}`.
+
+  **Requires a server restart to activate** (it's a `before_request` gate + new
+  routes). On restart, LAN devices that previously had open access will be asked
+  to create/enter a passcode — the host (localhost) and phone (tunnel) are
+  unaffected.
+
 ## [2026-06-05] — Fix the macOS app: broken Claydo images + the Claude-CLI dead-end (winget on Mac)
 
 Two macOS-only bugs in the frozen `.app`, both fixed in shared source so every
