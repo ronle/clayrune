@@ -20494,6 +20494,7 @@ async function openAllSkills() {
     focusModal(modalId);
     renderAllSkills();
     loadAllSkills();
+    loadDistillerQueue();
     return;
   }
 
@@ -20552,6 +20553,7 @@ async function openAllSkills() {
           </div>
         </div>
       </div>
+      <div id="as-queue"></div>
       <div id="as-list" style="max-height:65vh;overflow-y:auto"></div>
     </div>`;
   win.appendChild(content);
@@ -20566,6 +20568,7 @@ async function openAllSkills() {
   renderAllSkills();
   loadAllSkills();
   loadSkillUsage();
+  loadDistillerQueue();
 }
 
 async function loadAllSkills() {
@@ -20616,6 +20619,128 @@ async function loadSkillUsage() {
   } catch(e) {
     _skillUsageCache = { stats: {}, loaded: true };
   }
+}
+
+// ── Learning queue (Distiller _proposed/ artifacts + loop-health) ────────────
+// The human-promotes leg: surface the cross-session Distiller's proposals so
+// the operator can promote a good one into a real skill or reject it. Also
+// renders the loop-health self-detection alerts so a degraded leg is visible.
+let _distillerQueueOpen = true;
+
+async function loadDistillerQueue() {
+  const el = document.getElementById('as-queue');
+  if (!el) return;
+  try {
+    const [qRes, hRes] = await Promise.all([
+      fetch(API_BASE + '/api/distiller/_proposed'),
+      fetch(API_BASE + '/api/distiller/loop-health')
+    ]);
+    const items = await qRes.json().catch(() => []);
+    const health = await hRes.json().catch(() => ({}));
+    renderDistillerQueue(el, Array.isArray(items) ? items : [], health || {});
+  } catch (e) {
+    el.innerHTML = '';
+  }
+}
+
+function _distillerKindBadge(kind) {
+  const map = {
+    skill:       ['&#x1F9E9;', 'var(--accent)'],
+    exploration: ['&#x1F50D;', '#5b8def'],
+    preference:  ['&#x2699;',  '#b07cd0'],
+    update:      ['&#x270E;',  '#d0a24c'],
+  };
+  const [icon, color] = map[kind] || ['&#x2022;', 'var(--text-faint)'];
+  return `<span style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:3px;padding:1px 5px;white-space:nowrap">${icon} ${esc((kind||'?').toUpperCase())}</span>`;
+}
+
+function renderDistillerQueue(el, items, health) {
+  const alerts = (health && Array.isArray(health.alerts)) ? health.alerts : [];
+  if (!items.length && !alerts.length) { el.innerHTML = ''; return; }
+
+  const alertHtml = alerts.length ? `
+    <div style="margin-bottom:10px;display:flex;flex-direction:column;gap:5px">
+      ${alerts.map(a => `<div style="font-size:11px;color:#d0a24c;background:#d0a24c1a;border:1px solid #d0a24c44;border-radius:4px;padding:6px 9px">&#x26A0; ${esc(a)}</div>`).join('')}
+    </div>` : '';
+
+  const rows = items.map(it => {
+    const dir = it.directory || '';
+    const scope = it.scope || 'uncategorized';
+    const isCross = scope === 'cross-project';
+    const recur = it.recurrence_count_exact || it.recurrence_count_coarse || '';
+    const scopeLabel = isCross ? 'cross-project' : esc(scope);
+    const dirAttr = esc(dir).replace(/'/g, "\\'");
+    // Promote: project-scoped artifacts can go to their project or global;
+    // cross-project ones can only go global (project promote needs a project_id).
+    const promoteBtns = isCross
+      ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="promoteProposed('${dirAttr}','global',null)">Promote &#x2192; Global</button>`
+      : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="promoteProposed('${dirAttr}','project','${esc(scope)}')">Promote &#x2192; Project</button>
+         <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="promoteProposed('${dirAttr}','global',null)">Global</button>`;
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;padding-top:1px">${_distillerKindBadge(it.kind)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--text);word-break:break-word">${esc(it.name || '(unnamed)')}</div>
+          <div style="font-size:10px;color:var(--text-faint);margin-top:2px">${scopeLabel}${recur ? ' &#x2022; seen &#xD7;' + esc(String(recur)) : ''}</div>
+        </div>
+        <div style="flex-shrink:0;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">
+          ${promoteBtns}
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:#c0556b;border-color:#c0556b55" onclick="rejectProposed('${dirAttr}')">Reject</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  const bodyHtml = _distillerQueueOpen ? `
+    ${alertHtml}
+    <div style="max-height:240px;overflow-y:auto">${rows || '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px">No pending proposals.</div>'}</div>
+  ` : '';
+
+  el.innerHTML = `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;background:var(--surface2)">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="_distillerQueueOpen=!_distillerQueueOpen;loadDistillerQueue()">
+        <span style="font-size:13px;font-weight:700;color:var(--text)">&#x1F9E0; Learning queue</span>
+        <span style="font-size:11px;color:var(--text-faint)">${items.length} proposed${alerts.length ? ' &#x2022; ' + alerts.length + ' alert' + (alerts.length>1?'s':'') : ''}</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--text-faint)">${_distillerQueueOpen ? '&#x25BE;' : '&#x25B8;'}</span>
+      </div>
+      ${bodyHtml}
+    </div>`;
+}
+
+async function _distillerPost(url, payload) {
+  try {
+    const res = await fetch(API_BASE + url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      showToast((data && data.error) ? data.error : 'Action failed');
+      return false;
+    }
+    return true;
+  } catch (e) {
+    showToast('Network error');
+    return false;
+  }
+}
+
+async function promoteProposed(directory, scope, projectId) {
+  const payload = { directory, scope };
+  if (scope === 'project' && projectId) payload.project_id = projectId;
+  const ok = await _distillerPost('/api/distiller/promote', payload);
+  if (ok) {
+    showToast('Promoted to ' + (scope === 'global' ? 'global' : 'project') + ' skills');
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+    loadDistillerQueue();
+  }
+}
+
+async function rejectProposed(directory) {
+  if (!confirm('Reject this proposal? It will be suppressed (not re-proposed) and moved to _rejected/.')) return;
+  const ok = await _distillerPost('/api/distiller/reject', { directory });
+  if (ok) { showToast('Rejected'); loadDistillerQueue(); }
 }
 
 function renderAllSkills() {
