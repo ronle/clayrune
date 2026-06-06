@@ -1989,13 +1989,25 @@ def _read_proposed_meta(d: Path, scope: str) -> dict | None:
             if not f.is_file() or not f.name.endswith('.md'):
                 continue
             text = f.read_text(encoding='utf-8', errors='replace')
-            fm = _parse_frontmatter(text)
+            fm, body = _split_frontmatter(text)
+            # Human-readable title + gist so the review queue isn't a wall of
+            # truncated slugs. The body's first heading is the real prose (e.g.
+            # the full exploration question); the snippet is the opening finding.
+            title = (fm.get('description', '') or _first_heading(body)
+                     or fm.get('name', d.name).replace('-', ' '))
+            # _exploration_snippet leads with the heading; the row shows `title`
+            # separately, so drop the duplicated lead to leave just the gist.
+            snippet = _exploration_snippet(str(f))
+            if snippet and title and snippet.startswith(title):
+                snippet = snippet[len(title):].lstrip(' |').strip()
             return {
                 'path': str(f),
                 'directory': str(d),
                 'scope': scope,
                 'kind': fm.get('kind', f.stem.lower()),
                 'name': fm.get('name', d.name),
+                'title': title,
+                'snippet': snippet,
                 'extraction_scope': fm.get('extraction_scope', scope),
                 'created_at': fm.get('created_at', ''),
                 'evidence_session_ids': fm.get('evidence_session_ids', ''),

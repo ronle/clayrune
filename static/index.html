@@ -20654,56 +20654,91 @@ function _distillerKindBadge(kind) {
   return `<span style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:3px;padding:1px 5px;white-space:nowrap">${icon} ${esc((kind||'?').toUpperCase())}</span>`;
 }
 
+let _distillerDiagOpen = false;
+
 function renderDistillerQueue(el, items, health) {
   const alerts = (health && Array.isArray(health.alerts)) ? health.alerts : [];
   if (!items.length && !alerts.length) { el.innerHTML = ''; return; }
 
-  const alertHtml = alerts.length ? `
-    <div style="margin-bottom:10px;display:flex;flex-direction:column;gap:5px">
-      ${alerts.map(a => `<div style="font-size:11px;color:#d0a24c;background:#d0a24c1a;border:1px solid #d0a24c44;border-radius:4px;padding:6px 9px">&#x26A0; ${esc(a)}</div>`).join('')}
+  // Diagnostics (the loop-health alerts) are developer-facing — tuck them
+  // behind a disclosure so they don't crowd out the actual proposals.
+  const diagHtml = alerts.length ? `
+    <div style="margin:8px 0 4px">
+      <div style="font-size:11px;color:var(--text-faint);cursor:pointer" onclick="_distillerDiagOpen=!_distillerDiagOpen;loadDistillerQueue()">
+        ${_distillerDiagOpen ? '&#x25BE;' : '&#x25B8;'} Health diagnostics (${alerts.length})
+      </div>
+      ${_distillerDiagOpen ? `<div style="margin-top:6px;display:flex;flex-direction:column;gap:5px">
+        ${alerts.map(a => `<div style="font-size:11px;color:#b8893a;background:#d0a24c14;border:1px solid #d0a24c33;border-radius:4px;padding:6px 9px">${esc(a)}</div>`).join('')}
+      </div>` : ''}
     </div>` : '';
 
-  const rows = items.map(it => {
+  const rows = items.map((it, i) => {
     const dir = it.directory || '';
     const scope = it.scope || 'uncategorized';
     const isCross = scope === 'cross-project';
     const recur = it.recurrence_count_exact || it.recurrence_count_coarse || '';
-    const scopeLabel = isCross ? 'cross-project' : esc(scope);
+    const where = isCross ? 'seen across projects' : ('in ' + esc(scope));
     const dirAttr = esc(dir).replace(/'/g, "\\'");
+    const title = esc(it.title || it.name || '(unnamed)');
+    const snippet = it.snippet ? esc(it.snippet) : '';
     // Promote: project-scoped artifacts can go to their project or global;
     // cross-project ones can only go global (project promote needs a project_id).
     const promoteBtns = isCross
-      ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="promoteProposed('${dirAttr}','global',null)">Promote &#x2192; Global</button>`
-      : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="promoteProposed('${dirAttr}','project','${esc(scope)}')">Promote &#x2192; Project</button>
-         <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="promoteProposed('${dirAttr}','global',null)">Global</button>`;
+      ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposed('${dirAttr}','global',null)">Promote &#x2192; Global</button>`
+      : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill in this project only" onclick="promoteProposed('${dirAttr}','project','${esc(scope)}')">Promote &#x2192; Project</button>
+         <button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposed('${dirAttr}','global',null)">Global</button>`;
     return `
-      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border)">
-        <div style="flex-shrink:0;padding-top:1px">${_distillerKindBadge(it.kind)}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:var(--text);word-break:break-word">${esc(it.name || '(unnamed)')}</div>
-          <div style="font-size:10px;color:var(--text-faint);margin-top:2px">${scopeLabel}${recur ? ' &#x2022; seen &#xD7;' + esc(String(recur)) : ''}</div>
+      <div style="padding:10px 4px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <div style="flex-shrink:0;padding-top:1px">${_distillerKindBadge(it.kind)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:600;color:var(--text);word-break:break-word">${title}</div>
+            ${snippet ? `<div style="font-size:11px;color:var(--text-muted, var(--text-faint));margin-top:3px;line-height:1.4">${snippet}</div>` : ''}
+            <div style="font-size:10px;color:var(--text-faint);margin-top:4px">${where}${recur ? ' &#x2022; seen &#xD7;' + esc(String(recur)) : ''}
+              &#x2022; <span style="cursor:pointer;text-decoration:underline" onclick="toggleProposedRead('${dirAttr}', 'pa-${i}')">read full</span></div>
+            <div id="pa-${i}" style="display:none;margin-top:8px;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text);white-space:pre-wrap;max-height:300px;overflow:auto;line-height:1.5"></div>
+          </div>
         </div>
-        <div style="flex-shrink:0;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">
+        <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;margin-top:7px">
           ${promoteBtns}
-          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:#c0556b;border-color:#c0556b55" onclick="rejectProposed('${dirAttr}')">Reject</button>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:#c0556b;border-color:#c0556b55" title="Discard and stop suggesting this" onclick="rejectProposed('${dirAttr}')">Reject</button>
         </div>
       </div>`;
   }).join('');
 
   const bodyHtml = _distillerQueueOpen ? `
-    ${alertHtml}
-    <div style="max-height:240px;overflow-y:auto">${rows || '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px">No pending proposals.</div>'}</div>
+    <div style="font-size:11px;color:var(--text-faint);margin:6px 0 2px;line-height:1.45">
+      Patterns agents worked out across sessions. <b>Promote</b> a useful one into a reusable skill the agent loads automatically, or <b>Reject</b> to drop it and stop it being suggested.
+    </div>
+    ${diagHtml}
+    <div style="max-height:300px;overflow-y:auto;margin-top:6px">${rows || '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px">No pending proposals.</div>'}</div>
   ` : '';
 
   el.innerHTML = `
     <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;background:var(--surface2)">
       <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="_distillerQueueOpen=!_distillerQueueOpen;loadDistillerQueue()">
         <span style="font-size:13px;font-weight:700;color:var(--text)">&#x1F9E0; Learning queue</span>
-        <span style="font-size:11px;color:var(--text-faint)">${items.length} proposed${alerts.length ? ' &#x2022; ' + alerts.length + ' alert' + (alerts.length>1?'s':'') : ''}</span>
+        <span style="font-size:11px;color:var(--text-faint)">${items.length} pending${alerts.length ? ' &#x2022; ' + alerts.length + ' alert' + (alerts.length>1?'s':'') : ''}</span>
         <span style="margin-left:auto;font-size:11px;color:var(--text-faint)">${_distillerQueueOpen ? '&#x25BE;' : '&#x25B8;'}</span>
       </div>
       ${bodyHtml}
     </div>`;
+}
+
+async function toggleProposedRead(directory, rowId) {
+  const box = document.getElementById(rowId);
+  if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.textContent = 'Loading…';
+  try {
+    const res = await fetch(API_BASE + '/api/distiller/proposed-artifact?directory=' + encodeURIComponent(directory));
+    const art = await res.json();
+    if (!res.ok || !art || art.error) { box.textContent = (art && art.error) || 'Could not load.'; return; }
+    box.textContent = art.body || '(empty)';
+  } catch (e) {
+    box.textContent = 'Could not load.';
+  }
 }
 
 async function _distillerPost(url, payload) {

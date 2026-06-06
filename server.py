@@ -2437,6 +2437,21 @@ def post_distiller_reject():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/api/distiller/proposed-artifact', methods=['GET'])
+def get_distiller_proposed_artifact():
+    """Full content of one _proposed/ artifact (kind/title/description/body),
+    for the Learning-queue expand-to-read action. Path-guarded in the
+    distiller. Query: ?directory=<path>."""
+    directory = request.args.get('directory', '')
+    try:
+        art = _distiller.read_proposed_artifact(directory)
+        if art is None:
+            return jsonify({'error': 'artifact not found or outside _proposed/'}), 404
+        return jsonify(art)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/router/stats', methods=['GET'])
 def get_router_stats_aggregate():
     """Cross-project auto-router counters. Sums totals and by_pair across
