@@ -1818,6 +1818,159 @@ def loop_health() -> dict:
     return snap
 
 
+# ── Promotion / rejection (the human-promotes leg — step 3) ──────────────────
+# The Distiller proposes into _proposed/; promotion and rejection are always a
+# deliberate human action ("MC owns, agent proposes, human promotes"). Promote
+# installs the artifact as a real SKILL.md (server-side, via skills.write_skill)
+# and moves the proposal to _promoted/; reject writes a suppression marker so
+# the Distiller won't re-propose and moves it to _rejected/. Both buckets are
+# siblings of _proposed/ (NEVER under it — _is_valid_project_id would match an
+# underscore name and list_proposed() would re-surface the contents).
+
+
+def _is_within_proposed(directory: str) -> Path | None:
+    """Resolve `directory` and confirm it sits strictly under _proposed/.
+    Path-traversal guard for the promote/reject endpoints (client supplies the
+    path). Returns the resolved Path or None."""
+    if _skills_root is None or not directory:
+        return None
+    try:
+        root = (_skills_root / '_proposed').resolve()
+        d = Path(directory).resolve()
+        if d != root and root in d.parents:
+            return d
+    except Exception:
+        return None
+    return None
+
+
+def _split_frontmatter(text: str) -> tuple[dict, str]:
+    fm = _parse_frontmatter(text)
+    if text.startswith('---'):
+        end = text.find('\n---', 4)
+        if end >= 0:
+            return fm, text[end + 4:].lstrip('\n')
+    return fm, text
+
+
+def _first_heading(body: str) -> str:
+    for ln in body.splitlines():
+        s = ln.strip()
+        if s.startswith('#'):
+            return s.lstrip('# ').strip()
+    return ''
+
+
+def read_proposed_artifact(directory: str) -> dict | None:
+    """Read one _proposed/ artifact directory into a flat dict for promotion.
+
+    Returns {path, directory, scope_dir, project_id, kind, name, description,
+    body, exact, coarse, scope, source_session} or None (not found / outside
+    _proposed/). `project_id` is the owning project for suppression, derived
+    from the <scope_dir> path segment (None for the global/cross-project bucket).
+    """
+    d = _is_within_proposed(directory)
+    if d is None or not d.is_dir():
+        return None
+    try:
+        scope_dir = d.parent.name
+        pid = scope_dir if (scope_dir != 'global'
+                            and _is_valid_project_id(scope_dir)) else None
+        for f in sorted(d.iterdir()):
+            if not f.is_file() or not f.name.endswith('.md'):
+                continue
+            text = f.read_text(encoding='utf-8', errors='replace')
+            fm, body = _split_frontmatter(text)
+            kind = fm.get('kind', f.stem.lower())
+            name = fm.get('name', d.name)
+            # SKILL artifacts carry a TRIGGER description; explorations /
+            # preferences don't, so synthesize one from the first heading or
+            # the slug (the user can edit after promotion).
+            desc = (fm.get('description', '') or _first_heading(body)
+                    or name.replace('-', ' '))
+            return {
+                'path': str(f),
+                'directory': str(d),
+                'scope_dir': scope_dir,
+                'project_id': pid,
+                'kind': kind,
+                'name': name,
+                'description': desc,
+                'body': body,
+                'exact': fm.get('extraction_fingerprint_exact', ''),
+                'coarse': fm.get('extraction_fingerprint_coarse', ''),
+                'scope': fm.get('extraction_scope', ''),
+                'source_session': fm.get('source_session', ''),
+            }
+    except Exception:
+        return None
+    return None
+
+
+def _suppress_artifact(art: dict, source: str) -> bool:
+    """Write a `decision: no` suppression keyed {exact}:{kind} so the Distiller
+    won't re-propose a promoted/rejected artifact. Project-scoped only — a
+    cross-project (global) artifact has no single owning stats file (v1
+    limitation; re-rejecting if it recurs is cheap). Returns True if written."""
+    pid = art.get('project_id')
+    exact, kind = art.get('exact'), art.get('kind')
+    if not (pid and exact and kind):
+        return False
+    try:
+        key = f"{exact}:{kind}"
+        with _get_skill_stats_lock(pid):
+            stats = _read_skill_stats(pid)
+            stats.setdefault('suppressions', {})[key] = {
+                'decided_at': _now_iso() if _now_iso else '',
+                'decision': 'no',
+                'source': source,
+            }
+            _write_skill_stats(pid, stats)
+        return True
+    except Exception:
+        return False
+
+
+def _relocate_proposed(directory: str, bucket: str) -> bool:
+    """Move a proposal dir to a sibling bucket (_promoted/ or _rejected/).
+    Best-effort; never raises."""
+    d = _is_within_proposed(directory)
+    if d is None or not d.is_dir() or _skills_root is None:
+        return False
+    try:
+        dest_root = _skills_root / bucket
+        dest_root.mkdir(parents=True, exist_ok=True)
+        dest = dest_root / d.name
+        if dest.exists():
+            dest = dest_root / f"{d.name}-{d.stat().st_mtime_ns}"
+        d.rename(dest)
+        return True
+    except Exception:
+        return False
+
+
+def mark_promoted(directory: str) -> dict:
+    """Post-install bookkeeping: suppress re-proposal + move to _promoted/.
+    Called by the promote endpoint AFTER skills.write_skill succeeds."""
+    art = read_proposed_artifact(directory)
+    if art is None:
+        return {'ok': False, 'reason': 'not_found'}
+    suppressed = _suppress_artifact(art, 'ui_promote')
+    moved = _relocate_proposed(directory, '_promoted')
+    return {'ok': moved, 'suppressed': suppressed}
+
+
+def reject_proposed(directory: str) -> dict:
+    """Reject a proposal: suppress re-proposal + move to _rejected/."""
+    art = read_proposed_artifact(directory)
+    if art is None:
+        return {'ok': False, 'reason': 'not_found'}
+    suppressed = _suppress_artifact(art, 'ui_reject')
+    moved = _relocate_proposed(directory, '_rejected')
+    return {'ok': moved, 'suppressed': suppressed,
+            'kind': art['kind'], 'name': art['name']}
+
+
 _RE_PROJECT_ID = re.compile(r'^[a-z0-9_-]+$')
 
 

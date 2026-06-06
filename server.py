@@ -2368,6 +2368,75 @@ def get_distiller_loop_health():
     return jsonify(snap)
 
 
+@app.route('/api/distiller/promote', methods=['POST'])
+def post_distiller_promote():
+    """Promote a _proposed/ artifact into a real SKILL.md (the human-promotes
+    leg — step 3). Body: {directory, scope: 'project'|'global', project_id?}.
+    Installs via skills.write_skill (overwrite), then distiller.mark_promoted
+    suppresses re-proposal + moves the proposal to _promoted/. SKILL artifacts
+    carry their own TRIGGER description; EXPLORATION/PREFERENCE get a synthesized
+    one the user can edit afterward (this is also the step-4 bridge — a great
+    exploration becomes a skill by a deliberate human click)."""
+    body = request.get_json(silent=True) or {}
+    directory = body.get('directory', '')
+    scope = (body.get('scope') or 'project').strip()
+    project_id = body.get('project_id') or None
+    if scope not in ('project', 'global'):
+        return jsonify({'ok': False, 'error': 'scope must be project or global'}), 400
+    try:
+        art = _distiller.read_proposed_artifact(directory)
+        if art is None:
+            return jsonify({'ok': False,
+                            'error': 'artifact not found or outside _proposed/'}), 404
+        project_path = None
+        if scope == 'project':
+            project_id = project_id or art.get('project_id')
+            if not project_id:
+                return jsonify({'ok': False,
+                                'error': 'project_id required for project-scope promote '
+                                         '(cross-project artifact — choose global or pass project_id)'}), 400
+            project_path, err = _resolve_project_path_or_400(scope, project_id)
+            if err:
+                return err
+        rec = _skills.write_skill(
+            name=art['name'],
+            description=art['description'],
+            body=art['body'],
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            extra_meta={
+                'provenance': 'distilled-promoted',
+                'promoted_from': art['kind'],
+                'source_session': art.get('source_session', ''),
+                'extraction_fingerprint_exact': art.get('exact', ''),
+            },
+            overwrite=True,
+        )
+        mark = _distiller.mark_promoted(directory)
+        return jsonify({'ok': True, 'installed': rec, 'mark': mark})
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/distiller/reject', methods=['POST'])
+def post_distiller_reject():
+    """Reject a _proposed/ artifact: write a suppression marker (Distiller
+    won't re-propose) + move it to _rejected/. Body: {directory}."""
+    body = request.get_json(silent=True) or {}
+    directory = body.get('directory', '')
+    try:
+        result = _distiller.reject_proposed(directory)
+        if not result.get('ok') and result.get('reason') == 'not_found':
+            return jsonify({'ok': False,
+                            'error': 'artifact not found or outside _proposed/'}), 404
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/router/stats', methods=['GET'])
 def get_router_stats_aggregate():
     """Cross-project auto-router counters. Sums totals and by_pair across
