@@ -20807,13 +20807,20 @@ function renderDistillerQueue(el, items, health) {
     const where = isCross ? 'seen across projects' : ('in ' + esc(scope));
     const title = esc(it.title || it.name || '(unnamed)');
     const snippet = it.snippet ? esc(it.snippet) : '';
-    // Promote: project-scoped artifacts can go to their project or global;
-    // cross-project ones can only go global (project promote needs a project_id).
-    // Handlers take the row index and read the (un-serialized) path from cache.
-    const promoteBtns = isCross
-      ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Promote &#x2192; Global</button>`
-      : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill in this project only" onclick="promoteProposedByIdx(${i},'project')">Promote &#x2192; Project</button>
-         <button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Global</button>`;
+    // Kind-aware actions: explorations are reference notes the readback surfaces
+    // on demand (their question-shaped triggers were noise as always-loaded
+    // skills), so the queue only curates them — Reject noise, keep the rest in
+    // _proposed/ where readback uses them. Only SKILL / PREFERENCE — the kinds
+    // meant to be always-loaded — can Promote. Promote: project-scoped go to
+    // their project or global; cross-project go global only (project promote
+    // needs a project_id). Handlers read the (un-serialized) path from cache.
+    const isExploration = it.kind === 'exploration';
+    const promoteBtns = isExploration
+      ? `<span style="font-size:10px;color:var(--text-faint);align-self:center" title="Surfaced on demand by the readback when a task matches — no install needed">&#x1F50D; auto-surfaced on demand</span>`
+      : (isCross
+        ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Promote &#x2192; Global</button>`
+        : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill in this project only" onclick="promoteProposedByIdx(${i},'project')">Promote &#x2192; Project</button>
+           <button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Global</button>`);
     return `
       <div style="padding:10px 4px;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:flex-start;gap:10px">
@@ -20835,7 +20842,7 @@ function renderDistillerQueue(el, items, health) {
 
   const bodyHtml = _distillerQueueOpen ? `
     <div style="font-size:11px;color:var(--text-faint);margin:6px 0 2px;line-height:1.45">
-      Patterns agents worked out across sessions. <b>Promote</b> a useful one into a reusable skill the agent loads automatically, or <b>Reject</b> to drop it and stop it being suggested.
+      What agents worked out across sessions. <b>&#x1F50D; Explorations</b> are reference notes surfaced on demand when a task matches &#x2014; just <b>Reject</b> the noise. <b>Skills &amp; preferences</b> can be <b>Promoted</b> into artifacts the agent always loads.
     </div>
     ${diagHtml}
     <div style="max-height:300px;overflow-y:auto;margin-top:6px">${rows || '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px">No pending proposals.</div>'}</div>
