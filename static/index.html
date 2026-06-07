@@ -10443,6 +10443,12 @@ async function dispatchAgent(projectId) {
 }
 
 let agentSSEWatchdogs = {};  // sessionId → timer ID
+// sessionId → timestamp ms of the last SSE event (data or heartbeat). Mirrors
+// connectAgentStream's closure-local lastEventTime so the foreground freshness
+// reconciler (an external timer) can detect a ZOMBIE stream — an EventSource
+// whose handle still reports "open" but whose socket died silently under Doze,
+// firing no onerror. Age past SSE_ZOMBIE_MS ⇒ reap + rebuild.
+let agentLastEventAt = {};
 let followupTimeouts = {};  // sessionId → { timerId, projectId }
 // sessionId → timestamp ms. Set in sendFollowup, cleared after we've seen the
 // first `turn_start` from the new turn (or after 8s timeout). While truthy,
@@ -10578,6 +10584,7 @@ function connectAgentStream(projectId, sessionId) {
   // Heartbeat watchdog: if no SSE event (data or heartbeat) arrives within 30s,
   // the connection has silently died. Force reconnect.
   let lastEventTime = Date.now();
+  agentLastEventAt[sessionId] = lastEventTime;  // mirror for the freshness reconciler
   agentSSEWatchdogs[sessionId] = setInterval(() => {
     if (Date.now() - lastEventTime > 30000) {
       console.warn(`SSE watchdog: no event for 30s on session ${sessionId.slice(0,8)}, reconnecting`);
@@ -10597,6 +10604,7 @@ function connectAgentStream(projectId, sessionId) {
 
   es.onmessage = (event) => {
     lastEventTime = Date.now();
+    agentLastEventAt[sessionId] = lastEventTime;  // mirror for the freshness reconciler
     try {
       const msg = JSON.parse(event.data);
       if (msg.type === 'output') {
@@ -23834,6 +23842,75 @@ setInterval(async () => {
     } catch(e) {}
   }
 }, 15000);
+
+// ── Foreground freshness reconciler ─────────────────────────────────────────
+// Durable backstop for the mobile "live updates freeze until force-close/reload"
+// bug. Every prior recovery path was either EVENT-GATED (visibilitychange/focus/
+// pageshow — documented unreliable on Android WebViews), ZOMBIE-BLOCKED (keyed on
+// `!agentEventSources[sid]`, so a dead-but-present EventSource blocked both the
+// render-gap repaint and the SSE reconnect), or IDLE-SKIPPED (the 15s poll above
+// intentionally ignores idle sessions to protect Chromium's 6-slot cap). Under
+// Doze the SSE socket dies with the handle still "open" and no onerror, so none
+// of those fired and the chat the user was looking at froze until a full reload.
+//
+// This timer trusts the POLL, not the stream. While the app is VISIBLE it
+// reconciles every OPEN modal's active session straight from /agent/status, so
+// the visible chat self-heals within one tick no matter what the transport did.
+// _reconcileAgentBuffer is cursor-deduped against SSE, re-derives pending
+// questions (DOM-deduped), costs NO SSE slot (a plain fetch that frees itself),
+// and no-ops when already in sync — safe to run alongside a healthy live stream.
+// Separately it reaps a ZOMBIE stream (handle present but silent past the
+// threshold) for the active RUNNING session so dead handles don't pile up against
+// the 6-slot cap and true streaming resumes. Idle SSE is still never reopened
+// here, so the slot discipline the 15s poll protects is preserved.
+const FRESHNESS_TICK_MS = 5000;
+// SSE_ZOMBIE_MS must stay comfortably ABOVE the server's 15s SSE heartbeat
+// (server.py emits a `data:{type:'heartbeat'}` every ~15s — a real event, so it
+// fires onmessage and refreshes agentLastEventAt). A threshold ≤15s would
+// false-reap a HEALTHY idle stream in the gap between heartbeats. 25s = one
+// missed heartbeat + margin, and still beats the 30s in-stream watchdog so the
+// visible chat recovers sooner than a backgrounded one.
+const SSE_ZOMBIE_MS = 25000;
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  for (const [, entry] of openModals) {
+    if (!entry || entry.minimized || !entry.projectId) continue;
+    const pid = entry.projectId;
+    const sid = activeAgentTab[pid];
+    if (!sid) continue;
+    const cached = agentStatusCache[sid];
+    if (!cached) continue;
+    // Client-only sessions aren't server-backed — a poll would race-detach them.
+    if (cached._readOnlyRevived || sid.startsWith('_pending_')) continue;
+    // Mid-send: a follow-up POST is in flight. Don't fight the optimistic-send
+    // path (status flip + echo) or churn its eager-opened stream. The 8s window
+    // matches _sendInFlight's own gate; healing resumes on the next tick.
+    if (_sendInFlight[sid] && (Date.now() - _sendInFlight[sid] < 8000)) continue;
+
+    // Reap a ZOMBIE stream — a handle still present but silent past the
+    // threshold (socket died under Doze, no onerror). Closing it frees the
+    // Chromium slot and, crucially, clears the `!agentEventSources[sid]` block
+    // that otherwise traps every recovery path. Reconnect ONLY if the session is
+    // still running — idle sessions intentionally keep no stream (slot discipline,
+    // the same rule the 15s poll above protects). The fresh stream's since=
+    // cursor is anchored on agentServerLines, so it replays exactly the missed
+    // lines with no double-render; let it deliver and skip the poll this tick.
+    if (agentEventSources[sid] && (Date.now() - (agentLastEventAt[sid] || 0) > SSE_ZOMBIE_MS)) {
+      try { agentEventSources[sid].close(); } catch (_) {}
+      delete agentEventSources[sid];
+      if (agentSSEWatchdogs[sid]) { clearInterval(agentSSEWatchdogs[sid]); delete agentSSEWatchdogs[sid]; }
+      if (cached.status === 'running') { connectAgentStream(pid, sid); continue; }
+    }
+
+    // Content backstop — ONLY when there is no live handle (absent, or just
+    // reaped above). A healthy stream already keeps the buffer current; polling
+    // alongside it would race and could double-render a line (SSE onmessage has
+    // no agentServerLines dedup). _reconcileAgentBuffer is cursor-guarded,
+    // re-derives pending questions (DOM-deduped), costs no SSE slot, and no-ops
+    // when in sync — so this heals idle / closed / zombie alike, race-free.
+    if (!agentEventSources[sid]) _reconcileAgentBuffer(pid, sid);
+  }
+}, FRESHNESS_TICK_MS);
 
 // ── Preserve textarea values across DOM rebuilds ─────────────────────────────
 document.getElementById('modal-layer').addEventListener('input', e => {

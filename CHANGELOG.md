@@ -4,6 +4,48 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-07] — Mobile live updates no longer freeze until app restart
+
+The Android app's chat and project updates could stop refreshing entirely —
+frozen until a force-close + reopen or a pull-to-refresh. This had been patched
+many times; the root cause was structural. Live updates ride on SSE over the
+Capacitor WebView, which Android Doze kills silently (the socket dies while the
+`EventSource` handle still reports "open" and fires no `onerror`). And **every**
+recovery path had a blind spot:
+
+- the resurface heal (`_resyncOpenModalsFromServer`) is event-driven only —
+  `visibilitychange`/`focus`/`pageshow`, documented unreliable on Android
+  WebViews, so no event ⇒ no heal;
+- its heartbeat probe is a *separate* fetch, so it can't detect a zombie stream
+  (returns 200 but delivers nothing);
+- the 15s fallback poll skips idle sessions (Chromium slot-cap discipline) and
+  is gated on `!agentEventSources[sid]` — a zombie left in that map blocks every
+  path.
+
+So a chat whose stream zombied, with no user action to trigger recovery, just
+sat there frozen.
+
+**Durable fix** (`static/index.html`): a **foreground freshness reconciler** — a
+5s, visible-only timer that, for each open modal's active session, repaints
+straight from `/agent/status` (server truth) whenever there's no live handle.
+SSE is now a latency accelerator; the poll is the always-on backstop, so the
+visible chat self-heals within a tick no matter what the transport did. It costs
+no SSE slot, is cursor-deduped against the live stream, and runs **only** when
+no healthy stream exists — so it never races or duplicates the live path
+(`appendAgentLine`/`_reconcileAgentBuffer`). Separately it reaps a zombie stream
+(handle present but silent > 25 s, safely above the server's 15 s heartbeat) and
+reconnects it if the session is still running; idle streams are never reopened
+(slot discipline preserved). New global `agentLastEventAt` mirrors the SSE event
+timestamp so the timer can spot a zombie.
+
+**Validated** on the Android-emulator harness (`tools/mobile-test/`): S1–S4 all
+pass, including S3's no-duplication gate. Plus an isolation probe — kill the SSE,
+let the agent go idle, then take no action — confirming an idle session that
+missed its tail lines self-heals (1→2 lines, status `running`→`idle`, no
+duplicate render) with **no** user action, the exact case the old 15s poll
+couldn't cover. Web-layer only; no APK rebuild needed (the shell loads the SPA
+live).
+
 ## [2026-06-06b] — Session-lifecycle timers doubled: 30 min → 60 min
 
 Both 30-minute session-lifecycle timers are now 60 minutes, so warm sessions
