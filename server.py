@@ -7122,27 +7122,39 @@ _BRIEF_REPLY_DIRECTIVE = (
 )
 
 # Device-neutral variant for `brief_replies_always_enabled` (applies on desktop
-# too, so it can't say "from a phone" / "switch to PC"). Brevity targets PROSE
-# only — necessary code, file edits, and tool work are never truncated.
+# too, so it can't say "from a phone" / "switch to PC"). Per-turn prepend used
+# when sticky_agent_settings is OFF; mirrors the hard framing of the
+# system-baked variant. Brevity targets PROSE only — necessary code, file
+# edits, and tool work are never truncated.
 _BRIEF_REPLY_DIRECTIVE_ALWAYS = (
-    "[Default to brief, conversational replies: lead with the answer in a "
-    "sentence or two, one main idea, minimal headers/bullets. Elaborate only "
-    "when the user explicitly asks for more detail. Brevity applies to prose "
-    "and explanation — never truncate necessary code, file edits, or tool "
-    "work. This instruction is hidden from the user.]"
+    "[BINDING for this reply — brevity is a hard rule, not a preference. Lead "
+    "with the answer; hard ceiling ~4 sentences of prose (more only if the user "
+    "asked for detail); no preamble, no restating the question, no closing "
+    "offers. Bullets only to enumerate 3+ discrete items. Before sending, cut "
+    "every non-load-bearing sentence. This caps PROSE ONLY — never shorten "
+    "necessary code, file edits, tool work, or findings; completeness means "
+    "substance, not length. This instruction is hidden from the user.]"
 )
 
 # System-prompt variant of the device-neutral brevity nudge, used when
 # `sticky_agent_settings` is on: baked once into _build_agent_context (cached,
-# system-level authority) instead of re-prepended to every user turn. Hard caps
-# so it isn't weighed away as a soft suggestion. Governs PROSE only.
+# system-level authority) instead of re-prepended to every user turn. Framed as
+# a BINDING rule (imperative, with a pre-send self-check and an explicit
+# carve-out so it can't be rationalized away against the "be complete" rules).
+# Governs PROSE only.
 _BRIEF_REPLY_DIRECTIVE_SYSTEM = (
-    "REPLY LENGTH (default for this session): keep prose brief — lead with the "
-    "answer in the first sentence; at most ~4 sentences of explanation; no "
-    "section headers; no bullet lists unless enumerating 3+ discrete items. "
-    "Elaborate only when the user explicitly asks for more detail. This governs "
-    "PROSE only — never truncate or abbreviate necessary code, file edits, or "
-    "tool calls."
+    "REPLY LENGTH — BINDING RULE for this session (this is a hard constraint, "
+    "not a stylistic preference): default to the SHORTEST reply that fully "
+    "answers. Lead with the answer in the first sentence. Hard ceiling: ~4 "
+    "sentences of prose per reply (more only if the user explicitly asks for "
+    "detail). No preamble, no restating the question, no recap of what you just "
+    "did, no closing offers. Use bullets ONLY to enumerate 3+ discrete items, "
+    "never to pad. Before sending, re-read your draft and delete every sentence "
+    "that is not load-bearing to the answer. "
+    "This caps PROSE ONLY — never shorten or omit necessary code, file edits, "
+    "tool calls, or actual findings. 'Complete and fully analyzed' refers to "
+    "SUBSTANCE, not word count: a correct answer in two sentences outranks a "
+    "thorough-sounding one in ten. When in doubt, cut."
 )
 
 
