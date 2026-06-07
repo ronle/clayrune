@@ -251,6 +251,11 @@ def _load_config():
         'distiller_window_days': 30,
         'distiller_cost_cap_tokens_per_project_per_day': 100000,
         'distiller_proposal_dedupe_days': 7,
+        # Preferences carry content + are human-gated at promotion, so they
+        # generate on first observation (recurrence 1) instead of waiting for
+        # the 3x topic/skill threshold that structurally never fires for
+        # single-task sessions. Recurrence becomes a ranking signal, not a gate.
+        'distiller_preference_min_recurrence': 1,
         'distiller_cross_project_walk_debounce_session_count': 5,
         'distiller_cross_project_walk_debounce_seconds': 600,
         'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor

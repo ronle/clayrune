@@ -858,6 +858,14 @@ def _aggregate_per_project(project_id: str, project: dict,
     """
     candidates = []
     min_rec = int(_pcfg(project, 'distiller_min_recurrence', 3))
+    # Preferences carry real content (summary + evidence_quote) and are valuable
+    # the first time they're observed — a stated preference is knowledge now, not
+    # a statistical pattern needing 3× confirmation. They default to recurrence 1
+    # (like explorations); recurrence is a confidence/ranking signal, and the
+    # human promotion step is the quality gate (the locked learning definition's
+    # relaxed-feedback principle). Topic->skill stays gated: bare topic phrases
+    # carry no procedure, so generating skills from them only yields REFUSEs.
+    pref_min_rec = int(_pcfg(project, 'distiller_preference_min_recurrence', 1))
     window_days = int(_cfg('distiller_window_days', 30))
     dedupe_days = int(_cfg('distiller_proposal_dedupe_days', 7))
     new_fingerprints = {(s['exact'], s['coarse'], s['kind'])
@@ -881,7 +889,8 @@ def _aggregate_per_project(project_id: str, project: dict,
                 kind=kind, exact=exact, coarse=coarse,
                 kind_exact=kind_exact, kind_coarse=kind_coarse,
                 suppressions=suppressions, outbox=outbox,
-                min_rec=min_rec, dedupe_days=dedupe_days,
+                min_rec=min_rec, pref_min_rec=pref_min_rec,
+                dedupe_days=dedupe_days,
                 window_signals=window_signals,
                 new_signals=new_signals,
             )
@@ -895,7 +904,8 @@ def _evaluate_candidate(*, kind: str, exact: str, coarse: str,
                         suppressions: dict, outbox: dict,
                         min_rec: int, dedupe_days: int,
                         window_signals: list[dict],
-                        new_signals: list[dict]) -> dict | None:
+                        new_signals: list[dict],
+                        pref_min_rec: int = 1) -> dict | None:
     """One candidate decision. Returns None if NOT a candidate (gated)."""
     # Suppression check
     supp_key = f"{exact}:{kind}"
@@ -922,12 +932,14 @@ def _evaluate_candidate(*, kind: str, exact: str, coarse: str,
             'evidence_signals': evid,
             'recurrence_exact': 1, 'recurrence_coarse': 1,
         }
-    # Skill / preference: dual-layer recurrence check
+    # Skill / preference: dual-layer recurrence check. Preferences use their own
+    # (lower, default 1) threshold — they're content-rich and human-gated.
+    eff_min = pref_min_rec if kind == 'preference' else min_rec
     exact_sids = kind_exact.get((kind, exact), set())
     coarse_sids = kind_coarse.get((kind, coarse), set())
     exact_count = len(exact_sids)
     coarse_count = len(coarse_sids)
-    if exact_count < min_rec and coarse_count < (min_rec + 1):
+    if exact_count < eff_min and coarse_count < (eff_min + 1):
         # Honor Later: bump wait_until_recurrence comparison
         if supp and supp.get('decision') == 'later':
             wait = int(supp.get('wait_until_recurrence', 0))
