@@ -238,7 +238,7 @@ def _load_config():
         # respawns it with `-r <csid>` (full context preserved). Default OFF;
         # enable after validation, same posture as scribe_checkpoint. [2026-06-03]
         'idle_eviction_enabled': False,
-        'idle_eviction_minutes': 30,    # idle minutes before a warm session is evicted
+        'idle_eviction_minutes': 60,    # idle minutes before a warm session is evicted
         # Phase 4 Distiller (v2.1 §11 global keys).
         # Self-learning observer parallel to Scribe — extracts cross-session
         # patterns into _proposed/ for human review. Best-effort, never load-
@@ -13410,7 +13410,7 @@ def _scheduler_loop():
 
         # ── Purge stale sessions from memory ──────────────────────────────
         try:
-            cutoff = now - timedelta(minutes=30)
+            cutoff = now - timedelta(minutes=60)
             total_stale = 0
             for mgr in all_managers():
                 with mgr.lock:
@@ -14000,13 +14000,13 @@ def _guardian_check_session(sid, session, now):
     # flagging it 'error'; it is cleared on respawn. Default OFF.
     if _should_evict_idle_session(session, now,
                                   CONFIG.get('idle_eviction_enabled', False),
-                                  CONFIG.get('idle_eviction_minutes', 30)):
+                                  CONFIG.get('idle_eviction_minutes', 60)):
         proc_to_kill = None
         with get_manager(session['project_id']).lock:
             # Re-check under lock — status/proc may have changed since the snapshot.
             if _should_evict_idle_session(session, now,
                                           CONFIG.get('idle_eviction_enabled', False),
-                                          CONFIG.get('idle_eviction_minutes', 30)):
+                                          CONFIG.get('idle_eviction_minutes', 60)):
                 idle_min = (now - session.get('last_output_time', now)) / 60
                 session['evicted'] = True
                 session['process_alive'] = False

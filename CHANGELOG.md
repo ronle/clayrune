@@ -4,6 +4,22 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-06b] — Session-lifecycle timers doubled: 30 min → 60 min
+
+Both 30-minute session-lifecycle timers are now 60 minutes, so warm sessions
+and their chat tabs survive twice as long before MC reclaims them.
+
+- **Idle-eviction** (`idle_eviction_minutes`): a warm Mode B fleet (claude.exe +
+  its MCP-server tree) is now torn down after **60 min** of inactivity instead
+  of 30; the next message still transparently respawns it with `-r <csid>` (full
+  context preserved). Live-editable via `/api/config` (no restart) — already
+  pushed to the running server, and the in-code default + guardian fallbacks bumped
+  to 60 to match.
+- **Stale-session purge** (the scheduler's "Purge stale sessions from memory"
+  sweep): non-running sessions are dropped from the in-memory `agent_sessions`
+  map after **60 min** instead of 30 (hardcoded `timedelta`). **Takes effect on
+  next restart.**
+
 ## [2026-06-06] — Three user-reported fixes: LAN passcode gate, Dashboard = minimize all, Settings opens higher
 
 Three pieces of user feedback, smallest to largest.
