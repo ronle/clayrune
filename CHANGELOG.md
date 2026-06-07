@@ -20,7 +20,7 @@ and their chat tabs survive twice as long before MC reclaims them.
   map after **60 min** instead of 30 (hardcoded `timedelta`). **Takes effect on
   next restart.**
 
-## [2026-06-06] — Three user-reported fixes: LAN passcode gate, Dashboard = minimize all, Settings opens higher
+## [2026-06-06] — Three user-reported fixes: LAN passcode gate, Dashboard = minimize all, Settings anchors to its sidebar item
 
 Three pieces of user feedback, smallest to largest.
 
@@ -30,11 +30,14 @@ no-op on desktop. Clicking it now minimizes every open chat/modal to the tray
 giving you a clean board. Mobile is unchanged (there "Home" still closes modals
 back to the project grid).
 
-**2. The Settings panel opens higher.** It rendered its body async ("Loading…"
-first, then grew), so dead-center — measured against the short loading state —
-left it sitting low and running off the bottom once filled. It now seats near
-the top (~10% of viewport height) so the tall panel stays fully on-screen.
-Desktop only; mobile Settings is full-screen.
+**2. The Settings panel opens next to its sidebar item.** It used to float
+dead-center (and, because it's measured against its short "Loading…" state
+before the body renders, sat low and ran off the bottom once filled). It now
+anchors just to the right of the sidebar **Settings** item it launched from,
+aligned with it, clamped to stay fully on-screen — and re-anchors after the
+async render once the true height is known. Works whether the sidebar is
+hover-expanded (sidebar click) or collapsed (command palette), since it reads
+the item's live rect. Desktop only; mobile Settings is full-screen.
 
 **3. Direct LAN access now requires a passcode (the security gap).** The
 dashboard binds `0.0.0.0:PORT`, so any device on the same Wi-Fi could open

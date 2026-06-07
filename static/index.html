@@ -6565,6 +6565,33 @@ function centerModalElement(win) {
   win.style.top = Math.max(0, (window.innerHeight - h) / 2 + offset) + 'px';
 }
 
+// Anchor the Settings panel beside the sidebar "Settings" item it launched
+// from (rather than dead-center). Uses the item's live rect, so it works
+// whether the sidebar is hover-expanded (click) or collapsed (command palette).
+// Clamped to stay fully on-screen. Mobile keeps the full-screen 0,0 layout.
+function _positionSettingsModal(win) {
+  if (_isMobileDevice || window.innerWidth <= 960) {
+    win.style.left = '0px';
+    win.style.top = '0px';
+    return;
+  }
+  const item = document.querySelector('.sidebar-item[data-nav="settings"]');
+  if (!item) { centerModalElement(win); return; }   // fallback: shouldn't happen on desktop
+  const rect = item.getBoundingClientRect();
+  const margin = 12;
+  const w = win.offsetWidth || 480;
+  const h = win.offsetHeight || Math.round(window.innerHeight * 0.6);
+  // Just to the right of the item, aligned with its top…
+  let left = rect.right + margin;
+  let top = rect.top;
+  // …then clamped so the whole panel stays on-screen (against its current
+  // height — re-run after the async render when the real height is known).
+  left = Math.max(margin, Math.min(left, window.innerWidth - w - margin));
+  top = Math.max(margin, Math.min(top, window.innerHeight - h - margin));
+  win.style.left = left + 'px';
+  win.style.top = top + 'px';
+}
+
 function focusModal(modalId) {
   const entry = openModals.get(modalId);
   if (!entry || entry.minimized) return;
@@ -17366,14 +17393,9 @@ async function openSettings() {
   const z = nextModalZ++;
   win.style.zIndex = z;
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
-  centerModalElement(win);
-  // The Settings panel renders its body async (it shows "Loading…" first, then
-  // grows), so dead-center — measured against the short loading state — left it
-  // sitting low and running off the bottom once filled. Seat it near the top so
-  // the tall panel stays fully on-screen. Desktop only; mobile is full-screen.
-  if (!(_isMobileDevice || window.innerWidth <= 960)) {
-    win.style.top = Math.max(16, Math.round(window.innerHeight * 0.1)) + 'px';
-  }
+  // Open the panel right next to the sidebar "Settings" item it was launched
+  // from, instead of floating in the middle of the screen.
+  _positionSettingsModal(win);
   focusModal(modalId);
 
   // Mobile hardware-back support: this sentinel makes back close the settings
@@ -17382,6 +17404,10 @@ async function openSettings() {
   mcPushSettingsHistory();
 
   await _renderSettings();
+  // Re-anchor now that the body has rendered and its true height is known, so a
+  // tall panel is clamped to stay fully on-screen (the first pass measured the
+  // short "Loading…" state).
+  _positionSettingsModal(win);
 }
 
 async function _renderSettings() {
