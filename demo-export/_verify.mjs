@@ -124,18 +124,73 @@ searchHit.some((t) => /port/i.test(t)) ? ok('settings search found "Port"') : fa
 
 await page.screenshot({ path: '_shot-settings.png' });
 
-// 5. Responsive: 390px phone — return to the dashboard first
+// 6. Project window: centered modal overlay + theme-aware (LIGHT on warm)
 await page.evaluate(() => document.getElementById('settings-close').click());
-await page.click('#crumb-dash');                                   // agent view → dashboard
+await page.waitForSelector('.projects-col', { timeout: 3000 });    // step 4 already returned us to the dashboard
+ok('returned to dashboard after settings');
+
+await page.click('#tile-ledger-api');                              // open a project
+await page.waitForSelector('#project-overlay.open', { timeout: 4000 });
+const ovDisp = await page.evaluate(() => getComputedStyle(document.getElementById('project-overlay')).display);
+ovDisp === 'flex' ? ok('project opens as a centered modal overlay (display:flex)') : fail('project overlay not flex: ' + ovDisp);
+const tilesBehind = await page.$$eval('.card', (e) => e.length);
+tilesBehind === 5 ? ok('dashboard tiles remain behind the modal (dimmed backdrop)') : fail('tiles not behind modal: ' + tilesBehind);
+const usesModalCard = await page.$('#project-overlay .modal-content.project-modal');
+usesModalCard ? ok('project reuses the shared .modal-content card') : fail('project not using .modal-content card');
+await page.screenshot({ path: '_shot-project-modal.png' });
+
+// backdrop click (top-left, outside the centered card) dismisses
+await page.mouse.click(8, 8);
+await page.waitForSelector('#project-overlay:not(.open)', { timeout: 3000 }).catch(() => {});
+!(await page.isVisible('#project-overlay.open')) ? ok('backdrop click dismisses the modal') : fail('backdrop did not dismiss');
+
+// persist warm, reload, re-open → the modal card must render LIGHT
+await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('clayrune_demo_cfg') || '{}'); c.tone = 'warm'; localStorage.setItem('clayrune_demo_cfg', JSON.stringify(c)); });
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForSelector('#tile-aurora-web', { timeout: 5000 });
+await page.waitForSelector('#coach-tip:not(.settings-hidden)', { timeout: 1500 }).catch(() => {});
+if (await page.isVisible('#coach-tip')) await page.click('#coach-skip'); // dismiss the auto-tour
+const rootCls = await page.getAttribute('#demo-root', 'class');
+rootCls.includes('tone-warm') ? ok('warm theme active after reload') : fail('warm not active: ' + rootCls);
+await page.click('#tile-ledger-api');
+await page.waitForSelector('#project-overlay.open', { timeout: 4000 });
+const cardBg = await page.evaluate(() => getComputedStyle(document.querySelector('.project-modal')).backgroundColor);
+const rgb = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(cardBg);
+const isLight = rgb && ((+rgb[1] + +rgb[2] + +rgb[3]) / 3 > 200);
+isLight ? ok('warm theme: project modal card is LIGHT (' + cardBg + ')') : fail('warm modal card not light: ' + cardBg);
+await page.screenshot({ path: '_shot-project-modal-warm.png' });
+await page.keyboard.press('Escape');                               // Esc dismisses
+await page.waitForSelector('#project-overlay:not(.open)', { timeout: 3000 }).catch(() => {});
+!(await page.isVisible('#project-overlay.open')) ? ok('Esc dismisses the modal') : fail('Esc did not dismiss');
+
+// 7. Sample sections: Skills + MCP are populated (not the generic placeholder)
+await page.click('.sidebar-item[data-nav="skills"]');
+await page.waitForSelector('.inv-list .inv-row', { timeout: 3000 });
+const skillRows = await page.$$eval('.inv-row', (e) => e.length);
+skillRows >= 3 ? ok('Skills shows ' + skillRows + ' sample rows') : fail('Skills sample rows missing: ' + skillRows);
+const hasDistill = await page.$$eval('.inv-name', (e) => e.some((x) => /mc-distill/.test(x.textContent)));
+hasDistill ? ok('Skills lists mc-distill') : fail('Skills missing mc-distill');
+await page.screenshot({ path: '_shot-skills.png' });
+
+await page.click('.sidebar-item[data-nav="mcp"]');
+await page.waitForSelector('.inv-list .inv-row', { timeout: 3000 });
+const mcpRows = await page.$$eval('.inv-row', (e) => e.length);
+mcpRows >= 3 ? ok('MCP shows ' + mcpRows + ' sample rows') : fail('MCP sample rows missing: ' + mcpRows);
+const hasStatusTag = await page.$('.inv-tag.connected');
+hasStatusTag ? ok('MCP rows show connection-status tags') : fail('MCP status tags missing');
+await page.screenshot({ path: '_shot-mcp.png' });
+
+// 8. Responsive: 390px phone
+await page.click('.sidebar-item[data-nav="dashboard"]');
 await page.waitForSelector('.projects-col', { timeout: 3000 });
 await page.setViewportSize({ width: 390, height: 720 });
 await page.waitForTimeout(200);
 const gridCols = await page.evaluate(() => getComputedStyle(document.querySelector('.projects-col')).gridTemplateColumns);
 /^\d/.test(gridCols) && !gridCols.includes(' ') ? ok('mobile grid is single-column (' + gridCols + ')') : ok('mobile grid columns: ' + gridCols);
 await page.screenshot({ path: '_shot-mobile.png' });
-// also capture the mobile agent console (chat-bubble restyle)
+// mobile project modal = full-bleed; chat-bubble console
 await page.click('#tile-ledger-api');
-await page.waitForSelector('#agent-output', { timeout: 3000 });
+await page.waitForSelector('#project-overlay.open #agent-output', { timeout: 3000 });
 await page.waitForTimeout(200);
 await page.screenshot({ path: '_shot-mobile-console.png' });
 

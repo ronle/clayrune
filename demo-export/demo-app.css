@@ -494,6 +494,61 @@ body {
 #settings-body::-webkit-scrollbar { width: 6px; }
 #settings-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 
+/* ── PROJECT WINDOW ─────────────────────────────────────────────────────────
+   A project opens as a centered floating modal over a dimmed dashboard —
+   identical backdrop + centering to the Settings modal, so it inherits the
+   ACTIVE theme exactly (warm → light card / dark text, dark → dark card). It
+   reuses the shared .modal-content / .modal-header / .modal-close chrome, just
+   like the real app's project modal. */
+.project-overlay {
+  position: absolute; inset: 0; z-index: 900;
+  background: rgba(8,10,16,0.5);
+  display: none; align-items: center; justify-content: center; padding: 24px;
+}
+.project-overlay.open { display: flex; }
+.project-modal { width: 760px; max-width: 100%; height: 88%; max-height: 100%; }
+.pm-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pm-title .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-window-controls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.modal-minimize {
+  width: 32px; height: 32px; border-radius: 6px;
+  background: var(--surface3); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: 16px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.modal-minimize:hover { background: var(--amber-dim); color: var(--amber-text); border-color: var(--amber); }
+.project-modal-body { flex: 1; min-height: 0; display: flex; overflow: hidden; padding: 14px 16px 16px; }
+.project-modal-body .agent-view { flex: 1; min-width: 0; }
+
+/* ── INVENTORY LISTS (Skills / MCP sample sections) ─────────────────────────
+   Simple themed rows (vars only → follow the active theme like everything else). */
+.inv-list { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+.inv-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 14px;
+}
+.inv-ico {
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface3); font-size: 18px; line-height: 1;
+}
+.inv-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
+.inv-name { font-size: 13px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); }
+.inv-desc { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-tag {
+  font-size: 10px; padding: 2px 7px; border-radius: 999px; font-weight: 700;
+  letter-spacing: 0.3px; text-transform: uppercase; white-space: nowrap;
+  background: var(--surface3); color: var(--text-dim); font-family: var(--font-ui);
+}
+.inv-tag.global    { background: var(--accent-dim); color: var(--accent); }
+.inv-tag.project   { background: var(--purple-dim); color: var(--purple-text); }
+.inv-tag.connected { background: var(--green-dim);  color: var(--green-text); }
+.inv-tag.idle      { background: var(--surface3);   color: var(--text-dim); }
+.inv-meta { font-size: 11px; color: var(--text-faint); white-space: nowrap; margin-left: auto; font-family: var(--font-mono); flex-shrink: 0; }
+.inv-note { font-size: 12px; color: var(--text-faint); line-height: 1.5; margin: 2px 0 14px; max-width: 760px; }
+.inv-note b { color: var(--text-dim); font-weight: 600; }
+
 /* Settings drill-down (verbatim) */
 .settings-search-wrap { position: relative; margin: 2px 0 16px; }
 #settings-body[data-view="detail"] .settings-search-wrap,
@@ -525,6 +580,7 @@ body {
 .settings-list-row:hover { background: var(--surface2); }
 .settings-list-row + .settings-list-row::before { content: ''; position: absolute; top: 0; left: 54px; right: 0; border-top: 1px solid var(--border); }
 .settings-list-ico { width: 24px; height: 24px; flex-shrink: 0; color: var(--text); display: flex; align-items: center; justify-content: center; font-size: 19px; }
+.settings-list-ico svg { width: 23px; height: 23px; opacity: .92; }
 .settings-list-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .settings-list-title { font-size: 15px; color: var(--text); font-weight: 500; }
 .settings-list-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -577,10 +633,17 @@ body {
   pointer-events: none; display: none;
 }
 .coach-backdrop.active { display: block; }
+/* Four dim panels (positioned in JS) dim everything EXCEPT the spotlight and
+   the top header strip — so the header bar never washes out during the tour. */
+.coach-dim {
+  position: absolute; background: rgba(8,10,16,0.5);
+  pointer-events: none;
+  transition: opacity 0.2s ease, left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
 .coach-spot {
   position: absolute; border-radius: 10px;
-  box-shadow: 0 0 0 9999px rgba(8,10,16,0.62), 0 0 0 2px var(--accent);
-  transition: all 0.25s ease; pointer-events: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px 2px rgba(91,158,245,0.35);
+  transition: all 0.2s ease; pointer-events: none;
 }
 .coach-tip {
   position: absolute; z-index: 1600;
@@ -635,6 +698,13 @@ body {
   .content-main { padding: 12px 12px; }
   .demo-tag .dt-label { display: none; }     /* icon-only on phones to save header room */
   .header-right { gap: 8px; }
+  /* Project modal goes full-bleed on phones (mirrors the real app's coarse-pointer rule) */
+  .project-overlay { padding: 0; }
+  .project-modal { width: 100%; height: 100%; max-height: 100%; border-radius: 0; border: none; }
+  .project-modal-body { padding: 10px 10px 12px; }
+  /* Inventory rows wrap + let the description breathe */
+  .inv-desc { white-space: normal; }
+  .inv-meta { margin-left: 0; }
   /* Mobile console = chat bubbles (verbatim restyle of the same DOM) */
   .agent-output {
     display: flex; flex-direction: column; gap: 6px;

@@ -9,7 +9,7 @@ the real Settings panel — with **no backend, no network, and no real data**.
 
 | File | Purpose |
 |------|---------|
-| `demo-app.html` | Markup shell — sidebar, header, content mount, settings modal, coach-mark layer. No inline scripts, no inline event handlers. |
+| `demo-app.html` | Markup shell — sidebar, header, content mount, project-window + settings modals, coach-mark layer. No inline scripts, no inline event handlers. |
 | `demo-app.css`  | Styling extracted verbatim from the real dashboard (`static/index.html`) and re-scoped from the viewport onto a bounded `.demo-root` frame. Dark theme is the default; warm/editorial light themes + 6 accents included. |
 | `demo-app.js`   | The whole simulation: fake data, dashboard, agent console + streaming, plan→approve flow, the WhatsApp-style Settings drill-down, and the guided coach-mark tour. Vanilla JS, zero dependencies. |
 
@@ -66,7 +66,9 @@ A guided, 5-step coach-mark tour starts automatically (replay it anytime via the
 amber **Demo** chip or the **?** button in the header). Each step advances on the
 **real user action** — the “Next” button just performs that action for you:
 
-1. **Your projects** — spotlight on the *Aurora Web* tile → open it.
+1. **Your projects** — spotlight on the *Aurora Web* tile → open it. A project
+   opens as a **centered floating window over the dimmed dashboard** (same
+   theme-aware modal as the real app — light on the warm/editorial themes).
 2. **Dispatch a task** — the composer is pre-filled with *“Add a dark-mode
    toggle to my site.”* → **Dispatch**.
 3. The agent **streams a plan** (real `formatAgentText` markup: headers, bold,
@@ -101,9 +103,12 @@ nothing dead-ends.
   **Port**, **Auto-condense** + threshold, and the **Advanced features**
   checkboxes. Live search across all of them works. Provider/Connectivity panels
   are present but their actions are no-ops (“Disabled in demo”).
-- **Sections** like Skills / MCP / Backlog / Hivemind / Scheduler show a short
-  “part of the full app” placeholder — the demo intentionally focuses on running
-  an agent and on Settings.
+- **Skills** and **MCP** show sample inventories — simulated skills (with
+  global/project scope tags + enable toggles) and MCP servers (with transport
+  type + connection status). Sample data only; the rows wire to nothing.
+  **Backlog / Hivemind / Scheduler** still show a short “part of the full app”
+  placeholder — the demo focuses on running an agent, Settings, and these
+  two surfaces.
 
 ## Fidelity notes
 

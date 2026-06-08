@@ -71,6 +71,9 @@
       </div>
     </div>
 
+    <!-- ── Project floating window mount (opens over the dashboard) ─────── -->
+    <div class="project-overlay" id="project-overlay"></div>
+
     <!-- ── Settings modal mount ─────────────────────────────────────────── -->
     <div class="modal-overlay" id="settings-overlay">
       <div class="modal-content mc-settings-modal">
@@ -85,8 +88,12 @@
       </div>
     </div>
 
-    <!-- ── Coach-mark layer ─────────────────────────────────────────────── -->
+    <!-- ── Coach-mark layer (4 dim panels leave the header strip crisp) ──── -->
     <div class="coach-backdrop" id="coach-backdrop">
+      <div class="coach-dim" id="cd-top"></div>
+      <div class="coach-dim" id="cd-bottom"></div>
+      <div class="coach-dim" id="cd-left"></div>
+      <div class="coach-dim" id="cd-right"></div>
       <div class="coach-spot" id="coach-spot"></div>
     </div>
     <div class="coach-tip settings-hidden" id="coach-tip">
