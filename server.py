@@ -12497,18 +12497,43 @@ def _install_builtin_mcps():
 # transports supported: stdio (local subprocess), http (streamable HTTP),
 # sse (legacy HTTP+SSE). See mcp.py for the schema details.
 
+# Servers force-kept in any custom per-project loadout — dropping them would
+# silently break a load-bearing capability. `engram` = cross-session memory;
+# losing it kills the whole memory system for that project (see CLAUDE.md).
+_MCP_ALWAYS_KEEP = ('engram',)
+
+
 @app.route('/api/mcp')
 def list_mcp_route():
-    """List MCP servers across global pool + (optionally) one project's pool."""
+    """List MCP servers across global pool + (optionally) one project's pool.
+
+    When `project_id` is given, each item is annotated with `active` (is it in
+    the project's enabled_mcp_servers loadout?), `loadout_custom` (has the
+    project opted into trimming at all?), and `always_on` (force-kept server).
+    No opt-in → every server is active (full fleet, unchanged default).
+    """
     project_id = request.args.get('project_id')
 
+    project = None
     project_path = None
     if project_id:
         p = load_project(project_id)
         if p:
+            project = p
             project_path = p.get('project_path') or None
 
     items = _mcp.list_servers(project_path=project_path, project_id=project_id)
+
+    if project is not None:
+        sel = project.get('enabled_mcp_servers')
+        opted_in = isinstance(sel, list)
+        sel_set = set(sel) if opted_in else None
+        for it in items:
+            name = it.get('name')
+            it['always_on'] = name in _MCP_ALWAYS_KEEP
+            it['loadout_custom'] = opted_in
+            it['active'] = (sel_set is None) or (name in sel_set) or it['always_on']
+
     return jsonify(items)
 
 
@@ -12609,6 +12634,72 @@ def delete_mcp_route(scope, name):
         return jsonify({'error': str(e)}), 404
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+
+
+# ── Per-project MCP loadout (the enabled_mcp_servers trim) ───────────────────
+#
+# WRITE/READ surface for project['enabled_mcp_servers'], which the dispatch
+# trim (_resolve_project_mcp_config → --strict-mcp-config) consumes:
+#   absent/None → full fleet (default; unchanged for projects that never opted
+#                 in — this is why 0 projects were trimmed before this shipped).
+#   list        → load ONLY those servers for this project's agents.
+# A custom loadout always force-keeps _MCP_ALWAYS_KEEP (engram/memory).
+
+@app.route('/api/project/<project_id>/mcp-enabled', methods=['GET'])
+def get_project_mcp_enabled(project_id):
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    sel = p.get('enabled_mcp_servers')
+    opted_in = isinstance(sel, list)
+    try:
+        catalog = sorted(_mcp_server_catalog(p).keys())
+    except Exception:
+        catalog = []
+    return jsonify({
+        'opted_in': opted_in,
+        'enabled': sel if opted_in else None,
+        'catalog': catalog,
+        'always_keep': list(_MCP_ALWAYS_KEEP),
+    })
+
+
+@app.route('/api/project/<project_id>/mcp-enabled', methods=['PUT'])
+def set_project_mcp_enabled(project_id):
+    """Set (or clear) a project's MCP loadout.
+
+    Body: {"enabled": [names]}  → trim to these (engram force-kept).
+          {"enabled": null}     → clear the opt-in (back to full fleet).
+    """
+    filepath = DATA_DIR / f'{project_id}.json'
+    if not filepath.exists():
+        return jsonify({'error': 'project not found'}), 404
+    data = request.get_json(silent=True) or {}
+    enabled = data.get('enabled', None)
+    existing = json.loads(filepath.read_text(encoding='utf-8'))
+
+    if enabled is None:
+        existing.pop('enabled_mcp_servers', None)
+        existing['last_updated'] = now_iso()
+        save_project(project_id, existing)
+        return jsonify({'ok': True, 'opted_in': False, 'enabled': None})
+
+    if not isinstance(enabled, list) or not all(isinstance(x, str) for x in enabled):
+        return jsonify({'error': 'enabled must be a list of server names or null'}), 400
+
+    try:
+        catalog = set(_mcp_server_catalog(existing).keys())
+    except Exception:
+        catalog = set(enabled)
+    chosen = [n for n in dict.fromkeys(enabled) if n in catalog]
+    for keep in _MCP_ALWAYS_KEEP:
+        if keep in catalog and keep not in chosen:
+            chosen.append(keep)
+
+    existing['enabled_mcp_servers'] = chosen
+    existing['last_updated'] = now_iso()
+    save_project(project_id, existing)
+    return jsonify({'ok': True, 'opted_in': True, 'enabled': chosen})
 
 
 # ── MCP "Add from URL" — preview / install / cleanup ────────────────────────
