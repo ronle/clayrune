@@ -163,22 +163,57 @@ await page.keyboard.press('Escape');                               // Esc dismis
 await page.waitForSelector('#project-overlay:not(.open)', { timeout: 3000 }).catch(() => {});
 !(await page.isVisible('#project-overlay.open')) ? ok('Esc dismisses the modal') : fail('Esc did not dismiss');
 
-// 7. Sample sections: Skills + MCP are populated (not the generic placeholder)
+// 7. Sample sections: Skills + MCP — faithful list rows (name + scope/transport
+//    badges, command/description, path · mtime) with a working filter bar.
 await page.click('.sidebar-item[data-nav="skills"]');
-await page.waitForSelector('.inv-list .inv-row', { timeout: 3000 });
-const skillRows = await page.$$eval('.inv-row', (e) => e.length);
-skillRows >= 3 ? ok('Skills shows ' + skillRows + ' sample rows') : fail('Skills sample rows missing: ' + skillRows);
+await page.waitForSelector('.inv-group .inv-row', { timeout: 3000 });
+const skillRows = await page.$$eval('.inv-group .inv-row', (e) => e.length);
+skillRows >= 4 ? ok('Skills shows ' + skillRows + ' sample rows') : fail('Skills sample rows missing: ' + skillRows);
 const hasDistill = await page.$$eval('.inv-name', (e) => e.some((x) => /mc-distill/.test(x.textContent)));
 hasDistill ? ok('Skills lists mc-distill') : fail('Skills missing mc-distill');
+const hasScopeBadges = (await page.$('.inv-badge.global')) && (await page.$('.inv-badge.project'));
+hasScopeBadges ? ok('Skills rows show global + project scope badges') : fail('Skills scope badges missing');
+const hasSkillPath = await page.$$eval('.inv-path', (e) => e.some((x) => /SKILL\.md/.test(x.textContent)));
+hasSkillPath ? ok('Skills rows show config path · mtime') : fail('Skills path/mtime missing');
+await page.fill('#inv-search', 'engulfing');                       // live search filter
+await page.waitForTimeout(120);
+const filtered = await page.$$eval('.inv-group .inv-row', (e) => e.length);
+filtered === 1 ? ok('Skills search filters to 1 matching row') : fail('Skills search filter broken: ' + filtered);
+await page.fill('#inv-search', '');
 await page.screenshot({ path: '_shot-skills.png' });
 
 await page.click('.sidebar-item[data-nav="mcp"]');
-await page.waitForSelector('.inv-list .inv-row', { timeout: 3000 });
-const mcpRows = await page.$$eval('.inv-row', (e) => e.length);
-mcpRows >= 3 ? ok('MCP shows ' + mcpRows + ' sample rows') : fail('MCP sample rows missing: ' + mcpRows);
-const hasStatusTag = await page.$('.inv-tag.connected');
-hasStatusTag ? ok('MCP rows show connection-status tags') : fail('MCP status tags missing');
+await page.waitForSelector('.inv-group .inv-row', { timeout: 3000 });
+const mcpRows = await page.$$eval('.inv-group .inv-row', (e) => e.length);
+mcpRows >= 4 ? ok('MCP shows ' + mcpRows + ' sample rows') : fail('MCP sample rows missing: ' + mcpRows);
+const hasTransport = await page.$('.inv-badge.transport');
+hasTransport ? ok('MCP rows show transport badges') : fail('MCP transport badges missing');
+const hasCmd = await page.$$eval('.inv-preview', (e) => e.some((x) => /npx -y @modelcontextprotocol/.test(x.textContent)));
+hasCmd ? ok('MCP rows show the server command') : fail('MCP command preview missing');
+const hasMemLock = await page.$$eval('.inv-tiny.locked', (e) => e.some((x) => /memory/.test(x.textContent)));
+hasMemLock ? ok('MCP engram row shows the locked "✓ memory" control') : fail('MCP always-on lock missing');
+await page.selectOption('#inv-scope', 'global');                   // scope filter
+await page.waitForTimeout(120);
+const noProjectRows = await page.$$eval('.inv-group .inv-badge', (e) => e.every((x) => !/project:/.test(x.textContent)));
+noProjectRows ? ok('MCP scope filter → "Global only" hides project rows') : fail('MCP scope filter broken');
+await page.selectOption('#inv-scope', 'all');
 await page.screenshot({ path: '_shot-mcp.png' });
+
+// 7b. Appearance now has the Background section (Theme/Color/Image), like the real app
+await page.click('.sidebar-item[data-nav="settings"]');
+await page.waitForSelector('#settings-overlay.open', { timeout: 3000 });
+await page.waitForTimeout(150);
+if (await page.isVisible('#coach-tip')) await page.click('#coach-skip');
+await page.click('[data-drill="appearance"]');
+await page.waitForSelector('[data-sub]', { timeout: 3000 });
+const apSubs = await page.$$eval('.settings-sub-title', (e) => e.map((x) => x.textContent));
+apSubs.includes('Background') ? ok('Appearance includes a Background section') : fail('Appearance Background missing: ' + JSON.stringify(apSubs));
+await page.click(`[data-sub="${apSubs.indexOf('Background')}"]`);
+await page.waitForSelector('[data-seg="bg"]', { timeout: 3000 });
+await page.click('[data-seg="bg"] button[data-val="color"]');
+await page.waitForSelector('input[data-bgcolor]', { timeout: 3000 });
+ok('Appearance → Background → Color reveals the color picker');
+await page.evaluate(() => document.getElementById('settings-close').click());
 
 // 8. Responsive: 390px phone
 await page.click('.sidebar-item[data-nav="dashboard"]');

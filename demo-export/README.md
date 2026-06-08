@@ -97,15 +97,18 @@ nothing dead-ends.
 - **Settings are real and interactive**, persisted to `localStorage` under the
   `clayrune_demo_*` namespace (never to a server). Interactively changeable:
   **Theme** (Dark / Warm / Editorial), **Accent** (6 options), **Density**,
-  **Writing style**, **Model** (Auto / Opus 4.8 / Sonnet 4.6 / Haiku 4.5 —
+  **Writing style**, **Background** (Theme / solid Color — applied live),
+  **Model** (Auto / Opus 4.8 / Sonnet 4.6 / Haiku 4.5 —
   reflected live in the console’s model badge), **Effort**, **Permissions**,
   **Streaming (Mode B)** toggle, **Sticky settings**, **Enter-key** behavior,
   **Port**, **Auto-condense** + threshold, and the **Advanced features**
   checkboxes. Live search across all of them works. Provider/Connectivity panels
   are present but their actions are no-ops (“Disabled in demo”).
-- **Skills** and **MCP** show sample inventories — simulated skills (with
-  global/project scope tags + enable toggles) and MCP servers (with transport
-  type + connection status). Sample data only; the rows wire to nothing.
+- **Skills** and **MCP** show sample inventories rebuilt to match the real
+  app's list rows: each row is **name + scope badge** (`global` / `project: …`)
+  **+ transport** (MCP), then the **command / description**, then the config
+  **path · timestamp**, under a working **search + scope filter** bar. Sample
+  data only — Edit / Delete / “＋ New” say “Disabled in demo.”
   **Backlog / Hivemind / Scheduler** still show a short “part of the full app”
   placeholder — the demo focuses on running an agent, Settings, and these
   two surfaces.
