@@ -247,6 +247,15 @@
   body[data-accent="ink"]     { --accent: #6b7286; --accent-dim: #2a2f3f; --accent-soft: #474e62; }
   /* default accent = blue, handled by :root */
 
+  /* ─── Appearance: custom dashboard background scrim (theme-aware) ──────────
+     When a user sets a custom background image, applyDashboardBackground()
+     lays a translucent scrim of the THEME's base color over it so text on
+     transparent surfaces stays legible. --scrim-rgb is the theme bg as an
+     "r, g, b" triple consumed via rgba(var(--scrim-rgb), <alpha>). */
+  :root               { --scrim-rgb: 12, 14, 20; }
+  body.tone-warm      { --scrim-rgb: 246, 240, 228; }
+  body.tone-editorial { --scrim-rgb: 250, 249, 246; }
+
   /* ─── Appearance: Warm tone (light, cream, rounded) ───────────────────── */
   body.tone-warm {
     --bg:          #f6f0e4;
@@ -9159,8 +9168,116 @@ function _applyAppearanceOnInit() {
   } else {
     applyVoiceLabel();
   }
+  applyDashboardBackground();
 }
 _applyAppearanceOnInit();
+
+// ── Custom dashboard background (per-device, localStorage) ──────────────────
+// Same posture as tone/accent above: a per-browser appearance preference applied
+// to <body>. The dashboard's empty space is body's var(--bg) showing through the
+// transparent .main-area/.content-area/.content-main; sidebar/header/cards keep
+// their solid var(--surface), so overriding body's background is the clean hook.
+//   mode 'default' → theme var(--bg);  'color' → solid;  'image' → stored data URL.
+let bgMode  = localStorage.getItem('mc_bg_mode')  || 'default';   // default | color | image
+let bgColor = localStorage.getItem('mc_bg_color') || '#0c0e14';
+let bgDim   = parseInt(localStorage.getItem('mc_bg_dim') || '40', 10); // scrim alpha %, 0..80
+
+function applyDashboardBackground() {
+  const b = document.body;
+  // Clear any inline background first so switching modes never leaves residue.
+  b.style.backgroundImage = '';
+  b.style.backgroundColor = '';
+  b.style.backgroundSize = '';
+  b.style.backgroundPosition = '';
+  b.style.backgroundAttachment = '';
+  b.style.backgroundRepeat = '';
+  if (bgMode === 'color') {
+    b.style.backgroundColor = bgColor;
+  } else if (bgMode === 'image') {
+    const img = localStorage.getItem('mc_bg_image');
+    if (!img) return; // nothing stored yet → fall back to theme var(--bg)
+    const a = Math.max(0, Math.min(80, bgDim)) / 100;
+    b.style.backgroundImage =
+      `linear-gradient(rgba(var(--scrim-rgb), ${a}), rgba(var(--scrim-rgb), ${a})), url("${img}")`;
+    b.style.backgroundSize = 'cover';
+    b.style.backgroundPosition = 'center center';
+    b.style.backgroundAttachment = 'fixed';
+    b.style.backgroundRepeat = 'no-repeat';
+  }
+  // mode 'default' → leave cleared; stylesheet's body{background:var(--bg)} shows.
+}
+
+function setBgMode(mode) {
+  bgMode = mode;
+  localStorage.setItem('mc_bg_mode', mode);
+  applyDashboardBackground();
+  if (document.getElementById('settings-body')) _renderSettings();
+}
+
+function setBgColor(color) {
+  bgColor = color;
+  localStorage.setItem('mc_bg_color', color);
+  applyDashboardBackground();
+  // live <input type=color> — don't re-render (would drop the open picker)
+}
+
+function setBgDim(v) {
+  bgDim = parseInt(v, 10) || 0;
+  localStorage.setItem('mc_bg_dim', String(bgDim));
+  applyDashboardBackground();
+  const lbl = document.getElementById('mc-bg-dim-val');
+  if (lbl) lbl.textContent = bgDim + '%';
+}
+
+function pickBgImage() {
+  const inp = document.getElementById('mc-bg-file');
+  if (inp) inp.click();
+}
+
+function onBgImageChosen(input) {
+  const file = input.files && input.files[0];
+  input.value = ''; // allow re-choosing the same file later
+  if (!file) return;
+  if (!/^image\//.test(file.type)) { alert('Please choose an image file.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const tmp = new Image();
+    tmp.onload = () => {
+      // Downscale to <=2560px on the long edge + re-encode JPEG so the data URL
+      // fits comfortably in localStorage (~5MB origin quota, shared with MC keys).
+      const MAX = 2560;
+      let w = tmp.width, h = tmp.height;
+      if (Math.max(w, h) > MAX) {
+        const s = MAX / Math.max(w, h);
+        w = Math.round(w * s); h = Math.round(h * s);
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(tmp, 0, 0, w, h);
+      let dataUrl;
+      try { dataUrl = c.toDataURL('image/jpeg', 0.82); }
+      catch (_) { dataUrl = e.target.result; }
+      try {
+        localStorage.setItem('mc_bg_image', dataUrl);
+      } catch (err) {
+        alert('That image is too large to save on this device. Try a smaller one.');
+        return;
+      }
+      bgMode = 'image'; localStorage.setItem('mc_bg_mode', 'image');
+      applyDashboardBackground();
+      if (document.getElementById('settings-body')) _renderSettings();
+    };
+    tmp.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearBgImage() {
+  localStorage.removeItem('mc_bg_image');
+  if (bgMode === 'image') { bgMode = 'default'; localStorage.setItem('mc_bg_mode', 'default'); }
+  applyDashboardBackground();
+  if (document.getElementById('settings-body')) _renderSettings();
+}
 
 function formatElapsed(startedAt) {
   if (!startedAt) return '';
@@ -17675,6 +17792,40 @@ async function _renderSettings() {
           <button class="${currentVoice==='pro'?'active':''}" onclick="setVoice('pro')">Professional</button>
         </div>
       </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Background</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Dashboard background</div><div class="settings-hint">Personalize the space behind your projects. Saved on this device.</div></div>
+        <div class="mc-seg" id="mc-bg-seg">
+          <button class="${bgMode==='default'?'active':''}" onclick="setBgMode('default')">Theme</button>
+          <button class="${bgMode==='color'?'active':''}" onclick="setBgMode('color')">Color</button>
+          <button class="${bgMode==='image'?'active':''}" onclick="setBgMode('image')">Image</button>
+        </div>
+      </div>
+      ${bgMode==='color' ? `
+      <div class="settings-row">
+        <div><div class="settings-label">Pick a color</div><div class="settings-hint">A solid color behind the dashboard</div></div>
+        <input type="color" value="${esc(bgColor)}" oninput="setBgColor(this.value)" style="width:48px;height:32px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;padding:2px">
+      </div>` : ''}
+      ${bgMode==='image' ? `
+      <div class="settings-row">
+        <div><div class="settings-label">Your image</div><div class="settings-hint">${localStorage.getItem('mc_bg_image') ? 'An image is set for this device.' : 'No image chosen yet — pick one to apply it.'}</div></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn-dispatch" onclick="pickBgImage()">${localStorage.getItem('mc_bg_image') ? 'Replace…' : 'Choose…'}</button>
+          ${localStorage.getItem('mc_bg_image') ? `<button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="clearBgImage()">Remove</button>` : ''}
+        </div>
+      </div>
+      ${localStorage.getItem('mc_bg_image') ? `
+      <div class="settings-row">
+        <div><div class="settings-label">Dim for readability</div><div class="settings-hint">Tints the image toward your theme so text stays legible</div></div>
+        <div style="display:flex;gap:10px;align-items:center;min-width:170px">
+          <input type="range" min="0" max="80" value="${bgDim}" oninput="setBgDim(this.value)" style="flex:1;accent-color:var(--accent)">
+          <span id="mc-bg-dim-val" style="font-size:12px;color:var(--text-dim);min-width:34px;text-align:right">${bgDim}%</span>
+        </div>
+      </div>` : ''}` : ''}
+      <input type="file" id="mc-bg-file" accept="image/*" style="display:none" onchange="onBgImageChosen(this)">
     </div>
 
     <div class="settings-section">

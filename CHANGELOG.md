@@ -4,6 +4,27 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-07] — Custom dashboard background (Settings ▸ Appearance)
+
+You can now personalize the space behind your projects. **Settings ▸ Appearance
+▸ Background** adds a Theme / Color / Image picker:
+
+- **Theme** (default) — the current theme's base color, unchanged.
+- **Color** — a solid color of your choosing (native color picker).
+- **Image** — upload any image; it's downscaled (≤2560px long edge, JPEG) and
+  stored on **this device** in `localStorage`, then applied to `<body>` as a
+  fixed, cover-fit background. A **Dim for readability** slider lays a
+  theme-colored scrim over it (`--scrim-rgb`, theme-aware) so text on
+  transparent surfaces stays legible; the scrim re-tints automatically when you
+  switch themes.
+
+Per-device by design — same posture as the existing tone/accent/density/voice
+preferences (all `localStorage`, applied in `_applyAppearanceOnInit`). The
+dashboard's empty space is `body`'s `var(--bg)` showing through the transparent
+`.main-area`/`.content-area`/`.content-main`; sidebar, header, cards and modals
+keep their solid `var(--surface)`, so they stay readable over any background.
+No server changes; an already-open tab needs a hard reload to pick it up.
+
 ## [2026-06-07] — Mobile live updates no longer freeze until app restart
 
 The Android app's chat and project updates could stop refreshing entirely —
