@@ -255,6 +255,14 @@
   :root               { --scrim-rgb: 12, 14, 20; }
   body.tone-warm      { --scrim-rgb: 246, 240, 228; }
   body.tone-editorial { --scrim-rgb: 250, 249, 246; }
+  /* Settings → Background: live framing preview (aspect-ratio set inline to the
+     real viewport; object-fit + transform mirror the cover/zoom/position math). */
+  .mc-bg-preview {
+    width: 236px; max-width: 100%; aspect-ratio: 16 / 9;
+    border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--border2); background: var(--bg);
+  }
+  .mc-bg-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
   /* ─── Appearance: Warm tone (light, cream, rounded) ───────────────────── */
   body.tone-warm {
@@ -9201,8 +9209,42 @@ function _applyAppearanceOnInit() {
 let bgMode  = localStorage.getItem('mc_bg_mode')  || 'default';   // default | color | image
 let bgColor = localStorage.getItem('mc_bg_color') || '#0c0e14';
 let bgDim   = parseInt(localStorage.getItem('mc_bg_dim') || '40', 10); // scrim alpha %, 0..80
+// Image framing (image mode only). zoom = % of the cover baseline (100 = exactly
+// fills the screen, like before); posX/posY = focal point 0..100 for crop/pan.
+// MUST be declared before _applyAppearanceOnInit() for the same TDZ reason above.
+let bgZoom  = parseInt(localStorage.getItem('mc_bg_zoom') || '100', 10);
+let bgPosX  = parseInt(localStorage.getItem('mc_bg_posx') || '50', 10);
+let bgPosY  = parseInt(localStorage.getItem('mc_bg_posy') || '50', 10);
 
 _applyAppearanceOnInit();
+
+function _bgClampPct(v) { return Math.max(0, Math.min(100, parseInt(v, 10) || 0)); }
+function _bgClampZoom(v) { return Math.max(20, Math.min(400, parseInt(v, 10) || 100)); }
+
+// Natural pixel size of the stored image, persisted at pick time so we can size
+// the background relative to the viewport (cover baseline × zoom). Returns null
+// for legacy images saved before this existed → _bgLoadImageDims() back-fills it.
+function _bgImageDims() {
+  const w = parseInt(localStorage.getItem('mc_bg_imgw') || '', 10);
+  const h = parseInt(localStorage.getItem('mc_bg_imgh') || '', 10);
+  return (w > 0 && h > 0) ? { w: w, h: h } : null;
+}
+let _bgDimsLoading = false;
+function _bgLoadImageDims(dataUrl) {
+  if (_bgDimsLoading) return;
+  _bgDimsLoading = true;
+  const im = new Image();
+  im.onload = () => {
+    _bgDimsLoading = false;
+    if (im.naturalWidth > 0 && im.naturalHeight > 0) {
+      localStorage.setItem('mc_bg_imgw', String(im.naturalWidth));
+      localStorage.setItem('mc_bg_imgh', String(im.naturalHeight));
+      if (bgMode === 'image') applyDashboardBackground();
+    }
+  };
+  im.onerror = () => { _bgDimsLoading = false; };
+  im.src = dataUrl;
+}
 
 function applyDashboardBackground() {
   const b = document.body;
@@ -9219,14 +9261,47 @@ function applyDashboardBackground() {
     const img = localStorage.getItem('mc_bg_image');
     if (!img) return; // nothing stored yet → fall back to theme var(--bg)
     const a = Math.max(0, Math.min(80, bgDim)) / 100;
+    // Two layers: a theme-colored scrim (always covers the viewport for legible
+    // text) over the image (sized/positioned by the user's zoom + focal point).
     b.style.backgroundImage =
       `linear-gradient(rgba(var(--scrim-rgb), ${a}), rgba(var(--scrim-rgb), ${a})), url("${img}")`;
-    b.style.backgroundSize = 'cover';
-    b.style.backgroundPosition = 'center center';
-    b.style.backgroundAttachment = 'fixed';
-    b.style.backgroundRepeat = 'no-repeat';
+    b.style.backgroundRepeat = 'no-repeat, no-repeat';
+    b.style.backgroundAttachment = 'fixed, fixed';
+    b.style.backgroundPosition = `center center, ${_bgClampPct(bgPosX)}% ${_bgClampPct(bgPosY)}%`;
+    const dims = _bgImageDims();
+    if (dims) {
+      // cover baseline = the scale at which the image exactly fills the viewport;
+      // zoom multiplies it (100% = fill, >100 crops in, <100 reveals more/letterbox).
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const cover = Math.max(vw / dims.w, vh / dims.h);
+      const scale = cover * (_bgClampZoom(bgZoom) / 100);
+      b.style.backgroundSize = `cover, ${Math.round(dims.w * scale)}px ${Math.round(dims.h * scale)}px`;
+    } else {
+      b.style.backgroundSize = 'cover, cover'; // until dims back-fill
+      _bgLoadImageDims(img);
+    }
   }
   // mode 'default' → leave cleared; stylesheet's body{background:var(--bg)} shows.
+}
+
+// Background-size is computed in px against the viewport, so re-apply on resize
+// (only matters in image mode; debounced).
+let _bgResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (bgMode !== 'image') return;
+  clearTimeout(_bgResizeTimer);
+  _bgResizeTimer = setTimeout(() => applyDashboardBackground(), 120);
+});
+
+// Live preview thumbnail in Settings — mirrors the crop using object-fit so the
+// user can frame the image without the modal hiding the real background.
+function _updateBgPreview() {
+  const el = document.getElementById('mc-bg-preview-img');
+  if (!el) return;
+  const px = _bgClampPct(bgPosX), py = _bgClampPct(bgPosY);
+  el.style.objectPosition = px + '% ' + py + '%';
+  el.style.transform = 'scale(' + (_bgClampZoom(bgZoom) / 100) + ')';
+  el.style.transformOrigin = px + '% ' + py + '%';
 }
 
 function setBgMode(mode) {
@@ -9249,6 +9324,38 @@ function setBgDim(v) {
   applyDashboardBackground();
   const lbl = document.getElementById('mc-bg-dim-val');
   if (lbl) lbl.textContent = bgDim + '%';
+}
+
+function setBgZoom(v) {
+  bgZoom = _bgClampZoom(v);
+  localStorage.setItem('mc_bg_zoom', String(bgZoom));
+  applyDashboardBackground();
+  const lbl = document.getElementById('mc-bg-zoom-val');
+  if (lbl) lbl.textContent = bgZoom + '%';
+  _updateBgPreview();
+}
+
+function setBgPosX(v) {
+  bgPosX = _bgClampPct(v);
+  localStorage.setItem('mc_bg_posx', String(bgPosX));
+  applyDashboardBackground();
+  _updateBgPreview();
+}
+
+function setBgPosY(v) {
+  bgPosY = _bgClampPct(v);
+  localStorage.setItem('mc_bg_posy', String(bgPosY));
+  applyDashboardBackground();
+  _updateBgPreview();
+}
+
+function resetBgFraming() {
+  bgZoom = 100; bgPosX = 50; bgPosY = 50;
+  localStorage.setItem('mc_bg_zoom', '100');
+  localStorage.setItem('mc_bg_posx', '50');
+  localStorage.setItem('mc_bg_posy', '50');
+  applyDashboardBackground();
+  if (document.getElementById('settings-body')) _renderSettings();
 }
 
 function pickBgImage() {
@@ -9285,6 +9392,15 @@ function onBgImageChosen(input) {
         alert('That image is too large to save on this device. Try a smaller one.');
         return;
       }
+      // Remember the stored image's natural size (w,h are the re-encoded canvas
+      // dims) so zoom/framing can size it against the viewport, and reset framing
+      // to fill/center for the fresh image.
+      localStorage.setItem('mc_bg_imgw', String(w));
+      localStorage.setItem('mc_bg_imgh', String(h));
+      bgZoom = 100; bgPosX = 50; bgPosY = 50;
+      localStorage.setItem('mc_bg_zoom', '100');
+      localStorage.setItem('mc_bg_posx', '50');
+      localStorage.setItem('mc_bg_posy', '50');
       bgMode = 'image'; localStorage.setItem('mc_bg_mode', 'image');
       applyDashboardBackground();
       if (document.getElementById('settings-body')) _renderSettings();
@@ -9296,6 +9412,8 @@ function onBgImageChosen(input) {
 
 function clearBgImage() {
   localStorage.removeItem('mc_bg_image');
+  localStorage.removeItem('mc_bg_imgw');
+  localStorage.removeItem('mc_bg_imgh');
   if (bgMode === 'image') { bgMode = 'default'; localStorage.setItem('mc_bg_mode', 'default'); }
   applyDashboardBackground();
   if (document.getElementById('settings-body')) _renderSettings();
@@ -17845,6 +17963,28 @@ async function _renderSettings() {
         <div style="display:flex;gap:10px;align-items:center;min-width:170px">
           <input type="range" min="0" max="80" value="${bgDim}" oninput="setBgDim(this.value)" style="flex:1;accent-color:var(--accent)">
           <span id="mc-bg-dim-val" style="font-size:12px;color:var(--text-dim);min-width:34px;text-align:right">${bgDim}%</span>
+        </div>
+      </div>
+      <div class="settings-row" style="align-items:flex-start">
+        <div><div class="settings-label">Fit &amp; framing</div><div class="settings-hint">Zoom and reposition so the image sits right on your screen. Preview updates live.</div></div>
+        <div style="display:flex;flex-direction:column;gap:9px;width:236px;max-width:100%">
+          <div class="mc-bg-preview" style="aspect-ratio:${window.innerWidth}/${window.innerHeight}">
+            <img id="mc-bg-preview-img" alt="" src="${localStorage.getItem('mc_bg_image')}" style="object-position:${_bgClampPct(bgPosX)}% ${_bgClampPct(bgPosY)}%;transform:scale(${_bgClampZoom(bgZoom)/100});transform-origin:${_bgClampPct(bgPosX)}% ${_bgClampPct(bgPosY)}%">
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <span style="font-size:11px;color:var(--text-faint);width:54px;flex-shrink:0">Zoom</span>
+            <input type="range" min="30" max="300" value="${bgZoom}" oninput="setBgZoom(this.value)" style="flex:1;accent-color:var(--accent)">
+            <span id="mc-bg-zoom-val" style="font-size:12px;color:var(--text-dim);min-width:38px;text-align:right">${bgZoom}%</span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <span style="font-size:11px;color:var(--text-faint);width:54px;flex-shrink:0">Across</span>
+            <input type="range" min="0" max="100" value="${bgPosX}" oninput="setBgPosX(this.value)" style="flex:1;accent-color:var(--accent)">
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <span style="font-size:11px;color:var(--text-faint);width:54px;flex-shrink:0">Up / down</span>
+            <input type="range" min="0" max="100" value="${bgPosY}" oninput="setBgPosY(this.value)" style="flex:1;accent-color:var(--accent)">
+          </div>
+          <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text);align-self:flex-end;padding:5px 12px" onclick="resetBgFraming()">Reset framing</button>
         </div>
       </div>` : ''}` : ''}
       <input type="file" id="mc-bg-file" accept="image/*" style="display:none" onchange="onBgImageChosen(this)">
