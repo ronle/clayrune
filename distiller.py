@@ -884,7 +884,20 @@ def _aggregate_per_project(project_id: str, project: dict,
             kind_coarse.setdefault((k, s['coarse']), set()).add(s.get('sid', ''))
         suppressions = stats.get('suppressions', {}) or {}
         outbox = stats.get('outbox', {}) or {}
-        for (exact, coarse, kind) in new_fingerprints:
+        # Rescue stranded preferences. The current-session-only loop would never
+        # re-evaluate preferences captured under the old recurrence-3 gate
+        # (before pref_min_rec=1 landed) — they're content-rich one-offs that
+        # won't recur, so without this they sit in _skill_stats forever and never
+        # reach the review queue. Evaluate ALL in-window preference fingerprints,
+        # not just this session's. Outbox dedupe + suppressions still prevent
+        # re-proposing. Scoped to preferences ONLY: backfilling topics would
+        # flood the skill renderer with REFUSEs (they're content-starved), and
+        # explorations are single-shot off new_signals by design.
+        eval_fingerprints = set(new_fingerprints)
+        for s in window_signals:
+            if s.get('kind') == 'preference' and s.get('exact') and s.get('coarse'):
+                eval_fingerprints.add((s['exact'], s['coarse'], 'preference'))
+        for (exact, coarse, kind) in eval_fingerprints:
             cand = _evaluate_candidate(
                 kind=kind, exact=exact, coarse=coarse,
                 kind_exact=kind_exact, kind_coarse=kind_coarse,
