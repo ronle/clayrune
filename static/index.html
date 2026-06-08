@@ -9215,6 +9215,11 @@ let bgDim   = parseInt(localStorage.getItem('mc_bg_dim') || '40', 10); // scrim 
 let bgZoom  = parseInt(localStorage.getItem('mc_bg_zoom') || '100', 10);
 let bgPosX  = parseInt(localStorage.getItem('mc_bg_posx') || '50', 10);
 let bgPosY  = parseInt(localStorage.getItem('mc_bg_posy') || '50', 10);
+// MUST be declared before _applyAppearanceOnInit(): on boot with an image bg that
+// has no stored dims (a legacy image), applyDashboardBackground() → _bgLoadImageDims()
+// reads this `let`. Declared after the call it was in the temporal dead zone, so a
+// ReferenceError aborted the ENTIRE boot script — modals/settings/clicks all dead.
+let _bgDimsLoading = false;
 
 _applyAppearanceOnInit();
 
@@ -9229,7 +9234,7 @@ function _bgImageDims() {
   const h = parseInt(localStorage.getItem('mc_bg_imgh') || '', 10);
   return (w > 0 && h > 0) ? { w: w, h: h } : null;
 }
-let _bgDimsLoading = false;
+// _bgDimsLoading is declared above, before _applyAppearanceOnInit() (TDZ guard).
 function _bgLoadImageDims(dataUrl) {
   if (_bgDimsLoading) return;
   _bgDimsLoading = true;

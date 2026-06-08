@@ -43,12 +43,30 @@ const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json
 const ORIGIN = 'http://mc.smoke.test';   // arbitrary; every request is intercepted
 const BOOT_TIMEOUT_MS = 15000;
 
-let browser, exitCode = 1;
-try {
-  browser = await chromium.launch();
+// 4x4 PNG — a stand-in custom background image.
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR4nGP8z8Dwn4EIwDiqEAAA//8DABjcA0/9b3pPAAAAAElFTkSuQmCC';
+
+// Boot scenarios. Each is a fresh page with a different localStorage appearance
+// state (set BEFORE first paint via addInitScript). Every one must boot and
+// render the grid. These cover the appearance code paths that run during boot —
+// the area that has now produced TWO boot-aborting TDZ bugs (bgMode, then
+// _bgDimsLoading). The "image, NO dims" case is the one that hung the whole UI
+// on 2026-06-08: a legacy image with no stored dims makes applyDashboardBackground
+// call _bgLoadImageDims at boot. Without it here the test was falsely green.
+const SCENARIOS = [
+  { name: 'default theme (no bg)', ls: {} },
+  { name: 'image bg, NO stored dims (legacy)', ls: { mc_bg_mode: 'image', mc_bg_image: PNG } },
+  { name: 'image bg, with dims + framing', ls: { mc_bg_mode: 'image', mc_bg_image: PNG, mc_bg_imgw: '4', mc_bg_imgh: '4', mc_bg_zoom: '140', mc_bg_posx: '30', mc_bg_posy: '70' } },
+  { name: 'solid color bg', ls: { mc_bg_mode: 'color', mc_bg_color: '#123456' } },
+  { name: 'warm tone', ls: { mc_tone: 'warm' } },
+];
+
+async function runScenario(browser, sc) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
-
+  await page.addInitScript((ls) => {
+    try { for (const k of Object.keys(ls)) localStorage.setItem(k, ls[k]); } catch (e) {}
+  }, sc.ls);
   await page.route('**/*', (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/' || path === '/index.html')
@@ -57,66 +75,49 @@ try {
       return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config')
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-    // Everything else → fail; the SPA's own try/catch fallbacks handle it.
-    return route.abort();
+    return route.abort();  // CDNs + non-essential API → SPA fallbacks handle it
   });
-
   const pageErrors = [];
-  const consoleErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
-  page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
-
   await page.goto(ORIGIN + '/', { waitUntil: 'domcontentloaded' });
 
-  // THE ASSERTION: the project grid must populate with tiles. A boot-aborting
-  // throw leaves #projects-col on its "Loading..." placeholder forever.
-  let cardCount = 0;
-  let timedOut = false;
+  let cardCount = 0, timedOut = false;
   try {
     await page.waitForSelector('#projects-col .card', { timeout: BOOT_TIMEOUT_MS });
     cardCount = await page.locator('#projects-col .card').count();
-  } catch {
-    timedOut = true;
-    cardCount = await page.locator('#projects-col .card').count().catch(() => 0);
-  }
+  } catch { timedOut = true; cardCount = await page.locator('#projects-col .card').count().catch(() => 0); }
 
-  if (cardCount > 0) {
-    console.log(`✅ PASS — dashboard booted, project grid rendered ${cardCount} tile(s).`);
-    if (pageErrors.length) {
-      console.log(`   (note: ${pageErrors.length} non-fatal pageerror(s) during boot — grid still`);
-      console.log('    rendered, so these are not boot-blocking:)');
-      pageErrors.forEach((e) => console.log(`     • ${e}`));
-    }
-    exitCode = 0;
+  const ok = cardCount > 0;
+  if (ok) {
+    console.log(`✅ ${sc.name}: booted, grid rendered ${cardCount} tile(s).`);
   } else {
-    console.error('❌ FAIL — project grid never rendered (dashboard boot was aborted).');
+    console.error(`❌ ${sc.name}: project grid never rendered (boot aborted).`);
     const colText = await page.locator('#projects-col').innerText().catch(() => '(unreadable)');
-    console.error(`   #projects-col text: ${JSON.stringify(colText.slice(0, 140))}`);
-    if (timedOut) console.error(`   (waited ${BOOT_TIMEOUT_MS}ms for "#projects-col .card")`);
-
-    // Self-diagnosis: re-run render() in-page to surface a throw that the app's
-    // own try/catch swallowed (fetchProjects() catches render() errors and shows
-    // "Failed to load", hiding the real stack).
-    const renderErr = await page.evaluate(() => {
-      try { if (typeof render === 'function') { render(); return null; } return 'render() is not defined — boot aborted before it was reached'; }
-      catch (e) { return (e && e.stack) || String(e); }
-    }).catch((e) => `(evaluate failed: ${e})`);
-
+    console.error(`     #projects-col text: ${JSON.stringify(colText.slice(0, 120))}`);
+    if (timedOut) console.error(`     (waited ${BOOT_TIMEOUT_MS}ms for "#projects-col .card")`);
     if (pageErrors.length) {
-      console.error('   Uncaught exception(s) during boot — likely the cause:');
-      pageErrors.forEach((e) => console.error(`     • ${e}`));
+      console.error('     Uncaught exception(s) during boot — likely the cause:');
+      pageErrors.forEach((e) => console.error(`       • ${e}`));
+    } else {
+      console.error('     No uncaught exception captured — check the /api/projects fetch path.');
     }
-    if (renderErr) console.error(`   render() throws: ${renderErr.split('\n').slice(0, 4).join('\n     ')}`);
-    if (!pageErrors.length && !renderErr) {
-      console.error('   No exception captured — check the /api/projects fetch path.');
-      if (consoleErrors.length) consoleErrors.slice(0, 8).forEach((e) => console.error(`     console.error: ${e}`));
-    }
-    exitCode = 1;
   }
+  await ctx.close();
+  return ok;
+}
+
+let browser, allOk = false;
+try {
+  browser = await chromium.launch();
+  const results = [];
+  for (const sc of SCENARIOS) results.push(await runScenario(browser, sc));
+  allOk = results.every(Boolean);
+  console.log(allOk
+    ? `\n✅ PASS — all ${results.length} boot scenarios rendered the grid.`
+    : `\n❌ FAIL — ${results.filter((r) => !r).length}/${results.length} boot scenario(s) failed.`);
 } catch (err) {
   console.error('❌ FAIL — smoke harness error:', err && err.stack ? err.stack : err);
-  exitCode = 1;
 } finally {
   if (browser) await browser.close().catch(() => {});
-  process.exit(exitCode);
+  process.exit(allOk ? 0 : 1);
 }
