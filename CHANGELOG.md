@@ -4,6 +4,45 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-08] — Background crop editor, boot-crash fixes, preference learning
+
+**Custom background — drag-box crop & framing.** The custom dashboard background
+(Settings ▸ Appearance ▸ Background) now uses a direct-manipulation crop box
+instead of zoom / across / up-down sliders: drag the box to move, drag the corner
+(or scroll) to zoom. The box marks the region kept in view and its aspect matches
+your viewport, so the framing cover-fits every screen — one setting works on
+desktop and phone, with no letterboxing. Storage/apply are unchanged
+(`bgZoom`/`bgPosX`/`bgPosY`), so existing image backgrounds keep working;
+legacy images get their natural dimensions back-filled on first open.
+
+**Two boot crashes fixed (temporal dead zone).** The background code twice
+declared a `let` *below* the top-level `_applyAppearanceOnInit()` call that reads
+it, so on a fresh load a `ReferenceError` aborted the entire boot script: the
+dashboard hung on "Loading…" with no projects (bug #1, `bgMode`), and — for an
+image background with no stored dimensions — the whole UI went dead with
+clicks/modals/Settings unresponsive (bug #2, `_bgDimsLoading`). Both fixed by
+hoisting the declarations above the call. These shipped unseen because an
+already-open tab keeps the old working JS (server restart ≠ tab reload).
+
+**Boot smoke test (new) — `tools/smoke/`.** A headless Playwright check loads the
+real `static/index.html` and asserts the project grid renders across 5 appearance
+scenarios (including image-background-without-dimensions, the exact bug-#2
+trigger) — catching runtime boot throws that `node --check` can't. Runs in CI on
+every `static/index.html` change and is now a required step in the
+document-commit-deploy playbook.
+
+**Self-learning: preferences now generate.** The distiller captured stated user
+preferences but never turned them into reviewable proposals — the recurrence-3
+gate starved them, then the renderer refused single-sighting ones and leaked the
+refusals to the queue as junk. Preferences now generate on first clear statement
+(human review at promotion is the quality gate); refusal detection and
+code-fence stripping were hardened, and previously-captured preferences are
+rescued from storage.
+
+**Simulated demo.** A self-contained, fully-simulated dashboard demo for
+clayrune.io/demo (no backend), with a theme-aware centered project modal and
+Skills/MCP samples.
+
 ## [2026-06-07] — Fresh-install defaults: Warm theme + Enter-sends
 
 Two first-run defaults changed to match the website look and the preferred

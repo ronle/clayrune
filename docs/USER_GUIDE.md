@@ -473,13 +473,20 @@ Major sections:
 - **Paths** — workspace base directory, claude binary location, MEMORY
   thresholds.
 - **Appearance** — visual customization:
-  - **Theme** — Dark (default), Warm (cream, rounded brutalist), or
+  - **Theme** — Warm (default; cream, rounded brutalist), Dark, or
     Editorial (cream with serif headers). Affects every surface.
   - **Accent color** — Default, Sunset, Rose, Lilac, Lagoon, or Ink.
     Drives buttons, focus rings, and the active-agent pill.
   - **Density** — Cozy (default) or Compact. Compact shrinks tile
     height and tightens grid spacing for showing more projects at
     once on small screens.
+  - **Background** — keep the theme default, or set a solid color or
+    your own image behind the dashboard (saved per device). With an
+    image you also get a **Dim** slider (tints it toward your theme so
+    text stays legible) and a **crop box**: drag the box to move, drag
+    the corner — or scroll — to zoom. The box marks what stays in view
+    and adapts to any screen size, so the same framing works on desktop
+    and phone.
   - **Writing style** — Casual or Professional. Tunes the voice of
     in-app copy (greetings, empty-state hints, toasts).
 - **Advanced features** — show/hide the token counter, `[tool: …]` lines,
