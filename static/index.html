@@ -255,14 +255,27 @@
   :root               { --scrim-rgb: 12, 14, 20; }
   body.tone-warm      { --scrim-rgb: 246, 240, 228; }
   body.tone-editorial { --scrim-rgb: 250, 249, 246; }
-  /* Settings → Background: live framing preview (aspect-ratio set inline to the
-     real viewport; object-fit + transform mirror the cover/zoom/position math). */
-  .mc-bg-preview {
-    width: 236px; max-width: 100%; aspect-ratio: 16 / 9;
+  /* Settings → Background: interactive crop/framing editor. The whole image is
+     shown; the box marks the region kept in view (its aspect = your viewport, so
+     it previews the real framing). The area outside is dimmed via the box's giant
+     box-shadow. Drag the box to pan, the corner to zoom. */
+  .mc-crop {
+    position: relative; width: 236px; max-width: 100%;
     border-radius: 8px; overflow: hidden;
-    border: 1px solid var(--border2); background: var(--bg);
+    border: 1px solid var(--border2); background: var(--surface2);
+    user-select: none; touch-action: none;
   }
-  .mc-bg-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .mc-crop img { width: 100%; display: block; pointer-events: none; }
+  .mc-crop-box {
+    position: absolute; box-sizing: border-box; cursor: move;
+    border: 2px solid #fff; background: rgba(255,255,255,0.05);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
+  }
+  .mc-crop-handle {
+    position: absolute; right: -8px; bottom: -8px; width: 17px; height: 17px;
+    border-radius: 50%; background: var(--accent); border: 2px solid #fff;
+    cursor: nwse-resize; touch-action: none;
+  }
 
   /* ─── Appearance: Warm tone (light, cream, rounded) ───────────────────── */
   body.tone-warm {
@@ -9298,15 +9311,103 @@ window.addEventListener('resize', () => {
   _bgResizeTimer = setTimeout(() => applyDashboardBackground(), 120);
 });
 
-// Live preview thumbnail in Settings — mirrors the crop using object-fit so the
-// user can frame the image without the modal hiding the real background.
-function _updateBgPreview() {
-  const el = document.getElementById('mc-bg-preview-img');
-  if (!el) return;
+// ── Background framing: interactive crop-box editor ─────────────────────────
+// Replaces the zoom/across/up-down sliders with a direct-manipulation box drawn
+// over the image. The box marks the region kept in view; drag it to pan, drag the
+// corner (or wheel) to zoom. It writes the SAME bgZoom/bgPosX/bgPosY values, and
+// applyDashboardBackground() cover-fits that framing to whatever screen the
+// dashboard is on — so one setting works across all screen sizes/devices. The box
+// aspect = the live viewport, so what you frame is what you'll see on a screen
+// shaped like this one. Zoom is held to [100,400] here (100 = fills the screen;
+// you can only crop IN), so the editor never produces letterboxing.
+let _bgCrop = null;   // {Dw,Dh,imgW,imgH} of the editor, set on image load (never read at init)
+
+function _bgCropMetrics() {
+  const c = _bgCrop; if (!c || !c.imgW || !c.imgH) return null;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const cover = Math.max(vw / c.imgW, vh / c.imgH);
+  const scale = cover * (_bgClampZoom(bgZoom) / 100);
+  const wFrac = Math.min(1, vw / (c.imgW * scale));
+  const hFrac = Math.min(1, vh / (c.imgH * scale));
+  return { vw, vh, cover, wFrac, hFrac };
+}
+
+function _bgCropRender() {
+  const c = _bgCrop, box = document.getElementById('mc-crop-box');
+  if (!c || !box) return;
+  const m = _bgCropMetrics(); if (!m) return;
   const px = _bgClampPct(bgPosX), py = _bgClampPct(bgPosY);
-  el.style.objectPosition = px + '% ' + py + '%';
-  el.style.transform = 'scale(' + (_bgClampZoom(bgZoom) / 100) + ')';
-  el.style.transformOrigin = px + '% ' + py + '%';
+  box.style.width  = (m.wFrac * c.Dw) + 'px';
+  box.style.height = (m.hFrac * c.Dh) + 'px';
+  box.style.left   = ((1 - m.wFrac) * px / 100 * c.Dw) + 'px';
+  box.style.top    = ((1 - m.hFrac) * py / 100 * c.Dh) + 'px';
+}
+
+function _bgCropInit() {
+  const img = document.getElementById('mc-crop-img');
+  if (!img || !img.naturalWidth) return;
+  if (!img.clientWidth) { requestAnimationFrame(_bgCropInit); return; } // not laid out yet
+  _bgCrop = { Dw: img.clientWidth, Dh: img.clientHeight,
+              imgW: img.naturalWidth, imgH: img.naturalHeight };
+  // Persist natural dims so applyDashboardBackground() sizes correctly (also
+  // back-fills legacy images saved before dims were stored).
+  localStorage.setItem('mc_bg_imgw', String(img.naturalWidth));
+  localStorage.setItem('mc_bg_imgh', String(img.naturalHeight));
+  _bgCropRender();
+}
+
+function _bgSaveFraming() {
+  localStorage.setItem('mc_bg_zoom', String(_bgClampZoom(bgZoom)));
+  localStorage.setItem('mc_bg_posx', String(_bgClampPct(bgPosX)));
+  localStorage.setItem('mc_bg_posy', String(_bgClampPct(bgPosY)));
+}
+
+// Re-center the focal point so the visible region keeps the same center when zoom
+// changes (zoom around the middle of the box, not the image origin).
+function _bgCropZoomTo(newZoom, startMetrics, startPosX, startPosY) {
+  const cx = (1 - startMetrics.wFrac) * startPosX / 100 + startMetrics.wFrac / 2;
+  const cy = (1 - startMetrics.hFrac) * startPosY / 100 + startMetrics.hFrac / 2;
+  bgZoom = Math.max(100, Math.min(400, Math.round(newZoom)));
+  const nm = _bgCropMetrics();
+  bgPosX = nm.wFrac < 1 ? _bgClampPct((cx - nm.wFrac / 2) / (1 - nm.wFrac) * 100) : 50;
+  bgPosY = nm.hFrac < 1 ? _bgClampPct((cy - nm.hFrac / 2) / (1 - nm.hFrac) * 100) : 50;
+}
+
+function _bgCropDragStart(e, mode) {
+  e.preventDefault(); e.stopPropagation();
+  const c = _bgCrop, m = _bgCropMetrics();
+  if (!c || !m) return;
+  const startX = e.clientX, startY = e.clientY;
+  const startPosX = _bgClampPct(bgPosX), startPosY = _bgClampPct(bgPosY);
+  const startBoxW = m.wFrac * c.Dw;
+  const maxBoxW = Math.min(1, m.vw / (c.imgW * m.cover)) * c.Dw; // box width at zoom 100
+  const onMove = (ev) => {
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (mode === 'move') {
+      const mm = _bgCropMetrics();
+      if (mm.wFrac < 1) bgPosX = _bgClampPct(startPosX + (dx / ((1 - mm.wFrac) * c.Dw)) * 100);
+      if (mm.hFrac < 1) bgPosY = _bgClampPct(startPosY + (dy / ((1 - mm.hFrac) * c.Dh)) * 100);
+    } else { // resize the box → zoom (box width = maxBoxW * 100 / zoom)
+      const newBoxW = Math.max(8, startBoxW + dx);
+      _bgCropZoomTo(maxBoxW * 100 / newBoxW, m, startPosX, startPosY);
+    }
+    _bgCropRender(); _bgSaveFraming(); applyDashboardBackground();
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+function _bgCropWheel(e) {
+  if (!_bgCrop) return;
+  e.preventDefault();
+  const m = _bgCropMetrics(); if (!m) return;
+  _bgCropZoomTo(_bgClampZoom(bgZoom) + (e.deltaY < 0 ? 8 : -8), m,
+                _bgClampPct(bgPosX), _bgClampPct(bgPosY));
+  _bgCropRender(); _bgSaveFraming(); applyDashboardBackground();
 }
 
 function setBgMode(mode) {
@@ -9329,29 +9430,6 @@ function setBgDim(v) {
   applyDashboardBackground();
   const lbl = document.getElementById('mc-bg-dim-val');
   if (lbl) lbl.textContent = bgDim + '%';
-}
-
-function setBgZoom(v) {
-  bgZoom = _bgClampZoom(v);
-  localStorage.setItem('mc_bg_zoom', String(bgZoom));
-  applyDashboardBackground();
-  const lbl = document.getElementById('mc-bg-zoom-val');
-  if (lbl) lbl.textContent = bgZoom + '%';
-  _updateBgPreview();
-}
-
-function setBgPosX(v) {
-  bgPosX = _bgClampPct(v);
-  localStorage.setItem('mc_bg_posx', String(bgPosX));
-  applyDashboardBackground();
-  _updateBgPreview();
-}
-
-function setBgPosY(v) {
-  bgPosY = _bgClampPct(v);
-  localStorage.setItem('mc_bg_posy', String(bgPosY));
-  applyDashboardBackground();
-  _updateBgPreview();
 }
 
 function resetBgFraming() {
@@ -17971,23 +18049,13 @@ async function _renderSettings() {
         </div>
       </div>
       <div class="settings-row" style="align-items:flex-start">
-        <div><div class="settings-label">Fit &amp; framing</div><div class="settings-hint">Zoom and reposition so the image sits right on your screen. Preview updates live.</div></div>
+        <div><div class="settings-label">Crop &amp; framing</div><div class="settings-hint">Drag the box to move, drag the corner (or scroll) to zoom. The box is what stays in view — it adapts to every screen size.</div></div>
         <div style="display:flex;flex-direction:column;gap:9px;width:236px;max-width:100%">
-          <div class="mc-bg-preview" style="aspect-ratio:${window.innerWidth}/${window.innerHeight}">
-            <img id="mc-bg-preview-img" alt="" src="${localStorage.getItem('mc_bg_image')}" style="object-position:${_bgClampPct(bgPosX)}% ${_bgClampPct(bgPosY)}%;transform:scale(${_bgClampZoom(bgZoom)/100});transform-origin:${_bgClampPct(bgPosX)}% ${_bgClampPct(bgPosY)}%">
-          </div>
-          <div style="display:flex;gap:10px;align-items:center">
-            <span style="font-size:11px;color:var(--text-faint);width:54px;flex-shrink:0">Zoom</span>
-            <input type="range" min="30" max="300" value="${bgZoom}" oninput="setBgZoom(this.value)" style="flex:1;accent-color:var(--accent)">
-            <span id="mc-bg-zoom-val" style="font-size:12px;color:var(--text-dim);min-width:38px;text-align:right">${bgZoom}%</span>
-          </div>
-          <div style="display:flex;gap:10px;align-items:center">
-            <span style="font-size:11px;color:var(--text-faint);width:54px;flex-shrink:0">Across</span>
-            <input type="range" min="0" max="100" value="${bgPosX}" oninput="setBgPosX(this.value)" style="flex:1;accent-color:var(--accent)">
-          </div>
-          <div style="display:flex;gap:10px;align-items:center">
-            <span style="font-size:11px;color:var(--text-faint);width:54px;flex-shrink:0">Up / down</span>
-            <input type="range" min="0" max="100" value="${bgPosY}" oninput="setBgPosY(this.value)" style="flex:1;accent-color:var(--accent)">
+          <div class="mc-crop" id="mc-crop" onwheel="_bgCropWheel(event)">
+            <img id="mc-crop-img" alt="" src="${esc(localStorage.getItem('mc_bg_image') || '')}" onload="_bgCropInit()">
+            <div class="mc-crop-box" id="mc-crop-box" onpointerdown="_bgCropDragStart(event,'move')">
+              <div class="mc-crop-handle" onpointerdown="_bgCropDragStart(event,'resize')"></div>
+            </div>
           </div>
           <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text);align-self:flex-end;padding:5px 12px" onclick="resetBgFraming()">Reset framing</button>
         </div>
