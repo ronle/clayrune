@@ -9186,7 +9186,6 @@ function _applyAppearanceOnInit() {
   }
   applyDashboardBackground();
 }
-_applyAppearanceOnInit();
 
 // ── Custom dashboard background (per-device, localStorage) ──────────────────
 // Same posture as tone/accent above: a per-browser appearance preference applied
@@ -9194,9 +9193,16 @@ _applyAppearanceOnInit();
 // transparent .main-area/.content-area/.content-main; sidebar/header/cards keep
 // their solid var(--surface), so overriding body's background is the clean hook.
 //   mode 'default' → theme var(--bg);  'color' → solid;  'image' → stored data URL.
+// NOTE: these `let`s MUST be declared before _applyAppearanceOnInit() is called —
+// that call reaches applyDashboardBackground() which reads bgMode/bgColor/bgDim.
+// `let` is not hoisted, so declaring them after the call put them in the temporal
+// dead zone → a ReferenceError aborted the whole boot script and the dashboard
+// hung on "loading" (no project grid). Keep the call below this block.
 let bgMode  = localStorage.getItem('mc_bg_mode')  || 'default';   // default | color | image
 let bgColor = localStorage.getItem('mc_bg_color') || '#0c0e14';
 let bgDim   = parseInt(localStorage.getItem('mc_bg_dim') || '40', 10); // scrim alpha %, 0..80
+
+_applyAppearanceOnInit();
 
 function applyDashboardBackground() {
   const b = document.body;
