@@ -4,6 +4,23 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-07] — Fresh-install defaults: Warm theme + Enter-sends
+
+Two first-run defaults changed to match the website look and the preferred
+out-of-box behavior:
+
+- **Theme defaults to Warm** (the cream/light theme) instead of Dark. Because
+  Warm is a *light* theme over a dark `:root` CSS base, an anti-FOUC bootstrap
+  script was added as the first child of `<body>` to apply the tone class before
+  first paint — otherwise a fresh install would flash dark → cream every load.
+- **Enter key defaults to "Enter sends"** (Shift+Enter = newline) instead of
+  Ctrl+Enter.
+
+Both are fallback-only (`localStorage.getItem(...) || default`), so any explicit
+choice a user already made is preserved. Users who never touched these settings
+adopt the new defaults on their next **hard reload**. Change either anytime in
+Settings ▸ Appearance.
+
 ## [2026-06-07] — Custom dashboard background (Settings ▸ Appearance)
 
 You can now personalize the space behind your projects. **Settings ▸ Appearance

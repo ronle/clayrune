@@ -4768,6 +4768,22 @@
 </style>
 </head>
 <body>
+<script>
+  // Anti-FOUC theme bootstrap: apply the saved (or default) tone + accent to
+  // <body> BEFORE the rest of the page paints. The default tone is "warm" (a
+  // LIGHT theme) while the CSS base in :root is dark, so without this a fresh
+  // install would flash dark → cream on every load. _applyAppearanceOnInit()
+  // re-applies the same thing later (idempotent); this just wins the race.
+  (function () {
+    try {
+      var tone = localStorage.getItem('mc_tone') || 'warm';
+      if (tone === 'warm') document.body.classList.add('tone-warm');
+      else if (tone === 'editorial') document.body.classList.add('tone-editorial');
+      var accent = localStorage.getItem('mc_accent');
+      if (accent) document.body.setAttribute('data-accent', accent);
+    } catch (e) {}
+  })();
+</script>
 <span id="name-measure" class="name-measure"></span>
 
 <!-- ── PERF HUD (diagnostic, opt-in) ─────────────────────────────────────
@@ -9013,7 +9029,7 @@ function setTokenMode(mode) {
 
 // 'enter' = Enter sends, Shift+Enter for newline
 // 'ctrl-enter' = Ctrl/Cmd+Enter sends, Enter for newline (default)
-let enterKeyMode = localStorage.getItem('enter_mode') || 'ctrl-enter';
+let enterKeyMode = localStorage.getItem('enter_mode') || 'enter';
 
 // ── Advanced feature toggles (default OFF = hidden) ─────────────────────────
 // Keys: tokens, tool-lines, github, agent-log, memory
@@ -9071,7 +9087,7 @@ function setEnterMode(mode) {
 }
 
 // ── Appearance: tone / accent / density / voice ─────────────────────────────
-let currentTone   = localStorage.getItem('mc_tone')   || 'dark';
+let currentTone   = localStorage.getItem('mc_tone')   || 'warm';
 let currentAccent = localStorage.getItem('mc_accent') || '';
 let currentVoice  = localStorage.getItem('mc_voice')  || 'pro';
 
@@ -9153,7 +9169,7 @@ function setVoice(voice) {
 }
 
 function _applyAppearanceOnInit() {
-  const tone = localStorage.getItem('mc_tone');
+  const tone = localStorage.getItem('mc_tone') || 'warm';
   if (tone === 'warm') document.body.classList.add('tone-warm');
   else if (tone === 'editorial') document.body.classList.add('tone-editorial');
   const accent = localStorage.getItem('mc_accent');
