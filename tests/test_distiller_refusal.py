@@ -32,6 +32,33 @@ def test_is_refusal_empty_is_refusal():
     assert distiller._is_refusal(None) is True
 
 
+def test_is_refusal_backtick_and_rationale_forms():
+    # 2026-06-08 leak: the model emits the sentinel wrapped in backticks and/or
+    # followed by a rationale paragraph. The old `== 'REFUSE' or len<=12` guard
+    # missed both, writing them to the queue as junk artifacts.
+    assert distiller._is_refusal('`REFUSE`') is True
+    assert distiller._is_refusal('`REFUSE`\n\nThis is a single observation, '
+                                 'not a recurring preference.') is True
+    assert distiller._is_refusal('REFUSE\n\nThe evidence quote is delegatory '
+                                 'and does not express a preference.') is True
+    assert distiller._is_refusal('```\nREFUSE\n```') is True
+    assert distiller._is_refusal('**REFUSE**') is True
+
+
+def test_is_refusal_fenced_real_artifact_is_not_refusal():
+    # A real artifact the model wrapped in a ```markdown fence must NOT be
+    # treated as a refusal (the first content line is the heading, not REFUSE).
+    body = "```markdown\n# Avoid full IDE download when only CLI tools are needed\n\n## Why\n...\n```"
+    assert distiller._is_refusal(body) is False
+
+
+def test_strip_code_fences():
+    assert distiller._strip_code_fences('```markdown\n# Title\n\nbody\n```') == '# Title\n\nbody'
+    assert distiller._strip_code_fences('```\nplain\n```') == 'plain'
+    # No fence → unchanged (trimmed)
+    assert distiller._strip_code_fences('# Title\n\nbody\n') == '# Title\n\nbody'
+
+
 def test_is_refusal_real_artifact_is_not_refusal():
     # A genuine artifact body must NOT be treated as a refusal, even if the
     # word "refuse" appears somewhere in the prose.

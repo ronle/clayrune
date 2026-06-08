@@ -577,19 +577,24 @@ _EXPLORATION_PROMPT_PREAMBLE = (
 )
 
 _PREFERENCE_PROMPT_PREAMBLE = (
-    "You are the Phase 4 PREFERENCE.md generator. You receive N verbatim "
-    "user quotes expressing a recurring preference and output a "
-    "PREFERENCE.md ready to promote into feedback memory. Body shape mirrors "
+    "You are the Phase 4 PREFERENCE.md generator. You receive verbatim user "
+    "quotes expressing a preference and output a PREFERENCE.md ready to promote "
+    "into feedback memory. A SINGLE clearly-stated preference is enough — "
+    "recurrence is NOT required (it is a confidence signal only; the human "
+    "approves at promotion, which is the quality gate). Body shape mirrors "
     "the existing feedback_*.md files:\n\n"
     "  # <The preference, as a one-line rule>\n\n"
     "  ## Why (the underlying reason, if observable)\n  <extracted reason>\n\n"
     "  ## How to apply\n  <when this preference kicks in>\n\n"
     "  ## Evidence\n  - Session <sid> (<ts>): \"<verbatim quote>\"\n\n"
+    "Output ONLY the markdown body — do NOT wrap it in ``` code fences.\n\n"
     "PROMOTION TARGET — `suggested_target` is NOT set at extraction time "
     "(I3 closure). The promotion UI offers feedback_memory (default), "
     "project CLAUDE.md, or global SKILL.md.\n\n"
-    "REFUSE PATH: if the quotes don't actually express a coherent recurring "
-    "preference, output `REFUSE`."
+    "REFUSE PATH: output `REFUSE` ONLY if the quotes do not express a "
+    "preference at all — e.g. a delegatory aside (\"your call\"), a one-off "
+    "factual note, or noise. Do NOT refuse merely because a preference was "
+    "observed only once; a clear one-time preference is valid."
 )
 
 
@@ -1284,8 +1289,20 @@ def _is_refusal(out: str) -> bool:
     """
     if not out:
         return True
-    t = out.strip()
-    return t == 'REFUSE' or (t.upper().startswith('REFUSE') and len(t) <= 12)
+    # The model wraps the sentinel in code fences/backticks and/or follows it
+    # with a rationale paragraph ("`REFUSE`\n\nThis is a single observation …",
+    # "REFUSE\n\nThe evidence quote …"). The old `== 'REFUSE' or len<=12` guard
+    # missed both forms, leaking them to disk as junk artifacts. Inspect the
+    # first real content line, stripped of fences/backticks/emphasis/trailing
+    # punctuation — a genuine artifact starts with "# <rule>" or "---", never
+    # the REFUSE sentinel.
+    for raw in out.splitlines():
+        line = raw.strip()
+        if not line or line.startswith('```'):   # skip blanks + code-fence lines
+            continue
+        token = line.strip('`*_ ').rstrip('.:!').strip()
+        return token.upper() == 'REFUSE' or token.upper().startswith('REFUSE ')
+    return True  # nothing but fences/blanks → empty == refusal
 
 
 def _render_skill(project_id: str, project: dict,
@@ -1359,9 +1376,11 @@ def _render_preference(project_id: str, project: dict,
             f"  - Session {s.get('sid', '')} ({s.get('ts', '')}): "
             f"\"{s.get('evidence_quote', '')[:300]}\""
         )
+    # NB: deliberately do NOT pass recurrence counts here — preferences are
+    # valid at recurrence 1, and surfacing "exact=1" cued the model to refuse
+    # ("single observation, not a recurring preference"). Recurrence is a
+    # ranking/confidence signal recorded in frontmatter, not a generation gate.
     body_in = (
-        f"Recurrence: exact={candidate['recurrence_exact']} "
-        f"coarse={candidate['recurrence_coarse']}\n"
         f"Summary signals:\n" +
         '\n'.join(f"  - {s.get('summary', '')}"
                   for s in candidate['evidence_signals'][:10]) + "\n\n"
@@ -1411,6 +1430,21 @@ def _extract_name_from_frontmatter(text: str) -> str | None:
     return _slug(m.group(1).strip())
 
 
+def _strip_code_fences(text: str) -> str:
+    """Remove a single surrounding ```lang … ``` fence the model sometimes wraps
+    the whole artifact in. The body should be raw markdown, not a fenced code
+    block — the fence leaked into PREFERENCE.md/SKILL.md artifacts as a visible
+    ```markdown wrapper."""
+    t = (text or '').strip()
+    if t.startswith('```'):
+        nl = t.find('\n')
+        if nl != -1:
+            t = t[nl + 1:]          # drop the opening ``` / ```markdown line
+        if t.rstrip().endswith('```'):
+            t = t.rstrip()[:-3]     # drop the closing fence
+    return t.strip()
+
+
 def _wrap_skill_body(model_output: str, project_id: str, candidate: dict,
                      kind: str, name_slug: str) -> str:
     """Inject required frontmatter fields if the model omitted them.
@@ -1437,7 +1471,7 @@ def _wrap_skill_body(model_output: str, project_id: str, candidate: dict,
         'created_at': _now_iso() or '',
     }
     # If the model already produced frontmatter, splice our required fields
-    text = model_output.strip()
+    text = _strip_code_fences(model_output)
     if text.startswith('---'):
         end = text.find('\n---', 4)
         if end >= 0:
