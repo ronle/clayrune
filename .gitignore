@@ -183,3 +183,49 @@ data/projects/_mc_open_backlog.txt
 .mcp.json
 .clayrune_builtin_mcps.json
 _jscheck_tmp.js
+
+# ── Commit hygiene: recurring local clutter (2026-06-08) ────────────────────
+# These pile up in the working tree every session and were surfacing as
+# "uncommitted" noise that agents had to wade through (and risked sweeping into
+# commits). Ignoring them keeps `git status` scoped to real source. Paired with
+# CLAUDE.md "Commit discipline".
+
+# Backups MC/agents write before a risky rewrite (*.broken, *.bak, *.pre-…-bak)
+*.broken
+*.bak
+*-bak
+
+# Per-run runtime state (terminal pop-out / agent child PIDs)
+data/mc_child_pids.json
+
+# Distiller proposal queue — generated at session end, reviewed in the Skills
+# panel, promoted by hand. Regenerated; never source. (Same posture as
+# data/maintenance_reports/.)
+data/skills/_proposed/
+
+# Build artifacts served from /downloads (installers, APK/AAB, zips). Keep the
+# dir present for the server; ignore its contents.
+static/downloads/*
+!static/downloads/.gitkeep
+
+# Designated scratch dir — throwaway repro/debug/exploration artifacts. Agents:
+# put scratch HERE so it never reaches a commit candidate. Local-only.
+/_scratch/*
+!/_scratch/.gitkeep
+
+# Loose scratch under tools/ — the `_`-prefix (and repro-) = scratch convention.
+# tools/_mc_restart.ps1 is a real tracked helper, so keep it.
+tools/_*
+tools/repro-*
+!tools/_mc_restart.ps1
+
+# ── Mobile apps (Android + iOS): assets & scratch live out-of-repo (2026-06-08)
+# The mobile apps are separate products (E:\clayrune-mobile, the iOS Capacitor
+# platform, etc.). Their screenshots, icons, and store-listing image assets
+# don't belong in the MC repo — same posture as the hosted-cloud exclusion
+# above. MC's *server-side* mobile support (web push, mobile-pair, the mobile
+# dashboard UI) stays tracked; it lives in server.py / static/index.html.
+# (iOS capture scratch tools/_ios-* is already covered by tools/_* above.)
+docs/play-store/assets/screenshots/
+docs/play-store/assets/screenshots-padded/
+docs/play-store/assets/thumbs/
