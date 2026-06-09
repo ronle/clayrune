@@ -31,7 +31,7 @@ erodes the user's trust that the install does what it advertised.
 
 ## Configuration
 
-- **Repository**: `https://github.com/ronle/mission-control.git`
+- **Repository**: `https://github.com/ronle/clayrune.git`
 - **Default install directory**:
   - macOS / Linux: `$HOME/Clayrune`
   - Windows: `$env:USERPROFILE\Clayrune`
@@ -254,5 +254,5 @@ If any step fully fails after one fallback attempt:
 2. Print the failed command and its actual error output
 3. Print: `Full log: <INSTALL_DIR>/install.log`
 4. Print: `Re-running this installer is safe (it picks up where it left off).`
-5. Print: `If the problem persists, open an issue at https://github.com/ronle/mission-control/issues with the log.`
+5. Print: `If the problem persists, open an issue at https://github.com/ronle/clayrune/issues with the log.`
 6. Exit non-zero so the bootstrap script knows it failed

@@ -44,7 +44,7 @@ If you prefer running from source instead of the prebuilt exe:
 ### Option A: Desktop Window
 
 ```bash
-git clone https://github.com/ronle/mission-control.git
+git clone https://github.com/ronle/clayrune.git
 cd mission-control
 pip install -r requirements.txt
 python app.py
@@ -55,7 +55,7 @@ Opens a native window with the dashboard. Flask server runs in the background.
 ### Option B: Browser Only
 
 ```bash
-git clone https://github.com/ronle/mission-control.git
+git clone https://github.com/ronle/clayrune.git
 cd mission-control
 pip install flask
 python server.py

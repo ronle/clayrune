@@ -382,7 +382,7 @@ fi
 # (that's the product), but installing Clayrune doesn't.
 
 INSTALL_DIR="${CLAYRUNE_HOME:-$HOME/Clayrune}"
-REPO_URL="https://github.com/ronle/mission-control.git"
+REPO_URL="https://github.com/ronle/clayrune.git"
 
 # Detect OS — macOS and Linux take different paths for venv install + launcher.
 case "$(uname)" in

@@ -25,7 +25,7 @@ using System.Text;
 internal static class ClayruneInstaller
 {
     private const string DefaultPs1Url =
-        "https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.ps1";
+        "https://raw.githubusercontent.com/ronle/clayrune/master/installer/install.ps1";
 
     private static string Ps1Url()
     {
@@ -58,7 +58,7 @@ internal static class ClayruneInstaller
         Console.WriteLine("Disk space: about 500 MB.");
         Console.WriteLine();
         Console.WriteLine("You can audit what runs by reading:");
-        Console.WriteLine("  https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md");
+        Console.WriteLine("  https://raw.githubusercontent.com/ronle/clayrune/master/installer/install-prompt.md");
         Console.WriteLine();
         Pause("Press Enter to begin (or close this window to cancel) . . .");
 

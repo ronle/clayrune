@@ -34,7 +34,7 @@ Estimated time: 5-10 minutes.
 Disk space: about 500 MB.
 
 You can audit what runs by reading:
-  https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md
+  https://raw.githubusercontent.com/ronle/clayrune/master/installer/install-prompt.md
 
 EOF
 
@@ -44,8 +44,8 @@ echo
 
 # Run the bootstrap. CLAYRUNE_PROMPT_URL points at the GitHub raw URL until
 # clayrune.io DNS is configured. Once the domain is live, drop the env var.
-curl -sSL https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.sh | \
-  CLAYRUNE_PROMPT_URL=https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md sh
+curl -sSL https://raw.githubusercontent.com/ronle/clayrune/master/installer/install.sh | \
+  CLAYRUNE_PROMPT_URL=https://raw.githubusercontent.com/ronle/clayrune/master/installer/install-prompt.md sh
 
 EXIT_CODE=$?
 
