@@ -9,9 +9,9 @@ the real Settings panel — with **no backend, no network, and no real data**.
 
 | File | Purpose |
 |------|---------|
-| `demo-app.html` | Markup shell — sidebar, header, content mount, project / inventory / settings modals, coach-mark layer. No inline scripts, no inline event handlers. |
-| `demo-app.css`  | Styling extracted verbatim from the real dashboard (`static/index.html`) and re-scoped from the viewport onto a bounded `.demo-root` frame. Dark theme is the default; warm/editorial light themes + 6 accents included. |
-| `demo-app.js`   | The whole simulation: fake data, dashboard, agent console + streaming, plan→approve flow, the WhatsApp-style Settings drill-down, and the guided coach-mark tour. Vanilla JS, zero dependencies. |
+| `demo-app.html` | Markup shell — desktop sidebar/header + **mobile app bar / bottom tab bar / drawer**, content mount, project / inventory / settings modals, coach-mark layer. No inline scripts, no inline event handlers. |
+| `demo-app.css`  | Styling extracted verbatim from the real dashboard (`static/index.html`) and re-scoped from the viewport onto a bounded `.demo-root` frame. **Warm (light) is the default theme**; dark + editorial + 6 accents included. Below **768px** it swaps the desktop dashboard for the real app's mobile UI. |
+| `demo-app.js`   | The whole simulation: fake data, dashboard **+ mobile chat-list home**, agent console + streaming, plan→approve flow, the WhatsApp-style Settings drill-down, and the guided coach-mark tour (desktop + mobile). Vanilla JS, zero dependencies. |
 
 > `_verify.mjs` is a **dev-only** Playwright harness (not part of the bundle —
 > do not ship it). It drives the full run headless and asserts zero console
@@ -62,15 +62,16 @@ no `connect-src` / `frame-src` — nothing reaches the network.
 
 ## The scripted walkthrough
 
-A guided, 7-step coach-mark tour starts automatically **for first-time visitors**
-(replay it anytime via the amber **Demo** chip or the **?** button; the saved
-theme then sticks across reloads). The tour does **not** dim the dashboard — the
-spotlight ring + card carry the focus, so everything reads at full colour. Each
-step advances on the **real user action** — the “Next” button just performs it:
+A guided, 5-step coach-mark tour starts automatically (replay anytime via the
+amber **Demo** chip or the **?** button). The tour does **not** dim the
+dashboard — the spotlight ring + card carry the focus, so everything reads at
+full colour. On a phone it runs over the **mobile UI** (see below); on desktop,
+the dashboard. Each step advances on the **real user action** — the “Next”
+button just performs it:
 
-1. **Your projects** — spotlight on the *Aurora Web* tile → open it. A project
-   opens as a **centered floating window over the dimmed dashboard** (same
-   theme-aware modal as the real app — light on the warm/editorial themes).
+1. **Your projects** — spotlight on the *Aurora Web* tile (a **chat row** on
+   mobile) → open it. A project opens as a **centered modal over the dimmed
+   dashboard** on desktop, or **full-screen** on a phone.
 2. **Two conversations at once** — Aurora opens with **two parallel chat tabs**
    (the real app's tab strip; the second is a different task already running).
    The composer is pre-filled with *“Add a dark-mode toggle.”* → **Dispatch**.
@@ -78,15 +79,28 @@ step advances on the **real user action** — the “Next” button just perform
    `[tool: ExitPlanMode]`, then waits → **Approve Plan**.
 4. The agent **works** — streamed `[tool: …]` markers, a code block, a `[✓ done]`
    line, then a **summary** table. The tile flips to **Completed** → **Settings**.
-5. **Make it yours** — opens **Appearance → Theme & display**.
-6. **Switch the theme** — the demo starts in **Dark**; the step switches it to
-   the **Warm** light theme (saved in your browser).
-7. **You’re all set** — confirmation over the now-warm dashboard.
+5. **Make it yours** — points at **Appearance** (theme, accent, model…), all
+   saved in your browser.
 
 The project modal also has the real app's **three-dot menu** (Agent / Backlog /
 Agent Log / Plans / Rename / Memory & Rules / Delete). Dispatching on the other
 projects (or the second Aurora tab) runs a shorter generic turn so nothing
 dead-ends.
+
+## Mobile (≤768px)
+
+Below 768px the demo renders the **real Clayrune phone UI**, not the scaled
+desktop dashboard: a top **app bar** (greeting + hamburger + settings avatar), a
+**WhatsApp-style chat list** of projects (status-ring avatars, last-message line,
+unread badge, asking→working→… sort), a **bottom tab bar** with the lifted **+**
+FAB, and a slide-in **hamburger drawer**. Tapping a project opens its chat
+**full-screen** (same conversation tabs + chat-bubble transcript + composer) with
+a **←** back arrow to the list; Settings and the Skills/MCP/Backlog/Hivemind
+modals go full-screen too. The same scripted agent flow + coach guidance run
+here, so a phone visitor sees exactly how the mobile app behaves. The marketing
+site opens the demo full-screen on phones, so the iframe gets a real phone
+viewport and these `@media (max-width: 768px)` rules drive the switch — no
+website change needed.
 
 ## What is simulated / stubbed
 

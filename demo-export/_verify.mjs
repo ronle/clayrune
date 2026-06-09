@@ -42,6 +42,7 @@ const tiles = await page.$$eval('.card', (els) => els.length);
 tiles === 5 ? ok(`dashboard rendered ${tiles} tiles`) : fail(`expected 5 tiles, got ${tiles}`);
 
 // 2. Coach-mark tour visible on load
+await page.waitForSelector('#coach-tip:not(.settings-hidden)', { timeout: 3000 }).catch(() => {});
 const coachVisible = await page.isVisible('#coach-tip');
 coachVisible ? ok('coach-mark tour appeared on load') : fail('coach-mark did not appear');
 
@@ -57,14 +58,15 @@ const dimBg = await page.evaluate(() => {
   : fail('coach backdrop still darkens the dashboard: ' + dimBg);
 await page.screenshot({ path: '_shot-tour-top.png' });
 
-// 3. Drive the 7-step guided tour via the coach "Next" buttons (each performs its
-//    action). The default theme is DARK; the tour ends by switching to WARM.
+// 3. Drive the guided tour via the coach "Next" buttons (each performs its action).
+//    Default theme is WARM and stays warm through the tour.
 const coachNext = async (label) => {
   if (label) await page.waitForFunction((l) => document.getElementById('coach-next')?.textContent === l, label, { timeout: 8000 }).catch(() => {});
   await page.click('#coach-next');
 };
-const startTone = await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg') || '{}').tone);
-startTone === 'dark' ? ok('demo default theme is DARK') : fail('default tone not dark: ' + startTone);
+// cfg is only written to localStorage once a setting changes; read the live root class instead.
+const warmDefault = await page.evaluate(() => document.getElementById('demo-root').classList.contains('tone-warm'));
+warmDefault ? ok('demo default theme is WARM') : fail('default theme not warm (no tone-warm on root)');
 
 await coachNext('Open Aurora Web');                                // step 1 → open Aurora
 await page.waitForSelector('#agent-output', { timeout: 4000 });
@@ -96,26 +98,16 @@ await page.waitForFunction(() => document.querySelector('#agent-status-label')?.
 (await page.$('.hl-table')) ? ok('summary table rendered') : fail('no summary table');
 await page.screenshot({ path: '_shot-run.png' });
 
-// 4. Tour steps 4–7: open Settings → Appearance → switch to WARM → finish.
+// 4. Tour steps 4–5: open Settings → "Make it yours" → finish (Warm stays the default).
 await coachNext('Open Settings');                                  // step 4 → open Settings
 await page.waitForSelector('#settings-overlay.open', { timeout: 4000 });
 ok('settings modal opened (step 4)');
-await coachNext('Open Appearance');                                // step 5 → Appearance → Theme & display
-await page.waitForSelector('[data-seg="tone"]', { timeout: 4000 });
-ok('tour drilled into Appearance → Theme & display');
-await coachNext('Switch to Warm');                                 // step 6 → switch to Warm (+ closes Settings)
-await page.waitForFunction(() => document.getElementById('demo-root').classList.contains('tone-warm'), { timeout: 4000 });
-ok('tour switched the theme to WARM');
-const warmPersist = await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg')).tone);
-warmPersist === 'warm' ? ok('warm theme persisted to localStorage') : fail('warm not persisted: ' + warmPersist);
-await page.screenshot({ path: '_shot-tour-warm.png' });
-await coachNext('Done');                                           // step 7 → finish
+await coachNext('Got it');                                         // step 5 → finish
 await page.waitForTimeout(300);
-!(await page.isVisible('#coach-tip')) ? ok('tour finished after reaching Warm') : fail('coach still visible after step 7');
+!(await page.isVisible('#coach-tip')) ? ok('tour finished at step 5 of 5') : fail('coach still visible after step 5');
+(await page.evaluate(() => document.getElementById('demo-root').classList.contains('tone-warm'))) ? ok('theme stayed WARM through the tour') : fail('theme not warm after tour (no tone-warm on root)');
 
-// 4b. Re-open Settings to verify the rest persist (accent / model / streaming / search).
-await page.click('.sidebar-item[data-nav="settings"]');
-await page.waitForSelector('#settings-overlay.open', { timeout: 4000 });
+// 4b. Settings is still open (step 4 left it open) — verify accent / model / streaming / search persist.
 await page.click('[data-drill="appearance"]');
 await page.waitForSelector('[data-sub]', { timeout: 3000 });
 await page.click('[data-sub="0"]');                                // Theme & display
@@ -263,19 +255,54 @@ const blIntro = await page.textContent('#inv-overlay .inv-intro');
 await page.keyboard.press('Escape');
 await page.waitForSelector('#inv-overlay.open', { state: 'hidden', timeout: 3000 });
 
-// 8. Responsive: 390px phone
-await page.click('.sidebar-item[data-nav="dashboard"]');
+// 8. MOBILE (≤768px) — render the REAL phone UI, not the scaled desktop dashboard.
+await page.click('.sidebar-item[data-nav="dashboard"]');           // back to dashboard (view='dashboard')
 await page.waitForSelector('.projects-col', { timeout: 3000 });
-await page.setViewportSize({ width: 390, height: 720 });
-await page.waitForTimeout(200);
-const gridCols = await page.evaluate(() => getComputedStyle(document.querySelector('.projects-col')).gridTemplateColumns);
-/^\d/.test(gridCols) && !gridCols.includes(' ') ? ok('mobile grid is single-column (' + gridCols + ')') : ok('mobile grid columns: ' + gridCols);
-await page.screenshot({ path: '_shot-mobile.png' });
-// mobile project modal = full-bleed; chat-bubble console
-await page.click('#tile-ledger-api');
+await page.setViewportSize({ width: 390, height: 780 });           // phone viewport → mobile shell
+await page.waitForTimeout(280);                                    // resize handler re-renders the chat list
+const sbHidden = await page.evaluate(() => getComputedStyle(document.getElementById('sidebar')).display === 'none');
+sbHidden ? ok('mobile: desktop sidebar hidden') : fail('mobile: sidebar still shown');
+const appBar = await page.evaluate(() => getComputedStyle(document.getElementById('mc-app-bar')).display !== 'none');
+const tabBar = await page.evaluate(() => getComputedStyle(document.getElementById('bottom-tab-bar')).display !== 'none');
+(appBar && tabBar) ? ok('mobile: app bar + bottom tab bar shown') : fail('mobile chrome missing (appBar=' + appBar + ' tabBar=' + tabBar + ')');
+const rows = await page.$$eval('.mc-chat-row', (e) => e.length);
+rows === 5 ? ok('mobile: WhatsApp chat list shows 5 project rows') : fail('mobile chat rows: ' + rows);
+const sortedTop = await page.$eval('.mc-chat-row .cr-name', (e) => e.textContent);
+ok('mobile: top chat row = "' + sortedTop + '" (asking sorts first)');
+await page.screenshot({ path: '_shot-mobile-home.png' });
+
+// tap a chat → full-screen mobile chat with a back arrow
+await page.click('.mc-chat-row[data-open="ledger-api"]');
 await page.waitForSelector('#project-overlay.open #agent-output', { timeout: 3000 });
-await page.waitForTimeout(200);
+const w = await page.evaluate(() => Math.round(document.querySelector('.project-modal').getBoundingClientRect().width));
+w >= 384 ? ok('mobile: project chat is full-screen (' + w + 'px)') : fail('mobile chat not full-screen: ' + w);
+(await page.evaluate(() => getComputedStyle(document.getElementById('pm-back')).display !== 'none')) ? ok('mobile: chat shows a back arrow') : fail('mobile: no back arrow');
 await page.screenshot({ path: '_shot-mobile-console.png' });
+await page.click('#pm-back');
+await page.waitForSelector('#project-overlay.open', { state: 'hidden', timeout: 3000 });
+ok('mobile: back arrow returns to the chat list');
+
+// hamburger drawer
+await page.click('#mc-hamburger-btn');
+await page.waitForSelector('#mobile-drawer.open', { timeout: 2000 });
+const drawerItems = await page.$$eval('#mobile-drawer-list .mobile-drawer-item', (e) => e.length);
+drawerItems >= 6 ? ok('mobile: hamburger drawer opens (' + drawerItems + ' items)') : fail('drawer items: ' + drawerItems);
+await page.screenshot({ path: '_shot-mobile-drawer.png' });
+await page.click('#mobile-drawer-backdrop');
+await page.waitForTimeout(150);
+
+// Reload at phone width → the tour auto-runs on mobile; confirm the coach-guided
+// scripted flow (open chat → dispatch → plan) works exactly like desktop.
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForSelector('#coach-tip:not(.settings-hidden)', { timeout: 3000 }).catch(() => {});
+(await page.isVisible('#coach-tip')) ? ok('mobile: guided tour auto-runs on a phone viewport') : fail('mobile tour did not appear');
+await coachNext('Open Aurora Web');
+await page.waitForSelector('#project-overlay.open #agent-output', { timeout: 4000 });
+ok('mobile: tour opens the Aurora chat full-screen');
+await coachNext('Dispatch');
+await page.waitForSelector('#btn-approve-plan', { timeout: 15000 });
+ok('mobile: coach-guided scripted flow streams a plan + Approve (same as desktop)');
+await page.screenshot({ path: '_shot-mobile-plan.png' });
 
 // ── Verdicts ──
 consoleErrors.length === 0 ? ok('no console errors') : fail('console errors: ' + JSON.stringify(consoleErrors.slice(0, 5)));

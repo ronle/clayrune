@@ -51,6 +51,15 @@
 
     <!-- ── Main area ────────────────────────────────────────────────────── -->
     <div class="main-area">
+      <!-- Mobile app bar (≤ breakpoint only; mirrors the real app's .mc-app-bar) -->
+      <div class="mc-app-bar" id="mc-app-bar">
+        <button class="mc-hamburger-btn" id="mc-hamburger-btn" title="Menu"><span></span><span></span><span></span></button>
+        <div class="mc-greet">
+          <div class="mc-eyebrow">Clayrune</div>
+          <h1 class="mc-greeting">Hi <span aria-hidden="true">&#x1F44B;</span></h1>
+        </div>
+        <button class="mc-avatar-btn" id="mc-avatar-btn" title="Settings">C</button>
+      </div>
       <div class="header">
         <div class="header-left">
           <span class="header-breadcrumb" id="header-breadcrumb"></span>
@@ -73,6 +82,23 @@
 
     <!-- ── Project floating window mount (opens over the dashboard) ─────── -->
     <div class="project-overlay" id="project-overlay"></div>
+
+    <!-- ── Mobile bottom tab bar + hamburger drawer (≤ breakpoint only) ──── -->
+    <div class="bottom-tab-bar" id="bottom-tab-bar">
+      <div class="bottom-tab-item active" data-mnav="dashboard"><span class="bti-icon">&#x1F3E0;</span>Home</div>
+      <div class="bottom-tab-item" data-mnav="backlog"><span class="bti-icon">&#x2630;</span>Backlog</div>
+      <div class="bottom-tab-item fab" data-mnav="new"><span class="bti-icon">+</span>New</div>
+      <div class="bottom-tab-item" data-mnav="scheduler"><span class="bti-icon">&#x23F1;</span>Scheduler</div>
+      <div class="bottom-tab-item" data-mnav="hivemind"><span class="bti-icon">&#x1F41D;</span>Hivemind</div>
+    </div>
+    <div class="mobile-drawer-backdrop" id="mobile-drawer-backdrop"></div>
+    <aside class="mobile-drawer" id="mobile-drawer" aria-hidden="true">
+      <div class="mobile-drawer-head">
+        <div class="logo-icon">C</div><span class="logo-text">Clayrune</span>
+        <button class="mobile-drawer-close" id="mobile-drawer-close" title="Close">&#10005;</button>
+      </div>
+      <div class="mobile-drawer-list" id="mobile-drawer-list"></div>
+    </aside>
 
     <!-- ── Settings modal mount ─────────────────────────────────────────── -->
     <div class="modal-overlay" id="settings-overlay">

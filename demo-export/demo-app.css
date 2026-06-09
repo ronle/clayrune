@@ -2,7 +2,9 @@
    Clayrune — Public Interactive Demo (fully simulated, no backend)
    CSS extracted from the real dashboard (static/index.html) and re-scoped from
    the viewport (`body`) onto a bounded `.demo-root` frame so it embeds cleanly.
-   Dark theme is the default. No external fonts/deps (CSP-safe).
+   Warm (light cream) is the default theme. No external fonts/deps (CSP-safe).
+   Below 768px it renders the real app's MOBILE UI (chat list, full-screen chat,
+   bottom tab bar, drawer); above, the desktop dashboard.
    Font sizes are scaled up ~1.14x vs the real app (base 16px) for readability
    in the embedded frame — the one intentional deviation from "verbatim".
    ========================================================================== */
@@ -781,44 +783,145 @@ body {
 .demo-tag .dt-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 
 /* ── RESPONSIVE (iframe viewport) ───────────────────────────────────────── */
-@media (max-width: 600px) {
-  .projects-col { grid-template-columns: 1fr; gap: 8px; }
-  .header-search { display: none; }
-  .content-main { padding: 12px 12px; }
-  .demo-tag .dt-label { display: none; }     /* icon-only on phones to save header room */
-  .header-right { gap: 8px; }
-  /* Project + inventory modals go full-bleed on phones (real app's coarse-pointer rule) */
-  .project-overlay, .inv-overlay { padding: 0; }
-  .project-modal, .inv-modal:not(.compact) { width: 100%; height: 100%; max-height: 100%; border-radius: 0; border: none; }
+/* Transient toast (mobile "disabled in demo" feedback; works at any width). */
+.mc-toast {
+  position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--surface); font-size: 13px; font-weight: 500;
+  padding: 9px 16px; border-radius: 999px; z-index: 1300; max-width: calc(100% - 32px);
+  text-align: center; opacity: 0; transition: opacity 0.2s ease; pointer-events: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+}
+.mc-toast.show { opacity: 0.96; }
+
+/* The mobile-only chrome is hidden on desktop / large widths. */
+.mc-app-bar, .bottom-tab-bar, .mobile-drawer, .mobile-drawer-backdrop, .pm-back, .mc-chat-list { display: none; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   MOBILE (≤768px) — render the REAL Clayrune phone UI, not the scaled desktop
+   dashboard: app bar + WhatsApp-style chat list + full-screen chat (bubbles) +
+   bottom tab bar + hamburger drawer, lifted from static/index.html's mobile
+   layout. Desktop/large widths keep the dashboard untouched (above).
+   ════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Swap the desktop shell for the mobile shell */
+  .sidebar { display: none; }
+  .header { display: none; }
+  .mc-app-bar { display: flex; }
+  .bottom-tab-bar { display: grid; }
+  .mc-chat-list { display: flex; }
+  .content-area { overflow: visible; }
+  .content-main { padding: 0 0 80px; overflow-y: auto; }   /* leave room for the bottom tab bar */
+
+  /* ── App bar ─────────────────────────────────────────────────────────── */
+  .mc-app-bar { align-items: center; gap: 10px; padding: 18px 16px 10px; flex-shrink: 0; }
+  .mc-hamburger-btn {
+    width: 38px; height: 38px; flex-direction: column; align-items: center; justify-content: center;
+    gap: 4px; background: transparent; border: 1.5px solid var(--text); border-radius: 50%;
+    cursor: pointer; padding: 0; flex-shrink: 0;
+  }
+  .mc-hamburger-btn span { width: 16px; height: 2px; background: var(--text); border-radius: 1px; }
+  .mc-greet { flex: 1; min-width: 0; }
+  .mc-eyebrow { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
+  .mc-greeting { font-family: 'Nunito', var(--font-ui); font-weight: 800; font-size: 26px; line-height: 1.1; margin: 2px 0 0; letter-spacing: -0.01em; color: var(--text); }
+  .mc-avatar-btn {
+    width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #fff;
+    display: grid; place-items: center; font-weight: 700; font-size: 15px;
+    border: 1.5px solid var(--text); cursor: pointer; flex-shrink: 0;
+  }
+
+  /* ── Chat-list home (WhatsApp-style project rows) ────────────────────── */
+  .mc-list-eyebrow { padding: 2px 16px 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-faint); }
+  .mc-chat-list { flex-direction: column; }
+  .mc-chat-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; border-bottom: 1px solid var(--border); }
+  .mc-chat-row:active { background: var(--surface3); }
+  .cr-avatar {
+    position: relative; width: 50px; height: 50px; flex-shrink: 0; border-radius: 50%;
+    display: grid; place-items: center; background: var(--surface3); border: 2px solid var(--border2);
+    font-size: 24px; line-height: 1;
+  }
+  .cr-avatar.friendly-working { border-color: var(--green); }
+  .cr-avatar.friendly-asking  { border-color: var(--amber); }
+  .cr-avatar.friendly-stuck   { border-color: var(--red); }
+  .cr-ring { position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--green); opacity: 0; }
+  .cr-avatar.friendly-working .cr-ring { opacity: 1; animation: crPulse 1.8s ease-out infinite; }
+  @keyframes crPulse { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(1.35); opacity: 0; } }
+  .cr-main { flex: 1; min-width: 0; }
+  .cr-top { display: flex; align-items: baseline; gap: 8px; }
+  .cr-name { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cr-time { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
+  .cr-bot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .cr-sub { flex: 1; min-width: 0; font-size: 14px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cr-badge { flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+  .cr-unread .cr-name { font-weight: 800; }
+  .cr-unread .cr-sub { color: var(--text); font-weight: 600; }
+
+  /* ── Bottom tab bar (lifted FAB centre) ──────────────────────────────── */
+  .bottom-tab-bar {
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 400;
+    background: var(--surface); border-top: 1px solid var(--border);
+    grid-template-columns: repeat(5, 1fr); padding: 4px 8px 6px; align-items: end;
+  }
+  .bottom-tab-item { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 0; font-size: 10px; font-weight: 600; line-height: 1.1; color: var(--text-dim); cursor: pointer; }
+  .bottom-tab-item .bti-icon { font-size: 19px; line-height: 1; }
+  .bottom-tab-item.active { color: var(--accent); }
+  .bottom-tab-item.fab .bti-icon {
+    width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: #fff;
+    display: grid; place-items: center; font-size: 23px; font-weight: 800; line-height: 1;
+    border: 1.5px solid var(--text); box-shadow: 0 2px 0 var(--text); margin-top: -12px;
+  }
+
+  /* ── Hamburger drawer ────────────────────────────────────────────────── */
+  .mobile-drawer-backdrop { display: block; position: absolute; inset: 0; background: rgba(0,0,0,0.45); z-index: 600; opacity: 0; pointer-events: none; transition: opacity 0.18s ease; }
+  .mobile-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+  .mobile-drawer {
+    display: flex; position: absolute; top: 0; bottom: 0; left: 0; width: min(280px, 85%);
+    background: var(--surface); border-right: 1px solid var(--border); z-index: 601;
+    transform: translateX(-100%); transition: transform 0.22s ease; flex-direction: column;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.25);
+  }
+  .mobile-drawer.open { transform: translateX(0); }
+  .mobile-drawer-head { display: flex; align-items: center; gap: 10px; padding: 16px 16px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .mobile-drawer-head .logo-icon { width: 34px; height: 34px; background: #e8824a; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-family: 'Fraunces', var(--font-ui); font-weight: 800; font-size: 22px; color: #fff; }
+  .mobile-drawer-head .logo-text { opacity: 1; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #e8824a; }
+  .mobile-drawer-close { margin-left: auto; background: none; border: none; color: var(--text-faint); font-size: 26px; cursor: pointer; line-height: 1; }
+  .mobile-drawer-list { padding: 6px 0; overflow-y: auto; }
+  .mobile-drawer-item { display: flex; align-items: center; gap: 14px; padding: 13px 18px; cursor: pointer; color: var(--text); font-size: 15px; font-weight: 500; border-left: 3px solid transparent; }
+  .mobile-drawer-item:active { background: var(--surface3); }
+  .mobile-drawer-item.active { background: var(--surface3); border-left-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .mobile-drawer-item .mdi-icon { width: 22px; text-align: center; font-size: 17px; }
+
+  /* ── Full-screen modals (project / settings / inventory) ─────────────── */
+  .project-overlay, .inv-overlay, .modal-overlay { padding: 0; }
+  .modal-content { width: 100%; height: 100%; max-width: 100%; max-height: 100%; border-radius: 0; border: none; }
+  .inv-modal.compact { width: calc(100% - 24px); height: auto; max-height: 86%; border-radius: 12px; border: 1px solid var(--border); }
   .project-modal-body, .inv-modal-body { padding: 12px 12px 14px; }
-  .inv-modal.compact { width: calc(100% - 24px); height: auto; border-radius: 12px; }   /* Hivemind stays a small centered card */
-  /* Inventory: let the "+ New" button sit inline once the filter bar wraps */
   .inv-newbtn { margin-left: 0; }
-  /* Mobile console = chat bubbles (verbatim restyle of the same DOM) */
+  .agent-tab-bar { flex-wrap: nowrap; overflow-x: auto; }
+  .pm-back { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; background: none; border: none; color: var(--text); font-size: 22px; cursor: pointer; margin-right: 2px; flex-shrink: 0; }
+  .pm-back:active { background: var(--surface3); }
+  .modal-header { padding: 12px 14px 10px; }
+
+  /* ── Mobile chat console = chat bubbles (same DOM, restyled) ──────────── */
   .agent-output {
-    display: flex; flex-direction: column; gap: 6px;
-    padding: 12px 10px 14px;
+    display: flex; flex-direction: column; gap: 6px; padding: 12px 10px 14px;
     font-family: var(--font-ui); font-size: 15px; line-height: 1.45; white-space: normal;
   }
   .agent-output .agent-line {
     align-self: flex-start; background: var(--surface3); color: var(--text);
-    border: 1px solid var(--border2); padding: 8px 12px;
-    border-radius: 14px 14px 14px 4px; max-width: 84%; word-break: break-word;
-    white-space: pre-wrap; font-family: var(--font-mono); font-size: 14px;
+    border: 1px solid var(--border2); padding: 8px 12px; border-radius: 14px 14px 14px 4px;
+    max-width: 84%; word-break: break-word; white-space: pre-wrap; font-family: var(--font-mono); font-size: 14px;
   }
   .agent-output .agent-line:empty { display: none; }
   .agent-output .agent-line-prompt {
-    align-self: flex-end; background: var(--accent); color: #fff;
-    border-radius: 14px 14px 4px 14px; border-left: none; margin: 0;
-    padding: 9px 13px; font-family: var(--font-ui); font-size: 15px; font-weight: 500; max-width: 84%;
+    align-self: flex-end; background: var(--accent); color: #fff; border-radius: 14px 14px 4px 14px;
+    border-left: none; margin: 0; padding: 9px 13px; font-family: var(--font-ui); font-size: 15px; font-weight: 500; max-width: 84%;
   }
-  .agent-output .agent-line-tool,
-  .agent-output .agent-line-status,
-  .agent-output .agent-line-error,
-  .agent-output .agent-line-followup {
-    align-self: center; background: transparent; font-size: 12.5px;
-    padding: 2px 8px; text-align: center; max-width: 92%; border: none; font-family: var(--font-ui);
+  .agent-output .agent-line-tool, .agent-output .agent-line-status,
+  .agent-output .agent-line-error, .agent-output .agent-line-followup {
+    align-self: center; background: transparent; font-size: 12.5px; padding: 2px 8px;
+    text-align: center; max-width: 92%; border: none; font-family: var(--font-ui);
   }
   .agent-output .hl-table, .agent-output .plan-approve-row { align-self: stretch; max-width: 100%; }
+
   .coach-tip { width: calc(100% - 24px); }
 }
