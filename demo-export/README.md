@@ -62,25 +62,31 @@ no `connect-src` / `frame-src` — nothing reaches the network.
 
 ## The scripted walkthrough
 
-A guided, 5-step coach-mark tour starts automatically (replay it anytime via the
-amber **Demo** chip or the **?** button in the header). Each step advances on the
-**real user action** — the “Next” button just performs that action for you:
+A guided, 7-step coach-mark tour starts automatically **for first-time visitors**
+(replay it anytime via the amber **Demo** chip or the **?** button; the saved
+theme then sticks across reloads). The tour does **not** dim the dashboard — the
+spotlight ring + card carry the focus, so everything reads at full colour. Each
+step advances on the **real user action** — the “Next” button just performs it:
 
 1. **Your projects** — spotlight on the *Aurora Web* tile → open it. A project
    opens as a **centered floating window over the dimmed dashboard** (same
    theme-aware modal as the real app — light on the warm/editorial themes).
-2. **Dispatch a task** — the composer is pre-filled with *“Add a dark-mode
-   toggle to my site.”* → **Dispatch**.
-3. The agent **streams a plan** (real `formatAgentText` markup: headers, bold,
-   numbered list, file-path highlighting) and emits `[tool: ExitPlanMode]`, then
-   waits → **Approve Plan**.
-4. The agent **works** — authentic streamed `[tool: Read/Edit/Write/Bash]`
-   markers, a code block, a `[✓ done …]` status line, then a **summary** with a
-   files-changed table. The tile’s status pill flips to **Completed**.
-5. **Make it yours** — opens **Settings** to explore.
+2. **Two conversations at once** — Aurora opens with **two parallel chat tabs**
+   (the real app's tab strip; the second is a different task already running).
+   The composer is pre-filled with *“Add a dark-mode toggle.”* → **Dispatch**.
+3. The agent **streams a plan** (real `formatAgentText` markup) and emits
+   `[tool: ExitPlanMode]`, then waits → **Approve Plan**.
+4. The agent **works** — streamed `[tool: …]` markers, a code block, a `[✓ done]`
+   line, then a **summary** table. The tile flips to **Completed** → **Settings**.
+5. **Make it yours** — opens **Appearance → Theme & display**.
+6. **Switch the theme** — the demo starts in **Dark**; the step switches it to
+   the **Warm** light theme (saved in your browser).
+7. **You’re all set** — confirmation over the now-warm dashboard.
 
-Dispatching on the other (idle/working) projects runs a shorter generic turn so
-nothing dead-ends.
+The project modal also has the real app's **three-dot menu** (Agent / Backlog /
+Agent Log / Plans / Rename / Memory & Rules / Delete). Dispatching on the other
+projects (or the second Aurora tab) runs a shorter generic turn so nothing
+dead-ends.
 
 ## What is simulated / stubbed
 

@@ -364,6 +364,39 @@ body {
 /* ── AGENT CONSOLE (verbatim) ───────────────────────────────────────────── */
 .agent-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .agent-view-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; flex-shrink: 0; }
+
+/* ── AGENT TAB STRIP (parallel conversations — same markup/classes as the real
+      app's modal tab strip; one tab per session, the active one's chat shows). */
+.agent-tab-bar { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; flex-shrink: 0; }
+.agent-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 11px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: 12.5px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; max-width: 220px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.agent-tab:hover { border-color: var(--border2); color: var(--text); }
+.agent-tab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.agent-tab .agent-status-dot { width: 7px; height: 7px; flex-shrink: 0; }
+.agent-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-tab-close {
+  background: none; border: none; color: var(--text-faint);
+  cursor: pointer; font-size: 12px; padding: 0 2px; line-height: 1;
+  opacity: 0; transition: opacity 0.15s, color 0.15s; flex-shrink: 0; margin-left: 2px;
+}
+.agent-tab:hover .agent-tab-close { opacity: 1; }
+.agent-tab-close:hover { color: var(--red); }
+.agent-tab-new {
+  padding: 6px 11px; border-radius: 6px;
+  background: none; border: 1px dashed var(--border);
+  color: var(--text-faint); font-size: 12.5px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; font-family: var(--font-ui);
+}
+.agent-tab-new:hover { border-color: var(--accent); color: var(--accent); }
+/* One conversation panel per session; only the active one is shown. */
+.agent-session { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.agent-session[hidden] { display: none; }
 .agent-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .agent-status-dot.idle       { background: var(--accent); box-shadow: 0 0 4px var(--accent); }
 .agent-status-dot.running    { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
@@ -527,7 +560,7 @@ body {
 .inv-note2 b { color: var(--text); font-weight: 600; }
 .pm-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pm-title .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.modal-window-controls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.modal-window-controls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative; }
 .modal-minimize {
   width: 32px; height: 32px; border-radius: 6px;
   background: var(--surface3); border: 1px solid var(--border);
@@ -535,6 +568,37 @@ body {
   display: flex; align-items: center; justify-content: center; transition: all 0.15s;
 }
 .modal-minimize:hover { background: var(--amber-dim); color: var(--amber-text); border-color: var(--amber); }
+
+/* ── MODAL THREE-DOT MENU (same markup/classes as the real app) ────────────── */
+.modal-menu-btn {
+  width: 32px; height: 32px; border-radius: 6px;
+  background: var(--surface3); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: 18px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.modal-menu-btn:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.modal-menu-dropdown {
+  display: none; position: absolute; top: calc(100% + 6px); right: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; min-width: 220px; z-index: 50;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4); overflow: hidden;
+}
+.modal-menu-dropdown.open { display: block; }
+.modal-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; cursor: pointer; font-size: 14px;
+  color: var(--text); transition: background 0.1s; border: none;
+  background: none; width: 100%; text-align: left; font-family: var(--font-ui);
+}
+.modal-menu-item:hover { background: var(--surface3); }
+.modal-menu-item.active { color: var(--accent); }
+.modal-menu-item .menu-icon { width: 16px; text-align: center; color: var(--text-faint); font-size: 15px; }
+.modal-menu-item.active .menu-icon { color: var(--accent); }
+.modal-menu-item .tab-badge { margin-left: auto; background: var(--amber-dim); color: var(--amber-text); font-size: 11px; padding: 1px 7px; border-radius: 999px; font-weight: 600; }
+.modal-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.modal-menu-item.danger { color: var(--red-text); }
+.modal-menu-item.danger .menu-icon { color: var(--red-text); }
+.modal-menu-item.danger:hover { background: var(--red-dim); }
 .project-modal-body { flex: 1; min-height: 0; display: flex; overflow: hidden; padding: 14px 16px 16px; }
 .project-modal-body .agent-view { flex: 1; min-width: 0; }
 

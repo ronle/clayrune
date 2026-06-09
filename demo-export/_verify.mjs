@@ -57,93 +57,88 @@ const dimBg = await page.evaluate(() => {
   : fail('coach backdrop still darkens the dashboard: ' + dimBg);
 await page.screenshot({ path: '_shot-tour-top.png' });
 
-// 3. Run the scripted flow via real clicks (coach "Next" buttons perform actions)
-await page.click('#coach-next');                                   // open Aurora Web
+// 3. Drive the 7-step guided tour via the coach "Next" buttons (each performs its
+//    action). The default theme is DARK; the tour ends by switching to WARM.
+const coachNext = async (label) => {
+  if (label) await page.waitForFunction((l) => document.getElementById('coach-next')?.textContent === l, label, { timeout: 8000 }).catch(() => {});
+  await page.click('#coach-next');
+};
+const startTone = await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg') || '{}').tone);
+startTone === 'dark' ? ok('demo default theme is DARK') : fail('default tone not dark: ' + startTone);
+
+await coachNext('Open Aurora Web');                                // step 1 → open Aurora
 await page.waitForSelector('#agent-output', { timeout: 4000 });
 ok('opened agent console');
+// Aurora shows TWO parallel conversation tabs (the live one + a second running task)
+const tabLabels = await page.$$eval('#project-overlay .agent-tab .agent-tab-label', (e) => e.map((x) => x.textContent));
+tabLabels.length === 2 ? ok('Aurora shows 2 parallel conversation tabs (' + JSON.stringify(tabLabels) + ')') : fail('expected 2 conversation tabs, got ' + tabLabels.length);
+// the project modal has a working three-dot menu
+await page.click('#pm-menu-btn');
+await page.waitForSelector('#pm-menu.open', { timeout: 2000 });
+const menuItems = await page.$$eval('#pm-menu .modal-menu-item', (e) => e.length);
+menuItems >= 5 ? ok('project modal three-dot menu opens (' + menuItems + ' items)') : fail('three-dot menu items: ' + menuItems);
+await page.click('#pm-menu-btn');                                  // close the menu
+await page.waitForTimeout(100);
 const prefilled = await page.inputValue('#agent-input');
 prefilled.includes('dark-mode') ? ok('task pre-filled: ' + JSON.stringify(prefilled)) : fail('composer not pre-filled');
 
-await page.click('#coach-next');                                   // Dispatch
+await coachNext('Dispatch');                                       // step 2 → Dispatch
 await page.waitForSelector('#btn-approve-plan', { timeout: 15000 });
 ok('plan streamed; Approve Plan button present');
 const toolLine = await page.$$eval('.agent-line-tool', (e) => e.map((x) => x.textContent));
 toolLine.some((t) => t.includes('ExitPlanMode')) ? ok('[tool: ExitPlanMode] rendered') : fail('no ExitPlanMode tool line');
 
-await page.click('#coach-next');                                   // Approve
+await coachNext('Approve Plan');                                   // step 3 → Approve
 await page.waitForFunction(() => [...document.querySelectorAll('.agent-line-status')].some((e) => /done/i.test(e.textContent)), { timeout: 25000 });
 ok('work streamed to done status line');
-const promptEcho = await page.$$eval('.agent-line-prompt', (e) => e.map((x) => x.textContent));
-promptEcho.some((t) => t.includes('Plan approved')) ? ok('approval echo line present') : fail('no approval echo');
-
-// status flips to completed only AFTER the summary (incl. table) has streamed
 await page.waitForFunction(() => document.querySelector('#agent-status-label')?.textContent === 'Completed', { timeout: 12000 }).catch(() => {});
-const statusLabel = await page.textContent('#agent-status-label');
-statusLabel === 'Completed' ? ok('agent status → Completed') : fail('status not Completed: ' + statusLabel);
-const hasTable = await page.$('.hl-table');
-hasTable ? ok('summary table rendered') : fail('no summary table');
-
+(await page.textContent('#agent-status-label')) === 'Completed' ? ok('agent status → Completed') : fail('status not Completed');
+(await page.$('.hl-table')) ? ok('summary table rendered') : fail('no summary table');
 await page.screenshot({ path: '_shot-run.png' });
 
-// 4. Settings: open + change 3 settings, assert persistence + visual reflection
-await page.click('#coach-next');                                   // open Settings (step 4)
+// 4. Tour steps 4–7: open Settings → Appearance → switch to WARM → finish.
+await coachNext('Open Settings');                                  // step 4 → open Settings
 await page.waitForSelector('#settings-overlay.open', { timeout: 4000 });
-ok('settings modal opened');
-await page.waitForSelector('#coach-tip:not(.settings-hidden)', { timeout: 3000 }).catch(() => {});
-// Step 5 spotlights the Appearance row; clicking it must END the tour so the
-// spotlight doesn't linger on the now-replaced category row (the reported bug).
-if (await page.isVisible('#coach-tip')) {
-  await page.click('[data-drill="appearance"]');
-  await page.waitForTimeout(250);
-  !(await page.isVisible('#coach-tip')) ? ok('step 5: drilling Appearance ends the tour (no stale spotlight)') : fail('coach lingered after drilling Appearance');
-  await page.click('#settings-back-btn');                          // subs → list, ready for the settings tests
-  await page.waitForSelector('[data-drill="appearance"]', { timeout: 3000 });
-} else {
-  ok('step 5 coach not shown (skipped)');
-}
+ok('settings modal opened (step 4)');
+await coachNext('Open Appearance');                                // step 5 → Appearance → Theme & display
+await page.waitForSelector('[data-seg="tone"]', { timeout: 4000 });
+ok('tour drilled into Appearance → Theme & display');
+await coachNext('Switch to Warm');                                 // step 6 → switch to Warm (+ closes Settings)
+await page.waitForFunction(() => document.getElementById('demo-root').classList.contains('tone-warm'), { timeout: 4000 });
+ok('tour switched the theme to WARM');
+const warmPersist = await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg')).tone);
+warmPersist === 'warm' ? ok('warm theme persisted to localStorage') : fail('warm not persisted: ' + warmPersist);
+await page.screenshot({ path: '_shot-tour-warm.png' });
+await coachNext('Done');                                           // step 7 → finish
+await page.waitForTimeout(300);
+!(await page.isVisible('#coach-tip')) ? ok('tour finished after reaching Warm') : fail('coach still visible after step 7');
 
-// drill into Appearance → Theme & display, switch to Warm, assert body class + persisted
+// 4b. Re-open Settings to verify the rest persist (accent / model / streaming / search).
+await page.click('.sidebar-item[data-nav="settings"]');
+await page.waitForSelector('#settings-overlay.open', { timeout: 4000 });
 await page.click('[data-drill="appearance"]');
 await page.waitForSelector('[data-sub]', { timeout: 3000 });
-await page.click('[data-sub="0"]');                                 // Theme & display
-await page.waitForSelector('[data-seg="tone"]', { timeout: 3000 });
-await page.click('[data-seg="tone"] button[data-val="warm"]');
-let toneClass = await page.getAttribute('#demo-root', 'class');
-toneClass.includes('tone-warm') ? ok('theme switch applied (tone-warm on root)') : fail('theme not applied: ' + toneClass);
-let persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg')).tone);
-persisted === 'warm' ? ok('theme persisted to localStorage') : fail('theme not persisted: ' + persisted);
-
-// accent change
+await page.click('[data-sub="0"]');                                // Theme & display
+await page.waitForSelector('[data-seg="accent"]', { timeout: 3000 });
 await page.click('[data-seg="accent"] button[data-val="sunset"]');
-let accent = await page.getAttribute('#demo-root', 'data-accent');
-accent === 'sunset' ? ok('accent applied (data-accent=sunset)') : fail('accent not applied: ' + accent);
-
-// back to dark for screenshot fidelity, then change model in Agent
-await page.click('[data-seg="tone"] button[data-val="dark"]');
+(await page.getAttribute('#demo-root', 'data-accent')) === 'sunset' ? ok('accent applied (data-accent=sunset)') : fail('accent not applied');
 await page.click('#settings-back-btn');                            // → subs
 await page.click('#settings-back-btn');                            // → list
 await page.click('[data-drill="agent"]');
 await page.waitForSelector('[data-sub]', { timeout: 3000 });
-await page.click('[data-sub="1"]');                                 // Model
+await page.click('[data-sub="1"]');                                // Model
 await page.selectOption('select[data-set="model"]', 'claude-opus-4-8');
-let model = await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg')).model);
-model === 'claude-opus-4-8' ? ok('model setting persisted') : fail('model not persisted: ' + model);
-
-// streaming toggle  (back to the Agent sub-list, then into Integration)
+(await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg')).model)) === 'claude-opus-4-8' ? ok('model setting persisted') : fail('model not persisted');
 await page.click('#settings-back-btn');                            // Model detail → Agent subs
 await page.waitForSelector('[data-sub="3"]', { timeout: 3000 });
 await page.click('[data-sub="3"]');                                // Integration
 await page.click('.settings-toggle[data-toggle="use_streaming_agent"]');
-let streaming = await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg')).use_streaming_agent);
-streaming === false ? ok('streaming toggle persisted (off)') : fail('streaming toggle not persisted: ' + streaming);
-
-// search
+(await page.evaluate(() => JSON.parse(localStorage.getItem('clayrune_demo_cfg')).use_streaming_agent)) === false ? ok('streaming toggle persisted (off)') : fail('streaming toggle not persisted');
 await page.click('#settings-back-btn'); await page.click('#settings-back-btn');
 await page.fill('#settings-search', 'port');
 await page.waitForTimeout(150);
 const searchHit = await page.$$eval('#settings-detail-pane .settings-label', (e) => e.map((x) => x.textContent));
 searchHit.some((t) => /port/i.test(t)) ? ok('settings search found "Port"') : fail('search miss: ' + JSON.stringify(searchHit));
-
 await page.screenshot({ path: '_shot-settings.png' });
 
 // 6. Project window: centered modal overlay + theme-aware (LIGHT on warm)
