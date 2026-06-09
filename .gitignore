@@ -219,6 +219,13 @@ tools/_*
 tools/repro-*
 !tools/_mc_restart.ps1
 
+# Demo bundle (demo-export/) dev-only output — verify/capture screenshots
+# (_shot-*.png, _cap-*.png) and one-off scratch .mjs; the committed _verify.mjs
+# regenerates the screenshots on every run. Same `_`-prefix scratch convention
+# as tools/ above. The harness itself stays tracked.
+demo-export/_*
+!demo-export/_verify.mjs
+
 # ── Mobile apps (Android + iOS): assets & scratch live out-of-repo (2026-06-08)
 # The mobile apps are separate products (E:\clayrune-mobile, the iOS Capacitor
 # platform, etc.). Their screenshots, icons, and store-listing image assets
