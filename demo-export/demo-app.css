@@ -658,7 +658,7 @@ body {
 /* Four dim panels (positioned in JS) dim everything EXCEPT the spotlight and
    the top header strip — so the header bar never washes out during the tour. */
 .coach-dim {
-  position: absolute; background: rgba(8,10,16,0.5);
+  position: absolute; background: rgba(8,10,16,0.3);
   pointer-events: none;
   transition: opacity 0.2s ease, left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease;
 }

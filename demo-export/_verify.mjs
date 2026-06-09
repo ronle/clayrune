@@ -45,6 +45,17 @@ tiles === 5 ? ok(`dashboard rendered ${tiles} tiles`) : fail(`expected 5 tiles, 
 const coachVisible = await page.isVisible('#coach-tip');
 coachVisible ? ok('coach-mark tour appeared on load') : fail('coach-mark did not appear');
 
+// 2b. The dashboard TOP must stay full-colour during the tour: step 1 spotlights
+//     the first tile, so the top/left/right dim panels collapse (only below dims).
+const dimRects = await page.evaluate(() => {
+  const h = (id) => { const e = document.getElementById(id); return e ? Math.round(e.getBoundingClientRect().height) : -1; };
+  return { top: h('cd-top'), left: h('cd-left'), right: h('cd-right'), bottom: h('cd-bottom') };
+});
+(dimRects.top <= 1 && dimRects.left <= 1 && dimRects.right <= 1)
+  ? ok('tour keeps the dashboard top at full colour (top/side dim panels collapsed)')
+  : fail('top is dimmed during the tour: ' + JSON.stringify(dimRects));
+await page.screenshot({ path: '_shot-tour-top.png' });
+
 // 3. Run the scripted flow via real clicks (coach "Next" buttons perform actions)
 await page.click('#coach-next');                                   // open Aurora Web
 await page.waitForSelector('#agent-output', { timeout: 4000 });
