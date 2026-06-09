@@ -77,8 +77,18 @@ await page.screenshot({ path: '_shot-run.png' });
 await page.click('#coach-next');                                   // open Settings (step 4)
 await page.waitForSelector('#settings-overlay.open', { timeout: 4000 });
 ok('settings modal opened');
-await page.waitForTimeout(350);                                    // let step-5 coach appear
-if (await page.isVisible('#coach-tip')) await page.click('#coach-skip'); // dismiss tour to drive settings
+await page.waitForSelector('#coach-tip:not(.settings-hidden)', { timeout: 3000 }).catch(() => {});
+// Step 5 spotlights the Appearance row; clicking it must END the tour so the
+// spotlight doesn't linger on the now-replaced category row (the reported bug).
+if (await page.isVisible('#coach-tip')) {
+  await page.click('[data-drill="appearance"]');
+  await page.waitForTimeout(250);
+  !(await page.isVisible('#coach-tip')) ? ok('step 5: drilling Appearance ends the tour (no stale spotlight)') : fail('coach lingered after drilling Appearance');
+  await page.click('#settings-back-btn');                          // subs → list, ready for the settings tests
+  await page.waitForSelector('[data-drill="appearance"]', { timeout: 3000 });
+} else {
+  ok('step 5 coach not shown (skipped)');
+}
 
 // drill into Appearance → Theme & display, switch to Warm, assert body class + persisted
 await page.click('[data-drill="appearance"]');
@@ -167,6 +177,11 @@ await page.waitForSelector('#project-overlay:not(.open)', { timeout: 3000 }).cat
 //    badges, command/description, path · mtime) with a working filter bar.
 await page.click('.sidebar-item[data-nav="skills"]');
 await page.waitForSelector('.inv-group .inv-row', { timeout: 3000 });
+await page.waitForSelector('#feature-pop.show', { timeout: 3000 });   // brief "what is this?" intro
+const skPop = await page.textContent('.fp-title');
+/Skills/.test(skPop) ? ok('Skills opens a feature-intro popup ("' + skPop + '")') : fail('Skills popup title: ' + skPop);
+await page.screenshot({ path: '_shot-feature-pop.png' });
+await page.click('#fp-close');                                        // dismiss before the list tests
 const skillRows = await page.$$eval('.inv-group .inv-row', (e) => e.length);
 skillRows >= 4 ? ok('Skills shows ' + skillRows + ' sample rows') : fail('Skills sample rows missing: ' + skillRows);
 const hasDistill = await page.$$eval('.inv-name', (e) => e.some((x) => /mc-distill/.test(x.textContent)));
@@ -184,6 +199,10 @@ await page.screenshot({ path: '_shot-skills.png' });
 
 await page.click('.sidebar-item[data-nav="mcp"]');
 await page.waitForSelector('.inv-group .inv-row', { timeout: 3000 });
+await page.waitForSelector('#feature-pop.show', { timeout: 3000 });
+const mcPop = await page.textContent('.fp-title');
+/MCP/.test(mcPop) ? ok('MCP opens a feature-intro popup ("' + mcPop + '")') : fail('MCP popup title: ' + mcPop);
+await page.click('#fp-close');
 const mcpRows = await page.$$eval('.inv-group .inv-row', (e) => e.length);
 mcpRows >= 4 ? ok('MCP shows ' + mcpRows + ' sample rows') : fail('MCP sample rows missing: ' + mcpRows);
 const hasTransport = await page.$('.inv-badge.transport');
@@ -214,6 +233,13 @@ await page.click('[data-seg="bg"] button[data-val="color"]');
 await page.waitForSelector('input[data-bgcolor]', { timeout: 3000 });
 ok('Appearance → Background → Color reveals the color picker');
 await page.evaluate(() => document.getElementById('settings-close').click());
+
+// 7c. Hivemind opens a feature-intro popup (the section itself stays a placeholder)
+await page.click('.sidebar-item[data-nav="hivemind"]');
+await page.waitForSelector('#feature-pop.show', { timeout: 3000 });
+const hmPop = await page.textContent('.fp-title');
+/Hivemind/.test(hmPop) ? ok('Hivemind opens a feature-intro popup ("' + hmPop + '")') : fail('Hivemind popup title: ' + hmPop);
+await page.click('#fp-close');
 
 // 8. Responsive: 390px phone
 await page.click('.sidebar-item[data-nav="dashboard"]');

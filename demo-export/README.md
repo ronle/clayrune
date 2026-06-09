@@ -108,7 +108,9 @@ nothing dead-ends.
   app's list rows: each row is **name + scope badge** (`global` / `project: …`)
   **+ transport** (MCP), then the **command / description**, then the config
   **path · timestamp**, under a working **search + scope filter** bar. Sample
-  data only — Edit / Delete / “＋ New” say “Disabled in demo.”
+  data only — Edit / Delete / “＋ New” say “Disabled in demo.” Opening
+  **Skills**, **MCP**, or **Hivemind** also slides in a brief intro card that
+  explains what the feature is (auto-dismisses; closeable).
   **Backlog / Hivemind / Scheduler** still show a short “part of the full app”
   placeholder — the demo focuses on running an agent, Settings, and these
   two surfaces.
