@@ -9,7 +9,7 @@ the real Settings panel — with **no backend, no network, and no real data**.
 
 | File | Purpose |
 |------|---------|
-| `demo-app.html` | Markup shell — sidebar, header, content mount, project-window + settings modals, coach-mark layer. No inline scripts, no inline event handlers. |
+| `demo-app.html` | Markup shell — sidebar, header, content mount, project / inventory / settings modals, coach-mark layer. No inline scripts, no inline event handlers. |
 | `demo-app.css`  | Styling extracted verbatim from the real dashboard (`static/index.html`) and re-scoped from the viewport onto a bounded `.demo-root` frame. Dark theme is the default; warm/editorial light themes + 6 accents included. |
 | `demo-app.js`   | The whole simulation: fake data, dashboard, agent console + streaming, plan→approve flow, the WhatsApp-style Settings drill-down, and the guided coach-mark tour. Vanilla JS, zero dependencies. |
 
@@ -104,16 +104,15 @@ nothing dead-ends.
   **Port**, **Auto-condense** + threshold, and the **Advanced features**
   checkboxes. Live search across all of them works. Provider/Connectivity panels
   are present but their actions are no-ops (“Disabled in demo”).
-- **Skills** and **MCP** show sample inventories rebuilt to match the real
-  app's list rows: each row is **name + scope badge** (`global` / `project: …`)
-  **+ transport** (MCP), then the **command / description**, then the config
-  **path · timestamp**, under a working **search + scope filter** bar. Sample
-  data only — Edit / Delete / “＋ New” say “Disabled in demo.” Opening
-  **Skills**, **MCP**, or **Hivemind** also slides in a brief intro card that
-  explains what the feature is (auto-dismisses; closeable).
-  **Backlog / Hivemind / Scheduler** still show a short “part of the full app”
-  placeholder — the demo focuses on running an agent, Settings, and these
-  two surfaces.
+- **Skills**, **MCP**, and **Hivemind** open as **centered modals** — the same
+  window type as a project (shared `.modal-content` chrome + dimmed backdrop,
+  ✕ / minimize / backdrop / Esc to dismiss). Each modal leads with a “what is
+  this?” **intro callout** explaining the feature. Skills/MCP then list sample
+  rows rebuilt to match the real app: **name + scope badge** (`global` /
+  `project: …`) **+ transport** (MCP), then the **command / description**, then
+  the config **path · timestamp**, under a working **search + scope filter**
+  bar. Sample data only — Edit / Delete / “＋ New” say “Disabled in demo.”
+  **Backlog / Scheduler** still show a short “part of the full app” placeholder.
 
 ## Fidelity notes
 

@@ -173,15 +173,16 @@ await page.keyboard.press('Escape');                               // Esc dismis
 await page.waitForSelector('#project-overlay:not(.open)', { timeout: 3000 }).catch(() => {});
 !(await page.isVisible('#project-overlay.open')) ? ok('Esc dismisses the modal') : fail('Esc did not dismiss');
 
-// 7. Sample sections: Skills + MCP — faithful list rows (name + scope/transport
-//    badges, command/description, path · mtime) with a working filter bar.
+// 7. Skills / MCP / Hivemind open as CENTERED MODALS (same window type as a
+//    project), with the "what is this?" explanation as a callout inside the modal.
 await page.click('.sidebar-item[data-nav="skills"]');
+await page.waitForSelector('#inv-overlay.open .modal-content.inv-modal', { timeout: 3000 });
+ok('Skills opens as a centered modal (shared .modal-content window type)');
+const skTiles = await page.$$eval('.card', (e) => e.length);
+skTiles === 5 ? ok('dashboard stays behind the Skills modal (dimmed backdrop)') : fail('tiles not behind Skills modal: ' + skTiles);
+const skIntro = await page.textContent('#inv-overlay .inv-intro');
+/SKILL\.md/.test(skIntro) ? ok('Skills modal shows the intro explanation callout') : fail('Skills intro callout: ' + skIntro);
 await page.waitForSelector('.inv-group .inv-row', { timeout: 3000 });
-await page.waitForSelector('#feature-pop.show', { timeout: 3000 });   // brief "what is this?" intro
-const skPop = await page.textContent('.fp-title');
-/Skills/.test(skPop) ? ok('Skills opens a feature-intro popup ("' + skPop + '")') : fail('Skills popup title: ' + skPop);
-await page.screenshot({ path: '_shot-feature-pop.png' });
-await page.click('#fp-close');                                        // dismiss before the list tests
 const skillRows = await page.$$eval('.inv-group .inv-row', (e) => e.length);
 skillRows >= 4 ? ok('Skills shows ' + skillRows + ' sample rows') : fail('Skills sample rows missing: ' + skillRows);
 const hasDistill = await page.$$eval('.inv-name', (e) => e.some((x) => /mc-distill/.test(x.textContent)));
@@ -190,19 +191,21 @@ const hasScopeBadges = (await page.$('.inv-badge.global')) && (await page.$('.in
 hasScopeBadges ? ok('Skills rows show global + project scope badges') : fail('Skills scope badges missing');
 const hasSkillPath = await page.$$eval('.inv-path', (e) => e.some((x) => /SKILL\.md/.test(x.textContent)));
 hasSkillPath ? ok('Skills rows show config path · mtime') : fail('Skills path/mtime missing');
-await page.fill('#inv-search', 'engulfing');                       // live search filter
+await page.fill('#inv-search', 'engulfing');                       // live search filter (inside the modal)
 await page.waitForTimeout(120);
 const filtered = await page.$$eval('.inv-group .inv-row', (e) => e.length);
 filtered === 1 ? ok('Skills search filters to 1 matching row') : fail('Skills search filter broken: ' + filtered);
 await page.fill('#inv-search', '');
 await page.screenshot({ path: '_shot-skills.png' });
+await page.keyboard.press('Escape');                               // close before switching nav (scrim blocks the sidebar)
+await page.waitForSelector('#inv-overlay.open', { state: 'hidden', timeout: 3000 });
+ok('Esc closes the Skills modal');
 
 await page.click('.sidebar-item[data-nav="mcp"]');
-await page.waitForSelector('.inv-group .inv-row', { timeout: 3000 });
-await page.waitForSelector('#feature-pop.show', { timeout: 3000 });
-const mcPop = await page.textContent('.fp-title');
-/MCP/.test(mcPop) ? ok('MCP opens a feature-intro popup ("' + mcPop + '")') : fail('MCP popup title: ' + mcPop);
-await page.click('#fp-close');
+await page.waitForSelector('#inv-overlay.open .modal-content.inv-modal', { timeout: 3000 });
+ok('MCP opens as a centered modal');
+const mcIntro = await page.textContent('#inv-overlay .inv-intro');
+/Model Context Protocol/.test(mcIntro) ? ok('MCP modal shows the intro explanation callout') : fail('MCP intro callout: ' + mcIntro);
 const mcpRows = await page.$$eval('.inv-group .inv-row', (e) => e.length);
 mcpRows >= 4 ? ok('MCP shows ' + mcpRows + ' sample rows') : fail('MCP sample rows missing: ' + mcpRows);
 const hasTransport = await page.$('.inv-badge.transport');
@@ -217,6 +220,8 @@ const noProjectRows = await page.$$eval('.inv-group .inv-badge', (e) => e.every(
 noProjectRows ? ok('MCP scope filter → "Global only" hides project rows') : fail('MCP scope filter broken');
 await page.selectOption('#inv-scope', 'all');
 await page.screenshot({ path: '_shot-mcp.png' });
+await page.keyboard.press('Escape');
+await page.waitForSelector('#inv-overlay.open', { state: 'hidden', timeout: 3000 });
 
 // 7b. Appearance now has the Background section (Theme/Color/Image), like the real app
 await page.click('.sidebar-item[data-nav="settings"]');
@@ -234,12 +239,14 @@ await page.waitForSelector('input[data-bgcolor]', { timeout: 3000 });
 ok('Appearance → Background → Color reveals the color picker');
 await page.evaluate(() => document.getElementById('settings-close').click());
 
-// 7c. Hivemind opens a feature-intro popup (the section itself stays a placeholder)
+// 7c. Hivemind opens as a modal too — its intro card is the main payload
 await page.click('.sidebar-item[data-nav="hivemind"]');
-await page.waitForSelector('#feature-pop.show', { timeout: 3000 });
-const hmPop = await page.textContent('.fp-title');
-/Hivemind/.test(hmPop) ? ok('Hivemind opens a feature-intro popup ("' + hmPop + '")') : fail('Hivemind popup title: ' + hmPop);
-await page.click('#fp-close');
+await page.waitForSelector('#inv-overlay.open .modal-content.inv-modal.compact', { timeout: 3000 });
+const hmIntro = await page.textContent('#inv-overlay .inv-intro');
+/many projects/.test(hmIntro) ? ok('Hivemind opens as a modal with its explanation') : fail('Hivemind intro: ' + hmIntro);
+await page.screenshot({ path: '_shot-hivemind.png' });
+await page.keyboard.press('Escape');
+await page.waitForSelector('#inv-overlay.open', { state: 'hidden', timeout: 3000 });
 
 // 8. Responsive: 390px phone
 await page.click('.sidebar-item[data-nav="dashboard"]');

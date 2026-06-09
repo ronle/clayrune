@@ -500,13 +500,29 @@ body {
    ACTIVE theme exactly (warm → light card / dark text, dark → dark card). It
    reuses the shared .modal-content / .modal-header / .modal-close chrome, just
    like the real app's project modal. */
-.project-overlay {
+.project-overlay, .inv-overlay {
   position: absolute; inset: 0; z-index: 900;
   background: rgba(8,10,16,0.5);
   display: none; align-items: center; justify-content: center; padding: 24px;
 }
-.project-overlay.open { display: flex; }
+.project-overlay.open, .inv-overlay.open { display: flex; }
 .project-modal { width: 760px; max-width: 100%; height: 88%; max-height: 100%; }
+/* Skills / MCP / Hivemind open in the SAME window type as a project. */
+.inv-modal { width: 760px; max-width: 100%; height: 86%; max-height: 100%; }
+.inv-modal.compact { height: auto; }              /* Hivemind: content-sized, not tall */
+.inv-modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px 18px; }
+.inv-modal-body::-webkit-scrollbar { width: 6px; }
+.inv-modal-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+/* The "what is this?" explanation callout — front-and-center at the modal top. */
+.inv-intro {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: 10px;
+  padding: 11px 14px; margin-bottom: 14px;
+  font-size: 12px; line-height: 1.55; color: var(--text-dim);
+}
+.inv-intro b { color: var(--text); font-weight: 600; }
+.inv-note2 { font-size: 13px; line-height: 1.6; color: var(--text-dim); padding: 6px 2px; }
+.inv-note2 b { color: var(--text); font-weight: 600; }
 .pm-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pm-title .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modal-window-controls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -524,10 +540,7 @@ body {
       name + scope/transport badges, the command/description, then config
       path · mtime, with a search + scope filter bar above. Theme-aware via
       vars only (real app uses inline styles; mapped here to --text-dim/--font-mono). */
-.inv-head { font-size: 12px; color: var(--text-faint); line-height: 1.5; margin: 2px 0 12px; max-width: 820px; }
-.inv-head code { background: var(--surface3); color: var(--text-dim); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono); font-size: 0.92em; }
-.inv-head b { color: var(--text-dim); font-weight: 600; }
-.inv-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 900px; }
+.inv-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .inv-search { flex: 1; min-width: 180px; padding: 6px 10px; font-size: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); outline: none; font-family: var(--font-ui); }
 .inv-search:focus { border-color: var(--accent); }
 .inv-search::placeholder { color: var(--text-faint); }
@@ -555,35 +568,6 @@ body {
 .inv-desc { font-size: 12px; color: var(--text-dim); line-height: 1.4; }
 .inv-path { font-size: 10px; color: var(--text-faint); font-family: var(--font-mono); word-break: break-all; }
 .inv-empty { padding: 30px 12px; text-align: center; color: var(--text-faint); font-size: 12px; }
-
-/* ── FEATURE INTRO POPUP — brief "what is this?" card on opening Skills / MCP /
-      Hivemind. Slides in bottom-right, auto-dismisses, closeable. Theme-aware. */
-.feature-pop {
-  position: absolute; z-index: 1400;
-  right: 18px; bottom: 18px; width: 320px; max-width: calc(100% - 36px);
-  display: flex; gap: 12px; align-items: flex-start;
-  background: var(--surface); border: 1px solid var(--border2);
-  border-left: 3px solid var(--accent);
-  border-radius: 12px; padding: 14px 14px 14px 16px;
-  box-shadow: 0 12px 34px rgba(0,0,0,0.32);
-  opacity: 0; transform: translateY(12px);
-  transition: opacity 0.25s ease, transform 0.25s ease;
-  pointer-events: none;
-}
-.feature-pop.show { opacity: 1; transform: none; pointer-events: auto; }
-.fp-icon { font-size: 22px; line-height: 1; flex-shrink: 0; }
-.fp-body { min-width: 0; flex: 1; }
-.fp-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
-.fp-text { font-size: 12px; line-height: 1.5; color: var(--text-dim); }
-.fp-text b { color: var(--text); font-weight: 600; }
-.fp-close {
-  flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px;
-  background: transparent; border: none; color: var(--text-faint);
-  font-size: 12px; cursor: pointer; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.12s, color 0.12s;
-}
-.fp-close:hover { background: var(--surface3); color: var(--text); }
 
 /* Settings drill-down (verbatim) */
 .settings-search-wrap { position: relative; margin: 2px 0 16px; }
@@ -734,14 +718,13 @@ body {
   .content-main { padding: 12px 12px; }
   .demo-tag .dt-label { display: none; }     /* icon-only on phones to save header room */
   .header-right { gap: 8px; }
-  /* Project modal goes full-bleed on phones (mirrors the real app's coarse-pointer rule) */
-  .project-overlay { padding: 0; }
-  .project-modal { width: 100%; height: 100%; max-height: 100%; border-radius: 0; border: none; }
-  .project-modal-body { padding: 10px 10px 12px; }
+  /* Project + inventory modals go full-bleed on phones (real app's coarse-pointer rule) */
+  .project-overlay, .inv-overlay { padding: 0; }
+  .project-modal, .inv-modal:not(.compact) { width: 100%; height: 100%; max-height: 100%; border-radius: 0; border: none; }
+  .project-modal-body, .inv-modal-body { padding: 12px 12px 14px; }
+  .inv-modal.compact { width: calc(100% - 24px); height: auto; border-radius: 12px; }   /* Hivemind stays a small centered card */
   /* Inventory: let the "+ New" button sit inline once the filter bar wraps */
   .inv-newbtn { margin-left: 0; }
-  /* Feature popup spans the width on phones */
-  .feature-pop { right: 10px; left: 10px; bottom: 10px; width: auto; max-width: none; }
   /* Mobile console = chat bubbles (verbatim restyle of the same DOM) */
   .agent-output {
     display: flex; flex-direction: column; gap: 6px;
