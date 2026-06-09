@@ -1,16 +1,9 @@
 {
   "name": "mission-control",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Mission Control - Project Intelligence Dashboard",
-  "scripts": {
-    "tauri": "tauri"
-  },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "@tauri-apps/cli": "^2.10.1",
-    "@tauri-apps/plugin-shell": "^2"
-  }
+  "type": "commonjs"
 }

@@ -758,6 +758,17 @@ def _is_username_valid(u: str) -> tuple[bool, str]:
 
 _DEV_AUTH_ENABLED = os.environ.get("MC_CP_DEV_AUTH") == "1"
 
+# Fail-closed: the dev auth shim (X-Dev-User-Email impersonation, no signin
+# verification) must NEVER be on in production. Cloud Run always sets K_SERVICE,
+# so refuse to import there with dev auth enabled rather than silently let anyone
+# authenticate as any user.
+if _DEV_AUTH_ENABLED and os.environ.get("K_SERVICE"):
+    raise RuntimeError(
+        "MC_CP_DEV_AUTH=1 (full X-Dev-User-Email impersonation bypass) is set in a "
+        "Cloud Run environment (K_SERVICE present). Refusing to start — unset "
+        "MC_CP_DEV_AUTH in production."
+    )
+
 
 def _resolve_user(
     authorization: Optional[str],
