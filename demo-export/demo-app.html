@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Clayrune — Interactive Demo</title>
+  <!--
+    Fully simulated. No backend, no network requests, no auth, fake data only.
+    Safe to host on a public static site. See README.md.
+    Strict-CSP friendly: no inline scripts, no remote resources.
+  -->
+  <link rel="stylesheet" href="demo-app.css">
+</head>
+<body>
+  <!-- The whole dashboard lives inside this bounded flex shell (not the viewport). -->
+  <div class="demo-root" id="demo-root">
+
+    <!-- ── Sidebar ──────────────────────────────────────────────────────── -->
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-logo">
+        <div class="logo-icon">C</div>
+        <span class="logo-text">Clayrune</span>
+      </div>
+      <div class="sidebar-nav">
+        <div class="sidebar-item active" data-nav="dashboard">
+          <span class="si-icon">&#x25A6;</span><span class="si-label">Dashboard</span>
+        </div>
+        <div class="sidebar-item" data-nav="skills">
+          <span class="si-icon">&#x1F9E9;</span><span class="si-label">Skills</span>
+        </div>
+        <div class="sidebar-item" data-nav="mcp">
+          <span class="si-icon">&#x1F50C;</span><span class="si-label">MCP</span>
+        </div>
+        <div class="sidebar-item" data-nav="backlog">
+          <span class="si-icon">&#x1F4CB;</span><span class="si-label">Backlog</span>
+        </div>
+        <div class="sidebar-item" data-nav="hivemind">
+          <span class="si-icon">&#x1F41D;</span><span class="si-label">Hivemind</span>
+        </div>
+        <div class="sidebar-item" data-nav="scheduler">
+          <span class="si-icon">&#x23F1;</span><span class="si-label">Scheduler</span>
+        </div>
+        <div class="sidebar-item" id="nav-settings" data-nav="settings">
+          <span class="si-icon">&#x2699;</span><span class="si-label">Settings</span>
+        </div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section-label">Projects</div>
+        <div class="sidebar-projects" id="sidebar-projects"></div>
+      </div>
+    </nav>
+
+    <!-- ── Main area ────────────────────────────────────────────────────── -->
+    <div class="main-area">
+      <!-- Mobile app bar (≤ breakpoint only; mirrors the real app's .mc-app-bar) -->
+      <div class="mc-app-bar" id="mc-app-bar">
+        <button class="mc-hamburger-btn" id="mc-hamburger-btn" title="Menu"><span></span><span></span><span></span></button>
+        <div class="mc-greet">
+          <div class="mc-eyebrow">Clayrune</div>
+          <h1 class="mc-greeting">Hi <span aria-hidden="true">&#x1F44B;</span></h1>
+        </div>
+        <button class="mc-avatar-btn" id="mc-avatar-btn" title="Settings">C</button>
+      </div>
+      <div class="header">
+        <div class="header-left">
+          <span class="header-breadcrumb" id="header-breadcrumb"></span>
+        </div>
+        <div class="header-right">
+          <button class="demo-tag" id="demo-restart" title="Fully simulated demo — no backend, nothing leaves your browser. Click to replay.">
+            <span class="dt-dot"></span><span class="dt-label">Demo</span>
+          </button>
+          <div class="header-search"><span>Search or command&hellip;</span><kbd>Ctrl+K</kbd></div>
+          <div class="metric-pill"><div class="mp-dot" style="background:var(--green)"></div><span id="header-agent-count">0</span>&nbsp;agents</div>
+          <div class="live-badge"><div class="live-dot"></div>Live</div>
+          <button class="header-tour-btn" id="header-tour-btn" title="Replay the guided tour">?</button>
+        </div>
+      </div>
+
+      <div class="content-area">
+        <div class="content-main" id="content-main"><!-- view rendered by JS --></div>
+      </div>
+    </div>
+
+    <!-- ── Project floating window mount (opens over the dashboard) ─────── -->
+    <div class="project-overlay" id="project-overlay"></div>
+
+    <!-- ── Mobile bottom tab bar + hamburger drawer (≤ breakpoint only) ──── -->
+    <div class="bottom-tab-bar" id="bottom-tab-bar">
+      <div class="bottom-tab-item active" data-mnav="dashboard"><span class="bti-icon">&#x1F3E0;</span>Home</div>
+      <div class="bottom-tab-item" data-mnav="backlog"><span class="bti-icon">&#x2630;</span>Backlog</div>
+      <div class="bottom-tab-item fab" data-mnav="new"><span class="bti-icon">+</span>New</div>
+      <div class="bottom-tab-item" data-mnav="scheduler"><span class="bti-icon">&#x23F1;</span>Scheduler</div>
+      <div class="bottom-tab-item" data-mnav="hivemind"><span class="bti-icon">&#x1F41D;</span>Hivemind</div>
+    </div>
+    <div class="mobile-drawer-backdrop" id="mobile-drawer-backdrop"></div>
+    <aside class="mobile-drawer" id="mobile-drawer" aria-hidden="true">
+      <div class="mobile-drawer-head">
+        <div class="logo-icon">C</div><span class="logo-text">Clayrune</span>
+        <button class="mobile-drawer-close" id="mobile-drawer-close" title="Close">&#10005;</button>
+      </div>
+      <div class="mobile-drawer-list" id="mobile-drawer-list"></div>
+    </aside>
+
+    <!-- ── Settings modal mount ─────────────────────────────────────────── -->
+    <div class="modal-overlay" id="settings-overlay">
+      <div class="modal-content mc-settings-modal">
+        <div class="modal-header">
+          <span style="display:flex;align-items:center;gap:6px;min-width:0">
+            <button id="settings-back-btn" class="settings-back-btn settings-hidden" title="Back">&#8592;</button>
+            <span id="settings-title" class="modal-title">Settings</span>
+          </span>
+          <button class="modal-close" id="settings-close" title="Close">&#10005;</button>
+        </div>
+        <div id="settings-body" data-view="list"></div>
+      </div>
+    </div>
+
+    <!-- ── Coach-mark layer (4 dim panels leave the header strip crisp) ──── -->
+    <div class="coach-backdrop" id="coach-backdrop">
+      <div class="coach-dim" id="cd-top"></div>
+      <div class="coach-dim" id="cd-bottom"></div>
+      <div class="coach-dim" id="cd-left"></div>
+      <div class="coach-dim" id="cd-right"></div>
+      <div class="coach-spot" id="coach-spot"></div>
+    </div>
+    <div class="coach-tip settings-hidden" id="coach-tip">
+      <div class="coach-arrow" id="coach-arrow"></div>
+      <div class="coach-tip-step" id="coach-step"></div>
+      <div class="coach-tip-title" id="coach-title"></div>
+      <div class="coach-tip-body" id="coach-body"></div>
+      <div class="coach-tip-actions">
+        <button class="coach-skip" id="coach-skip">Skip tour</button>
+        <button class="coach-next" id="coach-next">Next</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="demo-app.js"></script>
+</body>
+</html>

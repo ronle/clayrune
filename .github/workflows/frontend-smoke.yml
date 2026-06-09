@@ -1,0 +1,51 @@
+name: Frontend boot smoke test
+
+# Loads the real dashboard SPA (static/index.html) in headless Chromium and
+# asserts the project grid actually renders. Catches RUNTIME boot throws that a
+# syntax/`node --check` pass cannot — e.g. the 2026-06-08 temporal-dead-zone
+# ReferenceError (a `let` read before its declaration) that aborted boot and
+# hung the whole dashboard on its "Loading..." placeholder with no projects.
+#
+# That bug shipped because the author's open tab kept the old JS (server restart
+# != tab reload), so a fresh load was never exercised. This turns "fresh load"
+# into a CI gate on every change to the page.
+
+on:
+  push:
+    paths:
+      - 'static/index.html'
+      - 'tools/smoke/**'
+      - '.github/workflows/frontend-smoke.yml'
+  pull_request:
+    paths:
+      - 'static/index.html'
+      - 'tools/smoke/**'
+      - '.github/workflows/frontend-smoke.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boot-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install smoke-test deps
+        working-directory: tools/smoke
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium (with OS deps)
+        working-directory: tools/smoke
+        run: npx playwright install --with-deps chromium
+
+      - name: Run dashboard boot smoke test
+        working-directory: tools/smoke
+        run: npm test

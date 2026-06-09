@@ -38,6 +38,7 @@ If a doc doesn't need updating, say so explicitly: *"CLAUDE.md doesn't need chan
 
 - Run any relevant tests, linters, or type checks.
 - For UI changes: actually open the dev server in a browser and verify the feature works.
+- **Dashboard SPA gate (Clayrune only)**: if you touched `static/index.html`, you MUST run the headless boot smoke test before committing — `cd tools/smoke && npm install && npx playwright install chromium && npm test` (chromium install is one-time). It loads the real page in headless Chromium and asserts the project grid renders. This catches RUNTIME boot throws that `node --check` / syntax checks miss — e.g. a `let` read before its declaration (temporal dead zone) that aborts boot and hangs the whole dashboard on "Loading..." with no projects. These ship unnoticed because your own open tab keeps the OLD working JS (server restart ≠ tab reload), so a fresh load is never exercised. **Gate**: before committing an `index.html` change, either show the `✅ PASS` output or state out loud why it's genuinely N/A. CI (`.github/workflows/frontend-smoke.yml`) runs the same check on PR, but run it locally first — don't outsource the catch.
 - If anything fails, stop and fix it before proceeding.
 
 ### 4. Stage and commit

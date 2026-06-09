@@ -263,8 +263,10 @@ def stage_clone(url: str, owner: str, repo: str, ref: str | None = None) -> dict
             raise RuntimeError(f'failed to clean stale install dir: {e}')
 
     branch_args = ['--branch', ref] if ref else []
+    # `--` terminates option parsing so a hostile URL can't smuggle a git flag
+    # (e.g. --upload-pack=…) into the positional slots.
     rc, out, err = _run(
-        ['git', 'clone', '--depth', '1', *branch_args, url, str(install_dir)],
+        ['git', 'clone', '--depth', '1', *branch_args, '--', url, str(install_dir)],
         timeout=120,
     )
     if rc != 0:

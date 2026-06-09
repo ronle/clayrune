@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Python-version preflight — keep FIRST. server.py is a direct entry point
+# (python server.py) and is also imported by app.py's Flask thread; either path
+# rejects a too-old interpreter before the 3.10+ import chain loads.
+import preflight  # noqa: F401
+
 import hashlib
 import json
 import os
@@ -160,7 +165,10 @@ try:
     import mc_remote_iface  # noqa: F401  (import for side-effect: surface available)
 except Exception as _e:
     mc_remote_iface = None  # type: ignore[assignment]
-    _log(f"[remote-access] mc_remote_iface not available: {_e}", flush=True)
+    # NOTE: this block runs at import time, BEFORE _log() is defined (line ~345,
+    # it depends on CONFIG which isn't loaded yet). Use print() here, or the
+    # except handler itself raises NameError and masks the real import error.
+    print(f"[remote-access] mc_remote_iface not available: {_e}", flush=True)
 
 if mc_remote_iface is not None:
     # Dev stub takes precedence when its env var is set — useful for UI work
@@ -171,17 +179,17 @@ if mc_remote_iface is not None:
         try:
             from mc_remote_iface.dev_stub import maybe_register_dev_stub
             if maybe_register_dev_stub():
-                _log(f"[remote-access] dev stub registered "
+                print(f"[remote-access] dev stub registered "
                       f"(MC_DEV_REMOTE_STUB={os.environ.get('MC_DEV_REMOTE_STUB')})", flush=True)
         except Exception as _e:
-            _log(f"[remote-access] dev stub unavailable: {_e}", flush=True)
+            print(f"[remote-access] dev stub unavailable: {_e}", flush=True)
     else:
         try:
             import mc_remote  # noqa: F401  (provider self-registers via __init__)
         except Exception as _e:
             # Absence is normal in an open-source build with no proprietary
             # provider installed. Log at info volume only.
-            _log(f"[remote-access] no provider installed: {_e}", flush=True)
+            print(f"[remote-access] no provider installed: {_e}", flush=True)
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -201,7 +209,12 @@ def _load_config():
         'desktop_mode': False,
         'user_name': '',
         'agent_name': '',
-        'use_streaming_agent': False,
+        # Persistent agent process (Mode B). Default ON (2026-06-04) — streaming
+        # is the standard runtime: one long-lived `claude` per chat, follow-ups
+        # written to stdin. A fresh install gets Mode B. Existing config.json
+        # files keep their saved value (the merge below preserves it), so this
+        # flip only reaches new installs / configs that predate the key.
+        'use_streaming_agent': True,
         # P2-1/P2-2 upload limits. 0 = unlimited (default → no behavior
         # change; enforcement is opt-in). upload_quota_bytes caps a
         # project's cumulative backlog-attachment storage;
@@ -233,7 +246,7 @@ def _load_config():
         # respawns it with `-r <csid>` (full context preserved). Default OFF;
         # enable after validation, same posture as scribe_checkpoint. [2026-06-03]
         'idle_eviction_enabled': False,
-        'idle_eviction_minutes': 30,    # idle minutes before a warm session is evicted
+        'idle_eviction_minutes': 60,    # idle minutes before a warm session is evicted
         # Phase 4 Distiller (v2.1 §11 global keys).
         # Self-learning observer parallel to Scribe — extracts cross-session
         # patterns into _proposed/ for human review. Best-effort, never load-
@@ -246,9 +259,21 @@ def _load_config():
         'distiller_window_days': 30,
         'distiller_cost_cap_tokens_per_project_per_day': 100000,
         'distiller_proposal_dedupe_days': 7,
+        # Preferences carry content + are human-gated at promotion, so they
+        # generate on first observation (recurrence 1) instead of waiting for
+        # the 3x topic/skill threshold that structurally never fires for
+        # single-task sessions. Recurrence becomes a ranking signal, not a gate.
+        'distiller_preference_min_recurrence': 1,
         'distiller_cross_project_walk_debounce_session_count': 5,
         'distiller_cross_project_walk_debounce_seconds': 600,
         'read_floor_topk': 3,          # SPEC §3 Leg B deterministic read floor
+        # Exploration read-floor — surfaces the Distiller's captured
+        # EXPLORATION.md proposals back into a new session's context (the
+        # learning-loop closer). Ships default-ON; flip enabled=false to
+        # revert to write-only _proposed/ behavior. Kept small (topk=2) so
+        # the cache-warmed context stays lean.
+        'exploration_readback_enabled': True,
+        'exploration_read_floor_topk': 2,
         'agent_channels': '',
         'agent_remote_control': False,
         'agent_revive_from_log': True,
@@ -336,16 +361,43 @@ def _log(*args, level='info', **kw):
     kw.setdefault('flush', True)
     _builtins.print(*args, **kw)
 
+def _cors_origin_allowed(origin: str) -> bool:
+    """True iff `origin` is one of our own app shells or a loopback origin.
+
+    The browser sets Origin and a web page cannot forge it, so allowlisting the
+    native-webview schemes (Tauri/Capacitor/Ionic) plus loopback hosts is safe
+    and — critically — blocks ordinary websites from driving the API cross-site.
+    """
+    if not origin:
+        return False
+    try:
+        from urllib.parse import urlparse
+        u = urlparse(origin)
+    except Exception:
+        return False
+    host = (u.hostname or '').lower()
+    scheme = (u.scheme or '').lower()
+    # Native app shells: tauri://localhost, capacitor://localhost, ionic://localhost
+    if scheme in ('tauri', 'capacitor', 'ionic') and host in ('localhost', ''):
+        return True
+    # Loopback + the https://tauri.localhost / https://localhost webview variants
+    return host in ('localhost', '127.0.0.1', '::1', 'tauri.localhost')
+
+
 @app.after_request
 def add_cors_headers(response):
-    # Localhost-only dev app: echo back whatever Origin the caller sends so
-    # the Tauri webview (which may use http://tauri.localhost, tauri://localhost,
-    # https://tauri.localhost, or other custom schemes depending on platform)
-    # can always reach the API. Not a security risk — server binds localhost.
-    origin = request.headers.get('Origin', '*')
-    response.headers['Access-Control-Allow-Origin'] = origin
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    # Cross-origin access is allowed ONLY for our own app shells (Tauri /
+    # Capacitor / Ionic) and loopback origins. We deliberately do NOT reflect
+    # arbitrary Origins: the API binds 0.0.0.0 and the host itself is
+    # loopback-exempt from the auth gate, so reflecting any Origin would let any
+    # website the user visits drive the API cross-site (CSRF → e.g.
+    # /api/terminal/launch RCE). Dashboard access over the CF tunnel is
+    # same-origin and needs no CORS header at all.
+    origin = request.headers.get('Origin', '')
+    if _cors_origin_allowed(origin):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     response.headers['Vary'] = 'Origin'
     if request.method == 'OPTIONS':
         response.status_code = 204
@@ -2327,6 +2379,119 @@ def get_distiller_proposed():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/distiller/loop-health', methods=['GET'])
+def get_distiller_loop_health():
+    """Learning-loop health snapshot — the self-detection layer (step 2 of the
+    2026-06-05 plan). Aggregates per-project counters + the _proposed/ queue
+    into generation/refuse/readback/queue signals with an `alerts` list, so a
+    degraded leg surfaces on its own. Enriches queue timestamps with day-age.
+    Read-only; never mutates state."""
+    try:
+        snap = _distiller.loop_health()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    # Enrich queue staleness with day-age (datetime lives server-side; the
+    # distiller deliberately stays datetime-free, using only ISO strings).
+    try:
+        now = datetime.now(timezone.utc)
+        for key in ('oldest_created_at', 'newest_created_at'):
+            ca = snap.get('queue', {}).get(key)
+            if ca:
+                try:
+                    dt = datetime.fromisoformat(ca.replace('Z', '+00:00'))
+                    snap['queue'][key.replace('_created_at', '_age_days')] = \
+                        round((now - dt).total_seconds() / 86400, 1)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return jsonify(snap)
+
+
+@app.route('/api/distiller/promote', methods=['POST'])
+def post_distiller_promote():
+    """Promote a _proposed/ artifact into a real SKILL.md (the human-promotes
+    leg — step 3). Body: {directory, scope: 'project'|'global', project_id?}.
+    Installs via skills.write_skill (overwrite), then distiller.mark_promoted
+    suppresses re-proposal + moves the proposal to _promoted/. SKILL artifacts
+    carry their own TRIGGER description; EXPLORATION/PREFERENCE get a synthesized
+    one the user can edit afterward (this is also the step-4 bridge — a great
+    exploration becomes a skill by a deliberate human click)."""
+    body = request.get_json(silent=True) or {}
+    directory = body.get('directory', '')
+    scope = (body.get('scope') or 'project').strip()
+    project_id = body.get('project_id') or None
+    if scope not in ('project', 'global'):
+        return jsonify({'ok': False, 'error': 'scope must be project or global'}), 400
+    try:
+        art = _distiller.read_proposed_artifact(directory)
+        if art is None:
+            return jsonify({'ok': False,
+                            'error': 'artifact not found or outside _proposed/'}), 404
+        project_path = None
+        if scope == 'project':
+            project_id = project_id or art.get('project_id')
+            if not project_id:
+                return jsonify({'ok': False,
+                                'error': 'project_id required for project-scope promote '
+                                         '(cross-project artifact — choose global or pass project_id)'}), 400
+            project_path, err = _resolve_project_path_or_400(scope, project_id)
+            if err:
+                return err
+        rec = _skills.write_skill(
+            name=art['name'],
+            description=art['description'],
+            body=art['body'],
+            scope=scope,
+            project_path=project_path,
+            project_id=project_id,
+            extra_meta={
+                'provenance': 'distilled-promoted',
+                'promoted_from': art['kind'],
+                'source_session': art.get('source_session', ''),
+                'extraction_fingerprint_exact': art.get('exact', ''),
+            },
+            overwrite=True,
+        )
+        mark = _distiller.mark_promoted(directory)
+        return jsonify({'ok': True, 'installed': rec, 'mark': mark})
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/distiller/reject', methods=['POST'])
+def post_distiller_reject():
+    """Reject a _proposed/ artifact: write a suppression marker (Distiller
+    won't re-propose) + move it to _rejected/. Body: {directory}."""
+    body = request.get_json(silent=True) or {}
+    directory = body.get('directory', '')
+    try:
+        result = _distiller.reject_proposed(directory)
+        if not result.get('ok') and result.get('reason') == 'not_found':
+            return jsonify({'ok': False,
+                            'error': 'artifact not found or outside _proposed/'}), 404
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/distiller/proposed-artifact', methods=['GET'])
+def get_distiller_proposed_artifact():
+    """Full content of one _proposed/ artifact (kind/title/description/body),
+    for the Learning-queue expand-to-read action. Path-guarded in the
+    distiller. Query: ?directory=<path>."""
+    directory = request.args.get('directory', '')
+    try:
+        art = _distiller.read_proposed_artifact(directory)
+        if art is None:
+            return jsonify({'error': 'artifact not found or outside _proposed/'}), 404
+        return jsonify(art)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/router/stats', methods=['GET'])
 def get_router_stats_aggregate():
     """Cross-project auto-router counters. Sums totals and by_pair across
@@ -3865,6 +4030,27 @@ def _build_agent_context(project, incognito=False, task=''):
                 "--- RELEVANT MEMORY (auto-surfaced for this task; "
                 "use the mc-memory-search skill to dig deeper) ---\n" + rl)
 
+    # Exploration read-floor — closes the learning loop by feeding the
+    # Distiller's captured EXPLORATION.md proposals back into context. Without
+    # this, _proposed/ explorations are write-only and never change behavior.
+    # Best-effort, gated, and never load-bearing (same posture as the Distiller
+    # write side). Skipped for incognito sessions (no memory leakage).
+    if task and not incognito and CONFIG.get('exploration_readback_enabled', True):
+        try:
+            expl = _distiller.exploration_read_floor(
+                project['id'], task,
+                int(CONFIG.get('exploration_read_floor_topk', 2) or 2))
+        except Exception:
+            expl = []
+        if expl:
+            el = "\n".join(
+                f"  • [{e['scope']}] {e['snippet']}  (full: {e['path']})"
+                for e in expl)
+            parts.append(
+                "--- RELEVANT PAST EXPLORATIONS (a prior session already "
+                "investigated something like this; read the full file before "
+                "re-deriving) ---\n" + el)
+
     # Recent activity — Claude-only: a non-Claude agent reads these past
     # "Agent dispatched: <task>" lines as things it still has to do.
     log = project.get('activity_log', [])[:3]
@@ -4623,22 +4809,41 @@ def _auto_recover_failed_resume(session):
         _log(f"[dispatch] Fresh retry failed for {project_id}: {e}")
 
 
-def _log_agent_activity(project_id, msg):
-    """Add an entry to the project's activity_log."""
+def _log_agent_activity(project_id, msg, bump_updated=True):
+    """Add an entry to the project's activity_log.
+
+    bump_updated: when True (default) also refresh `last_updated`, which drives
+    the recency sort in both the desktop list and the mobile chat list. Pass
+    False for background machinery (e.g. GitHub auto-sync) that should be
+    *logged* without floating the project to the top of the recency sort.
+    """
     p = load_project(project_id)
     if not p:
         return
     log = p.setdefault('activity_log', [])
     log.insert(0, {'ts': now_iso(), 'msg': msg})
     p['activity_log'] = log[:20]
-    p['last_updated'] = now_iso()
+    if bump_updated:
+        p['last_updated'] = now_iso()
     save_project(project_id, p)
+
+
+def _log_github_sync_activity(project_id, msg):
+    """Log a GitHub-sync event WITHOUT bumping `last_updated`.
+
+    GitHub auto-sync runs every 5 min (incl. error cycles like an unreachable
+    repo). Routing those through `_log_agent_activity` bumped `last_updated`
+    each cycle, floating the project to the top of the mobile recency sort with
+    no real conversation. Sync events still appear in the activity log; they no
+    longer affect time-placement. (Ron, 2026-06-05)
+    """
+    _log_agent_activity(project_id, msg, bump_updated=False)
 
 
 # ── GitHub sync module ───────────────────────────────────────────────────────
 import github_sync as _gh_sync
 _gh_sync.register(_POPEN_FLAGS, _STARTUPINFO,
-                   _log_agent_activity, load_project, save_project, now_iso)
+                   _log_github_sync_activity, load_project, save_project, now_iso)
 
 
 # ── Project (code) sync module — spike: read-only fetch + status ────────────
@@ -6952,27 +7157,39 @@ _BRIEF_REPLY_DIRECTIVE = (
 )
 
 # Device-neutral variant for `brief_replies_always_enabled` (applies on desktop
-# too, so it can't say "from a phone" / "switch to PC"). Brevity targets PROSE
-# only — necessary code, file edits, and tool work are never truncated.
+# too, so it can't say "from a phone" / "switch to PC"). Per-turn prepend used
+# when sticky_agent_settings is OFF; mirrors the hard framing of the
+# system-baked variant. Brevity targets PROSE only — necessary code, file
+# edits, and tool work are never truncated.
 _BRIEF_REPLY_DIRECTIVE_ALWAYS = (
-    "[Default to brief, conversational replies: lead with the answer in a "
-    "sentence or two, one main idea, minimal headers/bullets. Elaborate only "
-    "when the user explicitly asks for more detail. Brevity applies to prose "
-    "and explanation — never truncate necessary code, file edits, or tool "
-    "work. This instruction is hidden from the user.]"
+    "[BINDING for this reply — brevity is a hard rule, not a preference. Lead "
+    "with the answer; hard ceiling ~4 sentences of prose (more only if the user "
+    "asked for detail); no preamble, no restating the question, no closing "
+    "offers. Bullets only to enumerate 3+ discrete items. Before sending, cut "
+    "every non-load-bearing sentence. This caps PROSE ONLY — never shorten "
+    "necessary code, file edits, tool work, or findings; completeness means "
+    "substance, not length. This instruction is hidden from the user.]"
 )
 
 # System-prompt variant of the device-neutral brevity nudge, used when
 # `sticky_agent_settings` is on: baked once into _build_agent_context (cached,
-# system-level authority) instead of re-prepended to every user turn. Hard caps
-# so it isn't weighed away as a soft suggestion. Governs PROSE only.
+# system-level authority) instead of re-prepended to every user turn. Framed as
+# a BINDING rule (imperative, with a pre-send self-check and an explicit
+# carve-out so it can't be rationalized away against the "be complete" rules).
+# Governs PROSE only.
 _BRIEF_REPLY_DIRECTIVE_SYSTEM = (
-    "REPLY LENGTH (default for this session): keep prose brief — lead with the "
-    "answer in the first sentence; at most ~4 sentences of explanation; no "
-    "section headers; no bullet lists unless enumerating 3+ discrete items. "
-    "Elaborate only when the user explicitly asks for more detail. This governs "
-    "PROSE only — never truncate or abbreviate necessary code, file edits, or "
-    "tool calls."
+    "REPLY LENGTH — BINDING RULE for this session (this is a hard constraint, "
+    "not a stylistic preference): default to the SHORTEST reply that fully "
+    "answers. Lead with the answer in the first sentence. Hard ceiling: ~4 "
+    "sentences of prose per reply (more only if the user explicitly asks for "
+    "detail). No preamble, no restating the question, no recap of what you just "
+    "did, no closing offers. Use bullets ONLY to enumerate 3+ discrete items, "
+    "never to pad. Before sending, re-read your draft and delete every sentence "
+    "that is not load-bearing to the answer. "
+    "This caps PROSE ONLY — never shorten or omit necessary code, file edits, "
+    "tool calls, or actual findings. 'Complete and fully analyzed' refers to "
+    "SUBSTANCE, not word count: a correct answer in two sentences outranks a "
+    "thorough-sounding one in ten. When in doubt, cut."
 )
 
 
@@ -12315,18 +12532,43 @@ def _install_builtin_mcps():
 # transports supported: stdio (local subprocess), http (streamable HTTP),
 # sse (legacy HTTP+SSE). See mcp.py for the schema details.
 
+# Servers force-kept in any custom per-project loadout — dropping them would
+# silently break a load-bearing capability. `engram` = cross-session memory;
+# losing it kills the whole memory system for that project (see CLAUDE.md).
+_MCP_ALWAYS_KEEP = ('engram',)
+
+
 @app.route('/api/mcp')
 def list_mcp_route():
-    """List MCP servers across global pool + (optionally) one project's pool."""
+    """List MCP servers across global pool + (optionally) one project's pool.
+
+    When `project_id` is given, each item is annotated with `active` (is it in
+    the project's enabled_mcp_servers loadout?), `loadout_custom` (has the
+    project opted into trimming at all?), and `always_on` (force-kept server).
+    No opt-in → every server is active (full fleet, unchanged default).
+    """
     project_id = request.args.get('project_id')
 
+    project = None
     project_path = None
     if project_id:
         p = load_project(project_id)
         if p:
+            project = p
             project_path = p.get('project_path') or None
 
     items = _mcp.list_servers(project_path=project_path, project_id=project_id)
+
+    if project is not None:
+        sel = project.get('enabled_mcp_servers')
+        opted_in = isinstance(sel, list)
+        sel_set = set(sel) if opted_in else None
+        for it in items:
+            name = it.get('name')
+            it['always_on'] = name in _MCP_ALWAYS_KEEP
+            it['loadout_custom'] = opted_in
+            it['active'] = (sel_set is None) or (name in sel_set) or it['always_on']
+
     return jsonify(items)
 
 
@@ -12427,6 +12669,72 @@ def delete_mcp_route(scope, name):
         return jsonify({'error': str(e)}), 404
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+
+
+# ── Per-project MCP loadout (the enabled_mcp_servers trim) ───────────────────
+#
+# WRITE/READ surface for project['enabled_mcp_servers'], which the dispatch
+# trim (_resolve_project_mcp_config → --strict-mcp-config) consumes:
+#   absent/None → full fleet (default; unchanged for projects that never opted
+#                 in — this is why 0 projects were trimmed before this shipped).
+#   list        → load ONLY those servers for this project's agents.
+# A custom loadout always force-keeps _MCP_ALWAYS_KEEP (engram/memory).
+
+@app.route('/api/project/<project_id>/mcp-enabled', methods=['GET'])
+def get_project_mcp_enabled(project_id):
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    sel = p.get('enabled_mcp_servers')
+    opted_in = isinstance(sel, list)
+    try:
+        catalog = sorted(_mcp_server_catalog(p).keys())
+    except Exception:
+        catalog = []
+    return jsonify({
+        'opted_in': opted_in,
+        'enabled': sel if opted_in else None,
+        'catalog': catalog,
+        'always_keep': list(_MCP_ALWAYS_KEEP),
+    })
+
+
+@app.route('/api/project/<project_id>/mcp-enabled', methods=['PUT'])
+def set_project_mcp_enabled(project_id):
+    """Set (or clear) a project's MCP loadout.
+
+    Body: {"enabled": [names]}  → trim to these (engram force-kept).
+          {"enabled": null}     → clear the opt-in (back to full fleet).
+    """
+    filepath = DATA_DIR / f'{project_id}.json'
+    if not filepath.exists():
+        return jsonify({'error': 'project not found'}), 404
+    data = request.get_json(silent=True) or {}
+    enabled = data.get('enabled', None)
+    existing = json.loads(filepath.read_text(encoding='utf-8'))
+
+    if enabled is None:
+        existing.pop('enabled_mcp_servers', None)
+        existing['last_updated'] = now_iso()
+        save_project(project_id, existing)
+        return jsonify({'ok': True, 'opted_in': False, 'enabled': None})
+
+    if not isinstance(enabled, list) or not all(isinstance(x, str) for x in enabled):
+        return jsonify({'error': 'enabled must be a list of server names or null'}), 400
+
+    try:
+        catalog = set(_mcp_server_catalog(existing).keys())
+    except Exception:
+        catalog = set(enabled)
+    chosen = [n for n in dict.fromkeys(enabled) if n in catalog]
+    for keep in _MCP_ALWAYS_KEEP:
+        if keep in catalog and keep not in chosen:
+            chosen.append(keep)
+
+    existing['enabled_mcp_servers'] = chosen
+    existing['last_updated'] = now_iso()
+    save_project(project_id, existing)
+    return jsonify({'ok': True, 'opted_in': True, 'enabled': chosen})
 
 
 # ── MCP "Add from URL" — preview / install / cleanup ────────────────────────
@@ -13240,7 +13548,7 @@ def _scheduler_loop():
 
         # ── Purge stale sessions from memory ──────────────────────────────
         try:
-            cutoff = now - timedelta(minutes=30)
+            cutoff = now - timedelta(minutes=60)
             total_stale = 0
             for mgr in all_managers():
                 with mgr.lock:
@@ -13830,13 +14138,13 @@ def _guardian_check_session(sid, session, now):
     # flagging it 'error'; it is cleared on respawn. Default OFF.
     if _should_evict_idle_session(session, now,
                                   CONFIG.get('idle_eviction_enabled', False),
-                                  CONFIG.get('idle_eviction_minutes', 30)):
+                                  CONFIG.get('idle_eviction_minutes', 60)):
         proc_to_kill = None
         with get_manager(session['project_id']).lock:
             # Re-check under lock — status/proc may have changed since the snapshot.
             if _should_evict_idle_session(session, now,
                                           CONFIG.get('idle_eviction_enabled', False),
-                                          CONFIG.get('idle_eviction_minutes', 30)):
+                                          CONFIG.get('idle_eviction_minutes', 60)):
                 idle_min = (now - session.get('last_output_time', now)) / 60
                 session['evicted'] = True
                 session['process_alive'] = False
@@ -15267,11 +15575,375 @@ def _cf_session_nonce_from_request() -> str:
 def _is_cf_tunneled_request() -> bool:
     """True iff this request arrived through CF Access (i.e. via the tunnel).
 
-    Localhost dashboard hits don't have these headers — only requests routed
-    through cloudflared from the public hostname do.
+    cloudflared runs on THIS host and forwards to the origin over loopback, so a
+    genuine tunneled request both (a) carries Cf-Access-* headers AND (b) has a
+    loopback TCP peer. We require BOTH. The headers alone are attacker-forgeable:
+    the origin binds 0.0.0.0, so any LAN device can send Cf-Access-* directly —
+    but a forged header from a LAN IP fails the loopback-peer check and is
+    correctly treated as un-exempt (it must then pass the LAN passcode). If you
+    run cloudflared on a SEPARATE host, set a LAN passcode: tunnel traffic then
+    arrives from a non-loopback peer and is intentionally no longer auto-exempt.
     """
+    if not _is_loopback_request():
+        return False
     return bool(request.headers.get('Cf-Access-Authenticated-User-Email')
                 or request.headers.get('Cf-Access-Jwt-Assertion'))
+
+
+# ── Local (LAN) passcode gate ───────────────────────────────────────────────
+# The dashboard binds 0.0.0.0:PORT, so any device on the same network can reach
+# it directly at http://<host-ip>:PORT. Remote access through the Cloudflare
+# tunnel sits behind CF Access (email OTP), but direct LAN hits had NO auth at
+# all — anyone on the Wi-Fi got full control. This gate closes that gap:
+#
+#   • Loopback (this machine) and CF-tunneled requests are ALWAYS exempt. The
+#     tunnel terminates at cloudflared on localhost, so tunneled traffic both
+#     arrives as 127.0.0.1 AND carries Cf-Access-* headers — and it has already
+#     passed CF Access OTP. We never double-gate it.
+#   • Every other origin (a real LAN IP) must pass a shared passcode. Until a
+#     passcode is set the dashboard is LOCKED to LAN devices, which instead see
+#     a one-time "set a passcode" page; once set, they see a login page.
+#
+# remote_addr is the real TCP peer (we deliberately do NOT trust X-Forwarded-For
+# here — a LAN attacker could forge XFF: 127.0.0.1, but cannot forge the TCP
+# source and still complete the handshake). Storage lives in data/ (NOT
+# data/projects/), so load_projects() never sees it.
+
+LOCAL_AUTH_PATH = _DATA_ROOT / 'data' / 'local_auth.json'
+_LOCAL_AUTH_COOKIE = 'mc_local_auth'
+_LOCAL_AUTH_MAX_AGE = 30 * 86400  # cookie + signature validity (30 days)
+_LOCAL_AUTH_MIN_LEN = 4
+
+# Light in-memory brute-force throttle (per source IP). Best-effort; resets on
+# restart. Not a substitute for a strong passcode, just a speed bump.
+_LOCAL_AUTH_FAILS = {}            # ip -> [count, window_start_ts]
+_LOCAL_AUTH_FAIL_CAP = 10
+_LOCAL_AUTH_FAIL_WINDOW = 300     # seconds
+
+
+def _load_local_auth() -> dict:
+    try:
+        if LOCAL_AUTH_PATH.exists():
+            return json.loads(LOCAL_AUTH_PATH.read_text(encoding='utf-8')) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_local_auth(d: dict) -> None:
+    try:
+        LOCAL_AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = LOCAL_AUTH_PATH.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(d, indent=2), encoding='utf-8')
+        tmp.replace(LOCAL_AUTH_PATH)
+    except Exception as e:
+        _log(f"[local-auth] save failed: {e}", flush=True)
+
+
+def _local_auth_is_configured() -> bool:
+    d = _load_local_auth()
+    return bool(d.get('pw_hash') and d.get('pw_salt'))
+
+
+def _local_auth_hash(passcode: str, salt: bytes) -> str:
+    import hashlib
+    return hashlib.pbkdf2_hmac('sha256', passcode.encode('utf-8'), salt, 200_000).hex()
+
+
+def _local_auth_set_passcode(passcode: str) -> None:
+    import secrets
+    salt = secrets.token_bytes(16)
+    d = _load_local_auth()
+    d['pw_salt'] = salt.hex()
+    d['pw_hash'] = _local_auth_hash(passcode, salt)
+    # Rotate the cookie-signing secret so every existing session is invalidated
+    # when the passcode changes.
+    d['cookie_secret'] = secrets.token_hex(32)
+    d['updated_at'] = int(_time.time())
+    _save_local_auth(d)
+
+
+def _local_auth_verify_passcode(passcode: str) -> bool:
+    import hmac as _hmac
+    d = _load_local_auth()
+    salt_hex, pw_hash = d.get('pw_salt'), d.get('pw_hash')
+    if not salt_hex or not pw_hash:
+        return False
+    try:
+        salt = bytes.fromhex(salt_hex)
+    except Exception:
+        return False
+    return _hmac.compare_digest(_local_auth_hash(passcode, salt), pw_hash)
+
+
+def _local_auth_make_cookie() -> str:
+    import hmac as _hmac, hashlib
+    secret = (_load_local_auth().get('cookie_secret') or '').encode('utf-8')
+    iat = str(int(_time.time()))
+    sig = _hmac.new(secret, iat.encode('utf-8'), hashlib.sha256).hexdigest()
+    return f"{iat}.{sig}"
+
+
+def _local_auth_verify_cookie(val: str) -> bool:
+    import hmac as _hmac, hashlib
+    if not val or '.' not in val:
+        return False
+    secret = (_load_local_auth().get('cookie_secret') or '')
+    if not secret:
+        return False
+    try:
+        iat_str, sig = val.split('.', 1)
+        iat = int(iat_str)
+    except Exception:
+        return False
+    expected = _hmac.new(secret.encode('utf-8'), iat_str.encode('utf-8'), hashlib.sha256).hexdigest()
+    if not _hmac.compare_digest(expected, sig):
+        return False
+    return (_time.time() - iat) <= _LOCAL_AUTH_MAX_AGE
+
+
+def _is_loopback_request() -> bool:
+    ra = (request.remote_addr or '').strip().lower()
+    if ra in ('127.0.0.1', '::1', 'localhost'):
+        return True
+    # IPv4-mapped IPv6 loopback (e.g. ::ffff:127.0.0.1)
+    return ra.startswith('::ffff:127.')
+
+
+def _local_auth_exempt() -> bool:
+    """The host machine (loopback) and CF-tunneled requests never see the gate."""
+    return _is_loopback_request() or _is_cf_tunneled_request()
+
+
+def _local_auth_request_ok() -> bool:
+    """True iff this request may proceed past the gate (exempt, or carries a
+    valid auth cookie against a configured passcode)."""
+    if _local_auth_exempt():
+        return True
+    return _local_auth_is_configured() and _local_auth_verify_cookie(
+        request.cookies.get(_LOCAL_AUTH_COOKIE, ''))
+
+
+def _local_auth_throttled() -> bool:
+    rec = _LOCAL_AUTH_FAILS.get(request.remote_addr or '?')
+    if not rec:
+        return False
+    if _time.time() - rec[1] > _LOCAL_AUTH_FAIL_WINDOW:
+        _LOCAL_AUTH_FAILS.pop(request.remote_addr or '?', None)
+        return False
+    return rec[0] >= _LOCAL_AUTH_FAIL_CAP
+
+
+def _local_auth_note_fail() -> None:
+    ip = request.remote_addr or '?'
+    now = _time.time()
+    rec = _LOCAL_AUTH_FAILS.get(ip)
+    if not rec or now - rec[1] > _LOCAL_AUTH_FAIL_WINDOW:
+        _LOCAL_AUTH_FAILS[ip] = [1, now]
+    else:
+        rec[0] += 1
+
+
+def _local_auth_set_cookie(resp):
+    resp.set_cookie(_LOCAL_AUTH_COOKIE, _local_auth_make_cookie(),
+                    max_age=_LOCAL_AUTH_MAX_AGE, httponly=True, samesite='Lax', path='/')
+    return resp
+
+
+@app.before_request
+def _local_auth_gate():
+    # OPTIONS preflight carries no cookies and must not be redirected.
+    if request.method == 'OPTIONS':
+        return None
+    if _local_auth_request_ok():
+        return None
+    path = request.path or '/'
+    # The auth pages + their API + favicon must stay reachable while locked.
+    if (path.startswith('/api/local-auth/')
+            or path == '/_mc/local-locked'
+            or path == '/_mc/local-login'
+            or path == '/favicon.ico'):
+        return None
+    # When a passcode exists → login page. When none is set, a LAN device gets
+    # an informational "locked" page (NOT a setup form) — it can never bootstrap
+    # a passcode; only the host (exempt) can, via Settings.
+    state = 'login' if _local_auth_is_configured() else 'locked'
+    if path.startswith('/api/'):
+        return jsonify({'error': 'auth_required', 'auth_state': state}), 401
+    return redirect('/_mc/local-login' if state == 'login' else '/_mc/local-locked', code=302)
+
+
+@app.route('/api/local-auth/status', methods=['GET'])
+def local_auth_status():
+    """Lets the host Settings panel and the lock pages read current state."""
+    configured = _local_auth_is_configured()
+    return jsonify({
+        'configured': configured,
+        'exempt': _local_auth_exempt(),
+        'authed': _local_auth_request_ok(),
+    })
+
+
+@app.route('/api/local-auth/set', methods=['POST'])
+def local_auth_set():
+    """Set or change the LAN passcode.
+
+    The FIRST passcode can be set ONLY from an exempt context — the host
+    (loopback) or a CF-tunneled session — via Settings → Network access. A LAN
+    device can never bootstrap a passcode on an unprotected dashboard (otherwise
+    the first stranger to reach it could claim it). A LAN device may *change* an
+    existing passcode only by proving the current one. On success the caller is
+    logged in (cookie set)."""
+    body = request.get_json(silent=True) or {}
+    new_pass = (body.get('passcode') or '').strip()
+    if len(new_pass) < _LOCAL_AUTH_MIN_LEN:
+        return jsonify({'error': 'passcode_too_short', 'min': _LOCAL_AUTH_MIN_LEN}), 400
+    if not _local_auth_exempt():
+        if not _local_auth_is_configured():
+            # No LAN bootstrapping — the owner sets the first passcode on the host.
+            return jsonify({'error': 'setup_requires_host'}), 403
+        if not _local_auth_verify_passcode((body.get('current') or '').strip()):
+            return jsonify({'error': 'bad_current_passcode'}), 403
+    _local_auth_set_passcode(new_pass)
+    _log(f"[local-auth] passcode set/changed from {request.remote_addr}", flush=True)
+    return _local_auth_set_cookie(jsonify({'ok': True, 'configured': True}))
+
+
+@app.route('/api/local-auth/login', methods=['POST'])
+def local_auth_login():
+    if not _local_auth_is_configured():
+        return jsonify({'error': 'not_configured'}), 400
+    if _local_auth_throttled():
+        return jsonify({'error': 'too_many_attempts'}), 429
+    passcode = ((request.get_json(silent=True) or {}).get('passcode') or '').strip()
+    if not _local_auth_verify_passcode(passcode):
+        _local_auth_note_fail()
+        return jsonify({'error': 'bad_passcode'}), 403
+    _LOCAL_AUTH_FAILS.pop(request.remote_addr or '?', None)
+    return _local_auth_set_cookie(jsonify({'ok': True}))
+
+
+@app.route('/_mc/local-locked')
+def mc_local_locked_page():
+    # If already past the gate, no reason to show the lock page.
+    if _local_auth_request_ok():
+        return redirect('/', code=302)
+    # A passcode exists → the login page is the right place.
+    if _local_auth_is_configured():
+        return redirect('/_mc/local-login', code=302)
+    return _render_local_auth_page('locked')
+
+
+@app.route('/_mc/local-login')
+def mc_local_login_page():
+    if _local_auth_request_ok():
+        return redirect('/', code=302)
+    # No passcode yet → there's nothing to log in to; show the locked page.
+    if not _local_auth_is_configured():
+        return redirect('/_mc/local-locked', code=302)
+    return _render_local_auth_page('login')
+
+
+def _render_local_auth_page(mode: str) -> str:
+    safe_mode = 'login' if mode == 'login' else 'locked'
+    html = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Clayrune — Locked</title>
+<style>
+  :root { --accent:#e8824a; --bg:#fdfaf6; --fg:#1a1a1a; --muted:#6b6b6b; --border:#e0d8cc; --err:#c0392b; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; min-height:100%; background:var(--bg); color:var(--fg);
+              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; }
+  .wrap { max-width:440px; margin:0 auto; padding:48px 22px; }
+  .logo { font-size:13px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); margin-bottom:18px; }
+  h1 { font-size:22px; margin:0 0 8px; font-weight:700; }
+  p.lead { color:var(--muted); font-size:14px; line-height:1.55; margin:0 0 18px; }
+  .card { background:#fff; border:2px solid var(--border); border-radius:14px; padding:18px; }
+  label { display:block; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:0 0 6px; }
+  input { width:100%; padding:12px 14px; font-size:16px; border:2px solid var(--border); border-radius:10px; background:#fff; color:var(--fg); margin-bottom:12px; }
+  input:focus { outline:none; border-color:var(--accent); }
+  button { width:100%; margin-top:4px; padding:14px; font-size:16px; font-weight:600; background:var(--accent); color:#fff; border:none; border-radius:10px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .err { color:var(--err); font-size:13px; min-height:18px; margin:8px 0 0; }
+  .hint { font-size:12px; color:var(--muted); margin-top:14px; padding:10px 12px; background:#f6f1ea; border-radius:8px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">Clayrune</div>
+  <div id="root"></div>
+</div>
+<script>var MODE = "__MODE__";</script>
+<script>
+(function(){
+  var root = document.getElementById('root');
+  function setErr(m){ var e=document.getElementById('err'); if(e) e.textContent = m||''; }
+  function msgFor(j){
+    if(!j) return 'Something went wrong.';
+    switch(j.error){
+      case 'bad_passcode': return 'Incorrect passcode.';
+      case 'passcode_too_short': return 'Passcode must be at least 4 characters.';
+      case 'too_many_attempts': return 'Too many attempts — wait a minute and try again.';
+      case 'bad_current_passcode': return 'Current passcode is incorrect.';
+      case 'not_configured': return 'No passcode is set yet.';
+      default: return 'Something went wrong.';
+    }
+  }
+  function bindEnter(){
+    Array.prototype.forEach.call(document.querySelectorAll('input'), function(i){
+      i.addEventListener('keydown', function(e){ if(e.key==='Enter'){ var b=document.getElementById('go'); if(b) b.click(); }});
+    });
+  }
+  function doLogin(){
+    var p1=(document.getElementById('p1').value||'');
+    if(!p1){ setErr('Enter your passcode.'); return; }
+    var b=document.getElementById('go'); b.disabled=true; setErr('');
+    fetch('/api/local-auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:p1})})
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
+      .then(function(res){
+        if(res.ok){ location.replace('/'); return; }
+        b.disabled=false;
+        // A passcode was removed on the host since this page loaded → back to locked.
+        if(res.j && res.j.error==='not_configured'){ render('locked'); return; }
+        setErr(msgFor(res.j));
+      })
+      .catch(function(){ b.disabled=false; setErr('Network error — try again.'); });
+  }
+  function render(mode){
+    if(mode==='login'){
+      root.innerHTML =
+        '<h1>Enter passcode</h1>'
+      + '<p class="lead">This Clayrune dashboard is protected. Enter the passcode to continue.</p>'
+      + '<div class="card">'
+      + '<label for="p1">Passcode</label>'
+      + '<input id="p1" type="password" autocomplete="current-password" placeholder="Passcode" autofocus>'
+      + '<button id="go">Unlock</button>'
+      + '<p class="err" id="err"></p>'
+      + '</div>';
+      document.getElementById('go').onclick = doLogin;
+      bindEnter();
+    } else {
+      // No passcode is set. A network device CANNOT create one here — that would
+      // let the first stranger to reach the dashboard claim it. Point them to
+      // the host, where the owner sets it in Settings.
+      root.innerHTML =
+        '<h1>Dashboard locked</h1>'
+      + '<p class="lead">This Clayrune dashboard is not open to your network yet. The owner needs to set a passcode on the host computer &mdash; open Clayrune there and go to <b>Settings &rarr; Connectivity &rarr; Network access</b>. Once a passcode is set, you can sign in here.</p>'
+      + '<div class="card">'
+      + '<button id="go">Try again</button>'
+      + '</div>';
+      document.getElementById('go').onclick = function(){ location.reload(); };
+    }
+  }
+  render(MODE);
+})();
+</script>
+</body>
+</html>"""
+    return html.replace('__MODE__', safe_mode)
 
 
 @app.before_request

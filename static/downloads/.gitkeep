@@ -1,0 +1,2 @@
+# Keeps static/downloads/ present in the repo; its build-artifact contents
+# (installers, APK/AAB, zips) are gitignored.

@@ -4,6 +4,227 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-09] — Security hardening: LAN auth bypass, CORS, git-arg injection
+
+Closes findings from an internal security review (each independently verified
+against source before fixing). The two criticals were a single chain.
+
+**Critical — unauthenticated RCE chain closed.** The dashboard binds `0.0.0.0`
+and exempts the host (loopback) and CF-tunnelled requests from the LAN passcode
+gate. But `_is_cf_tunneled_request()` trusted the mere *presence* of a
+`Cf-Access-*` header, which a LAN device can forge — bypassing the gate and
+reaching `/api/terminal/launch` (which runs `shell=True`). It now requires a
+**loopback TCP peer AND** the header: cloudflared forwards over loopback, so
+genuine tunnel traffic still passes, but a forged header from a LAN IP does not.
+
+**Critical — permissive CORS removed.** `add_cors_headers` reflected any
+`Origin`, so any website the user visited could drive the API cross-site
+(loopback is auth-exempt → drive-by `/api/terminal/launch`). CORS is now an
+allowlist: native app shells (Tauri/Capacitor/Ionic) + loopback origins only.
+Same-origin access over the CF tunnel is unaffected.
+
+**git argument-injection hardening.** The `git clone` calls in `skills.py` and
+`mcp_installer.py` now place `--` before the positional URL so a hostile
+URL/ref can't smuggle a git flag (e.g. `--upload-pack=…`); `project_sync.py`
+rejects leading-dash remote/branch names.
+
+**Control-plane admin allowlist fail-closed.** `MC_CP_ADMIN_EMAILS` no longer
+defaults to a personal email — unset now means *nobody* is an operator.
+
+**Private data untracked + gitignore hardened.** Removed proprietary
+`data/projects/engulfing-analyst/` content and the private `engulfing-diagnostic`
+builtin skill from tracking (kept locally). `data/projects/*/` is now ignored so
+per-project workspaces can never be committed again. NOTE: this stops *future*
+exposure only — the data remains in public git history; a history rewrite +
+force-push is a separate, operator-approved step.
+
+## [2026-06-08] — Background crop editor, boot-crash fixes, preference learning
+
+**Custom background — drag-box crop & framing.** The custom dashboard background
+(Settings ▸ Appearance ▸ Background) now uses a direct-manipulation crop box
+instead of zoom / across / up-down sliders: drag the box to move, drag the corner
+(or scroll) to zoom. The box marks the region kept in view and its aspect matches
+your viewport, so the framing cover-fits every screen — one setting works on
+desktop and phone, with no letterboxing. Storage/apply are unchanged
+(`bgZoom`/`bgPosX`/`bgPosY`), so existing image backgrounds keep working;
+legacy images get their natural dimensions back-filled on first open.
+
+**Two boot crashes fixed (temporal dead zone).** The background code twice
+declared a `let` *below* the top-level `_applyAppearanceOnInit()` call that reads
+it, so on a fresh load a `ReferenceError` aborted the entire boot script: the
+dashboard hung on "Loading…" with no projects (bug #1, `bgMode`), and — for an
+image background with no stored dimensions — the whole UI went dead with
+clicks/modals/Settings unresponsive (bug #2, `_bgDimsLoading`). Both fixed by
+hoisting the declarations above the call. These shipped unseen because an
+already-open tab keeps the old working JS (server restart ≠ tab reload).
+
+**Boot smoke test (new) — `tools/smoke/`.** A headless Playwright check loads the
+real `static/index.html` and asserts the project grid renders across 5 appearance
+scenarios (including image-background-without-dimensions, the exact bug-#2
+trigger) — catching runtime boot throws that `node --check` can't. Runs in CI on
+every `static/index.html` change and is now a required step in the
+document-commit-deploy playbook.
+
+**Self-learning: preferences now generate.** The distiller captured stated user
+preferences but never turned them into reviewable proposals — the recurrence-3
+gate starved them, then the renderer refused single-sighting ones and leaked the
+refusals to the queue as junk. Preferences now generate on first clear statement
+(human review at promotion is the quality gate); refusal detection and
+code-fence stripping were hardened, and previously-captured preferences are
+rescued from storage.
+
+**Simulated demo.** A self-contained, fully-simulated dashboard demo for
+clayrune.io/demo (no backend), with a theme-aware centered project modal and
+Skills/MCP samples.
+
+## [2026-06-07] — Fresh-install defaults: Warm theme + Enter-sends
+
+Two first-run defaults changed to match the website look and the preferred
+out-of-box behavior:
+
+- **Theme defaults to Warm** (the cream/light theme) instead of Dark. Because
+  Warm is a *light* theme over a dark `:root` CSS base, an anti-FOUC bootstrap
+  script was added as the first child of `<body>` to apply the tone class before
+  first paint — otherwise a fresh install would flash dark → cream every load.
+- **Enter key defaults to "Enter sends"** (Shift+Enter = newline) instead of
+  Ctrl+Enter.
+
+Both are fallback-only (`localStorage.getItem(...) || default`), so any explicit
+choice a user already made is preserved. Users who never touched these settings
+adopt the new defaults on their next **hard reload**. Change either anytime in
+Settings ▸ Appearance.
+
+## [2026-06-07] — Custom dashboard background (Settings ▸ Appearance)
+
+You can now personalize the space behind your projects. **Settings ▸ Appearance
+▸ Background** adds a Theme / Color / Image picker:
+
+- **Theme** (default) — the current theme's base color, unchanged.
+- **Color** — a solid color of your choosing (native color picker).
+- **Image** — upload any image; it's downscaled (≤2560px long edge, JPEG) and
+  stored on **this device** in `localStorage`, then applied to `<body>` as a
+  fixed, cover-fit background. A **Dim for readability** slider lays a
+  theme-colored scrim over it (`--scrim-rgb`, theme-aware) so text on
+  transparent surfaces stays legible; the scrim re-tints automatically when you
+  switch themes.
+
+Per-device by design — same posture as the existing tone/accent/density/voice
+preferences (all `localStorage`, applied in `_applyAppearanceOnInit`). The
+dashboard's empty space is `body`'s `var(--bg)` showing through the transparent
+`.main-area`/`.content-area`/`.content-main`; sidebar, header, cards and modals
+keep their solid `var(--surface)`, so they stay readable over any background.
+No server changes; an already-open tab needs a hard reload to pick it up.
+
+## [2026-06-07] — Mobile live updates no longer freeze until app restart
+
+The Android app's chat and project updates could stop refreshing entirely —
+frozen until a force-close + reopen or a pull-to-refresh. This had been patched
+many times; the root cause was structural. Live updates ride on SSE over the
+Capacitor WebView, which Android Doze kills silently (the socket dies while the
+`EventSource` handle still reports "open" and fires no `onerror`). And **every**
+recovery path had a blind spot:
+
+- the resurface heal (`_resyncOpenModalsFromServer`) is event-driven only —
+  `visibilitychange`/`focus`/`pageshow`, documented unreliable on Android
+  WebViews, so no event ⇒ no heal;
+- its heartbeat probe is a *separate* fetch, so it can't detect a zombie stream
+  (returns 200 but delivers nothing);
+- the 15s fallback poll skips idle sessions (Chromium slot-cap discipline) and
+  is gated on `!agentEventSources[sid]` — a zombie left in that map blocks every
+  path.
+
+So a chat whose stream zombied, with no user action to trigger recovery, just
+sat there frozen.
+
+**Durable fix** (`static/index.html`): a **foreground freshness reconciler** — a
+5s, visible-only timer that, for each open modal's active session, repaints
+straight from `/agent/status` (server truth) whenever there's no live handle.
+SSE is now a latency accelerator; the poll is the always-on backstop, so the
+visible chat self-heals within a tick no matter what the transport did. It costs
+no SSE slot, is cursor-deduped against the live stream, and runs **only** when
+no healthy stream exists — so it never races or duplicates the live path
+(`appendAgentLine`/`_reconcileAgentBuffer`). Separately it reaps a zombie stream
+(handle present but silent > 25 s, safely above the server's 15 s heartbeat) and
+reconnects it if the session is still running; idle streams are never reopened
+(slot discipline preserved). New global `agentLastEventAt` mirrors the SSE event
+timestamp so the timer can spot a zombie.
+
+**Validated** on the Android-emulator harness (`tools/mobile-test/`): S1–S4 all
+pass, including S3's no-duplication gate. Plus an isolation probe — kill the SSE,
+let the agent go idle, then take no action — confirming an idle session that
+missed its tail lines self-heals (1→2 lines, status `running`→`idle`, no
+duplicate render) with **no** user action, the exact case the old 15s poll
+couldn't cover. Web-layer only; no APK rebuild needed (the shell loads the SPA
+live).
+
+## [2026-06-06b] — Session-lifecycle timers doubled: 30 min → 60 min
+
+Both 30-minute session-lifecycle timers are now 60 minutes, so warm sessions
+and their chat tabs survive twice as long before MC reclaims them.
+
+- **Idle-eviction** (`idle_eviction_minutes`): a warm Mode B fleet (claude.exe +
+  its MCP-server tree) is now torn down after **60 min** of inactivity instead
+  of 30; the next message still transparently respawns it with `-r <csid>` (full
+  context preserved). Live-editable via `/api/config` (no restart) — already
+  pushed to the running server, and the in-code default + guardian fallbacks bumped
+  to 60 to match.
+- **Stale-session purge** (the scheduler's "Purge stale sessions from memory"
+  sweep): non-running sessions are dropped from the in-memory `agent_sessions`
+  map after **60 min** instead of 30 (hardcoded `timedelta`). **Takes effect on
+  next restart.**
+
+## [2026-06-06] — Three user-reported fixes: LAN passcode gate, Dashboard = minimize all, Settings anchors to its sidebar item
+
+Three pieces of user feedback, smallest to largest.
+
+**1. The sidebar "Dashboard" button now does something (desktop).** It was a
+no-op on desktop. Clicking it now minimizes every open chat/modal to the tray
+(`showDesktop()` — the same action behind the command-palette "Minimize All"),
+giving you a clean board. Mobile is unchanged (there "Home" still closes modals
+back to the project grid).
+
+**2. The Settings panel opens next to its sidebar item.** It used to float
+dead-center (and, because it's measured against its short "Loading…" state
+before the body renders, sat low and ran off the bottom once filled). It now
+anchors just to the right of the sidebar **Settings** item it launched from,
+aligned with it, clamped to stay fully on-screen — and re-anchors after the
+async render once the true height is known. Works whether the sidebar is
+hover-expanded (sidebar click) or collapsed (command palette), since it reads
+the item's live rect. Desktop only; mobile Settings is full-screen.
+
+**3. Direct LAN access now requires a passcode (the security gap).** The
+dashboard binds `0.0.0.0:PORT`, so any device on the same Wi-Fi could open
+`http://<host-ip>:PORT` and get **full control with no authentication** — the
+only gate was Cloudflare Access on the *remote* tunnel. Closed with a local
+passcode gate (`@app.before_request` in `server.py`):
+
+- **Always exempt:** loopback (this machine) and CF-tunneled requests. The
+  tunnel terminates at cloudflared on localhost, so remote traffic both arrives
+  as `127.0.0.1` *and* carries `Cf-Access-*` headers, and has already passed CF
+  Access OTP. Remote access is unchanged.
+- **Gated:** every other origin (a real LAN IP). `request.remote_addr` is the
+  real TCP peer — we deliberately ignore `X-Forwarded-For` so a LAN client can't
+  forge a loopback source.
+- **Locked by default, no LAN bootstrapping.** Until a passcode is set, LAN
+  devices are locked out and shown an informational *"set it on the host"* page
+  — they can **not** create the first passcode (otherwise the first stranger to
+  reach the dashboard could claim it). Only an exempt context (the host, or a
+  CF-tunneled session) can set the first passcode. Once one exists, LAN devices
+  get a *login* page. Auth is a 30-day HMAC-signed `httponly` cookie; changing
+  the passcode rotates the signing secret and invalidates every existing
+  session. Light per-IP brute-force throttle. PBKDF2-SHA256 (200k) passcode hash.
+- **Host control:** Settings → Connectivity → **Network access** is where the
+  owner sets/changes the passcode (the host is exempt, so no current-passcode
+  needed). This is the *only* way to set the first one.
+- Storage: `data/local_auth.json` (gitignored — holds the hash + signing
+  secret; lives in `data/`, not `data/projects/`, so `load_projects()` ignores
+  it). Endpoints: `/api/local-auth/{status,set,login}`; pages `/_mc/local-{locked,login}`.
+
+  **Requires a server restart to activate** (it's a `before_request` gate + new
+  routes). On restart, LAN devices that previously had open access are locked
+  until the owner sets a passcode on the host — the host (localhost) and phone
+  (tunnel) are unaffected.
+
 ## [2026-06-05] — Fix the macOS app: broken Claydo images + the Claude-CLI dead-end (winget on Mac)
 
 Two macOS-only bugs in the frozen `.app`, both fixed in shared source so every
@@ -75,6 +296,57 @@ sessions.
 - Mobile uploads + agent-text URL linkification.
 - Modal no longer re-docks to the right after you drag it free; settings modal
   sizes to its content.
+
+## [2026-06-04] — Keep a conversation's window open after its process dies (detach, don't delete)
+
+A conversation tab used to **vanish on its own** once the server stopped listing
+its session in `/agent/status`. That happens in normal operation: the guardian
+**purges any non-running/non-idle session from the in-memory `agent_sessions`
+after 30 min** (`server.py` "Purge stale sessions from memory"), and a restart
+clears the dict entirely (revival is lazy, on the next message). The frontend
+treated "absent from `/agent/status`" as **stale** and *deleted* the entry from
+`agentHistory` — so a finished chat the user might still want to continue would
+silently disappear ~30 min later, with no restart and no warning. The
+conversation itself was never gone (transcript on disk + `agent_log`; a follow-up
+resumes it via `claude -r`), but the open window was — which "feels like it's
+gone."
+
+Fix is frontend-only: the stale-handler now **detaches instead of deletes**. For a
+session the server no longer lists we keep the `agentHistory` entry, its rendered
+output buffer, and its status cache; we tear down only the live SSE + watchdog and
+mark the entry **`stopped`**. `stopped` is already a first-class status — it shows
+the "Type to resume conversation…" input, draws no Stop button, and is *not* in the
+`wantsLiveStream` set, so it never triggers a doomed SSE reconnect to a session the
+server forgot. Manual conversations stay visible as a tab (automated schedule/
+hivemind runs still drop to the Runs panel when terminal); the user can still
+✕-close one deliberately. Typing in the detached tab routes through the existing
+`/agent/send` → `_revive_from_agent_log` → `claude -r` path (same session_id), so
+it reactivates in place with full context.
+
+Scope note: this covers the common "window vanishes while the dashboard stays open"
+case (the 30-min purge, transient desync). A **server restart** still reloads the
+page (heartbeat detects `started_at` changed), and the `mc_open_modals` snapshot
+restores modal position but not the active chat — after a restart the conversation
+is reachable from the picker but isn't auto-restored into the chat view. Closing
+that gap (persist + restore the active conversation across a restart) is a separate,
+larger change.
+
+Follow-up — no "Blocked" flash on the way to STOPPED. A detaching window briefly
+showed a **"Blocked"** pill before settling on STOPPED, because two client paths
+marked a *dead-but-resumable* session `error` (which renders as "Blocked" via the
+`error → status_blocked` label map) just before the detach flipped it to `stopped`:
+the `es.onerror` retries-exhausted branch ("server lost the session") and the 15s
+watchdog's "session vanished" branch. Both now mark **`stopped`** directly —
+consistent with the detach — so a lost/resumable session goes straight to STOPPED.
+Genuine turn errors (server `status:error`, SSE `type:error`) are untouched and
+still surface as "Blocked". If a session is actually still alive (a transient SSE
+blip), the next status poll restores its real running/idle status.
+
+Files: `static/index.html` (the `fetchAgentStatus` stale-handler: `_isDetached`
+replaces `_isStale`; detach loop preserves entry/buffer/cache and sets `stopped`;
+`activeAgentTab` no longer cleared for these; plus the `es.onerror` and 15s-watchdog
+"lost session" branches now set `stopped` instead of `error`). **Activates on a hard
+tab reload** (SPA HTML only — no server restart needed).
 
 ## [2026-06-03] — Brief replies on desktop too (Settings → Interface → Brief replies)
 

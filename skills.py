@@ -755,7 +755,9 @@ def git_clone_to_staging(url: str, ref: str | None = None, timeout: int = 60) ->
     cmd = ['git', 'clone', '--depth', '1']
     if effective_ref:
         cmd += ['--branch', effective_ref]
-    cmd += [clone_url, str(staging_path)]
+    # `--` terminates option parsing so a hostile URL/ref can't smuggle a git
+    # flag (e.g. --upload-pack=…) into the positional slots.
+    cmd += ['--', clone_url, str(staging_path)]
 
     try:
         result = subprocess.run(

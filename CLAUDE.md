@@ -1,5 +1,26 @@
 # Clayrune — Claude Code project notes
 
+## Commit discipline — stay scoped to your own session (added 2026-06-08)
+
+When asked to commit "the work we did," stage **only the files you edited this
+session, by explicit path** (`git add <path> …`):
+
+- **Never** `git add -A`, `git add .`, or `git commit -a`. Name the paths.
+- **Don't sweep, don't narrate.** The working tree always carries unrelated
+  dirty files — other MC-managed projects' data under `data/projects/`,
+  backups, `_scratch/`, mobile/store assets. Don't stage them; don't list them
+  back. A commit report names only what you committed. Enumerate other dirty
+  files **only** if the user asks "what else is uncommitted?"
+- Scratch/throwaway artifacts go in **`_scratch/`** (gitignored), not in
+  `tools/`, `docs/`, or `data/`.
+- Pairs with the standing rule to commit your own completed work without asking
+  — but *only your own*.
+
+`.gitignore` enforces the structural half: backups (`*.bak`/`*.broken`),
+runtime (`data/mc_child_pids.json`, `data/skills/_proposed/`), `_scratch/`,
+`tools/_*` scratch, served build artifacts, and mobile-app assets are all
+untracked so they never reach a commit candidate.
+
 ## macOS code-signing & notarization (added 2026-06-04)
 
 The Mac `.app` is now **signed (Developer ID) + notarized + stapled** so fresh
@@ -38,6 +59,16 @@ clips: `tools/extract-frames.sh video.mp4 4 48` (4 fps, up to 48 frames).
 
 ffmpeg must be installed (`winget install Gyan.FFmpeg` / `apt install ffmpeg`
 / `brew install ffmpeg`). The script tells the user how to install if missing.
+
+## Showing the user an image in chat
+
+To display an image to the user, **output its absolute path on its own line** —
+the agent-chat renderer (`formatAgentText` → `/api/serve-image`) turns it into an
+inline thumbnail (click to enlarge). The file must resolve under the repo root,
+`data/uploads/`, or a registered project path (the `/api/serve-image` allowlist).
+**Markdown `![](...)` does NOT render** — the generic "your output is GitHub
+markdown in a terminal" framing is misleading for MC's web chat. Full detail +
+gotchas: memory `reference-show-image-in-chat`.
 
 ## Live test environments
 

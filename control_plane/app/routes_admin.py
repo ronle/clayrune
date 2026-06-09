@@ -8,8 +8,10 @@ Routes:
   GET  /v1/admin/data       — JSON: users + devices aggregate (admin-only)
 
 Admin allowlist: comma-separated emails in `MC_CP_ADMIN_EMAILS` env var
-(default: `leviran1@gmail.com`). Anyone not on the list signing into the
-page sees an "Access denied" panel; the JSON endpoint returns 403.
+(no default — set it to grant operator access; when unset, NOBODY is an
+operator and every admin request is denied, fail-closed). Anyone not on the
+list signing into the page sees an "Access denied" panel; the JSON endpoint
+returns 403.
 
 The operator dashboard intentionally aggregates only Firestore-resident data
 (users + devices). CF Access sessions per user would require an O(N) fan-out
@@ -34,7 +36,7 @@ log = logging.getLogger(__name__)
 
 
 def _admin_emails() -> set[str]:
-    raw = os.environ.get("MC_CP_ADMIN_EMAILS", "leviran1@gmail.com")
+    raw = os.environ.get("MC_CP_ADMIN_EMAILS", "")
     return {e.strip().lower() for e in raw.split(",") if e.strip()}
 
 

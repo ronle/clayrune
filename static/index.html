@@ -4,10 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Clayrune</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8824a'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='Fraunces,Nunito,Inter,serif' font-weight='800' font-size='24' fill='%23ffffff'%3EC%3C/text%3E%3C/svg%3E">
+<!-- Favicon = the Claydo mascot (matches the Mac .app dock icon + the Windows
+     "--app" launcher's taskbar icon, which both derive from this). Bump the ?v=
+     query whenever icon-192.png changes — Chrome caches favicons aggressively. -->
+<link rel="icon" type="image/png" href="/static/icon-192.png?v=3">
 <meta name="theme-color" content="#e8824a">
-<link rel="manifest" href="/static/manifest.json?v=2">
-<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="manifest" href="/static/manifest.json?v=3">
+<link rel="apple-touch-icon" href="/static/icon-192.png?v=3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Clayrune">
@@ -243,6 +246,36 @@
   body[data-accent="lagoon"]  { --accent: #4fa89a; --accent-dim: #1a3d38; --accent-soft: #3a7a70; }
   body[data-accent="ink"]     { --accent: #6b7286; --accent-dim: #2a2f3f; --accent-soft: #474e62; }
   /* default accent = blue, handled by :root */
+
+  /* ─── Appearance: custom dashboard background scrim (theme-aware) ──────────
+     When a user sets a custom background image, applyDashboardBackground()
+     lays a translucent scrim of the THEME's base color over it so text on
+     transparent surfaces stays legible. --scrim-rgb is the theme bg as an
+     "r, g, b" triple consumed via rgba(var(--scrim-rgb), <alpha>). */
+  :root               { --scrim-rgb: 12, 14, 20; }
+  body.tone-warm      { --scrim-rgb: 246, 240, 228; }
+  body.tone-editorial { --scrim-rgb: 250, 249, 246; }
+  /* Settings → Background: interactive crop/framing editor. The whole image is
+     shown; the box marks the region kept in view (its aspect = your viewport, so
+     it previews the real framing). The area outside is dimmed via the box's giant
+     box-shadow. Drag the box to pan, the corner to zoom. */
+  .mc-crop {
+    position: relative; width: 236px; max-width: 100%;
+    border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--border2); background: var(--surface2);
+    user-select: none; touch-action: none;
+  }
+  .mc-crop img { width: 100%; display: block; pointer-events: none; }
+  .mc-crop-box {
+    position: absolute; box-sizing: border-box; cursor: move;
+    border: 2px solid #fff; background: rgba(255,255,255,0.05);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
+  }
+  .mc-crop-handle {
+    position: absolute; right: -8px; bottom: -8px; width: 17px; height: 17px;
+    border-radius: 50%; background: var(--accent); border: 2px solid #fff;
+    cursor: nwse-resize; touch-action: none;
+  }
 
   /* ─── Appearance: Warm tone (light, cream, rounded) ───────────────────── */
   body.tone-warm {
@@ -4756,6 +4789,22 @@
 </style>
 </head>
 <body>
+<script>
+  // Anti-FOUC theme bootstrap: apply the saved (or default) tone + accent to
+  // <body> BEFORE the rest of the page paints. The default tone is "warm" (a
+  // LIGHT theme) while the CSS base in :root is dark, so without this a fresh
+  // install would flash dark → cream on every load. _applyAppearanceOnInit()
+  // re-applies the same thing later (idempotent); this just wins the race.
+  (function () {
+    try {
+      var tone = localStorage.getItem('mc_tone') || 'warm';
+      if (tone === 'warm') document.body.classList.add('tone-warm');
+      else if (tone === 'editorial') document.body.classList.add('tone-editorial');
+      var accent = localStorage.getItem('mc_accent');
+      if (accent) document.body.setAttribute('data-accent', accent);
+    } catch (e) {}
+  })();
+</script>
 <span id="name-measure" class="name-measure"></span>
 
 <!-- ── PERF HUD (diagnostic, opt-in) ─────────────────────────────────────
@@ -6562,6 +6611,33 @@ function centerModalElement(win) {
   win.style.top = Math.max(0, (window.innerHeight - h) / 2 + offset) + 'px';
 }
 
+// Anchor the Settings panel beside the sidebar "Settings" item it launched
+// from (rather than dead-center). Uses the item's live rect, so it works
+// whether the sidebar is hover-expanded (click) or collapsed (command palette).
+// Clamped to stay fully on-screen. Mobile keeps the full-screen 0,0 layout.
+function _positionSettingsModal(win) {
+  if (_isMobileDevice || window.innerWidth <= 960) {
+    win.style.left = '0px';
+    win.style.top = '0px';
+    return;
+  }
+  const item = document.querySelector('.sidebar-item[data-nav="settings"]');
+  if (!item) { centerModalElement(win); return; }   // fallback: shouldn't happen on desktop
+  const rect = item.getBoundingClientRect();
+  const margin = 12;
+  const w = win.offsetWidth || 480;
+  const h = win.offsetHeight || Math.round(window.innerHeight * 0.6);
+  // Just to the right of the item, aligned with its top…
+  let left = rect.right + margin;
+  let top = rect.top;
+  // …then clamped so the whole panel stays on-screen (against its current
+  // height — re-run after the async render when the real height is known).
+  left = Math.max(margin, Math.min(left, window.innerWidth - w - margin));
+  top = Math.max(margin, Math.min(top, window.innerHeight - h - margin));
+  win.style.left = left + 'px';
+  win.style.top = top + 'px';
+}
+
 function focusModal(modalId) {
   const entry = openModals.get(modalId);
   if (!entry || entry.minimized) return;
@@ -7133,9 +7209,14 @@ async function openIncognito() {
 
 function sidebarNav(target) {
   if (target === 'dashboard') {
-    // On mobile, "Home" = back to project grid → close any open modals
-    if (window.innerWidth <= 960 && typeof openModals !== 'undefined' && openModals.size) {
-      Array.from(openModals.keys()).forEach(id => closeModalById(id));
+    if (window.innerWidth <= 960) {
+      // On mobile, "Home" = back to project grid → close any open modals
+      if (typeof openModals !== 'undefined' && openModals.size) {
+        Array.from(openModals.keys()).forEach(id => closeModalById(id));
+      }
+    } else if (typeof showDesktop === 'function') {
+      // On desktop, "Dashboard" = show the desktop → minimize all open chats
+      showDesktop();
     }
   }
   else if (target === 'scheduler') openScheduler();
@@ -8969,7 +9050,7 @@ function setTokenMode(mode) {
 
 // 'enter' = Enter sends, Shift+Enter for newline
 // 'ctrl-enter' = Ctrl/Cmd+Enter sends, Enter for newline (default)
-let enterKeyMode = localStorage.getItem('enter_mode') || 'ctrl-enter';
+let enterKeyMode = localStorage.getItem('enter_mode') || 'enter';
 
 // ── Advanced feature toggles (default OFF = hidden) ─────────────────────────
 // Keys: tokens, tool-lines, github, agent-log, memory
@@ -9027,7 +9108,7 @@ function setEnterMode(mode) {
 }
 
 // ── Appearance: tone / accent / density / voice ─────────────────────────────
-let currentTone   = localStorage.getItem('mc_tone')   || 'dark';
+let currentTone   = localStorage.getItem('mc_tone')   || 'warm';
 let currentAccent = localStorage.getItem('mc_accent') || '';
 let currentVoice  = localStorage.getItem('mc_voice')  || 'pro';
 
@@ -9109,7 +9190,7 @@ function setVoice(voice) {
 }
 
 function _applyAppearanceOnInit() {
-  const tone = localStorage.getItem('mc_tone');
+  const tone = localStorage.getItem('mc_tone') || 'warm';
   if (tone === 'warm') document.body.classList.add('tone-warm');
   else if (tone === 'editorial') document.body.classList.add('tone-editorial');
   const accent = localStorage.getItem('mc_accent');
@@ -9124,8 +9205,302 @@ function _applyAppearanceOnInit() {
   } else {
     applyVoiceLabel();
   }
+  applyDashboardBackground();
 }
+
+// ── Custom dashboard background (per-device, localStorage) ──────────────────
+// Same posture as tone/accent above: a per-browser appearance preference applied
+// to <body>. The dashboard's empty space is body's var(--bg) showing through the
+// transparent .main-area/.content-area/.content-main; sidebar/header/cards keep
+// their solid var(--surface), so overriding body's background is the clean hook.
+//   mode 'default' → theme var(--bg);  'color' → solid;  'image' → stored data URL.
+// NOTE: these `let`s MUST be declared before _applyAppearanceOnInit() is called —
+// that call reaches applyDashboardBackground() which reads bgMode/bgColor/bgDim.
+// `let` is not hoisted, so declaring them after the call put them in the temporal
+// dead zone → a ReferenceError aborted the whole boot script and the dashboard
+// hung on "loading" (no project grid). Keep the call below this block.
+let bgMode  = localStorage.getItem('mc_bg_mode')  || 'default';   // default | color | image
+let bgColor = localStorage.getItem('mc_bg_color') || '#0c0e14';
+let bgDim   = parseInt(localStorage.getItem('mc_bg_dim') || '40', 10); // scrim alpha %, 0..80
+// Image framing (image mode only). zoom = % of the cover baseline (100 = exactly
+// fills the screen, like before); posX/posY = focal point 0..100 for crop/pan.
+// MUST be declared before _applyAppearanceOnInit() for the same TDZ reason above.
+let bgZoom  = parseInt(localStorage.getItem('mc_bg_zoom') || '100', 10);
+let bgPosX  = parseInt(localStorage.getItem('mc_bg_posx') || '50', 10);
+let bgPosY  = parseInt(localStorage.getItem('mc_bg_posy') || '50', 10);
+// MUST be declared before _applyAppearanceOnInit(): on boot with an image bg that
+// has no stored dims (a legacy image), applyDashboardBackground() → _bgLoadImageDims()
+// reads this `let`. Declared after the call it was in the temporal dead zone, so a
+// ReferenceError aborted the ENTIRE boot script — modals/settings/clicks all dead.
+let _bgDimsLoading = false;
+
 _applyAppearanceOnInit();
+
+function _bgClampPct(v) { return Math.max(0, Math.min(100, parseInt(v, 10) || 0)); }
+function _bgClampZoom(v) { return Math.max(20, Math.min(400, parseInt(v, 10) || 100)); }
+
+// Natural pixel size of the stored image, persisted at pick time so we can size
+// the background relative to the viewport (cover baseline × zoom). Returns null
+// for legacy images saved before this existed → _bgLoadImageDims() back-fills it.
+function _bgImageDims() {
+  const w = parseInt(localStorage.getItem('mc_bg_imgw') || '', 10);
+  const h = parseInt(localStorage.getItem('mc_bg_imgh') || '', 10);
+  return (w > 0 && h > 0) ? { w: w, h: h } : null;
+}
+// _bgDimsLoading is declared above, before _applyAppearanceOnInit() (TDZ guard).
+function _bgLoadImageDims(dataUrl) {
+  if (_bgDimsLoading) return;
+  _bgDimsLoading = true;
+  const im = new Image();
+  im.onload = () => {
+    _bgDimsLoading = false;
+    if (im.naturalWidth > 0 && im.naturalHeight > 0) {
+      localStorage.setItem('mc_bg_imgw', String(im.naturalWidth));
+      localStorage.setItem('mc_bg_imgh', String(im.naturalHeight));
+      if (bgMode === 'image') applyDashboardBackground();
+    }
+  };
+  im.onerror = () => { _bgDimsLoading = false; };
+  im.src = dataUrl;
+}
+
+function applyDashboardBackground() {
+  const b = document.body;
+  // Clear any inline background first so switching modes never leaves residue.
+  b.style.backgroundImage = '';
+  b.style.backgroundColor = '';
+  b.style.backgroundSize = '';
+  b.style.backgroundPosition = '';
+  b.style.backgroundAttachment = '';
+  b.style.backgroundRepeat = '';
+  if (bgMode === 'color') {
+    b.style.backgroundColor = bgColor;
+  } else if (bgMode === 'image') {
+    const img = localStorage.getItem('mc_bg_image');
+    if (!img) return; // nothing stored yet → fall back to theme var(--bg)
+    const a = Math.max(0, Math.min(80, bgDim)) / 100;
+    // Two layers: a theme-colored scrim (always covers the viewport for legible
+    // text) over the image (sized/positioned by the user's zoom + focal point).
+    b.style.backgroundImage =
+      `linear-gradient(rgba(var(--scrim-rgb), ${a}), rgba(var(--scrim-rgb), ${a})), url("${img}")`;
+    b.style.backgroundRepeat = 'no-repeat, no-repeat';
+    b.style.backgroundAttachment = 'fixed, fixed';
+    b.style.backgroundPosition = `center center, ${_bgClampPct(bgPosX)}% ${_bgClampPct(bgPosY)}%`;
+    const dims = _bgImageDims();
+    if (dims) {
+      // cover baseline = the scale at which the image exactly fills the viewport;
+      // zoom multiplies it (100% = fill, >100 crops in, <100 reveals more/letterbox).
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const cover = Math.max(vw / dims.w, vh / dims.h);
+      const scale = cover * (_bgClampZoom(bgZoom) / 100);
+      b.style.backgroundSize = `cover, ${Math.round(dims.w * scale)}px ${Math.round(dims.h * scale)}px`;
+    } else {
+      b.style.backgroundSize = 'cover, cover'; // until dims back-fill
+      _bgLoadImageDims(img);
+    }
+  }
+  // mode 'default' → leave cleared; stylesheet's body{background:var(--bg)} shows.
+}
+
+// Background-size is computed in px against the viewport, so re-apply on resize
+// (only matters in image mode; debounced).
+let _bgResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (bgMode !== 'image') return;
+  clearTimeout(_bgResizeTimer);
+  _bgResizeTimer = setTimeout(() => applyDashboardBackground(), 120);
+});
+
+// ── Background framing: interactive crop-box editor ─────────────────────────
+// Replaces the zoom/across/up-down sliders with a direct-manipulation box drawn
+// over the image. The box marks the region kept in view; drag it to pan, drag the
+// corner (or wheel) to zoom. It writes the SAME bgZoom/bgPosX/bgPosY values, and
+// applyDashboardBackground() cover-fits that framing to whatever screen the
+// dashboard is on — so one setting works across all screen sizes/devices. The box
+// aspect = the live viewport, so what you frame is what you'll see on a screen
+// shaped like this one. Zoom is held to [100,400] here (100 = fills the screen;
+// you can only crop IN), so the editor never produces letterboxing.
+let _bgCrop = null;   // {Dw,Dh,imgW,imgH} of the editor, set on image load (never read at init)
+
+function _bgCropMetrics() {
+  const c = _bgCrop; if (!c || !c.imgW || !c.imgH) return null;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const cover = Math.max(vw / c.imgW, vh / c.imgH);
+  const scale = cover * (_bgClampZoom(bgZoom) / 100);
+  const wFrac = Math.min(1, vw / (c.imgW * scale));
+  const hFrac = Math.min(1, vh / (c.imgH * scale));
+  return { vw, vh, cover, wFrac, hFrac };
+}
+
+function _bgCropRender() {
+  const c = _bgCrop, box = document.getElementById('mc-crop-box');
+  if (!c || !box) return;
+  const m = _bgCropMetrics(); if (!m) return;
+  const px = _bgClampPct(bgPosX), py = _bgClampPct(bgPosY);
+  box.style.width  = (m.wFrac * c.Dw) + 'px';
+  box.style.height = (m.hFrac * c.Dh) + 'px';
+  box.style.left   = ((1 - m.wFrac) * px / 100 * c.Dw) + 'px';
+  box.style.top    = ((1 - m.hFrac) * py / 100 * c.Dh) + 'px';
+}
+
+function _bgCropInit() {
+  const img = document.getElementById('mc-crop-img');
+  if (!img || !img.naturalWidth) return;
+  if (!img.clientWidth) { requestAnimationFrame(_bgCropInit); return; } // not laid out yet
+  _bgCrop = { Dw: img.clientWidth, Dh: img.clientHeight,
+              imgW: img.naturalWidth, imgH: img.naturalHeight };
+  // Persist natural dims so applyDashboardBackground() sizes correctly (also
+  // back-fills legacy images saved before dims were stored).
+  localStorage.setItem('mc_bg_imgw', String(img.naturalWidth));
+  localStorage.setItem('mc_bg_imgh', String(img.naturalHeight));
+  _bgCropRender();
+}
+
+function _bgSaveFraming() {
+  localStorage.setItem('mc_bg_zoom', String(_bgClampZoom(bgZoom)));
+  localStorage.setItem('mc_bg_posx', String(_bgClampPct(bgPosX)));
+  localStorage.setItem('mc_bg_posy', String(_bgClampPct(bgPosY)));
+}
+
+// Re-center the focal point so the visible region keeps the same center when zoom
+// changes (zoom around the middle of the box, not the image origin).
+function _bgCropZoomTo(newZoom, startMetrics, startPosX, startPosY) {
+  const cx = (1 - startMetrics.wFrac) * startPosX / 100 + startMetrics.wFrac / 2;
+  const cy = (1 - startMetrics.hFrac) * startPosY / 100 + startMetrics.hFrac / 2;
+  bgZoom = Math.max(100, Math.min(400, Math.round(newZoom)));
+  const nm = _bgCropMetrics();
+  bgPosX = nm.wFrac < 1 ? _bgClampPct((cx - nm.wFrac / 2) / (1 - nm.wFrac) * 100) : 50;
+  bgPosY = nm.hFrac < 1 ? _bgClampPct((cy - nm.hFrac / 2) / (1 - nm.hFrac) * 100) : 50;
+}
+
+function _bgCropDragStart(e, mode) {
+  e.preventDefault(); e.stopPropagation();
+  const c = _bgCrop, m = _bgCropMetrics();
+  if (!c || !m) return;
+  const startX = e.clientX, startY = e.clientY;
+  const startPosX = _bgClampPct(bgPosX), startPosY = _bgClampPct(bgPosY);
+  const startBoxW = m.wFrac * c.Dw;
+  const maxBoxW = Math.min(1, m.vw / (c.imgW * m.cover)) * c.Dw; // box width at zoom 100
+  const onMove = (ev) => {
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (mode === 'move') {
+      const mm = _bgCropMetrics();
+      if (mm.wFrac < 1) bgPosX = _bgClampPct(startPosX + (dx / ((1 - mm.wFrac) * c.Dw)) * 100);
+      if (mm.hFrac < 1) bgPosY = _bgClampPct(startPosY + (dy / ((1 - mm.hFrac) * c.Dh)) * 100);
+    } else { // resize the box → zoom (box width = maxBoxW * 100 / zoom)
+      const newBoxW = Math.max(8, startBoxW + dx);
+      _bgCropZoomTo(maxBoxW * 100 / newBoxW, m, startPosX, startPosY);
+    }
+    _bgCropRender(); _bgSaveFraming(); applyDashboardBackground();
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+function _bgCropWheel(e) {
+  if (!_bgCrop) return;
+  e.preventDefault();
+  const m = _bgCropMetrics(); if (!m) return;
+  _bgCropZoomTo(_bgClampZoom(bgZoom) + (e.deltaY < 0 ? 8 : -8), m,
+                _bgClampPct(bgPosX), _bgClampPct(bgPosY));
+  _bgCropRender(); _bgSaveFraming(); applyDashboardBackground();
+}
+
+function setBgMode(mode) {
+  bgMode = mode;
+  localStorage.setItem('mc_bg_mode', mode);
+  applyDashboardBackground();
+  if (document.getElementById('settings-body')) _renderSettings();
+}
+
+function setBgColor(color) {
+  bgColor = color;
+  localStorage.setItem('mc_bg_color', color);
+  applyDashboardBackground();
+  // live <input type=color> — don't re-render (would drop the open picker)
+}
+
+function setBgDim(v) {
+  bgDim = parseInt(v, 10) || 0;
+  localStorage.setItem('mc_bg_dim', String(bgDim));
+  applyDashboardBackground();
+  const lbl = document.getElementById('mc-bg-dim-val');
+  if (lbl) lbl.textContent = bgDim + '%';
+}
+
+function resetBgFraming() {
+  bgZoom = 100; bgPosX = 50; bgPosY = 50;
+  localStorage.setItem('mc_bg_zoom', '100');
+  localStorage.setItem('mc_bg_posx', '50');
+  localStorage.setItem('mc_bg_posy', '50');
+  applyDashboardBackground();
+  if (document.getElementById('settings-body')) _renderSettings();
+}
+
+function pickBgImage() {
+  const inp = document.getElementById('mc-bg-file');
+  if (inp) inp.click();
+}
+
+function onBgImageChosen(input) {
+  const file = input.files && input.files[0];
+  input.value = ''; // allow re-choosing the same file later
+  if (!file) return;
+  if (!/^image\//.test(file.type)) { alert('Please choose an image file.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const tmp = new Image();
+    tmp.onload = () => {
+      // Downscale to <=2560px on the long edge + re-encode JPEG so the data URL
+      // fits comfortably in localStorage (~5MB origin quota, shared with MC keys).
+      const MAX = 2560;
+      let w = tmp.width, h = tmp.height;
+      if (Math.max(w, h) > MAX) {
+        const s = MAX / Math.max(w, h);
+        w = Math.round(w * s); h = Math.round(h * s);
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(tmp, 0, 0, w, h);
+      let dataUrl;
+      try { dataUrl = c.toDataURL('image/jpeg', 0.82); }
+      catch (_) { dataUrl = e.target.result; }
+      try {
+        localStorage.setItem('mc_bg_image', dataUrl);
+      } catch (err) {
+        alert('That image is too large to save on this device. Try a smaller one.');
+        return;
+      }
+      // Remember the stored image's natural size (w,h are the re-encoded canvas
+      // dims) so zoom/framing can size it against the viewport, and reset framing
+      // to fill/center for the fresh image.
+      localStorage.setItem('mc_bg_imgw', String(w));
+      localStorage.setItem('mc_bg_imgh', String(h));
+      bgZoom = 100; bgPosX = 50; bgPosY = 50;
+      localStorage.setItem('mc_bg_zoom', '100');
+      localStorage.setItem('mc_bg_posx', '50');
+      localStorage.setItem('mc_bg_posy', '50');
+      bgMode = 'image'; localStorage.setItem('mc_bg_mode', 'image');
+      applyDashboardBackground();
+      if (document.getElementById('settings-body')) _renderSettings();
+    };
+    tmp.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearBgImage() {
+  localStorage.removeItem('mc_bg_image');
+  localStorage.removeItem('mc_bg_imgw');
+  localStorage.removeItem('mc_bg_imgh');
+  if (bgMode === 'image') { bgMode = 'default'; localStorage.setItem('mc_bg_mode', 'default'); }
+  applyDashboardBackground();
+  if (document.getElementById('settings-body')) _renderSettings();
+}
 
 function formatElapsed(startedAt) {
   if (!startedAt) return '';
@@ -9864,6 +10239,17 @@ function switchAgentTab(projectId, sessionId) {
     mcPushConvHistory();
   }
   refreshModal();
+  // Recover anything this conversation missed while it was inactive: its SSE may
+  // have closed (turn_complete, the Chromium 6-connection cap, or Doze parking),
+  // so the buffer can be stale and a plain tab switch otherwise never re-fetches
+  // — the agent's later output stays silently missing until a hard refresh.
+  // fetchAgentStatus refills the buffer from server truth, idempotently repaints
+  // the now-visible panel (the render-gap fix inside it), and reconnects the live
+  // stream for a running or active-idle session. We deliberately use it rather
+  // than a direct _reconcileAgentBuffer append: the append could race a
+  // concurrent background poll's repaint and render the recovered lines twice,
+  // whereas the clear-and-rebuild repaint is idempotent.
+  fetchAgentStatus(projectId);
 }
 
 function newAgentTab(projectId) {
@@ -10397,6 +10783,12 @@ async function dispatchAgent(projectId) {
 }
 
 let agentSSEWatchdogs = {};  // sessionId → timer ID
+// sessionId → timestamp ms of the last SSE event (data or heartbeat). Mirrors
+// connectAgentStream's closure-local lastEventTime so the foreground freshness
+// reconciler (an external timer) can detect a ZOMBIE stream — an EventSource
+// whose handle still reports "open" but whose socket died silently under Doze,
+// firing no onerror. Age past SSE_ZOMBIE_MS ⇒ reap + rebuild.
+let agentLastEventAt = {};
 let followupTimeouts = {};  // sessionId → { timerId, projectId }
 // sessionId → timestamp ms. Set in sendFollowup, cleared after we've seen the
 // first `turn_start` from the new turn (or after 8s timeout). While truthy,
@@ -10496,6 +10888,23 @@ async function _reconcileAgentBuffer(projectId, sessionId) {
   }
 }
 
+// Repaint a session's agent-output element from its full buffer. Fixes a render
+// gap: when lines are recovered into the buffer wholesale (a /agent/status sync)
+// while refreshModal has PRESERVED the existing agent-output node for scroll/perf,
+// the node is never rebuilt from the grown buffer and the recovered lines stay
+// invisible ("agent text didn't appear even though there was progress"). A
+// clear-and-reappend brings the DOM back in sync with the buffer. Call only on
+// buffer growth for a non-streaming session — never on the hot incremental path.
+function _repaintAgentOutput(sessionId) {
+  const el = document.getElementById(`agent-output-${sessionId}`);
+  if (!el) return false;
+  const buf = agentOutputBuffers[sessionId] || [];
+  el.innerHTML = '';
+  delete el.dataset.scrollInitialized;
+  for (const line of buf) appendAgentLine(sessionId, line);
+  return true;
+}
+
 function connectAgentStream(projectId, sessionId) {
   if (agentEventSources[sessionId]) {
     agentEventSources[sessionId].close();
@@ -10515,6 +10924,7 @@ function connectAgentStream(projectId, sessionId) {
   // Heartbeat watchdog: if no SSE event (data or heartbeat) arrives within 30s,
   // the connection has silently died. Force reconnect.
   let lastEventTime = Date.now();
+  agentLastEventAt[sessionId] = lastEventTime;  // mirror for the freshness reconciler
   agentSSEWatchdogs[sessionId] = setInterval(() => {
     if (Date.now() - lastEventTime > 30000) {
       console.warn(`SSE watchdog: no event for 30s on session ${sessionId.slice(0,8)}, reconnecting`);
@@ -10534,6 +10944,7 @@ function connectAgentStream(projectId, sessionId) {
 
   es.onmessage = (event) => {
     lastEventTime = Date.now();
+    agentLastEventAt[sessionId] = lastEventTime;  // mirror for the freshness reconciler
     try {
       const msg = JSON.parse(event.data);
       if (msg.type === 'output') {
@@ -10781,10 +11192,15 @@ function connectAgentStream(projectId, sessionId) {
           // Retry with increasing delay
           setTimeout(() => connectAgentStream(projectId, sessionId), retries * 2000);
         } else {
-          // Too many retries — server likely lost the session
-          cached.status = 'error';
+          // Too many retries — the server lost the live session (process died
+          // or was purged). That's not an error, it's a dropped/resumable
+          // session: mark it 'stopped' (resumable, no reconnect) to match the
+          // detach path, instead of 'error' which renders as a "Blocked" pill on
+          // the way to STOPPED. If the session is actually still alive
+          // server-side, the next status poll restores its real running/idle.
+          cached.status = 'stopped';
           const hist = agentHistory.find(h => h.sessionId === sessionId);
-          if (hist) hist.status = 'error';
+          if (hist) hist.status = 'stopped';
           delete sseRetryCount[sessionId];
           refreshModal();
           renderAgentConsole();
@@ -12072,7 +12488,27 @@ async function fetchAgentStatus(projectId) {
       // consumes it now. To bring the nudge back, render it somewhere
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
       agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual' };
+      // Question-form reconciliation (parity with _reconcileAgentBuffer). The
+      // wholesale cache rebuild above drops pendingQuestions on every poll. If we
+      // don't re-derive it here, a form that only ever lived in the cache — the
+      // question arrived while this session's panel wasn't in the DOM (a
+      // background agent tab, an unfocused or closed modal) — is lost on the next
+      // poll and never comes back: the SSE is already connected so it won't
+      // re-emit, and _rerenderPendingQuestions finds an empty cache when the tab
+      // is finally focused. Re-derive from server truth so the form restores on
+      // focus / tab-switch. renderAgentQuestion is DOM-dedup-safe and no-ops when
+      // the panel is absent or the qid was already answered this turn.
+      if (s.waiting_for_question) {
+        agentStatusCache[sid].pendingQuestions = (s.pending_questions || []).map(pq => ({
+          questions: pq.questions || [], question_id: pq.question_id || ''
+        }));
+        for (const pq of (s.pending_questions || [])) {
+          try { renderAgentQuestion(sid, projectId, pq.questions || [], pq.question_id || ''); }
+          catch (_) {}
+        }
+      }
       if (s.log_lines && s.log_lines.length > 0) {
+        const _prevBufLen = (agentOutputBuffers[sid] || []).length;
         // Defensive: older / runtime-dispatched sessions may not have seeded
         // the user prompt into server-side log_lines, so a wholesale replace
         // would wipe the locally-echoed `> {task}` prefix and the user's
@@ -12089,6 +12525,18 @@ async function fetchAgentStatus(projectId) {
         // of replaying all log_lines from 0 (which would double the buffer
         // and double-render every line in the DOM).
         agentServerLines[sid] = s.log_lines.length;
+        // Render-gap recovery: if the buffer just GREW here (lines arrived while
+        // this panel was inactive/backgrounded and its SSE was parked), the
+        // refreshModal() at the end of this function PRESERVES the existing
+        // agent-output node (scroll/perf) and won't repaint it from the grown
+        // buffer — so the recovered lines stay invisible. Repaint from the buffer
+        // now. Gated on (a) growth and (b) no live SSE, so the actively-streaming
+        // chat (kept in sync incrementally by appendAgentLine) never flickers.
+        if ((agentOutputBuffers[sid] || []).length > _prevBufLen
+            && !agentEventSources[sid]
+            && document.getElementById(`agent-output-${sid}`)) {
+          _repaintAgentOutput(sid);
+        }
       }
       const existingHist = agentHistory.find(h => h.sessionId === sid);
       if (!existingHist) {
@@ -12118,46 +12566,52 @@ async function fetchAgentStatus(projectId) {
         connectAgentStream(projectId, sid);
       }
     }
-    // Clean up stale sessions that the server no longer knows about
-    // (e.g., after server restart when in-memory sessions are lost)
+    // Sessions the server no longer lists — after a restart that cleared the
+    // in-memory agent_sessions, or the 30-min stale-purge in server.py. The
+    // conversation itself is NOT gone: its transcript is on disk + in the
+    // agent_log, and a follow-up transparently resumes it (`claude -r`). So we
+    // DETACH the tab instead of deleting it — keep the entry, its rendered
+    // buffer, and its status cache so the window stays put ("don't make the
+    // user feel the chat is gone"); only tear down the live stream and mark it
+    // 'stopped'. 'stopped' shows the "Type to resume conversation..." input,
+    // draws no Stop button, and isn't in the wantsLiveStream set, so it won't
+    // trigger a doomed SSE reconnect to a session the server forgot. The user
+    // can still ✕-close it deliberately (closeAgentTab). [keep-window-open]
     const serverSids = new Set(sessions.map(s => s.session_id));
     // Read-only reconstructed sessions (deep-link tap on a dead session) are
     // intentionally client-injected and will never be in serverSids — don't
-    // treat them as stale or a background poll would wipe the tab mid-read.
+    // touch them or a background poll would disturb the tab mid-read.
     // Temp sessions (_pending_*) are optimistic pre-POST entries — the server
     // doesn't know about them yet; exclude them so a concurrent fetchAgentStatus
-    // doesn't race-delete the temp session and cause a spurious BLOCKED flash.
+    // doesn't race-detach the temp session and cause a spurious BLOCKED flash.
     // Locally-running sessions are also protected: a fetchAgentStatus response
     // initiated BEFORE dispatch may arrive after the temp→real promotion and
-    // carry an empty session list, which would race-delete the newly promoted
+    // carry an empty session list, which would race-detach the newly promoted
     // real session ID (not _pending_ any more) and cause a BLOCKED flash.
     const _isInjectedRO = sid => !!(agentStatusCache[sid] || {})._readOnlyRevived;
     const _isPending = sid => (sid || '').startsWith('_pending_');
     const _isLocallyRunning = sid => (agentStatusCache[sid] || {}).status === 'running';
-    const _isStale = h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId) && !_isLocallyRunning(h.sessionId);
-    const staleEntries = agentHistory.filter(_isStale);
-    for (const stale of staleEntries) {
-      delete agentStatusCache[stale.sessionId];
-      delete agentOutputBuffers[stale.sessionId];
-      if (agentEventSources[stale.sessionId]) {
-        agentEventSources[stale.sessionId].close();
-        delete agentEventSources[stale.sessionId];
+    const _isDetached = h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId) && !_isLocallyRunning(h.sessionId);
+    const detachedEntries = agentHistory.filter(_isDetached);
+    for (const det of detachedEntries) {
+      // Tear down only the live resources; KEEP the entry, its output buffer,
+      // and its status cache (the latter holds claudeSessionId, needed to
+      // resume, and is what agentPanelHTML reads to render the active session).
+      if (agentEventSources[det.sessionId]) {
+        agentEventSources[det.sessionId].close();
+        delete agentEventSources[det.sessionId];
       }
-      if (agentSSEWatchdogs[stale.sessionId]) {
-        clearInterval(agentSSEWatchdogs[stale.sessionId]);
-        delete agentSSEWatchdogs[stale.sessionId];
+      if (agentSSEWatchdogs[det.sessionId]) {
+        clearInterval(agentSSEWatchdogs[det.sessionId]);
+        delete agentSSEWatchdogs[det.sessionId];
       }
+      det.status = 'stopped';
+      if (agentStatusCache[det.sessionId]) agentStatusCache[det.sessionId].status = 'stopped';
     }
-    if (staleEntries.length > 0) {
-      agentHistory = agentHistory.filter(h => !_isStale(h));
-    }
-    // Clear active tab if it points to a stale session (but keep an injected
-    // read-only tab the user is actively viewing, keep a _pending_ tab that
-    // is still mid-dispatch, and keep a locally-running session that a stale
-    // fetch may not yet know about).
-    if (activeAgentTab[projectId] && !serverSids.has(activeAgentTab[projectId]) && !_isInjectedRO(activeAgentTab[projectId]) && !_isPending(activeAgentTab[projectId]) && !_isLocallyRunning(activeAgentTab[projectId])) {
-      delete activeAgentTab[projectId];
-    }
+    // activeAgentTab is intentionally NOT cleared for a detached session — the
+    // user stays on the conversation they were reading; it just becomes
+    // resumable in place. (agentPanelHTML still drops a selection that points to
+    // a session no longer in the tab list, e.g. one the user ✕-closed.)
 
     // Auto-select a tab when none is active. DESKTOP: always (classic tab
     // strip — a tab should be open). MOBILE: only a single conversation
@@ -12172,7 +12626,7 @@ async function fetchAgentStatus(projectId) {
         activeAgentTab[projectId] = running ? running.session_id : (visible[0] || sessions[0]).session_id;
       }
     }
-    if (sessions.length > 0 || staleEntries.length > 0) {
+    if (sessions.length > 0 || detachedEntries.length > 0) {
       refreshModal();
       renderAgentConsole();
     }
@@ -17287,7 +17741,9 @@ async function openSettings() {
   const z = nextModalZ++;
   win.style.zIndex = z;
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
-  centerModalElement(win);
+  // Open the panel right next to the sidebar "Settings" item it was launched
+  // from, instead of floating in the middle of the screen.
+  _positionSettingsModal(win);
   focusModal(modalId);
 
   // Mobile hardware-back support: this sentinel makes back close the settings
@@ -17296,6 +17752,10 @@ async function openSettings() {
   mcPushSettingsHistory();
 
   await _renderSettings();
+  // Re-anchor now that the body has rendered and its true height is known, so a
+  // tall panel is clamped to stay fully on-screen (the first pass measured the
+  // short "Loading…" state).
+  _positionSettingsModal(win);
 }
 
 async function _renderSettings() {
@@ -17307,6 +17767,8 @@ async function _renderSettings() {
   // Refresh remote-access status alongside config so the panel renders with
   // live state (no provider / not enrolled / enrolled).
   fetchRemoteStatus().then(s => { window._remoteState = s; refreshRemoteAccessSection(); });
+  // Hydrate the local-network passcode section with live state.
+  refreshLocalAccessSection();
   // Hydrate push notifications section (permission, VAPID key, subscriptions).
   // NOTE: these used to fire via setTimeout BEFORE body.innerHTML was set,
   // which raced — refreshPushSection's early-return-on-missing-element left
@@ -17556,6 +18018,52 @@ async function _renderSettings() {
     </div>
 
     <div class="settings-section">
+      <div class="settings-section-title">Background</div>
+      <div class="settings-row">
+        <div><div class="settings-label">Dashboard background</div><div class="settings-hint">Personalize the space behind your projects. Saved on this device.</div></div>
+        <div class="mc-seg" id="mc-bg-seg">
+          <button class="${bgMode==='default'?'active':''}" onclick="setBgMode('default')">Theme</button>
+          <button class="${bgMode==='color'?'active':''}" onclick="setBgMode('color')">Color</button>
+          <button class="${bgMode==='image'?'active':''}" onclick="setBgMode('image')">Image</button>
+        </div>
+      </div>
+      ${bgMode==='color' ? `
+      <div class="settings-row">
+        <div><div class="settings-label">Pick a color</div><div class="settings-hint">A solid color behind the dashboard</div></div>
+        <input type="color" value="${esc(bgColor)}" oninput="setBgColor(this.value)" style="width:48px;height:32px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;padding:2px">
+      </div>` : ''}
+      ${bgMode==='image' ? `
+      <div class="settings-row">
+        <div><div class="settings-label">Your image</div><div class="settings-hint">${localStorage.getItem('mc_bg_image') ? 'An image is set for this device.' : 'No image chosen yet — pick one to apply it.'}</div></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn-dispatch" onclick="pickBgImage()">${localStorage.getItem('mc_bg_image') ? 'Replace…' : 'Choose…'}</button>
+          ${localStorage.getItem('mc_bg_image') ? `<button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="clearBgImage()">Remove</button>` : ''}
+        </div>
+      </div>
+      ${localStorage.getItem('mc_bg_image') ? `
+      <div class="settings-row">
+        <div><div class="settings-label">Dim for readability</div><div class="settings-hint">Tints the image toward your theme so text stays legible</div></div>
+        <div style="display:flex;gap:10px;align-items:center;min-width:170px">
+          <input type="range" min="0" max="80" value="${bgDim}" oninput="setBgDim(this.value)" style="flex:1;accent-color:var(--accent)">
+          <span id="mc-bg-dim-val" style="font-size:12px;color:var(--text-dim);min-width:34px;text-align:right">${bgDim}%</span>
+        </div>
+      </div>
+      <div class="settings-row" style="align-items:flex-start">
+        <div><div class="settings-label">Crop &amp; framing</div><div class="settings-hint">Drag the box to move, drag the corner (or scroll) to zoom. The box is what stays in view — it adapts to every screen size.</div></div>
+        <div style="display:flex;flex-direction:column;gap:9px;width:236px;max-width:100%">
+          <div class="mc-crop" id="mc-crop" onwheel="_bgCropWheel(event)">
+            <img id="mc-crop-img" alt="" src="${esc(localStorage.getItem('mc_bg_image') || '')}" onload="_bgCropInit()">
+            <div class="mc-crop-box" id="mc-crop-box" onpointerdown="_bgCropDragStart(event,'move')">
+              <div class="mc-crop-handle" onpointerdown="_bgCropDragStart(event,'resize')"></div>
+            </div>
+          </div>
+          <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text);align-self:flex-end;padding:5px 12px" onclick="resetBgFraming()">Reset framing</button>
+        </div>
+      </div>` : ''}` : ''}
+      <input type="file" id="mc-bg-file" accept="image/*" style="display:none" onchange="onBgImageChosen(this)">
+    </div>
+
+    <div class="settings-section">
       <div class="settings-section-title">Interface</div>
       <div class="settings-row">
         <div><div class="settings-label">Enter Key Behavior</div><div class="settings-hint">How Enter works in agent input</div></div>
@@ -17569,6 +18077,8 @@ async function _renderSettings() {
 
       <div class="settings-detail-pane settings-hidden" data-cat="connect">
       <div class="settings-cat-label">Connectivity</div>
+    ${localAccessSettingsHTML()}
+
     ${remoteAccessSettingsHTML()}
 
     ${pushNotificationsSettingsHTML()}
@@ -17652,6 +18162,111 @@ async function _renderSettings() {
   // Restore the master/detail/search view (persisted across re-renders so that
   // setTone/setAccent/etc. don't bounce you back to the list mid-edit).
   _applySettingsView();
+}
+
+// ── Local network access (LAN passcode) ─────────────────────────────────────
+// The dashboard binds 0.0.0.0, so any device on the same network can reach it.
+// Loopback (this PC) and tunneled (CF Access) traffic is always exempt; this
+// section lets the host set / change the passcode that gates direct LAN access.
+// Locked by default: until a passcode is set, LAN devices see a setup page.
+// Backend: /api/local-auth/{status,set,login}.
+window._localAuthState = window._localAuthState || null;
+
+async function fetchLocalAuthStatus() {
+  try {
+    const r = await fetch(API_BASE + '/api/local-auth/status');
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) { return null; }
+}
+
+async function refreshLocalAccessSection() {
+  window._localAuthState = await fetchLocalAuthStatus();
+  const el = document.getElementById('local-access-section');
+  if (el) el.outerHTML = localAccessSettingsHTML();
+  // outerHTML replacement drops the settings-hidden class; re-assert it so a
+  // single-sub-item detail screen stays correct.
+  try { _applySettingsSectionVisibility(); } catch (_) {}
+}
+
+function localAccessSettingsHTML() {
+  const st = window._localAuthState;
+  const configured = !!(st && st.configured);
+  const pill = configured
+    ? `<span style="font-size:11px;font-weight:600;padding:3px 8px;border-radius:8px;background:#10b98122;color:#059669;border:1px solid #10b98155;letter-spacing:.3px;margin-left:8px">On</span>`
+    : `<span style="font-size:11px;font-weight:600;padding:3px 8px;border-radius:8px;background:#f59e0b22;color:#d97706;border:1px solid #f59e0b55;letter-spacing:.3px;margin-left:8px">Set a passcode</span>`;
+  let body;
+  if (!configured) {
+    body = `
+      <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
+        No passcode is set yet, so devices on your local network are locked out
+        (they can't create one — only you can, here). Set one to let them sign
+        in. This computer is always exempt, and remote access through the secure
+        tunnel keeps its own sign-in.
+      </div>
+      <div id="local-auth-form-row">
+        <button class="btn-dispatch" onclick="showLocalAuthForm('set')">Set a passcode</button>
+      </div>`;
+  } else {
+    body = `
+      <div class="settings-hint" style="margin-bottom:10px;line-height:1.45">
+        Devices on your local network must enter the passcode to open this
+        dashboard. This computer is always exempt.
+      </div>
+      <div id="local-auth-form-row">
+        <button class="btn-dispatch" onclick="showLocalAuthForm('change')">Change passcode</button>
+      </div>`;
+  }
+  return `<div class="settings-section" id="local-access-section">
+    <div class="settings-section-title">Network access${pill}</div>
+    ${body}
+  </div>`;
+}
+
+function showLocalAuthForm(mode) {
+  const row = document.getElementById('local-auth-form-row');
+  if (!row) return;
+  const st = window._localAuthState || {};
+  // The host (loopback) and tunneled callers are exempt and don't need the
+  // current passcode to change it; an authed LAN device does.
+  const needCurrent = (mode === 'change') && st.configured && !st.exempt;
+  row.innerHTML = `
+    ${needCurrent ? `<input class="settings-input" id="la-cur" type="password" placeholder="Current passcode" autocomplete="current-password" style="margin-bottom:8px">` : ''}
+    <input class="settings-input" id="la-p1" type="password" placeholder="New passcode (at least 4 characters)" autocomplete="new-password" style="margin-bottom:8px">
+    <input class="settings-input" id="la-p2" type="password" placeholder="Confirm passcode" autocomplete="new-password" style="margin-bottom:8px">
+    <div style="display:flex;gap:8px">
+      <button class="btn-dispatch" onclick="submitLocalAuth('${mode}')">Save passcode</button>
+      <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="refreshLocalAccessSection()">Cancel</button>
+    </div>
+    <div class="settings-hint" id="la-err" style="color:var(--red,#c0392b);min-height:16px;margin-top:6px"></div>`;
+  const f = document.getElementById('la-p1'); if (f) f.focus();
+}
+
+async function submitLocalAuth(mode) {
+  const p1 = (document.getElementById('la-p1') || {}).value || '';
+  const p2 = (document.getElementById('la-p2') || {}).value || '';
+  const curEl = document.getElementById('la-cur');
+  const err = document.getElementById('la-err');
+  const setErr = (m) => { if (err) err.textContent = m || ''; };
+  if (p1.length < 4) { setErr('Passcode must be at least 4 characters.'); return; }
+  if (p1 !== p2) { setErr('Passcodes do not match.'); return; }
+  const payload = { passcode: p1 };
+  if (curEl) payload.current = curEl.value || '';
+  try {
+    const r = await fetch(API_BASE + '/api/local-auth/set', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      showToast(mode === 'change' ? 'Passcode changed' : 'Passcode set — local network access is now protected');
+      refreshLocalAccessSection();
+    } else {
+      setErr(j.error === 'bad_current_passcode' ? 'Current passcode is incorrect.'
+           : j.error === 'passcode_too_short' ? 'Passcode must be at least 4 characters.'
+           : j.error === 'setup_requires_host' ? 'The first passcode must be set on the host computer.'
+           : 'Could not save passcode.');
+    }
+  } catch (_) { setErr('Network error — try again.'); }
 }
 
 // ── Remote Access ────────────────────────────────────────────────────────────
@@ -20420,6 +21035,7 @@ async function openAllSkills() {
     focusModal(modalId);
     renderAllSkills();
     loadAllSkills();
+    loadDistillerQueue();
     return;
   }
 
@@ -20478,6 +21094,7 @@ async function openAllSkills() {
           </div>
         </div>
       </div>
+      <div id="as-queue"></div>
       <div id="as-list" style="max-height:65vh;overflow-y:auto"></div>
     </div>`;
   win.appendChild(content);
@@ -20492,6 +21109,7 @@ async function openAllSkills() {
   renderAllSkills();
   loadAllSkills();
   loadSkillUsage();
+  loadDistillerQueue();
 }
 
 async function loadAllSkills() {
@@ -20542,6 +21160,192 @@ async function loadSkillUsage() {
   } catch(e) {
     _skillUsageCache = { stats: {}, loaded: true };
   }
+}
+
+// ── Learning queue (Distiller _proposed/ artifacts + loop-health) ────────────
+// The human-promotes leg: surface the cross-session Distiller's proposals so
+// the operator can promote a good one into a real skill or reject it. Also
+// renders the loop-health self-detection alerts so a degraded leg is visible.
+let _distillerQueueOpen = true;
+
+async function loadDistillerQueue() {
+  const el = document.getElementById('as-queue');
+  if (!el) return;
+  try {
+    const [qRes, hRes] = await Promise.all([
+      fetch(API_BASE + '/api/distiller/_proposed'),
+      fetch(API_BASE + '/api/distiller/loop-health')
+    ]);
+    const items = await qRes.json().catch(() => []);
+    const health = await hRes.json().catch(() => ({}));
+    renderDistillerQueue(el, Array.isArray(items) ? items : [], health || {});
+  } catch (e) {
+    el.innerHTML = '';
+  }
+}
+
+function _distillerKindBadge(kind) {
+  const map = {
+    skill:       ['&#x1F9E9;', 'var(--accent)'],
+    exploration: ['&#x1F50D;', '#5b8def'],
+    preference:  ['&#x2699;',  '#b07cd0'],
+    update:      ['&#x270E;',  '#d0a24c'],
+  };
+  const [icon, color] = map[kind] || ['&#x2022;', 'var(--text-faint)'];
+  return `<span style="font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:3px;padding:1px 5px;white-space:nowrap">${icon} ${esc((kind||'?').toUpperCase())}</span>`;
+}
+
+let _distillerDiagOpen = false;
+// Cache the proposals so click handlers reference them BY INDEX. Embedding the
+// artifact directory (a Windows path with backslashes) into an onclick JS
+// string literal eats the backslashes (\U -> U), corrupting the path — so we
+// never serialize it into HTML; we look it up from this array at click time.
+let _distillerQueueItems = [];
+
+function renderDistillerQueue(el, items, health) {
+  const alerts = (health && Array.isArray(health.alerts)) ? health.alerts : [];
+  if (!items.length && !alerts.length) { el.innerHTML = ''; return; }
+  _distillerQueueItems = items;
+
+  // Diagnostics (the loop-health alerts) are developer-facing — tuck them
+  // behind a disclosure so they don't crowd out the actual proposals.
+  const diagHtml = alerts.length ? `
+    <div style="margin:8px 0 4px">
+      <div style="font-size:11px;color:var(--text-faint);cursor:pointer" onclick="_distillerDiagOpen=!_distillerDiagOpen;loadDistillerQueue()">
+        ${_distillerDiagOpen ? '&#x25BE;' : '&#x25B8;'} Health diagnostics (${alerts.length})
+      </div>
+      ${_distillerDiagOpen ? `<div style="margin-top:6px;display:flex;flex-direction:column;gap:5px">
+        ${alerts.map(a => `<div style="font-size:11px;color:#b8893a;background:#d0a24c14;border:1px solid #d0a24c33;border-radius:4px;padding:6px 9px">${esc(a)}</div>`).join('')}
+      </div>` : ''}
+    </div>` : '';
+
+  const rows = items.map((it, i) => {
+    const dir = it.directory || '';
+    const scope = it.scope || 'uncategorized';
+    const isCross = scope === 'cross-project';
+    const recur = it.recurrence_count_exact || it.recurrence_count_coarse || '';
+    const where = isCross ? 'seen across projects' : ('in ' + esc(scope));
+    const title = esc(it.title || it.name || '(unnamed)');
+    const snippet = it.snippet ? esc(it.snippet) : '';
+    // Kind-aware actions: explorations are reference notes the readback surfaces
+    // on demand (their question-shaped triggers were noise as always-loaded
+    // skills), so the queue only curates them — Reject noise, keep the rest in
+    // _proposed/ where readback uses them. Only SKILL / PREFERENCE — the kinds
+    // meant to be always-loaded — can Promote. Promote: project-scoped go to
+    // their project or global; cross-project go global only (project promote
+    // needs a project_id). Handlers read the (un-serialized) path from cache.
+    const isExploration = it.kind === 'exploration';
+    const promoteBtns = isExploration
+      ? `<span style="font-size:10px;color:var(--text-faint);align-self:center" title="Surfaced on demand by the readback when a task matches — no install needed">&#x1F50D; auto-surfaced on demand</span>`
+      : (isCross
+        ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Promote &#x2192; Global</button>`
+        : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill in this project only" onclick="promoteProposedByIdx(${i},'project')">Promote &#x2192; Project</button>
+           <button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Global</button>`);
+    return `
+      <div style="padding:10px 4px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <div style="flex-shrink:0;padding-top:1px">${_distillerKindBadge(it.kind)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:600;color:var(--text);word-break:break-word">${title}</div>
+            ${snippet ? `<div style="font-size:11px;color:var(--text-muted, var(--text-faint));margin-top:3px;line-height:1.4">${snippet}</div>` : ''}
+            <div style="font-size:10px;color:var(--text-faint);margin-top:4px">${where}${recur ? ' &#x2022; seen &#xD7;' + esc(String(recur)) : ''}
+              &#x2022; <span style="cursor:pointer;text-decoration:underline" onclick="toggleProposedReadByIdx(${i}, 'pa-${i}')">read full</span></div>
+            <div id="pa-${i}" style="display:none;margin-top:8px;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text);white-space:pre-wrap;max-height:300px;overflow:auto;line-height:1.5"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;margin-top:7px">
+          ${promoteBtns}
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:#c0556b;border-color:#c0556b55" title="Discard and stop suggesting this" onclick="rejectProposedByIdx(${i})">Reject</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  const bodyHtml = _distillerQueueOpen ? `
+    <div style="font-size:11px;color:var(--text-faint);margin:6px 0 2px;line-height:1.45">
+      What agents worked out across sessions. <b>&#x1F50D; Explorations</b> are reference notes surfaced on demand when a task matches &#x2014; just <b>Reject</b> the noise. <b>Skills &amp; preferences</b> can be <b>Promoted</b> into artifacts the agent always loads.
+    </div>
+    ${diagHtml}
+    <div style="max-height:300px;overflow-y:auto;margin-top:6px">${rows || '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px">No pending proposals.</div>'}</div>
+  ` : '';
+
+  el.innerHTML = `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;background:var(--surface2)">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="_distillerQueueOpen=!_distillerQueueOpen;loadDistillerQueue()">
+        <span style="font-size:13px;font-weight:700;color:var(--text)">&#x1F9E0; Learning queue</span>
+        <span style="font-size:11px;color:var(--text-faint)">${items.length} pending${alerts.length ? ' &#x2022; ' + alerts.length + ' alert' + (alerts.length>1?'s':'') : ''}</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--text-faint)">${_distillerQueueOpen ? '&#x25BE;' : '&#x25B8;'}</span>
+      </div>
+      ${bodyHtml}
+    </div>`;
+}
+
+async function toggleProposedRead(directory, rowId) {
+  const box = document.getElementById(rowId);
+  if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.textContent = 'Loading…';
+  try {
+    const res = await fetch(API_BASE + '/api/distiller/proposed-artifact?directory=' + encodeURIComponent(directory));
+    const art = await res.json();
+    if (!res.ok || !art || art.error) { box.textContent = (art && art.error) || 'Could not load.'; return; }
+    box.textContent = art.body || '(empty)';
+  } catch (e) {
+    box.textContent = 'Could not load.';
+  }
+}
+
+async function _distillerPost(url, payload) {
+  try {
+    const res = await fetch(API_BASE + url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      showToast((data && data.error) ? data.error : 'Action failed');
+      return false;
+    }
+    return true;
+  } catch (e) {
+    showToast('Network error');
+    return false;
+  }
+}
+
+// Index-based handlers — read the artifact path from the cached item so the
+// (backslash-laden, Windows) directory never passes through an HTML/JS string.
+function promoteProposedByIdx(i, scope) {
+  const it = _distillerQueueItems[i];
+  if (!it) return;
+  promoteProposed(it.directory, scope, scope === 'project' ? it.scope : null);
+}
+function rejectProposedByIdx(i) {
+  const it = _distillerQueueItems[i];
+  if (it) rejectProposed(it.directory);
+}
+function toggleProposedReadByIdx(i, rowId) {
+  const it = _distillerQueueItems[i];
+  if (it) toggleProposedRead(it.directory, rowId);
+}
+
+async function promoteProposed(directory, scope, projectId) {
+  const payload = { directory, scope };
+  if (scope === 'project' && projectId) payload.project_id = projectId;
+  const ok = await _distillerPost('/api/distiller/promote', payload);
+  if (ok) {
+    showToast('Promoted to ' + (scope === 'global' ? 'global' : 'project') + ' skills');
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+    loadDistillerQueue();
+  }
+}
+
+async function rejectProposed(directory) {
+  if (!confirm('Reject this proposal? It will be suppressed (not re-proposed) and moved to _rejected/.')) return;
+  const ok = await _distillerPost('/api/distiller/reject', { directory });
+  if (ok) { showToast('Rejected'); loadDistillerQueue(); }
 }
 
 function renderAllSkills() {
@@ -21678,12 +22482,30 @@ function renderAllMCP() {
 
   if (countEl) countEl.textContent = `${rows.length} server${rows.length===1?'':'s'}`;
 
+  // Per-project loadout banner — only meaningful when one project is selected.
+  // active/loadout_custom are annotated by /api/mcp?project_id=… (see server.py).
+  let banner = '';
+  if (f.project !== 'all' && _allMCPCache.loaded && _allMCPCache.items.length) {
+    const its = _allMCPCache.items;
+    const custom = its.some(s => s.loadout_custom);
+    const names = [...new Set(its.map(s => s.name))];
+    const activeNames = [...new Set(its.filter(s => s.active).map(s => s.name))];
+    if (custom) {
+      banner = `<div style="padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface2);font-size:11px;color:var(--text-mute);display:flex;align-items:center;gap:8px">
+        <span style="color:var(--accent)">●</span> Custom loadout — <b>${activeNames.length}/${names.length}</b> servers load for this project's agents
+        <button class="btn-tiny" onclick="_mcpResetLoadout()" style="margin-left:auto">Reset to all</button></div>`;
+    } else {
+      banner = `<div style="padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface2);font-size:11px;color:var(--text-faint)">
+        All <b>${names.length}</b> servers load for this project (default) — toggle any <b>off</b> to trim what its agents load.</div>`;
+    }
+  }
+
   if (!rows.length) {
-    container.innerHTML = `<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">No MCP servers match the current filters.<br><span style="font-size:11px">Click "+ New MCP server" to add one.</span></div>`;
+    container.innerHTML = banner + `<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">No MCP servers match the current filters.<br><span style="font-size:11px">Click "+ New MCP server" to add one.</span></div>`;
     return;
   }
 
-  container.innerHTML = rows.map(s => _renderMCPRow(s)).join('');
+  container.innerHTML = banner + rows.map(s => _renderMCPRow(s)).join('');
 }
 
 function _renderMCPRow(s) {
@@ -21705,6 +22527,13 @@ function _renderMCPRow(s) {
   const editArgs = `'${esc(s.scope)}', '${esc(s.name)}', ${s.project_id ? `'${esc(s.project_id)}'` : 'null'}, false`;
   const delArgs = `'${esc(s.scope)}', '${esc(s.name)}', ${s.project_id ? `'${esc(s.project_id)}'` : 'null'}`;
   const mtime = s.mtime_iso ? new Date(s.mtime_iso).toLocaleString() : '';
+  // Per-project "active" toggle — only present when a single project is selected
+  // (server annotates s.active). always_on servers (engram/memory) are locked on.
+  const activeToggle = (s.active === undefined) ? '' : (
+    s.always_on
+      ? `<span class="btn-tiny" style="opacity:.6;cursor:default;border-color:var(--accent);color:var(--accent)" title="Always loaded — provides cross-session memory; can't be disabled">✓ memory</span>`
+      : `<button class="btn-tiny" onclick="_mcpToggleActive('${esc(s.name)}', ${s.active ? 'false' : 'true'})" style="${s.active ? 'color:var(--accent);border-color:var(--accent)' : 'opacity:.65'}" title="${s.active ? 'Loaded for this project — click to disable' : 'Not loaded for this project — click to enable'}">${s.active ? '✓ active' : '○ off'}</button>`
+  );
 
   return `<div class="mcp-row" style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:4px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -21712,7 +22541,8 @@ function _renderMCPRow(s) {
       ${scopeBadge}
       ${transportBadge}
       ${shadowBadge}
-      <div style="margin-left:auto;display:flex;gap:6px">
+      <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+        ${activeToggle}
         <button class="btn-tiny" onclick="openMCPEditor(${editArgs})">Edit</button>
         <button class="btn-tiny danger" onclick="deleteMCPAction(${delArgs})">Delete</button>
       </div>
@@ -21720,6 +22550,38 @@ function _renderMCPRow(s) {
     <div style="font-size:12px;color:var(--text-mute);line-height:1.4;font-family:var(--mono);word-break:break-all">${esc(s.preview || '(no command/url)')}</div>
     <div style="font-size:10px;color:var(--text-faint);font-family:var(--mono)">${esc(s.path || '')} &middot; ${esc(mtime)}</div>
   </div>`;
+}
+
+// Per-project MCP loadout writes → /api/project/<id>/mcp-enabled (server.py).
+// Toggling materializes enabled_mcp_servers from the project's currently-active
+// set; Reset clears the opt-in (back to the full fleet). engram is force-kept
+// server-side regardless. After a write we refetch so active flags re-sync.
+async function _mcpToggleActive(name, newActive) {
+  const pid = _allMCPFilter.project;
+  if (!pid || pid === 'all') return;
+  const activeSet = new Set(_allMCPCache.items.filter(s => s.active).map(s => s.name));
+  if (newActive) activeSet.add(name); else activeSet.delete(name);
+  try {
+    await fetch(API_BASE + '/api/project/' + encodeURIComponent(pid) + '/mcp-enabled', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: [...activeSet] })
+    });
+  } catch (e) {}
+  _allMCPCache = { items: [], loaded: false, loading: false };
+  loadAllMCP();
+}
+
+async function _mcpResetLoadout() {
+  const pid = _allMCPFilter.project;
+  if (!pid || pid === 'all') return;
+  try {
+    await fetch(API_BASE + '/api/project/' + encodeURIComponent(pid) + '/mcp-enabled', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: null })
+    });
+  } catch (e) {}
+  _allMCPCache = { items: [], loaded: false, loading: false };
+  loadAllMCP();
 }
 
 async function openMCPEditor(scope, name, projectId, isNew) {
@@ -23388,10 +24250,13 @@ setInterval(async () => {
       for (const rh of running.filter(x => x.projectId === h.projectId)) {
         const ss = serverMap[rh.sessionId];
         if (!ss) {
-          // Session vanished from server (e.g. server restart) — mark as lost
+          // Session vanished from the server (30-min purge, or a desync). Not an
+          // error — a dropped/resumable session, same as the fetchAgentStatus
+          // detach path. Mark it 'stopped' (resumable) instead of 'error' so the
+          // tab goes straight to STOPPED without flashing a "Blocked" pill.
           if (!agentEventSources[rh.sessionId]) {
-            rh.status = 'error';
-            if (agentStatusCache[rh.sessionId]) agentStatusCache[rh.sessionId].status = 'error';
+            rh.status = 'stopped';
+            if (agentStatusCache[rh.sessionId]) agentStatusCache[rh.sessionId].status = 'stopped';
             delete agentLogCache[h.projectId];
             refreshModal();
             renderAgentConsole();
@@ -23421,6 +24286,75 @@ setInterval(async () => {
     } catch(e) {}
   }
 }, 15000);
+
+// ── Foreground freshness reconciler ─────────────────────────────────────────
+// Durable backstop for the mobile "live updates freeze until force-close/reload"
+// bug. Every prior recovery path was either EVENT-GATED (visibilitychange/focus/
+// pageshow — documented unreliable on Android WebViews), ZOMBIE-BLOCKED (keyed on
+// `!agentEventSources[sid]`, so a dead-but-present EventSource blocked both the
+// render-gap repaint and the SSE reconnect), or IDLE-SKIPPED (the 15s poll above
+// intentionally ignores idle sessions to protect Chromium's 6-slot cap). Under
+// Doze the SSE socket dies with the handle still "open" and no onerror, so none
+// of those fired and the chat the user was looking at froze until a full reload.
+//
+// This timer trusts the POLL, not the stream. While the app is VISIBLE it
+// reconciles every OPEN modal's active session straight from /agent/status, so
+// the visible chat self-heals within one tick no matter what the transport did.
+// _reconcileAgentBuffer is cursor-deduped against SSE, re-derives pending
+// questions (DOM-deduped), costs NO SSE slot (a plain fetch that frees itself),
+// and no-ops when already in sync — safe to run alongside a healthy live stream.
+// Separately it reaps a ZOMBIE stream (handle present but silent past the
+// threshold) for the active RUNNING session so dead handles don't pile up against
+// the 6-slot cap and true streaming resumes. Idle SSE is still never reopened
+// here, so the slot discipline the 15s poll protects is preserved.
+const FRESHNESS_TICK_MS = 5000;
+// SSE_ZOMBIE_MS must stay comfortably ABOVE the server's 15s SSE heartbeat
+// (server.py emits a `data:{type:'heartbeat'}` every ~15s — a real event, so it
+// fires onmessage and refreshes agentLastEventAt). A threshold ≤15s would
+// false-reap a HEALTHY idle stream in the gap between heartbeats. 25s = one
+// missed heartbeat + margin, and still beats the 30s in-stream watchdog so the
+// visible chat recovers sooner than a backgrounded one.
+const SSE_ZOMBIE_MS = 25000;
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  for (const [, entry] of openModals) {
+    if (!entry || entry.minimized || !entry.projectId) continue;
+    const pid = entry.projectId;
+    const sid = activeAgentTab[pid];
+    if (!sid) continue;
+    const cached = agentStatusCache[sid];
+    if (!cached) continue;
+    // Client-only sessions aren't server-backed — a poll would race-detach them.
+    if (cached._readOnlyRevived || sid.startsWith('_pending_')) continue;
+    // Mid-send: a follow-up POST is in flight. Don't fight the optimistic-send
+    // path (status flip + echo) or churn its eager-opened stream. The 8s window
+    // matches _sendInFlight's own gate; healing resumes on the next tick.
+    if (_sendInFlight[sid] && (Date.now() - _sendInFlight[sid] < 8000)) continue;
+
+    // Reap a ZOMBIE stream — a handle still present but silent past the
+    // threshold (socket died under Doze, no onerror). Closing it frees the
+    // Chromium slot and, crucially, clears the `!agentEventSources[sid]` block
+    // that otherwise traps every recovery path. Reconnect ONLY if the session is
+    // still running — idle sessions intentionally keep no stream (slot discipline,
+    // the same rule the 15s poll above protects). The fresh stream's since=
+    // cursor is anchored on agentServerLines, so it replays exactly the missed
+    // lines with no double-render; let it deliver and skip the poll this tick.
+    if (agentEventSources[sid] && (Date.now() - (agentLastEventAt[sid] || 0) > SSE_ZOMBIE_MS)) {
+      try { agentEventSources[sid].close(); } catch (_) {}
+      delete agentEventSources[sid];
+      if (agentSSEWatchdogs[sid]) { clearInterval(agentSSEWatchdogs[sid]); delete agentSSEWatchdogs[sid]; }
+      if (cached.status === 'running') { connectAgentStream(pid, sid); continue; }
+    }
+
+    // Content backstop — ONLY when there is no live handle (absent, or just
+    // reaped above). A healthy stream already keeps the buffer current; polling
+    // alongside it would race and could double-render a line (SSE onmessage has
+    // no agentServerLines dedup). _reconcileAgentBuffer is cursor-guarded,
+    // re-derives pending questions (DOM-deduped), costs no SSE slot, and no-ops
+    // when in sync — so this heals idle / closed / zombie alike, race-free.
+    if (!agentEventSources[sid]) _reconcileAgentBuffer(pid, sid);
+  }
+}, FRESHNESS_TICK_MS);
 
 // ── Preserve textarea values across DOM rebuilds ─────────────────────────────
 document.getElementById('modal-layer').addEventListener('input', e => {
@@ -23492,6 +24426,23 @@ async function _resyncOpenModalsFromServer() {
   for (const [, entry] of openModals) {
     if (!entry || entry.minimized || !entry.projectId) continue;
     pids.add(entry.projectId);
+    // Resurface heal for the chat the user is actually looking at. A desktop
+    // browser tab that was backgrounded (e.g. while you were on the mobile app)
+    // has its EventSource PARKED by Chromium without firing onerror — the object
+    // still reports "open" but delivers nothing. The heartbeat probe above is a
+    // SEPARATE fetch, so it can't detect that, and fetchAgentStatus()'s
+    // render-gap repaint + SSE reconnect are BOTH gated on
+    // `!agentEventSources[sid]` — so the zombie blocked both and new replies
+    // stayed invisible until a full reload. Drop the active session's stream
+    // here so the fetchAgentStatus() below repaints the missed lines and
+    // reconnects a live one. Scoped to resurface (focus/visibility/pageshow),
+    // so actively-streaming chats are never churned mid-use.
+    const asid = activeAgentTab[entry.projectId];
+    if (asid && agentEventSources[asid]) {
+      try { agentEventSources[asid].close(); } catch (_) {}
+      delete agentEventSources[asid];
+      if (agentSSEWatchdogs[asid]) { clearInterval(agentSSEWatchdogs[asid]); delete agentSSEWatchdogs[asid]; }
+    }
   }
   for (const pid of pids) fetchAgentStatus(pid);
 }

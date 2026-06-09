@@ -155,3 +155,94 @@ def test_build_command_default_arg_is_off(claude_rt):
     """Callers that never pass mcp_config_json keep old behavior."""
     cmd = claude_rt.build_command(streaming=True)
     assert '--mcp-config' not in cmd
+
+
+# ── Per-project loadout endpoints: GET/PUT /api/project/<id>/mcp-enabled ───────
+#
+# The WRITE surface that finally lets enabled_mcp_servers be set from the UI
+# (previously the trim was read-only → 0 projects ever opted in). Invariants:
+#   - default-off project → opted_in False, enabled None;
+#   - PUT a list → opted_in True, persisted, engram force-kept, unknown skipped;
+#   - PUT null → opt-in cleared (key removed) → back to full fleet;
+#   - non-list → 400; unknown project → 404;
+#   - /api/mcp?project_id annotates active/loadout_custom/always_on.
+
+@pytest.fixture
+def client(srv):
+    srv.app.config['TESTING'] = True
+    return srv.app.test_client()
+
+
+def _make_project(srv, pid='p', **fields):
+    rec = {'id': pid, 'name': pid, 'project_path': '', **fields}
+    (srv.DATA_DIR / f'{pid}.json').write_text(json.dumps(rec), encoding='utf-8')
+    return rec
+
+
+def _stub_endpoint_catalog(srv, monkeypatch, names):
+    cat = {n: {'command': 'x'} for n in names}
+    cat.setdefault('engram', {'command': 'engram', 'args': ['mcp', '--tools=agent']})
+    monkeypatch.setattr(srv, '_mcp_server_catalog', lambda project: dict(cat))
+
+
+def test_get_mcp_enabled_default_off(srv, client, monkeypatch):
+    _make_project(srv, 'p')
+    _stub_endpoint_catalog(srv, monkeypatch, ['filesystem'])
+    body = client.get('/api/project/p/mcp-enabled').get_json()
+    assert body['opted_in'] is False
+    assert body['enabled'] is None
+    assert 'engram' in body['catalog'] and 'filesystem' in body['catalog']
+
+
+def test_put_mcp_enabled_sets_list_and_force_keeps_engram(srv, client, monkeypatch):
+    _make_project(srv, 'p')
+    _stub_endpoint_catalog(srv, monkeypatch, ['filesystem', 'github'])
+    body = client.put('/api/project/p/mcp-enabled', json={'enabled': ['filesystem']}).get_json()
+    assert body['opted_in'] is True
+    assert 'filesystem' in body['enabled']
+    assert 'engram' in body['enabled']  # force-kept even though not requested
+    saved = json.loads((srv.DATA_DIR / 'p.json').read_text(encoding='utf-8'))
+    assert sorted(saved['enabled_mcp_servers']) == sorted(body['enabled'])
+
+
+def test_put_mcp_enabled_filters_unknown_names(srv, client, monkeypatch):
+    _make_project(srv, 'p')
+    _stub_endpoint_catalog(srv, monkeypatch, ['filesystem'])
+    body = client.put('/api/project/p/mcp-enabled', json={'enabled': ['filesystem', 'ghost']}).get_json()
+    assert 'ghost' not in body['enabled']
+    assert 'filesystem' in body['enabled']
+
+
+def test_put_mcp_enabled_null_clears_optin(srv, client, monkeypatch):
+    _make_project(srv, 'p', enabled_mcp_servers=['filesystem', 'engram'])
+    _stub_endpoint_catalog(srv, monkeypatch, ['filesystem'])
+    body = client.put('/api/project/p/mcp-enabled', json={'enabled': None}).get_json()
+    assert body['opted_in'] is False
+    saved = json.loads((srv.DATA_DIR / 'p.json').read_text(encoding='utf-8'))
+    assert 'enabled_mcp_servers' not in saved
+
+
+def test_put_mcp_enabled_rejects_non_list(srv, client, monkeypatch):
+    _make_project(srv, 'p')
+    _stub_endpoint_catalog(srv, monkeypatch, ['filesystem'])
+    assert client.put('/api/project/p/mcp-enabled', json={'enabled': 'filesystem'}).status_code == 400
+
+
+def test_put_mcp_enabled_unknown_project_404(srv, client):
+    assert client.put('/api/project/nope/mcp-enabled', json={'enabled': []}).status_code == 404
+
+
+def test_list_mcp_annotates_active_when_project(srv, client, monkeypatch):
+    _make_project(srv, 'p', enabled_mcp_servers=['filesystem', 'engram'])
+    monkeypatch.setattr(srv._mcp, 'list_servers',
+                        lambda project_path=None, project_id=None: [
+                            {'name': 'filesystem', 'scope': 'global'},
+                            {'name': 'github', 'scope': 'global'},
+                            {'name': 'engram', 'scope': 'global'},
+                        ])
+    items = {it['name']: it for it in client.get('/api/mcp?project_id=p').get_json()}
+    assert items['filesystem']['active'] is True
+    assert items['github']['active'] is False      # opted-in list excludes it
+    assert items['engram']['active'] is True        # always_on overrides
+    assert items['engram']['always_on'] is True
+    assert items['filesystem']['loadout_custom'] is True

@@ -6,9 +6,9 @@
 # after building the app:
 #
 #     pyinstaller build-macos.spec --noconfirm     # produces dist/Clayrune.app
-#     tools/notarize-macos.sh                        # -> MissionControl-macOS.zip
+#     tools/notarize-macos.sh                        # -> Clayrune-macOS.zip
 #
-# The output MissionControl-macOS.zip is the notarized, Gatekeeper-clean
+# The output Clayrune-macOS.zip is the notarized, Gatekeeper-clean
 # artifact to upload to the website / GitHub release. It is a drop-in
 # replacement for the UNSIGNED zip that .github/workflows/build-macos.yml
 # currently produces and auto-attaches to releases — always replace that one.
@@ -36,7 +36,7 @@ set -euo pipefail
 APP="${1:-dist/Clayrune.app}"
 IDENTITY="${CLAYRUNE_SIGN_IDENTITY:-Developer ID Application: Ron Levy (ZN4RFW9K5T)}"
 PROFILE="${CLAYRUNE_NOTARY_PROFILE:-clayrune-notary}"
-OUT_ZIP="${CLAYRUNE_OUT_ZIP:-MissionControl-macOS.zip}"
+OUT_ZIP="${CLAYRUNE_OUT_ZIP:-Clayrune-macOS.zip}"
 
 say() { printf '\n\033[1;36m==>\033[0m %s\n' "$1"; }
 die() { printf '\n\033[1;31mERROR:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -47,7 +47,7 @@ Build it first:  pyinstaller build-macos.spec --noconfirm"
 
 command -v xcrun >/dev/null 2>&1 || die "Xcode Command Line Tools missing. Run: xcode-select --install"
 
-if ! security find-identity -v -p codesigning | grep -qF "$IDENTITY"; then
+if ! grep -qF "$IDENTITY" <<<"$(security find-identity -v -p codesigning)"; then
   die "Signing identity not found in your keychain:
   $IDENTITY
 Set up the Developer ID cert first — see docs/MACOS_NOTARIZATION.md"
@@ -79,7 +79,8 @@ codesign --force --deep --options runtime --timestamp \
 # alone is not enough — it passes on PyInstaller's pre-existing ad-hoc signature
 # and gives a false "valid on disk". The Authority line is the real proof.
 say "Verifying signature"
-codesign -dvv "$APP" 2>&1 | grep -qF "Authority=$IDENTITY" \
+SIG_INFO="$(codesign -dvv "$APP" 2>&1)"
+grep -qF "Authority=$IDENTITY" <<<"$SIG_INFO" \
   || die "App is not signed with the Developer ID identity after signing."
 codesign --verify --strict "$APP" || die "codesign --verify failed."
 
@@ -100,7 +101,8 @@ fi
 # ── 4. Staple the ticket + final Gatekeeper check ───────────────────────────
 say "Stapling ticket"
 xcrun stapler staple "$APP"
-spctl -a -t exec -vvv "$APP" 2>&1 | grep -q "source=Notarized Developer ID" \
+GK_INFO="$(spctl -a -t exec -vvv "$APP" 2>&1)"
+grep -q "source=Notarized Developer ID" <<<"$GK_INFO" \
   || die "Gatekeeper assessment did not report 'Notarized Developer ID'."
 
 # ── 5. Zip the STAPLED app for distribution ─────────────────────────────────

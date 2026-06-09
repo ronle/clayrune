@@ -577,19 +577,24 @@ _EXPLORATION_PROMPT_PREAMBLE = (
 )
 
 _PREFERENCE_PROMPT_PREAMBLE = (
-    "You are the Phase 4 PREFERENCE.md generator. You receive N verbatim "
-    "user quotes expressing a recurring preference and output a "
-    "PREFERENCE.md ready to promote into feedback memory. Body shape mirrors "
+    "You are the Phase 4 PREFERENCE.md generator. You receive verbatim user "
+    "quotes expressing a preference and output a PREFERENCE.md ready to promote "
+    "into feedback memory. A SINGLE clearly-stated preference is enough — "
+    "recurrence is NOT required (it is a confidence signal only; the human "
+    "approves at promotion, which is the quality gate). Body shape mirrors "
     "the existing feedback_*.md files:\n\n"
     "  # <The preference, as a one-line rule>\n\n"
     "  ## Why (the underlying reason, if observable)\n  <extracted reason>\n\n"
     "  ## How to apply\n  <when this preference kicks in>\n\n"
     "  ## Evidence\n  - Session <sid> (<ts>): \"<verbatim quote>\"\n\n"
+    "Output ONLY the markdown body — do NOT wrap it in ``` code fences.\n\n"
     "PROMOTION TARGET — `suggested_target` is NOT set at extraction time "
     "(I3 closure). The promotion UI offers feedback_memory (default), "
     "project CLAUDE.md, or global SKILL.md.\n\n"
-    "REFUSE PATH: if the quotes don't actually express a coherent recurring "
-    "preference, output `REFUSE`."
+    "REFUSE PATH: output `REFUSE` ONLY if the quotes do not express a "
+    "preference at all — e.g. a delegatory aside (\"your call\"), a one-off "
+    "factual note, or noise. Do NOT refuse merely because a preference was "
+    "observed only once; a clear one-time preference is valid."
 )
 
 
@@ -858,6 +863,14 @@ def _aggregate_per_project(project_id: str, project: dict,
     """
     candidates = []
     min_rec = int(_pcfg(project, 'distiller_min_recurrence', 3))
+    # Preferences carry real content (summary + evidence_quote) and are valuable
+    # the first time they're observed — a stated preference is knowledge now, not
+    # a statistical pattern needing 3× confirmation. They default to recurrence 1
+    # (like explorations); recurrence is a confidence/ranking signal, and the
+    # human promotion step is the quality gate (the locked learning definition's
+    # relaxed-feedback principle). Topic->skill stays gated: bare topic phrases
+    # carry no procedure, so generating skills from them only yields REFUSEs.
+    pref_min_rec = int(_pcfg(project, 'distiller_preference_min_recurrence', 1))
     window_days = int(_cfg('distiller_window_days', 30))
     dedupe_days = int(_cfg('distiller_proposal_dedupe_days', 7))
     new_fingerprints = {(s['exact'], s['coarse'], s['kind'])
@@ -876,12 +889,26 @@ def _aggregate_per_project(project_id: str, project: dict,
             kind_coarse.setdefault((k, s['coarse']), set()).add(s.get('sid', ''))
         suppressions = stats.get('suppressions', {}) or {}
         outbox = stats.get('outbox', {}) or {}
-        for (exact, coarse, kind) in new_fingerprints:
+        # Rescue stranded preferences. The current-session-only loop would never
+        # re-evaluate preferences captured under the old recurrence-3 gate
+        # (before pref_min_rec=1 landed) — they're content-rich one-offs that
+        # won't recur, so without this they sit in _skill_stats forever and never
+        # reach the review queue. Evaluate ALL in-window preference fingerprints,
+        # not just this session's. Outbox dedupe + suppressions still prevent
+        # re-proposing. Scoped to preferences ONLY: backfilling topics would
+        # flood the skill renderer with REFUSEs (they're content-starved), and
+        # explorations are single-shot off new_signals by design.
+        eval_fingerprints = set(new_fingerprints)
+        for s in window_signals:
+            if s.get('kind') == 'preference' and s.get('exact') and s.get('coarse'):
+                eval_fingerprints.add((s['exact'], s['coarse'], 'preference'))
+        for (exact, coarse, kind) in eval_fingerprints:
             cand = _evaluate_candidate(
                 kind=kind, exact=exact, coarse=coarse,
                 kind_exact=kind_exact, kind_coarse=kind_coarse,
                 suppressions=suppressions, outbox=outbox,
-                min_rec=min_rec, dedupe_days=dedupe_days,
+                min_rec=min_rec, pref_min_rec=pref_min_rec,
+                dedupe_days=dedupe_days,
                 window_signals=window_signals,
                 new_signals=new_signals,
             )
@@ -895,7 +922,8 @@ def _evaluate_candidate(*, kind: str, exact: str, coarse: str,
                         suppressions: dict, outbox: dict,
                         min_rec: int, dedupe_days: int,
                         window_signals: list[dict],
-                        new_signals: list[dict]) -> dict | None:
+                        new_signals: list[dict],
+                        pref_min_rec: int = 1) -> dict | None:
     """One candidate decision. Returns None if NOT a candidate (gated)."""
     # Suppression check
     supp_key = f"{exact}:{kind}"
@@ -922,12 +950,14 @@ def _evaluate_candidate(*, kind: str, exact: str, coarse: str,
             'evidence_signals': evid,
             'recurrence_exact': 1, 'recurrence_coarse': 1,
         }
-    # Skill / preference: dual-layer recurrence check
+    # Skill / preference: dual-layer recurrence check. Preferences use their own
+    # (lower, default 1) threshold — they're content-rich and human-gated.
+    eff_min = pref_min_rec if kind == 'preference' else min_rec
     exact_sids = kind_exact.get((kind, exact), set())
     coarse_sids = kind_coarse.get((kind, coarse), set())
     exact_count = len(exact_sids)
     coarse_count = len(coarse_sids)
-    if exact_count < min_rec and coarse_count < (min_rec + 1):
+    if exact_count < eff_min and coarse_count < (eff_min + 1):
         # Honor Later: bump wait_until_recurrence comparison
         if supp and supp.get('decision') == 'later':
             wait = int(supp.get('wait_until_recurrence', 0))
@@ -1248,6 +1278,33 @@ def _proposal_target(project_id: str, scope_tag: str, kind: str,
     return base / kind_to_file.get(kind, 'SKILL.md')
 
 
+def _is_refusal(out: str) -> bool:
+    """True if the model declined to author an artifact (REFUSE path).
+
+    MUST be checked against the RAW model output, before _wrap_skill_body
+    prepends frontmatter — otherwise the wrapped body starts with `---` and
+    the downstream `body.strip() == 'REFUSE'` guard never matches, leaking
+    the refusal to disk as a bogus artifact (the clayrune_website
+    `distilled-969b3b91` SKILL.md body == "REFUSE" bug, 2026-06-05).
+    """
+    if not out:
+        return True
+    # The model wraps the sentinel in code fences/backticks and/or follows it
+    # with a rationale paragraph ("`REFUSE`\n\nThis is a single observation …",
+    # "REFUSE\n\nThe evidence quote …"). The old `== 'REFUSE' or len<=12` guard
+    # missed both forms, leaking them to disk as junk artifacts. Inspect the
+    # first real content line, stripped of fences/backticks/emphasis/trailing
+    # punctuation — a genuine artifact starts with "# <rule>" or "---", never
+    # the REFUSE sentinel.
+    for raw in out.splitlines():
+        line = raw.strip()
+        if not line or line.startswith('```'):   # skip blanks + code-fence lines
+            continue
+        token = line.strip('`*_ ').rstrip('.:!').strip()
+        return token.upper() == 'REFUSE' or token.upper().startswith('REFUSE ')
+    return True  # nothing but fences/blanks → empty == refusal
+
+
 def _render_skill(project_id: str, project: dict,
                   candidate: dict) -> tuple[str | None, Path]:
     """Render a SKILL.md proposal. Returns (body, target_path) or (None, _)."""
@@ -1272,7 +1329,7 @@ def _render_skill(project_id: str, project: dict,
         out = _scribe_call(model, instruction, body_in)
     except Exception:
         return None, Path()
-    if not out:
+    if _is_refusal(out):
         return None, Path()
     name_slug = _extract_name_from_frontmatter(out) or f"distilled-{candidate['exact'][:8]}"
     body = _wrap_skill_body(out, project_id, candidate, kind='skill',
@@ -1298,7 +1355,7 @@ def _render_exploration(project_id: str, project: dict,
         out = _scribe_call(model, instruction, body_in)
     except Exception:
         return None, Path()
-    if not out:
+    if _is_refusal(out):
         return None, Path()
     q = sig.get('question', '') or candidate['exact']
     name_slug = _slug(q.split('?')[0][:60]) or f"exploration-{candidate['exact'][:8]}"
@@ -1319,9 +1376,11 @@ def _render_preference(project_id: str, project: dict,
             f"  - Session {s.get('sid', '')} ({s.get('ts', '')}): "
             f"\"{s.get('evidence_quote', '')[:300]}\""
         )
+    # NB: deliberately do NOT pass recurrence counts here — preferences are
+    # valid at recurrence 1, and surfacing "exact=1" cued the model to refuse
+    # ("single observation, not a recurring preference"). Recurrence is a
+    # ranking/confidence signal recorded in frontmatter, not a generation gate.
     body_in = (
-        f"Recurrence: exact={candidate['recurrence_exact']} "
-        f"coarse={candidate['recurrence_coarse']}\n"
         f"Summary signals:\n" +
         '\n'.join(f"  - {s.get('summary', '')}"
                   for s in candidate['evidence_signals'][:10]) + "\n\n"
@@ -1331,7 +1390,7 @@ def _render_preference(project_id: str, project: dict,
         out = _scribe_call(model, instruction, body_in)
     except Exception:
         return None, Path()
-    if not out:
+    if _is_refusal(out):
         return None, Path()
     name_slug = _extract_name_from_frontmatter(out) or f"preference-{candidate['exact'][:8]}"
     body = _wrap_skill_body(out, project_id, candidate, kind='preference',
@@ -1371,6 +1430,21 @@ def _extract_name_from_frontmatter(text: str) -> str | None:
     return _slug(m.group(1).strip())
 
 
+def _strip_code_fences(text: str) -> str:
+    """Remove a single surrounding ```lang … ``` fence the model sometimes wraps
+    the whole artifact in. The body should be raw markdown, not a fenced code
+    block — the fence leaked into PREFERENCE.md/SKILL.md artifacts as a visible
+    ```markdown wrapper."""
+    t = (text or '').strip()
+    if t.startswith('```'):
+        nl = t.find('\n')
+        if nl != -1:
+            t = t[nl + 1:]          # drop the opening ``` / ```markdown line
+        if t.rstrip().endswith('```'):
+            t = t.rstrip()[:-3]     # drop the closing fence
+    return t.strip()
+
+
 def _wrap_skill_body(model_output: str, project_id: str, candidate: dict,
                      kind: str, name_slug: str) -> str:
     """Inject required frontmatter fields if the model omitted them.
@@ -1397,7 +1471,7 @@ def _wrap_skill_body(model_output: str, project_id: str, candidate: dict,
         'created_at': _now_iso() or '',
     }
     # If the model already produced frontmatter, splice our required fields
-    text = model_output.strip()
+    text = _strip_code_fences(model_output)
     if text.startswith('---'):
         end = text.find('\n---', 4)
         if end >= 0:
@@ -1581,6 +1655,381 @@ def list_proposed() -> list[dict]:
     return out
 
 
+_RE_EXPL_STOP = frozenset((
+    'the', 'and', 'for', 'why', 'are', 'was', 'were', 'how', 'does', 'did',
+    'what', 'when', 'with', 'this', 'that', 'from', 'into', 'has', 'have',
+    'not', 'all', 'any', 'but', 'can', 'its', 'our', 'out', 'use', 'using',
+    'a', 'an', 'is', 'it', 'in', 'on', 'of', 'to', 'do', 'be',
+))
+
+
+def _expl_tokens(s: str) -> set[str]:
+    """Lowercased content tokens (len ≥ 3, stopwords dropped) for overlap
+    scoring. Used by the exploration read-floor ranker."""
+    out = set()
+    for w in re.split(r'[^a-z0-9]+', (s or '').lower()):
+        if len(w) >= 3 and w not in _RE_EXPL_STOP:
+            out.add(w)
+    return out
+
+
+def exploration_read_floor(project_id: str, task: str,
+                           topk: int = 2) -> list[dict]:
+    """Rank past EXPLORATION.md proposals by keyword overlap with `task` and
+    return the top-K as {name, path, snippet} for read-floor injection into
+    _build_agent_context.
+
+    This is the loop-closer: explorations the Distiller captured are otherwise
+    write-only in _proposed/. Surfacing the relevant ones back into a new
+    session's context is what turns the pipeline from a journal into learning
+    (the agent reuses prior exploration instead of re-deriving it).
+
+    Scope: the project's own explorations PLUS cross-project (global) ones —
+    matching the cross-project-default learning philosophy. Best-effort;
+    never raises (returns [] on any failure).
+    """
+    if _skills_root is None or not task or topk < 1:
+        return []
+    try:
+        qt = _expl_tokens(task)
+        if not qt:
+            return []
+        # Loop-health telemetry: count every real readback query (task with
+        # content tokens) and, below, every query that actually injects a hit.
+        # hit_rate = readback_hit / readback_query proves the loop-closer earns
+        # its context cost. Best-effort; _increment_counter never raises.
+        _increment_counter(project_id, 'readback_query')
+        scored = []
+        for meta in list_proposed():
+            if meta.get('kind') != 'exploration':
+                continue
+            if meta.get('scope') not in (project_id, 'cross-project'):
+                continue
+            name = meta.get('name', '') or ''
+            score = len(qt & _expl_tokens(name.replace('-', ' ')))
+            if score <= 0:
+                continue
+            scored.append((score, meta.get('created_at', ''), meta))
+        if not scored:
+            return []
+        _increment_counter(project_id, 'readback_hit')
+        # Highest overlap first, recency as tie-breaker.
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        out = []
+        for _score, _ts, meta in scored[:topk]:
+            out.append({
+                'name': meta.get('name', ''),
+                'path': meta.get('path', ''),
+                'scope': meta.get('scope', ''),
+                'snippet': _exploration_snippet(meta.get('path', '')),
+            })
+        return out
+    except Exception:
+        return []
+
+
+def _exploration_snippet(path: str, limit: int = 320) -> str:
+    """Compact gist from an EXPLORATION.md body: the title line plus the start
+    of the first prose paragraph, frontmatter stripped. Capped at `limit`."""
+    try:
+        text = Path(path).read_text(encoding='utf-8', errors='replace')
+    except Exception:
+        return ''
+    if text.startswith('---'):
+        end = text.find('\n---', 4)
+        if end >= 0:
+            text = text[end + 4:]
+    title = ''
+    body_lines = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith('#') and not title:
+            title = s.lstrip('# ').strip()
+            continue
+        if not s.startswith('#'):
+            body_lines.append(s)
+        if len(' '.join(body_lines)) > limit:
+            break
+    gist = ' '.join(body_lines)[:limit]
+    parts = [p for p in (title, gist) if p]
+    return ' | '.join(parts)
+
+
+_ARTIFACT_KINDS = ('skill', 'exploration', 'preference', 'update')
+
+
+def loop_health() -> dict:
+    """Global learning-loop health snapshot — the self-detection layer.
+
+    Aggregates the per-project _skill_stats.json counters and the _proposed/
+    queue census into the four loop-health signals we agreed to watch
+    (2026-06-05): generation rate, refuse rate, readback hit-rate, and queue
+    staleness. Emits an ``alerts`` list of human-readable flags so a degraded
+    leg surfaces on its own instead of being found by hand (the REFUSE bug sat
+    undetected precisely because nothing watched these numbers).
+
+    Read-only: never writes _skill_stats.json, never raises (returns a partial
+    snapshot with an error note on failure). Caller (server endpoint) may
+    enrich queue timestamps with day-age math.
+    """
+    snap = {
+        'generation': {},      # per kind: {proposed, refused, refuse_rate}
+        'readback': {'queries': 0, 'hits': 0, 'hit_rate': None},
+        'queue': {'total': 0, 'by_kind': {}, 'by_scope': {},
+                  'oldest_created_at': None, 'newest_created_at': None},
+        'extraction': {'errors': 0, 'vocabulary_miss': 0},
+        'projects_seen': 0,
+        'alerts': [],
+    }
+    # ── Sum counters across every project sidecar ────────────────────────────
+    agg: Counter = Counter()
+    try:
+        if _data_root is not None:
+            for p in _data_root.glob('*_skill_stats.json'):
+                snap['projects_seen'] += 1
+                try:
+                    stats = json.loads(p.read_text(encoding='utf-8') or '{}')
+                except Exception:
+                    continue
+                for k, v in (stats.get('counters', {}) or {}).items():
+                    try:
+                        agg[k] += int(v)
+                    except Exception:
+                        pass
+    except Exception as e:
+        snap['alerts'].append(f"counter aggregation failed: {e!r}")
+
+    for kind in _ARTIFACT_KINDS:
+        proposed = agg.get(f'proposed:{kind}', 0)
+        refused = agg.get(f'render_refuse:{kind}', 0)
+        denom = proposed + refused
+        snap['generation'][kind] = {
+            'proposed': proposed,
+            'refused': refused,
+            'refuse_rate': round(refused / denom, 3) if denom else None,
+        }
+    snap['readback']['queries'] = agg.get('readback_query', 0)
+    snap['readback']['hits'] = agg.get('readback_hit', 0)
+    if snap['readback']['queries']:
+        snap['readback']['hit_rate'] = round(
+            snap['readback']['hits'] / snap['readback']['queries'], 3)
+    snap['extraction']['errors'] = (
+        agg.get('extraction_error', 0) + agg.get('extraction_parse_error', 0))
+    snap['extraction']['vocabulary_miss'] = agg.get('vocabulary_miss', 0)
+
+    # ── _proposed/ queue census ──────────────────────────────────────────────
+    try:
+        proposed_items = list_proposed()
+    except Exception:
+        proposed_items = []
+    snap['queue']['total'] = len(proposed_items)
+    for it in proposed_items:
+        k = it.get('kind', 'unknown')
+        sc = it.get('scope', 'unknown')
+        snap['queue']['by_kind'][k] = snap['queue']['by_kind'].get(k, 0) + 1
+        snap['queue']['by_scope'][sc] = snap['queue']['by_scope'].get(sc, 0) + 1
+        ca = it.get('created_at', '') or ''
+        if ca:
+            if (snap['queue']['oldest_created_at'] is None
+                    or ca < snap['queue']['oldest_created_at']):
+                snap['queue']['oldest_created_at'] = ca
+            if (snap['queue']['newest_created_at'] is None
+                    or ca > snap['queue']['newest_created_at']):
+                snap['queue']['newest_created_at'] = ca
+
+    # ── Derived alerts (the self-detection signal) ───────────────────────────
+    gen = snap['generation']
+    expl_proposed = gen['exploration']['proposed']
+    pipeline_alive = expl_proposed > 0 or snap['queue']['total'] > 0
+    # A whole artifact kind never being produced while explorations flow is the
+    # structural signal — SKILL flatline was the REFUSE-bug signature; PREFERENCE
+    # has never once fired (recurrence-3 bar likely too high for single-task
+    # sessions, the same problem that killed Phase 1).
+    for kind in ('skill', 'preference'):
+        if gen[kind]['proposed'] == 0 and pipeline_alive:
+            snap['alerts'].append(
+                f"{kind} generation flatlined: 0 {kind.upper()} artifacts "
+                f"proposed globally while {expl_proposed} explorations flowed "
+                f"- check render_refuse:{kind} and the recurrence threshold.")
+    # High refuse rate on any kind with enough samples to be real.
+    for kind in _ARTIFACT_KINDS:
+        g = gen[kind]
+        if g['refuse_rate'] is not None and g['refuse_rate'] >= 0.5 \
+                and g['refused'] >= 3:
+            snap['alerts'].append(
+                f"high refuse rate for {kind}: "
+                f"{int(g['refuse_rate'] * 100)}% ({g['refused']} refused / "
+                f"{g['proposed'] + g['refused']} attempts).")
+    # Readback rarely hitting — the loop-closer isn't earning its context cost.
+    rb = snap['readback']
+    if rb['queries'] >= 10 and rb['hit_rate'] is not None and rb['hit_rate'] < 0.2:
+        snap['alerts'].append(
+            f"readback hit-rate low: {int(rb['hit_rate'] * 100)}% over "
+            f"{rb['queries']} queries - explorations rarely match live tasks.")
+    # Promotion backlog: artifacts accumulate with no promotion surface yet.
+    if snap['queue']['total'] >= 10:
+        snap['alerts'].append(
+            f"promotion backlog: {snap['queue']['total']} artifacts queued in "
+            f"_proposed/ (oldest {snap['queue']['oldest_created_at']}); no "
+            "promotion UI exists yet, so nothing leaves the queue.")
+    return snap
+
+
+# ── Promotion / rejection (the human-promotes leg — step 3) ──────────────────
+# The Distiller proposes into _proposed/; promotion and rejection are always a
+# deliberate human action ("MC owns, agent proposes, human promotes"). Promote
+# installs the artifact as a real SKILL.md (server-side, via skills.write_skill)
+# and moves the proposal to _promoted/; reject writes a suppression marker so
+# the Distiller won't re-propose and moves it to _rejected/. Both buckets are
+# siblings of _proposed/ (NEVER under it — _is_valid_project_id would match an
+# underscore name and list_proposed() would re-surface the contents).
+
+
+def _is_within_proposed(directory: str) -> Path | None:
+    """Resolve `directory` and confirm it sits strictly under _proposed/.
+    Path-traversal guard for the promote/reject endpoints (client supplies the
+    path). Returns the resolved Path or None."""
+    if _skills_root is None or not directory:
+        return None
+    try:
+        root = (_skills_root / '_proposed').resolve()
+        d = Path(directory).resolve()
+        if d != root and root in d.parents:
+            return d
+    except Exception:
+        return None
+    return None
+
+
+def _split_frontmatter(text: str) -> tuple[dict, str]:
+    fm = _parse_frontmatter(text)
+    if text.startswith('---'):
+        end = text.find('\n---', 4)
+        if end >= 0:
+            return fm, text[end + 4:].lstrip('\n')
+    return fm, text
+
+
+def _first_heading(body: str) -> str:
+    for ln in body.splitlines():
+        s = ln.strip()
+        if s.startswith('#'):
+            return s.lstrip('# ').strip()
+    return ''
+
+
+def read_proposed_artifact(directory: str) -> dict | None:
+    """Read one _proposed/ artifact directory into a flat dict for promotion.
+
+    Returns {path, directory, scope_dir, project_id, kind, name, description,
+    body, exact, coarse, scope, source_session} or None (not found / outside
+    _proposed/). `project_id` is the owning project for suppression, derived
+    from the <scope_dir> path segment (None for the global/cross-project bucket).
+    """
+    d = _is_within_proposed(directory)
+    if d is None or not d.is_dir():
+        return None
+    try:
+        scope_dir = d.parent.name
+        pid = scope_dir if (scope_dir != 'global'
+                            and _is_valid_project_id(scope_dir)) else None
+        for f in sorted(d.iterdir()):
+            if not f.is_file() or not f.name.endswith('.md'):
+                continue
+            text = f.read_text(encoding='utf-8', errors='replace')
+            fm, body = _split_frontmatter(text)
+            kind = fm.get('kind', f.stem.lower())
+            name = fm.get('name', d.name)
+            # SKILL artifacts carry a TRIGGER description; explorations /
+            # preferences don't, so synthesize one from the first heading or
+            # the slug (the user can edit after promotion).
+            desc = (fm.get('description', '') or _first_heading(body)
+                    or name.replace('-', ' '))
+            return {
+                'path': str(f),
+                'directory': str(d),
+                'scope_dir': scope_dir,
+                'project_id': pid,
+                'kind': kind,
+                'name': name,
+                'description': desc,
+                'body': body,
+                'exact': fm.get('extraction_fingerprint_exact', ''),
+                'coarse': fm.get('extraction_fingerprint_coarse', ''),
+                'scope': fm.get('extraction_scope', ''),
+                'source_session': fm.get('source_session', ''),
+            }
+    except Exception:
+        return None
+    return None
+
+
+def _suppress_artifact(art: dict, source: str) -> bool:
+    """Write a `decision: no` suppression keyed {exact}:{kind} so the Distiller
+    won't re-propose a promoted/rejected artifact. Project-scoped only — a
+    cross-project (global) artifact has no single owning stats file (v1
+    limitation; re-rejecting if it recurs is cheap). Returns True if written."""
+    pid = art.get('project_id')
+    exact, kind = art.get('exact'), art.get('kind')
+    if not (pid and exact and kind):
+        return False
+    try:
+        key = f"{exact}:{kind}"
+        with _get_skill_stats_lock(pid):
+            stats = _read_skill_stats(pid)
+            stats.setdefault('suppressions', {})[key] = {
+                'decided_at': _now_iso() if _now_iso else '',
+                'decision': 'no',
+                'source': source,
+            }
+            _write_skill_stats(pid, stats)
+        return True
+    except Exception:
+        return False
+
+
+def _relocate_proposed(directory: str, bucket: str) -> bool:
+    """Move a proposal dir to a sibling bucket (_promoted/ or _rejected/).
+    Best-effort; never raises."""
+    d = _is_within_proposed(directory)
+    if d is None or not d.is_dir() or _skills_root is None:
+        return False
+    try:
+        dest_root = _skills_root / bucket
+        dest_root.mkdir(parents=True, exist_ok=True)
+        dest = dest_root / d.name
+        if dest.exists():
+            dest = dest_root / f"{d.name}-{d.stat().st_mtime_ns}"
+        d.rename(dest)
+        return True
+    except Exception:
+        return False
+
+
+def mark_promoted(directory: str) -> dict:
+    """Post-install bookkeeping: suppress re-proposal + move to _promoted/.
+    Called by the promote endpoint AFTER skills.write_skill succeeds."""
+    art = read_proposed_artifact(directory)
+    if art is None:
+        return {'ok': False, 'reason': 'not_found'}
+    suppressed = _suppress_artifact(art, 'ui_promote')
+    moved = _relocate_proposed(directory, '_promoted')
+    return {'ok': moved, 'suppressed': suppressed}
+
+
+def reject_proposed(directory: str) -> dict:
+    """Reject a proposal: suppress re-proposal + move to _rejected/."""
+    art = read_proposed_artifact(directory)
+    if art is None:
+        return {'ok': False, 'reason': 'not_found'}
+    suppressed = _suppress_artifact(art, 'ui_reject')
+    moved = _relocate_proposed(directory, '_rejected')
+    return {'ok': moved, 'suppressed': suppressed,
+            'kind': art['kind'], 'name': art['name']}
+
+
 _RE_PROJECT_ID = re.compile(r'^[a-z0-9_-]+$')
 
 
@@ -1599,13 +2048,25 @@ def _read_proposed_meta(d: Path, scope: str) -> dict | None:
             if not f.is_file() or not f.name.endswith('.md'):
                 continue
             text = f.read_text(encoding='utf-8', errors='replace')
-            fm = _parse_frontmatter(text)
+            fm, body = _split_frontmatter(text)
+            # Human-readable title + gist so the review queue isn't a wall of
+            # truncated slugs. The body's first heading is the real prose (e.g.
+            # the full exploration question); the snippet is the opening finding.
+            title = (fm.get('description', '') or _first_heading(body)
+                     or fm.get('name', d.name).replace('-', ' '))
+            # _exploration_snippet leads with the heading; the row shows `title`
+            # separately, so drop the duplicated lead to leave just the gist.
+            snippet = _exploration_snippet(str(f))
+            if snippet and title and snippet.startswith(title):
+                snippet = snippet[len(title):].lstrip(' |').strip()
             return {
                 'path': str(f),
                 'directory': str(d),
                 'scope': scope,
                 'kind': fm.get('kind', f.stem.lower()),
                 'name': fm.get('name', d.name),
+                'title': title,
+                'snippet': snippet,
                 'extraction_scope': fm.get('extraction_scope', scope),
                 'created_at': fm.get('created_at', ''),
                 'evidence_session_ids': fm.get('evidence_session_ids', ''),
