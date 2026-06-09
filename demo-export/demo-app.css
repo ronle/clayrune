@@ -519,11 +519,11 @@ body {
 .inv-intro {
   background: var(--surface2); border: 1px solid var(--border);
   border-left: 3px solid var(--accent); border-radius: 10px;
-  padding: 11px 14px; margin-bottom: 14px;
-  font-size: 13.5px; line-height: 1.55; color: var(--text-dim);
+  padding: 12px 15px; margin-bottom: 14px;
+  font-size: 15px; line-height: 1.55; color: var(--text-dim);
 }
 .inv-intro b { color: var(--text); font-weight: 600; }
-.inv-note2 { font-size: 15px; line-height: 1.6; color: var(--text-dim); padding: 6px 2px; }
+.inv-note2 { font-size: 16px; line-height: 1.6; color: var(--text-dim); padding: 6px 2px; }
 .inv-note2 b { color: var(--text); font-weight: 600; }
 .pm-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pm-title .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -543,33 +543,33 @@ body {
       path · mtime, with a search + scope filter bar above. Theme-aware via
       vars only (real app uses inline styles; mapped here to --text-dim/--font-mono). */
 .inv-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.inv-search { flex: 1; min-width: 180px; padding: 6px 10px; font-size: 13.5px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); outline: none; font-family: var(--font-ui); }
+.inv-search { flex: 1; min-width: 180px; padding: 6px 10px; font-size: 15px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); outline: none; font-family: var(--font-ui); }
 .inv-search:focus { border-color: var(--accent); }
 .inv-search::placeholder { color: var(--text-faint); }
-.inv-select { padding: 6px 8px; font-size: 13.5px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-family: var(--font-ui); }
+.inv-select { padding: 6px 8px; font-size: 15px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-family: var(--font-ui); }
 .inv-select:disabled { opacity: 0.55; cursor: not-allowed; }
-.inv-count { font-size: 12.5px; color: var(--text-faint); }
-.inv-newbtn { margin-left: auto; background: var(--green-dim); border: 1px solid var(--green); color: var(--green-text); font-size: 13.5px; font-weight: 600; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-family: var(--font-ui); white-space: nowrap; }
+.inv-count { font-size: 13.5px; color: var(--text-faint); }
+.inv-newbtn { margin-left: auto; background: var(--green-dim); border: 1px solid var(--green); color: var(--green-text); font-size: 15px; font-weight: 600; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-family: var(--font-ui); white-space: nowrap; }
 .inv-newbtn:hover { background: var(--green); color: var(--bg); }
 .inv-group { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-top: 12px; background: var(--surface); max-width: 900px; }
 .inv-row { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
 .inv-row:last-child { border-bottom: none; }
 .inv-row-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.inv-name { font-weight: 600; color: var(--text); font-size: 15px; font-family: var(--font-mono); }
-.inv-badge { font-size: 11.5px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+.inv-name { font-weight: 600; color: var(--text); font-size: 16px; font-family: var(--font-mono); }
+.inv-badge { font-size: 13px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
 .inv-badge.global    { background: var(--surface2);   color: var(--text-faint); }
 .inv-badge.project   { background: var(--accent-dim);  color: var(--accent); }
 .inv-badge.transport { background: var(--surface2);   color: var(--text-faint); font-family: var(--font-mono); }
-.inv-usage { font-size: 11.5px; color: var(--text-faint); margin-left: 2px; }
+.inv-usage { font-size: 13px; color: var(--text-faint); margin-left: 2px; }
 .inv-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
-.inv-tiny { font-size: 12.5px; padding: 3px 9px; border-radius: 5px; background: var(--surface3); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; font-family: var(--font-ui); white-space: nowrap; }
+.inv-tiny { font-size: 13.5px; padding: 3px 9px; border-radius: 5px; background: var(--surface3); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; font-family: var(--font-ui); white-space: nowrap; }
 .inv-tiny:hover { border-color: var(--accent); color: var(--accent); }
 .inv-tiny.danger:hover { border-color: var(--red); color: var(--red-text); background: var(--red-dim); }
 .inv-tiny.locked { color: var(--accent); border-color: var(--accent); opacity: 0.7; cursor: default; }
-.inv-preview { font-size: 13.5px; color: var(--text-dim); line-height: 1.4; font-family: var(--font-mono); word-break: break-all; }
-.inv-desc { font-size: 13.5px; color: var(--text-dim); line-height: 1.4; }
-.inv-path { font-size: 11.5px; color: var(--text-faint); font-family: var(--font-mono); word-break: break-all; }
-.inv-empty { padding: 30px 12px; text-align: center; color: var(--text-faint); font-size: 13.5px; }
+.inv-preview { font-size: 15px; color: var(--text-dim); line-height: 1.4; font-family: var(--font-mono); word-break: break-all; }
+.inv-desc { font-size: 15px; color: var(--text-dim); line-height: 1.4; }
+.inv-path { font-size: 13px; color: var(--text-faint); font-family: var(--font-mono); word-break: break-all; }
+.inv-empty { padding: 30px 12px; text-align: center; color: var(--text-faint); font-size: 15px; }
 
 /* Settings drill-down (verbatim) */
 .settings-search-wrap { position: relative; margin: 2px 0 16px; }
@@ -658,13 +658,16 @@ body {
 /* Four dim panels (positioned in JS) dim everything EXCEPT the spotlight and
    the top header strip — so the header bar never washes out during the tour. */
 .coach-dim {
-  position: absolute; background: rgba(8,10,16,0.3);
+  /* No darkening — the tour guides with the spotlight ring + card only, so the
+     dashboard (header AND tiles) always reads at full colour. */
+  position: absolute; background: transparent;
   pointer-events: none;
   transition: opacity 0.2s ease, left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease;
 }
 .coach-spot {
   position: absolute; border-radius: 10px;
-  box-shadow: 0 0 0 2px var(--accent), 0 0 18px 2px rgba(91,158,245,0.35);
+  /* Ring carries the focus on its own now (no backdrop dim): accent ring + soft halo. */
+  box-shadow: 0 0 0 3px var(--accent), 0 0 0 6px var(--accent-dim), 0 0 22px 4px rgba(91,158,245,0.4);
   transition: all 0.2s ease; pointer-events: none;
 }
 .coach-tip {

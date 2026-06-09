@@ -45,15 +45,16 @@ tiles === 5 ? ok(`dashboard rendered ${tiles} tiles`) : fail(`expected 5 tiles, 
 const coachVisible = await page.isVisible('#coach-tip');
 coachVisible ? ok('coach-mark tour appeared on load') : fail('coach-mark did not appear');
 
-// 2b. The dashboard TOP must stay full-colour during the tour: step 1 spotlights
-//     the first tile, so the top/left/right dim panels collapse (only below dims).
-const dimRects = await page.evaluate(() => {
-  const h = (id) => { const e = document.getElementById(id); return e ? Math.round(e.getBoundingClientRect().height) : -1; };
-  return { top: h('cd-top'), left: h('cd-left'), right: h('cd-right'), bottom: h('cd-bottom') };
+// 2b. The tour must NOT darken the dashboard at all — the dim backdrop is fully
+//     transparent; the spotlight ring + card carry the focus, so header AND tiles
+//     read at full colour on first impression.
+const dimBg = await page.evaluate(() => {
+  const e = document.getElementById('cd-top');
+  return e ? getComputedStyle(e).backgroundColor : 'none';
 });
-(dimRects.top <= 1 && dimRects.left <= 1 && dimRects.right <= 1)
-  ? ok('tour keeps the dashboard top at full colour (top/side dim panels collapsed)')
-  : fail('top is dimmed during the tour: ' + JSON.stringify(dimRects));
+/rgba?\([^)]*,\s*0\s*\)|transparent|^none$/.test(dimBg)
+  ? ok('coach tour does not dim the dashboard — backdrop transparent (' + dimBg + ')')
+  : fail('coach backdrop still darkens the dashboard: ' + dimBg);
 await page.screenshot({ path: '_shot-tour-top.png' });
 
 // 3. Run the scripted flow via real clicks (coach "Next" buttons perform actions)
@@ -256,6 +257,14 @@ await page.waitForSelector('#inv-overlay.open .modal-content.inv-modal.compact',
 const hmIntro = await page.textContent('#inv-overlay .inv-intro');
 /many projects/.test(hmIntro) ? ok('Hivemind opens as a modal with its explanation') : fail('Hivemind intro: ' + hmIntro);
 await page.screenshot({ path: '_shot-hivemind.png' });
+await page.keyboard.press('Escape');
+await page.waitForSelector('#inv-overlay.open', { state: 'hidden', timeout: 3000 });
+
+// 7d. Backlog opens as an explainer modal too
+await page.click('.sidebar-item[data-nav="backlog"]');
+await page.waitForSelector('#inv-overlay.open .modal-content.inv-modal.compact', { timeout: 3000 });
+const blIntro = await page.textContent('#inv-overlay .inv-intro');
+/per-project queue/.test(blIntro) ? ok('Backlog opens as a modal with its explanation') : fail('Backlog intro: ' + blIntro);
 await page.keyboard.press('Escape');
 await page.waitForSelector('#inv-overlay.open', { state: 'hidden', timeout: 3000 });
 

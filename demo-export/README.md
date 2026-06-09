@@ -104,15 +104,16 @@ nothing dead-ends.
   **Port**, **Auto-condense** + threshold, and the **Advanced features**
   checkboxes. Live search across all of them works. Provider/Connectivity panels
   are present but their actions are no-ops (“Disabled in demo”).
-- **Skills**, **MCP**, and **Hivemind** open as **centered modals** — the same
-  window type as a project (shared `.modal-content` chrome + dimmed backdrop,
-  ✕ / minimize / backdrop / Esc to dismiss). Each modal leads with a “what is
-  this?” **intro callout** explaining the feature. Skills/MCP then list sample
-  rows rebuilt to match the real app: **name + scope badge** (`global` /
+- **Skills**, **MCP**, **Hivemind**, and **Backlog** open as **centered modals**
+  — the same window type as a project (shared `.modal-content` chrome + dimmed
+  backdrop, ✕ / minimize / backdrop / Esc to dismiss). Each modal leads with a
+  “what is this?” **intro callout** explaining the feature. Skills/MCP then list
+  sample rows rebuilt to match the real app: **name + scope badge** (`global` /
   `project: …`) **+ transport** (MCP), then the **command / description**, then
   the config **path · timestamp**, under a working **search + scope filter**
   bar. Sample data only — Edit / Delete / “＋ New” say “Disabled in demo.”
-  **Backlog / Scheduler** still show a short “part of the full app” placeholder.
+  Hivemind/Backlog are explainer-only. **Scheduler** still shows a short
+  “part of the full app” placeholder.
 
 ## Fidelity notes
 
