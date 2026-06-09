@@ -247,11 +247,15 @@ def _ensure_gitignore_entry(repo_root: str, entry: str) -> None:
 # ── Status computation ──────────────────────────────────────────────────────
 
 def _working_branch(project: dict) -> str:
-    return (project.get('code_sync_branch') or 'main').strip() or 'main'
+    b = (project.get('code_sync_branch') or 'main').strip() or 'main'
+    # Never let an operator-set value masquerade as a git flag in argv.
+    return 'main' if b.startswith('-') else b
 
 
 def _remote_name(project: dict) -> str:
-    return (project.get('code_sync_remote') or 'origin').strip() or 'origin'
+    r = (project.get('code_sync_remote') or 'origin').strip() or 'origin'
+    # Never let an operator-set value masquerade as a git flag in argv.
+    return 'origin' if r.startswith('-') else r
 
 
 def fetch(project: dict) -> tuple[bool, str]:

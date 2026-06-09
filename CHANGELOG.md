@@ -4,6 +4,40 @@
 > `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
 > remain "mission-control" to avoid breaking existing installs.
 
+## [2026-06-09] — Security hardening: LAN auth bypass, CORS, git-arg injection
+
+Closes findings from an internal security review (each independently verified
+against source before fixing). The two criticals were a single chain.
+
+**Critical — unauthenticated RCE chain closed.** The dashboard binds `0.0.0.0`
+and exempts the host (loopback) and CF-tunnelled requests from the LAN passcode
+gate. But `_is_cf_tunneled_request()` trusted the mere *presence* of a
+`Cf-Access-*` header, which a LAN device can forge — bypassing the gate and
+reaching `/api/terminal/launch` (which runs `shell=True`). It now requires a
+**loopback TCP peer AND** the header: cloudflared forwards over loopback, so
+genuine tunnel traffic still passes, but a forged header from a LAN IP does not.
+
+**Critical — permissive CORS removed.** `add_cors_headers` reflected any
+`Origin`, so any website the user visited could drive the API cross-site
+(loopback is auth-exempt → drive-by `/api/terminal/launch`). CORS is now an
+allowlist: native app shells (Tauri/Capacitor/Ionic) + loopback origins only.
+Same-origin access over the CF tunnel is unaffected.
+
+**git argument-injection hardening.** The `git clone` calls in `skills.py` and
+`mcp_installer.py` now place `--` before the positional URL so a hostile
+URL/ref can't smuggle a git flag (e.g. `--upload-pack=…`); `project_sync.py`
+rejects leading-dash remote/branch names.
+
+**Control-plane admin allowlist fail-closed.** `MC_CP_ADMIN_EMAILS` no longer
+defaults to a personal email — unset now means *nobody* is an operator.
+
+**Private data untracked + gitignore hardened.** Removed proprietary
+`data/projects/engulfing-analyst/` content and the private `engulfing-diagnostic`
+builtin skill from tracking (kept locally). `data/projects/*/` is now ignored so
+per-project workspaces can never be committed again. NOTE: this stops *future*
+exposure only — the data remains in public git history; a history rewrite +
+force-push is a separate, operator-approved step.
+
 ## [2026-06-08] — Background crop editor, boot-crash fixes, preference learning
 
 **Custom background — drag-box crop & framing.** The custom dashboard background

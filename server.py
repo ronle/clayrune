@@ -361,16 +361,43 @@ def _log(*args, level='info', **kw):
     kw.setdefault('flush', True)
     _builtins.print(*args, **kw)
 
+def _cors_origin_allowed(origin: str) -> bool:
+    """True iff `origin` is one of our own app shells or a loopback origin.
+
+    The browser sets Origin and a web page cannot forge it, so allowlisting the
+    native-webview schemes (Tauri/Capacitor/Ionic) plus loopback hosts is safe
+    and — critically — blocks ordinary websites from driving the API cross-site.
+    """
+    if not origin:
+        return False
+    try:
+        from urllib.parse import urlparse
+        u = urlparse(origin)
+    except Exception:
+        return False
+    host = (u.hostname or '').lower()
+    scheme = (u.scheme or '').lower()
+    # Native app shells: tauri://localhost, capacitor://localhost, ionic://localhost
+    if scheme in ('tauri', 'capacitor', 'ionic') and host in ('localhost', ''):
+        return True
+    # Loopback + the https://tauri.localhost / https://localhost webview variants
+    return host in ('localhost', '127.0.0.1', '::1', 'tauri.localhost')
+
+
 @app.after_request
 def add_cors_headers(response):
-    # Localhost-only dev app: echo back whatever Origin the caller sends so
-    # the Tauri webview (which may use http://tauri.localhost, tauri://localhost,
-    # https://tauri.localhost, or other custom schemes depending on platform)
-    # can always reach the API. Not a security risk — server binds localhost.
-    origin = request.headers.get('Origin', '*')
-    response.headers['Access-Control-Allow-Origin'] = origin
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    # Cross-origin access is allowed ONLY for our own app shells (Tauri /
+    # Capacitor / Ionic) and loopback origins. We deliberately do NOT reflect
+    # arbitrary Origins: the API binds 0.0.0.0 and the host itself is
+    # loopback-exempt from the auth gate, so reflecting any Origin would let any
+    # website the user visits drive the API cross-site (CSRF → e.g.
+    # /api/terminal/launch RCE). Dashboard access over the CF tunnel is
+    # same-origin and needs no CORS header at all.
+    origin = request.headers.get('Origin', '')
+    if _cors_origin_allowed(origin):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     response.headers['Vary'] = 'Origin'
     if request.method == 'OPTIONS':
         response.status_code = 204
@@ -15548,9 +15575,17 @@ def _cf_session_nonce_from_request() -> str:
 def _is_cf_tunneled_request() -> bool:
     """True iff this request arrived through CF Access (i.e. via the tunnel).
 
-    Localhost dashboard hits don't have these headers — only requests routed
-    through cloudflared from the public hostname do.
+    cloudflared runs on THIS host and forwards to the origin over loopback, so a
+    genuine tunneled request both (a) carries Cf-Access-* headers AND (b) has a
+    loopback TCP peer. We require BOTH. The headers alone are attacker-forgeable:
+    the origin binds 0.0.0.0, so any LAN device can send Cf-Access-* directly —
+    but a forged header from a LAN IP fails the loopback-peer check and is
+    correctly treated as un-exempt (it must then pass the LAN passcode). If you
+    run cloudflared on a SEPARATE host, set a LAN passcode: tunnel traffic then
+    arrives from a non-loopback peer and is intentionally no longer auto-exempt.
     """
+    if not _is_loopback_request():
+        return False
     return bool(request.headers.get('Cf-Access-Authenticated-User-Email')
                 or request.headers.get('Cf-Access-Jwt-Assertion'))
 
