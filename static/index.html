@@ -5255,8 +5255,8 @@
 </aside>
 
 <script>
-// ── API base: empty for standalone Flask, full URL when running inside Tauri ──
-const API_BASE = window.__TAURI_INTERNALS__ ? 'http://localhost:5199' : '';
+// ── API base: same-origin (served by Flask — browser or PyInstaller app). ──
+const API_BASE = '';
 
 let allProjects = [];
 let _globalConfig = {};  // cached global config — used to resolve effective per-project mode

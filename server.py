@@ -365,7 +365,7 @@ def _cors_origin_allowed(origin: str) -> bool:
     """True iff `origin` is one of our own app shells or a loopback origin.
 
     The browser sets Origin and a web page cannot forge it, so allowlisting the
-    native-webview schemes (Tauri/Capacitor/Ionic) plus loopback hosts is safe
+    native-webview schemes (Capacitor/Ionic) plus loopback hosts is safe
     and — critically — blocks ordinary websites from driving the API cross-site.
     """
     if not origin:
@@ -377,11 +377,11 @@ def _cors_origin_allowed(origin: str) -> bool:
         return False
     host = (u.hostname or '').lower()
     scheme = (u.scheme or '').lower()
-    # Native app shells: tauri://localhost, capacitor://localhost, ionic://localhost
-    if scheme in ('tauri', 'capacitor', 'ionic') and host in ('localhost', ''):
+    # Native mobile app shells: capacitor://localhost, ionic://localhost
+    if scheme in ('capacitor', 'ionic') and host in ('localhost', ''):
         return True
-    # Loopback + the https://tauri.localhost / https://localhost webview variants
-    return host in ('localhost', '127.0.0.1', '::1', 'tauri.localhost')
+    # Loopback + the https://localhost webview variant
+    return host in ('localhost', '127.0.0.1', '::1')
 
 
 @app.after_request
@@ -1208,6 +1208,26 @@ def _atomic_write_text(path, text, encoding='utf-8'):
     tmp = path.with_name(f'.{path.name}.tmp{os.getpid()}')
     tmp.write_text(text, encoding=encoding)
     os.replace(tmp, path)
+
+
+def _harden_secret_perms(path) -> None:
+    """Best-effort: restrict a secret file (provider API keys, VAPID/Firebase
+    keys, LAN passcode hash, mobile-pairing token) to the owning user only.
+    POSIX → chmod 0600; Windows → strip ACL inheritance and grant only the
+    current user. Never raises — a perms failure must not break the write."""
+    p = str(path)
+    try:
+        if os.name == 'nt':
+            import getpass
+            user = os.environ.get('USERNAME') or getpass.getuser()
+            subprocess.run(
+                ['icacls', p, '/inheritance:r', '/grant:r', f'{user}:F'],
+                capture_output=True,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        else:
+            os.chmod(p, 0o600)
+    except Exception:
+        pass
 
 
 def get_manager_for_session(session_id):
@@ -3076,6 +3096,13 @@ def serve_image():
         for p in load_projects():
             pp = (p.get('project_path') or '').strip()
             if pp:
+                # Don't let a project rooted at a filesystem/drive root (C:\, /,
+                # C:\Users, /home) turn serve-image into a whole-disk image read.
+                try:
+                    if len(Path(os.path.realpath(pp)).parts) < 3:
+                        continue
+                except Exception:
+                    continue
                 allowed.append(pp)
     except Exception:
         pass
@@ -3437,6 +3464,7 @@ def _save_provider_env_file(data: Dict[str, Dict[str, str]]) -> None:
     PROVIDER_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
     PROVIDER_ENV_PATH.write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+    _harden_secret_perms(PROVIDER_ENV_PATH)
 
 
 def _hydrate_provider_env_into_os() -> None:
@@ -14695,6 +14723,7 @@ def _load_vapid_keys() -> dict:
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(d, f, indent=2)
         os.replace(tmp, PUSH_VAPID_PATH)
+        _harden_secret_perms(PUSH_VAPID_PATH)
     return d
 
 
@@ -15210,6 +15239,7 @@ def _save_mobile_pairing(d: dict) -> None:
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(d, f, indent=2)
     tmp.replace(MOBILE_PAIRING_PATH)
+    _harden_secret_perms(MOBILE_PAIRING_PATH)
 
 
 def _mobile_pair_mask(secret: str) -> str:
@@ -15572,6 +15602,71 @@ def _cf_session_nonce_from_request() -> str:
         return ''
 
 
+_CF_JWKS_CACHE = {'ts': 0, 'keys': {}}
+
+
+def _cf_jwks_key(team: str, kid):
+    """Return the JWK dict for `kid` from the CF Access team certs, cached 1h."""
+    import time as _t
+    import urllib.request
+    now = int(_t.time())
+    if kid and kid in _CF_JWKS_CACHE['keys'] and now - _CF_JWKS_CACHE['ts'] < 3600:
+        return _CF_JWKS_CACHE['keys'][kid]
+    with urllib.request.urlopen(f"https://{team}/cdn-cgi/access/certs", timeout=5) as r:
+        data = json.loads(r.read().decode('utf-8'))
+    _CF_JWKS_CACHE['keys'] = {k.get('kid'): k for k in data.get('keys', []) if k.get('kid')}
+    _CF_JWKS_CACHE['ts'] = now
+    return _CF_JWKS_CACHE['keys'].get(kid)
+
+
+def _cf_jwt_verified(jwt_str: str):
+    """Verify a Cf-Access-Jwt-Assertion (RS256 sig + aud + exp) against the CF
+    Access team certs. Returns True/False ONLY when verification is configured
+    (CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD env) and a token is present; returns
+    None when unconfigured or unverifiable (network/parse error) so the caller
+    falls back to the loopback-gated trust — a JWKS hiccup must never lock out
+    remote access. A bad signature/claim returns False (reject)."""
+    team = (os.environ.get('CF_ACCESS_TEAM_DOMAIN') or '').strip().rstrip('/')
+    aud = (os.environ.get('CF_ACCESS_AUD') or '').strip()
+    if not team or not aud or not jwt_str or jwt_str.count('.') != 2:
+        return None
+    try:
+        import base64, time as _t
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+        def _b64u(s):
+            return base64.urlsafe_b64decode(s + '=' * ((4 - len(s) % 4) % 4))
+
+        header_b64, payload_b64, sig_b64 = jwt_str.split('.')
+        header = json.loads(_b64u(header_b64))
+        payload = json.loads(_b64u(payload_b64))
+        if header.get('alg') != 'RS256':
+            return False
+        token_aud = payload.get('aud')
+        if aud not in (token_aud if isinstance(token_aud, list) else [token_aud]):
+            return False
+        if int(payload.get('exp', 0)) < int(_t.time()):
+            return False
+        jwk = _cf_jwks_key(team, header.get('kid'))
+        if not jwk:
+            return None  # couldn't fetch keys → fail-open, don't lock out
+        pub = rsa.RSAPublicNumbers(
+            int.from_bytes(_b64u(jwk['e']), 'big'),
+            int.from_bytes(_b64u(jwk['n']), 'big'),
+        ).public_key()
+        signing_input = (header_b64 + '.' + payload_b64).encode('ascii')
+    except Exception:
+        return None  # setup/parse/network error → fail-open to the loopback gate
+    # Signature check kept separate so an INVALID signature → False (reject),
+    # not None (which would fall back to trusting the header).
+    try:
+        from cryptography.hazmat.primitives import hashes as _hashes
+        pub.verify(_b64u(sig_b64), signing_input, padding.PKCS1v15(), _hashes.SHA256())
+        return True
+    except Exception:
+        return False
+
+
 def _is_cf_tunneled_request() -> bool:
     """True iff this request arrived through CF Access (i.e. via the tunnel).
 
@@ -15583,8 +15678,14 @@ def _is_cf_tunneled_request() -> bool:
     correctly treated as un-exempt (it must then pass the LAN passcode). If you
     run cloudflared on a SEPARATE host, set a LAN passcode: tunnel traffic then
     arrives from a non-loopback peer and is intentionally no longer auto-exempt.
+
+    When CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD are set, the assertion JWT is also
+    signature-verified (defense-in-depth); a provably-forged token is rejected.
     """
     if not _is_loopback_request():
+        return False
+    jwt_str = request.headers.get('Cf-Access-Jwt-Assertion', '')
+    if jwt_str and _cf_jwt_verified(jwt_str) is False:
         return False
     return bool(request.headers.get('Cf-Access-Authenticated-User-Email')
                 or request.headers.get('Cf-Access-Jwt-Assertion'))
@@ -15636,6 +15737,7 @@ def _save_local_auth(d: dict) -> None:
         tmp = LOCAL_AUTH_PATH.with_suffix('.json.tmp')
         tmp.write_text(json.dumps(d, indent=2), encoding='utf-8')
         tmp.replace(LOCAL_AUTH_PATH)
+        _harden_secret_perms(LOCAL_AUTH_PATH)
     except Exception as e:
         _log(f"[local-auth] save failed: {e}", flush=True)
 

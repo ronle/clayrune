@@ -123,6 +123,9 @@ def sync_branch_name(project: dict) -> str:
     (design §11.8 — privacy / branding customization)."""
     prefix = (project.get('code_sync_branch_prefix') or _DEFAULT_BRANCH_PREFIX).strip()
     prefix = prefix.rstrip('/') or _DEFAULT_BRANCH_PREFIX
+    # Never let an operator-set prefix masquerade as a git flag in argv.
+    if prefix.startswith('-'):
+        prefix = _DEFAULT_BRANCH_PREFIX
     return f'{prefix}/{get_install_id()}'
 
 
@@ -329,6 +332,8 @@ def compute_status(project: dict) -> dict:
     base = project.get('project_path') or ''
     branch_prefix = (project.get('code_sync_branch_prefix')
                      or _DEFAULT_BRANCH_PREFIX).rstrip('/')
+    if branch_prefix.startswith('-'):
+        branch_prefix = _DEFAULT_BRANCH_PREFIX
     working = _working_branch(project)
     remote = _remote_name(project)
     my_branch = sync_branch_name(project)
