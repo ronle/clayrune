@@ -5,7 +5,7 @@
 #  Use this to start fresh before re-running the installer.
 #
 #  Run via:
-#    iwr https://raw.githubusercontent.com/ronle/mission-control/master/installer/Clayrune-Nuke.ps1 -useb | iex
+#    iwr https://raw.githubusercontent.com/ronle/clayrune/master/installer/Clayrune-Nuke.ps1 -useb | iex
 #
 #  Default (always removes):
 #    - $env:USERPROFILE\Clayrune (install dir)

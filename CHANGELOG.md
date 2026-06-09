@@ -1,8 +1,10 @@
 # Clayrune — Changelog
 
-> Renamed from "Mission Control" 2026-05-01. Backend identifiers (`mc_remote`,
-> `MC_*` env vars, repo name, Cloud Run service, keystore namespace) intentionally
-> remain "mission-control" to avoid breaking existing installs.
+> Renamed from "Mission Control" 2026-05-01; the GitHub repo was renamed
+> `mission-control` → `clayrune` 2026-06-09 (in-repo URLs updated; GitHub
+> redirects the old path). Backend identifiers (`mc_remote`, `MC_*` env vars,
+> Cloud Run service, keystore namespace) intentionally remain "mission-control"
+> to avoid breaking existing installs.
 
 ## [2026-06-09] — Security hardening: LAN auth bypass, CORS, git-arg injection
 
@@ -37,6 +39,11 @@ builtin skill from tracking (kept locally). `data/projects/*/` is now ignored so
 per-project workspaces can never be committed again. NOTE: this stops *future*
 exposure only — the data remains in public git history; a history rewrite +
 force-push is a separate, operator-approved step.
+
+**Repo renamed → `clayrune`.** The GitHub repo was renamed `mission-control` →
+`clayrune` to match the product; all in-repo `github.com/ronle/mission-control`
+URLs (README, installer, marketing) were updated. GitHub redirects the old path,
+and backend identifiers (`mc_*`, Cloud Run, keystore) are intentionally unchanged.
 
 ## [2026-06-08] — Background crop editor, boot-crash fixes, preference learning
 

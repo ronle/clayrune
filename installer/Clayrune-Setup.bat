@@ -38,7 +38,7 @@ echo Estimated time: 5-10 minutes.
 echo Disk space: about 500 MB.
 echo.
 echo You can audit what runs by reading:
-echo   https://raw.githubusercontent.com/ronle/mission-control/master/installer/install-prompt.md
+echo   https://raw.githubusercontent.com/ronle/clayrune/master/installer/install-prompt.md
 echo.
 pause
 
@@ -59,7 +59,7 @@ REM minutes after a push. The `?t=<ticks>` query param is ignored by the
 REM origin but forces the CDN to fetch fresh, so users always run the latest
 REM install.ps1 (critical when shipping a hotfix while the previous version
 REM is broken on a fresh VM).
-powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "$cb = [DateTimeOffset]::Now.ToUnixTimeSeconds(); iwr \"https://raw.githubusercontent.com/ronle/mission-control/master/installer/install.ps1?t=$cb\" -useb | iex"
+powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "$cb = [DateTimeOffset]::Now.ToUnixTimeSeconds(); iwr \"https://raw.githubusercontent.com/ronle/clayrune/master/installer/install.ps1?t=$cb\" -useb | iex"
 
 set "PSEXIT=%ERRORLEVEL%"
 

@@ -81,7 +81,7 @@ The bootstrap clearly prints the exact `claude --dangerously-skip-permissions` l
 | `https://clayrune.io/install-prompt.md` | the install prompt | this repo: `installer/install-prompt.md` |
 
 For testing before the domain is up, the same files can be served from
-`https://raw.githubusercontent.com/ronle/mission-control/master/installer/<file>`.
+`https://raw.githubusercontent.com/ronle/clayrune/master/installer/<file>`.
 The bootstraps respect a `CLAYRUNE_PROMPT_URL` env var so you can point them at
 any URL.
 
