@@ -44,7 +44,7 @@ class TestRouteDispatchModel:
         s.CONFIG['auto_model_enabled'] = True
         with patch.object(s, '_scribe_call', return_value='H'):
             model, source = s._route_dispatch_model('say hi', 'opus')
-        assert model == 'haiku'
+        assert model == s._AUTO_MODEL_VALID['H']
         assert source == 'auto'
 
     def test_sonnet_pick(self, tmp_path, monkeypatch):
@@ -52,7 +52,7 @@ class TestRouteDispatchModel:
         s.CONFIG['auto_model_enabled'] = True
         with patch.object(s, '_scribe_call', return_value='S'):
             model, source = s._route_dispatch_model('refactor this function', 'opus')
-        assert model == 'sonnet'
+        assert model == s._AUTO_MODEL_VALID['S']
         assert source == 'auto'
 
     def test_opus_pick(self, tmp_path, monkeypatch):
@@ -60,7 +60,7 @@ class TestRouteDispatchModel:
         s.CONFIG['auto_model_enabled'] = True
         with patch.object(s, '_scribe_call', return_value='O'):
             model, source = s._route_dispatch_model('redesign the auth layer', 'sonnet')
-        assert model == 'opus'
+        assert model == s._AUTO_MODEL_VALID['O']
         assert source == 'auto'
 
     def test_classifier_exception_fails_open(self, tmp_path, monkeypatch):
@@ -85,7 +85,7 @@ class TestRouteDispatchModel:
         s.CONFIG['auto_model_enabled'] = True
         with patch.object(s, '_scribe_call', return_value='h'):
             model, source = s._route_dispatch_model('say hi', 'opus')
-        assert model == 'haiku'
+        assert model == s._AUTO_MODEL_VALID['H']
         assert source == 'auto'
 
     def test_empty_prompt_short_circuits(self, tmp_path, monkeypatch):
@@ -116,7 +116,7 @@ class TestResolveDispatchModel:
         s.CONFIG['auto_model_enabled'] = True
         with patch.object(s, '_scribe_call', return_value='H'):
             model, source = s._resolve_dispatch_model({'agent_model': 'opus'}, 'say hi')
-        assert model == 'haiku'
+        assert model == s._AUTO_MODEL_VALID['H']
         assert source == 'auto'
 
     def test_empty_prompt_short_circuits_to_manual(self, tmp_path, monkeypatch):
