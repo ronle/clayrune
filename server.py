@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Python-version preflight — keep FIRST. server.py is a direct entry point
+# (python server.py) and is also imported by app.py's Flask thread; either path
+# rejects a too-old interpreter before the 3.10+ import chain loads.
+import preflight  # noqa: F401
+
 import hashlib
 import json
 import os
@@ -160,7 +165,10 @@ try:
     import mc_remote_iface  # noqa: F401  (import for side-effect: surface available)
 except Exception as _e:
     mc_remote_iface = None  # type: ignore[assignment]
-    _log(f"[remote-access] mc_remote_iface not available: {_e}", flush=True)
+    # NOTE: this block runs at import time, BEFORE _log() is defined (line ~345,
+    # it depends on CONFIG which isn't loaded yet). Use print() here, or the
+    # except handler itself raises NameError and masks the real import error.
+    print(f"[remote-access] mc_remote_iface not available: {_e}", flush=True)
 
 if mc_remote_iface is not None:
     # Dev stub takes precedence when its env var is set — useful for UI work
@@ -171,17 +179,17 @@ if mc_remote_iface is not None:
         try:
             from mc_remote_iface.dev_stub import maybe_register_dev_stub
             if maybe_register_dev_stub():
-                _log(f"[remote-access] dev stub registered "
+                print(f"[remote-access] dev stub registered "
                       f"(MC_DEV_REMOTE_STUB={os.environ.get('MC_DEV_REMOTE_STUB')})", flush=True)
         except Exception as _e:
-            _log(f"[remote-access] dev stub unavailable: {_e}", flush=True)
+            print(f"[remote-access] dev stub unavailable: {_e}", flush=True)
     else:
         try:
             import mc_remote  # noqa: F401  (provider self-registers via __init__)
         except Exception as _e:
             # Absence is normal in an open-source build with no proprietary
             # provider installed. Log at info volume only.
-            _log(f"[remote-access] no provider installed: {_e}", flush=True)
+            print(f"[remote-access] no provider installed: {_e}", flush=True)
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
