@@ -4667,11 +4667,20 @@ def _read_agent_stream_b(proc, session):
                         session['status'] = 'idle'
                         session['last_status_change_time'] = _time.time()
                     else:
-                        session['status'] = 'completed' if rc == 0 else 'error'
+                        # rc!=0 while 'idle' = the turn ALREADY ended cleanly
+                        # (the result event set 'idle' at the turn boundary);
+                        # the nonzero exit is post-turn teardown — e.g.
+                        # claude-fable-5 exits 1 after every turn under the
+                        # full Mode B flag set — not a task failure. Logging
+                        # it 'error' painted a red "Blocked" tile after each
+                        # successful turn (2026-06-10). Mid-turn deaths still
+                        # classify as error: they die with status 'running'.
+                        _post_turn = session['status'] == 'idle'
+                        session['status'] = 'completed' if (rc == 0 or _post_turn) else 'error'
                         session['last_status_change_time'] = _time.time()
                         if rc != 0:
                             session['log_lines'].append(f"[exited with code {rc}]")
-                        if rc == 0:
+                        if rc == 0 or _post_turn:
                             session['recovery_attempts'] = 0
                             session['guardian_state'] = None
                             session['pending_recovery_message'] = None
