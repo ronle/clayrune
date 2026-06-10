@@ -127,6 +127,12 @@ _guardian_stop = threading.Event()
 # ── Web push state ───────────────────────────────────────────────────────────
 _push_state_lock = threading.Lock()
 
+# FCM lazy-init handles (REBOUND globals — the Phase-0 sweep deferred them;
+# blueprint 1.2 moved them here with every reference rewritten to state.*,
+# so there is exactly one live binding).
+_fcm_app = None  # lazy-init firebase_admin.App
+_fcm_init_error = None
+
 # ── Dashboard presence (push focus-suppression gate) ─────────────────────────
 # A browser/PWA that has a session's chat OPEN and the tab/window VISIBLE +
 # FOCUSED pings /api/presence every ~15s. While a fresh ping exists for

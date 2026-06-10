@@ -50,3 +50,30 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   E9/F821 ✓ · pyright mc/ 0 errors ✓ · smoke boot :5377 heartbeat 200 +
   `/api/local-auth/status` correct JSON + locked-page 302 ✓
 - **Commit:** `276d3bd` on `refactor/backend`, merged to `local/opus-effort`.
+
+## 1.2 — push_mobile blueprint (2026-06-10)
+
+- **What moved:** 923 lines → `mc/blueprints/push_mobile.py`: 7 `/api/push` +
+  6 `/api/mobile-pair` + `/api/presence` (presence exists solely as push
+  focus-suppression → travels with push; **+1 route vs the plan table**, total
+  still 209). VAPID/subscription store, FCM block, `_notify_push`,
+  `_handle_push_signal`, presence touch/watch, mobile pairing + Path-B
+  auto-pair/keystore/tokens.
+- **Rebound globals done right:** `_fcm_app`/`_fcm_init_error` (the Phase-0
+  deferred case) now live in `mc/state.py`; their `global` stmt dropped and all
+  11 references rewritten to `state._fcm_*` — single live binding, no
+  split-brain.
+- **Seams:** `wire(data_root, load_project_fn, cf_session_nonce_fn,
+  get_remote_provider_fn)` — projects family (1.11) + remote family (1.7) will
+  re-home the last three. Only inbound shim: `_handle_push_signal` (2 stream-
+  reader call sites; moves home at 1.12). Stanza placed with the 1.1 stanza
+  AFTER `_cf_session_nonce_from_request`'s def (import-time NameError otherwise
+  — ruff F821 caught it).
+- **Typing debt, explicit:** 17 verbatim-moved lines tripped pyright basic
+  (crypto union-narrowing + Optional `.get` chains); each tagged
+  `# pyright: ignore[<rule>]  # moved-verbatim typing debt (1.2)` — greppable,
+  zero behavior change. mc/ back to 0 errors.
+- **Gates:** routes 209/209 ✓ · full pytest 0 ✓ · ruff E9/F821 ✓ · pyright mc/
+  0 ✓ · smoke :5377 + route parity vs live :5199 (same VAPID key, same
+  mobile-pair/presence responses) ✓
+- **Commit:** `(fill)` on `refactor/backend`, merged to `local/opus-effort`.
