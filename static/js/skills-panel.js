@@ -184,6 +184,10 @@ function _distillerKindBadge(kind) {
 }
 
 let _distillerDiagOpen = false;
+// Explorations are reference notes the readback already uses silently; they
+// have no Promote action (only Reject), so they're collapsed by default — the
+// queue stays a list of real promote/reject DECISIONS, not a wall of notes.
+let _distillerExplorationsOpen = false;
 // Cache the proposals so click handlers reference them BY INDEX. Embedding the
 // artifact directory (a Windows path with backslashes) into an onclick JS
 // string literal eats the backslashes (\U -> U), corrupting the path — so we
@@ -207,7 +211,7 @@ function renderDistillerQueue(el, items, health) {
       </div>` : ''}
     </div>` : '';
 
-  const rows = items.map((it, i) => {
+  const rowData = items.map((it, i) => {
     const dir = it.directory || '';
     const scope = it.scope || 'uncategorized';
     const isCross = scope === 'cross-project';
@@ -229,7 +233,7 @@ function renderDistillerQueue(el, items, health) {
         ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Promote &#x2192; Global</button>`
         : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill in this project only" onclick="promoteProposedByIdx(${i},'project')">Promote &#x2192; Project</button>
            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Global</button>`);
-    return `
+    const html = `
       <div style="padding:10px 4px;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:flex-start;gap:10px">
           <div style="flex-shrink:0;padding-top:1px">${_distillerKindBadge(it.kind)}</div>
@@ -246,21 +250,41 @@ function renderDistillerQueue(el, items, health) {
           <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:#c0556b;border-color:#c0556b55" title="Discard and stop suggesting this" onclick="rejectProposedByIdx(${i})">Reject</button>
         </div>
       </div>`;
-  }).join('');
+    return { isExploration, html };
+  });
+
+  // Split: promotable proposals (PREFERENCE/SKILL/UPDATE) are real decisions and
+  // lead the queue; explorations are reference notes the readback already uses
+  // silently, so they collapse into a prune-only drawer (the user's call —
+  // 2026-06-10: "why present them if all I can do is reject them?").
+  const promotableRows = rowData.filter(r => !r.isExploration).map(r => r.html).join('');
+  const explorationRows = rowData.filter(r => r.isExploration).map(r => r.html).join('');
+  const explCount = rowData.filter(r => r.isExploration).length;
+  const promotableCount = rowData.length - explCount;
+  const hitRate = (health && health.readback && typeof health.readback.hit_rate === 'number')
+    ? Math.round(health.readback.hit_rate * 100) : null;
+  const explDrawer = explCount ? `
+    <div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:8px">
+      <div style="font-size:11px;color:var(--text-faint);cursor:pointer" onclick="_distillerExplorationsOpen=!_distillerExplorationsOpen;loadDistillerQueue()">
+        ${_distillerExplorationsOpen ? '&#x25BE;' : '&#x25B8;'} &#x1F50D; ${explCount} reference note${explCount>1?'s':''} &#x2014; auto-used by agents${hitRate!=null?', '+hitRate+'% hit rate':''} &#x2022; expand to prune noise
+      </div>
+      ${_distillerExplorationsOpen ? `<div style="margin-top:6px">${explorationRows}</div>` : ''}
+    </div>` : '';
 
   const bodyHtml = _distillerQueueOpen ? `
     <div style="font-size:11px;color:var(--text-faint);margin:6px 0 2px;line-height:1.45">
       What agents worked out across sessions. <b>&#x1F50D; Explorations</b> are reference notes surfaced on demand when a task matches &#x2014; just <b>Reject</b> the noise. <b>Skills &amp; preferences</b> can be <b>Promoted</b> into artifacts the agent always loads.
     </div>
     ${diagHtml}
-    <div style="max-height:300px;overflow-y:auto;margin-top:6px">${rows || '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px">No pending proposals.</div>'}</div>
+    <div style="max-height:300px;overflow-y:auto;margin-top:6px">${promotableRows || '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px">No proposals to review.</div>'}</div>
+    ${explDrawer}
   ` : '';
 
   el.innerHTML = `
     <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;background:var(--surface2)">
       <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="_distillerQueueOpen=!_distillerQueueOpen;loadDistillerQueue()">
         <span style="font-size:13px;font-weight:700;color:var(--text)">&#x1F9E0; Learning queue</span>
-        <span style="font-size:11px;color:var(--text-faint)">${items.length} pending${alerts.length ? ' &#x2022; ' + alerts.length + ' alert' + (alerts.length>1?'s':'') : ''}</span>
+        <span style="font-size:11px;color:var(--text-faint)">${promotableCount} pending${alerts.length ? ' &#x2022; ' + alerts.length + ' alert' + (alerts.length>1?'s':'') : ''}</span>
         <span style="margin-left:auto;font-size:11px;color:var(--text-faint)">${_distillerQueueOpen ? '&#x25BE;' : '&#x25B8;'}</span>
       </div>
       ${bodyHtml}
