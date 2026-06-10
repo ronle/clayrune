@@ -18,6 +18,12 @@ on:
   release:
     types: [published]
 
+# The release-triggered GITHUB_TOKEN needs contents:write to `gh release upload`
+# the built zip — without it the Attach step 403s ("Resource not accessible by
+# integration"), which is why the asset never appeared on v2.0.0–v2.0.2.
+permissions:
+  contents: write
+
 concurrency:
   group: build-macos-${{ github.ref }}
   cancel-in-progress: true
