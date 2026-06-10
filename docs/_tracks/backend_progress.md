@@ -91,4 +91,4 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   used by the MCP/distiller sections until 1.4/1.5 extract).
 - **Gates:** routes 209/209 ✓ · full pytest 0 ✓ · ruff ✓ · pyright mc/ 0 ✓ ·
   smoke :5377 — /api/skills lists, /api/skills/search returns hits ✓
-- **Commit:** `(fill13)` on `refactor/backend`, merged to `local/opus-effort`.
+- **Commit:** `aa1fb6f` on `refactor/backend`, merged to `local/opus-effort`.
