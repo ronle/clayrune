@@ -6,6 +6,21 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-09] — v2.0.2 (security + hardening)
+
+Follow-up to v2.0.1 from a second code-inspection pass. **All users should update.**
+- **`/api/terminal/launch` restricted to loopback** — the free-form `shell=True`
+  command sink now rejects non-loopback callers (defense-in-depth on the RCE
+  surface; only host-local agents use it).
+- **Dependency CVEs:** control-plane `fastapi`/`cryptography` bumped past 8 known
+  CVEs (incl. a starlette multipart-upload DoS); main-app floors raised (Pillow
+  libwebp heap-overflow, requests, flask, cryptography).
+- Continuous dependency auditing in CI (`pip-audit` + `cargo audit`), committed
+  `mc_tunnel/Cargo.lock`, narrowed a bare `except` in `time_ago`, removed dead
+  imports (ruff), and added an exception-swallowing policy.
+
+> The control-plane CVE fix is live only after the Cloud Run service is redeployed.
+
 ## [2026-06-09] — v2.0.1 (security release)
 
 Patch release rolling the 2026-06-09 security hardening (detailed below) into a
