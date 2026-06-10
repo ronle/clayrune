@@ -225,3 +225,70 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   /_mc/name-device, local-auth/status + push/vapid-public-key (both re-homed
   seams), system/loops shows `session-label-enforcer` ✓
 - **Commit:** `82f5494` on `wt-1.7` (orchestrator merges).
+
+## 1.8 — terminal_routes blueprint (2026-06-10)
+
+- **What moved:** 258 lines (one contiguous region, splice-asserted: exactly
+  6 routes + 8 defs, byte-faithful) → `mc/blueprints/terminal_routes.py`:
+  **6 routes** (plan said 5): the 5 `/api/terminal/*` (launch/stream/stdin/
+  stop/delete) + `/api/project/<id>/terminal/status` (terminal feature under
+  the project prefix — same cohesion call as /api/presence in 1.2), the
+  reader/kill helpers (`_read_terminal_stream`, `_kill_terminal_session`),
+  and the TTY-shim spawn machinery (PYTHONPATH sitecustomize env wiring).
+  `_TTY_SHIM_DIR` (derived from `_APP_DIR`) became a wired placeholder —
+  the 1.7 SESSION_LABELS_PATH pattern.
+- **Helper placement (the step's main boundary call):**
+  `_register_process`/`_unregister_process` **STAY in server.py** — grep
+  shows ~24 call sites across agent dispatch, hivemind workers/orchestrator,
+  housekeeping, revival, and shutdown; the terminal call is 1 of them. They
+  wire in and re-home at 1.12. Same verdict for `_kill_pid`/`_pid_is_alive`/
+  `_kill_proc_background` (reaper + stream readers + agent stop) and
+  `_launch_terminal_for_binary` (provider-auth popup, never touches
+  terminal_sessions — NOT this family). **NO system_routes wire kwargs
+  re-homed** (the brief's contingency didn't trigger); terminal stanza sits
+  AFTER the system stanza, order-safe.
+- **Seams:** `wire(load_project_fn, get_manager_fn, register_process_fn,
+  unregister_process_fn, popen_flags, startupinfo, tty_shim_dir)`. Inbound
+  shim (1): `_kill_terminal_session` — called by delete_project (1.11) and
+  the atexit `_cleanup_terminals` hook. The hook itself STAYS in server.py:
+  moving its `atexit.register` (line ~12605, pre-stanza) into the blueprint
+  would reorder LIFO exit hooks vs scheduler/hivemind stops — behavior
+  change. Both call sites resolve the shim global at call time, no
+  import-order issue (ruff F821 clean).
+- **AUTH-GATE FINDING (plan 1.8 acceptance said "re-verify the 403"):**
+  `/api/terminal/launch` has NO route-private gate — its protection is the
+  app-wide `local_auth_gate` (1.1): loopback + CF-tunneled exempt, all other
+  peers need the LAN passcode cookie. The reject is **401 auth_required,
+  not 403** (403 exists only inside the passcode login flow). Verified BOTH
+  ways: unit test with `environ_base={'REMOTE_ADDR':'192.168.1.50'}` (401 +
+  Popen-recorder proves no spawn, no session) AND live smoke POST from the
+  real LAN interface 192.168.86.4 → 401 `{"error":"auth_required"}`. The
+  plan's "403" is a misremembered status code; behavior unchanged.
+- **Phase 5:** new `tests/test_terminal_routes.py` (16 tests): launch happy
+  path with FakeProc-on-a-real-pipe (verbatim `_read_terminal_stream`
+  exercised: feed→capture→EOF→completed→unregister) + `/api/processes`
+  cross-blueprint check, 401 auth-reject + loopback-exempt twin, malformed
+  ×5, stdin roundtrip/guards, stop/delete lifecycle + idempotency, status
+  purge, SSE unknown-session. Patches `mc.blueprints.terminal_routes.*`
+  attrs only (test-port rule); `subprocess` replaced by a recorder
+  namespace ON THE MODULE so no real children spawn.
+- **Cross-test pollution found:** `test_pid_reaper.py::
+  test_persist_pid_ledger_roundtrip` clears `tracked_processes` and leaks
+  a `{'proc': object()}` entry (no `.poll`) — full-suite-only 500 in
+  `/api/processes` for any later caller. Fixed inside this step's fixture
+  (clear-at-entry + snapshot/restore); the reaper test itself untouched
+  (out of moves-only scope — flag for a cleanup commit).
+- **Gates:** routes 210/210 (122 app-grep [121 real + the 1.7-noted f-string
+  line] + 88 bp) ✓ · `import server` ✓ · ruff E9/F821 ✓ · pyright mc/ 0 (no
+  new typing-debt tags needed — moved bodies are untyped-param Any) ✓ · full
+  pytest exit 0 (codex env skip only) ✓ · isolated smoke (`MC_DATA_DIR=
+  $TEMP\mc-smoke-18-*`, `MC_PORT=5377`, BOM-less config seed via
+  `[IO.File]::WriteAllText` + seeded `data/projects/term-smoke.json`,
+  taskkill-as-own-command): heartbeat 200 · loopback launch 200 + sid ·
+  /api/processes shows `type=terminal alive=true` (cross-blueprint) ·
+  terminal/status streams real ping output (reader thread live) ·
+  enforcer-state `last_run=0` (seed parsed, no revocations) · LAN-peer
+  launch 401 · `taskkill /T /F` killed server + tracked terminal child
+  37208 + grandchildren (tree verified dead, port 5377 free, live :5199
+  untouched) ✓
+- **Commit:** `PENDING` on `wt-1.8` (orchestrator merges).
