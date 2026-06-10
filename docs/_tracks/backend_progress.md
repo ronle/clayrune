@@ -29,3 +29,24 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   (NOTE: tracks-doc smoke command needs `MC_PORT=<free port>` — live MC owns :5199,
   a second bind fails; doc command corrected here.)
 - **Commit:** `e66ae29` on `refactor/backend`, merged to `local/opus-effort`.
+
+## 1.1 — local_auth blueprint (pilot, 2026-06-10)
+
+- **What moved:** the entire LAN passcode gate family (350 lines) →
+  `mc/blueprints/local_auth.py`: 5 routes (3 `/api/local-auth/*` + 2 `/_mc/local-*`
+  pages), 13 `_local_auth_*` helpers, `_render_local_auth_page`, constants, the
+  `before_request` gate body (`local_auth_gate()`; thin wrapper stays on `app` at
+  the SAME source position → hook order vs `_redirect_unlabeled_cf_session`
+  unchanged). `_harden_secret_perms` → `mc/core.py` (cross-family, shimmed).
+- **Seam:** `wire(local_auth_path=…, is_cf_tunneled_request=…)` late-binds the two
+  unextracted deps (`_DATA_ROOT`; CF JWT machinery → moves home at 1.7). Wired
+  types annotated; None defaults are import-time-only.
+- **No shims needed:** zero callers of the family elsewhere in server.py (verified
+  by grep); tests drive it via HTTP. Existing `test_auth_routes.py` covers
+  provider auth, NOT this gate — so per Phase 5 added
+  `tests/test_local_auth_routes.py` (7 tests: exempt host, LAN locked 401/302,
+  no LAN bootstrap, set→login lifecycle incl. cookie-jar pitfall, throttle 429).
+- **Gates:** routes 209/209 (204 app + 5 bp) ✓ · full pytest exit 0 ✓ · ruff
+  E9/F821 ✓ · pyright mc/ 0 errors ✓ · smoke boot :5377 heartbeat 200 +
+  `/api/local-auth/status` correct JSON + locked-page 302 ✓
+- **Commit:** `(fill)` on `refactor/backend`, merged to `local/opus-effort`.

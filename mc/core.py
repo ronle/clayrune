@@ -10,6 +10,7 @@ This module must never import server.py.
 
 import builtins as _builtins
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,6 +49,26 @@ def _atomic_write_text(path, text, encoding='utf-8'):
     tmp = path.with_name(f'.{path.name}.tmp{os.getpid()}')
     tmp.write_text(text, encoding=encoding)
     os.replace(tmp, path)
+
+
+def _harden_secret_perms(path) -> None:
+    """Best-effort: restrict a secret file (provider API keys, VAPID/Firebase
+    keys, LAN passcode hash, mobile-pairing token) to the owning user only.
+    POSIX → chmod 0600; Windows → strip ACL inheritance and grant only the
+    current user. Never raises — a perms failure must not break the write."""
+    p = str(path)
+    try:
+        if os.name == 'nt':
+            import getpass
+            user = os.environ.get('USERNAME') or getpass.getuser()
+            subprocess.run(
+                ['icacls', p, '/inheritance:r', '/grant:r', f'{user}:F'],
+                capture_output=True,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        else:
+            os.chmod(p, 0o600)
+    except Exception:
+        pass
 
 
 def time_ago(ts_str):
