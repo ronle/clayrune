@@ -224,4 +224,4 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   port-free asserts): heartbeat, remote/status, enforcer-state,
   /_mc/name-device, local-auth/status + push/vapid-public-key (both re-homed
   seams), system/loops shows `session-label-enforcer` ✓
-- **Commit:** `PENDING` on `wt-1.7` (orchestrator merges).
+- **Commit:** `82f5494` on `wt-1.7` (orchestrator merges).
