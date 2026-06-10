@@ -1726,7 +1726,7 @@ def time_ago(ts_str):
         if secs < 3600:  return f'{secs // 60}m ago'
         if secs < 86400: return f'{secs // 3600}h ago'
         return f'{secs // 86400}d ago'
-    except:
+    except (ValueError, TypeError, AttributeError):
         return ts_str
 
 
