@@ -724,3 +724,173 @@ what moved, commit SHA, gate results.
    take those three template+hydration families; their only couplings are
    `_renderSettings` (window prop now) and `_applySettingsSectionVisibility`
    (window prop now) — both already bridged.
+
+## Phase 3 — module 7: extract settings sections → `static/js/settings-sections.js` (2026-06-09)
+
+- **Module-6 SHA backfill:** module 6 (js/settings-drill.js) = commit `eb19921`.
+- **Region re-derived — ONE contiguous segment, not three:** old lines
+  12930–14159 (`// ── Local network access (LAN passcode)` header through
+  `disconnectRemoteAccess`'s closing brace + trailing blank 14159; next line
+  14160 is `async function saveSetting`, which stays inline — it's the
+  generic helper used by templates across the whole app, not part of these
+  families). The span contains exactly the three settings-section families
+  and nothing else: Local network access (12930–13033), Remote Access
+  templates (13035–13279), Web push + PWA install (13281–13728), Devices
+  list (13730–13791), CF sign-in sessions (13793–14051), and the remote
+  action handlers (14053–14158) — the last three are the remote family's
+  closure (called only from its generated HTML / refresh chain). 35 function
+  declarations total.
+- **Inbound refs re-verified (formal whole-repo scan of all 35 function
+  names + 5 state names): only 8 cross-file hits, ALL in
+  `static/js/settings-drill.js`, all runtime-only** — `${localAccessSettingsHTML()}`
+  /`${remoteAccessSettingsHTML()}`/`${pushNotificationsSettingsHTML()}`
+  (L576/578/580, the Connectivity pane template), `fetchRemoteStatus` +
+  `refreshRemoteAccessSection` (L264), `refreshLocalAccessSection` (L266),
+  `refreshPushSection` (L655) + 1 comment (L269). Plus ONE remaining-inline
+  ref: `refreshPushSection()` at L16066 inside the eager SW registration's
+  statechange listener (runtime callback, guarded by `#sw-status-line`
+  existence + try/catch). Zero parse-time callers anywhere. demo-export /
+  smoke fixtures / server.py: zero hits.
+- **Parse-time audit (brace-depth scan):** region top level = 33 function
+  declarations + 4 `window.*` state inits (`_localAuthState`, `_remoteState`,
+  `_pushState`, `_deferredInstallPrompt`) + 2 `window.addEventListener`
+  registrations (`beforeinstallprompt`/`appinstalled`) — no IIFEs, no bare
+  top-level calls. (Scanner derails at L14104's `replace(/'/g, "\\'")` regex
+  literal — same known limitation as module 6; the three functions below it
+  verified plain declarations by read. `node --input-type=module --check`
+  parses the final file.)
+- **`window._pushState` ordering INVERTS — analyzed equivalent:** the inline
+  boot block's `window._pushState = window._pushState || {}` (L16051, parse
+  time) now runs BEFORE the module's defaults-object init (which `||`-no-ops
+  against the boot `{}`), so the full defaults (`supported:null, subs:[],
+  publicKey:'', …`) are never applied. Verified every read site is
+  falsy-tolerant or guarded: `thisDeviceEndpoint`/`publicKey` only in
+  boolean/`!x` contexts or set-before-read, `swState`/`swError` read with
+  `|| 'unknown'`/`|| ''` fallbacks, `subs` written before any read,
+  `supported` never read at all. Undefined ≡ default at every site. Live
+  gate confirms (`swState='activated'`, hydration intact).
+- **Deferred-listener timing:** `beforeinstallprompt`/`appinstalled` now
+  register at module eval (pre-DOMContentLoaded) instead of mid-parse.
+  Chrome fires bip only after manifest+SW+engagement heuristics (seconds
+  after load) — no realistic miss window; a miss would only delay the
+  Install row's "available" state until the next fire.
+- **What moved:** old lines 12930–14159 → `static/js/settings-sections.js`,
+  **byte-verbatim** (binary reassembly assertion: original index.html ==
+  new file with the `<script>` tag removed and the region re-inserted;
+  interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/settings-sections.js"></script>`
+  after the settings-drill.js tag, before `</body>`. Anti-FOUC bootstrap
+  untouched. Diff shape: 1 insertion, 1,230 deletions.
+- **Numbers:** `settings-sections.js` = 61,585 bytes / 1,262 lines (1,230
+  moved + 32-line interop tail; CRLF, no BOM). `index.html` 836,560 →
+  776,962 bytes; 17,191 → 15,962 lines (BOM preserved).
+- **Interop surface: 24 window function re-exposures, 0 accessor bridges**
+  (the `="<ident>=` generated-handler-assignment scan is EMPTY; the formal
+  assignment-target scan found zero writes to non-region bindings — no
+  `nextModalZ++`-class couplings at all in this region):
+  - Cross-module/inline callers (7): `localAccessSettingsHTML`,
+    `remoteAccessSettingsHTML`, `pushNotificationsSettingsHTML`,
+    `refreshLocalAccessSection`, `refreshRemoteAccessSection`,
+    `refreshPushSection`, `fetchRemoteStatus`.
+  - Region-generated `on*=` targets (17): `showLocalAuthForm`,
+    `submitLocalAuth`, `enableRemoteAccess`, `copyToClipboardSafe`,
+    `disableRemoteAccess`, `resumeRemoteAccess`, `disconnectRemoteAccess`,
+    `testPushNotification`, `unsubscribeThisDevice`, `enablePushOnThisDevice`,
+    `installPwaApp`, `removePushSubscription`, `updatePushSubscription`,
+    `renameRemoteSession`, `signOutSession`, `enforceSessionCleanup`,
+    `signOutAllSessions`. (NOTE: `copyToClipboardSafe` is a generic-looking
+    utility but its ONLY callers are this region's generated onclicks —
+    verified; if future inline code wants it, it's on window.)
+  - Module-private (11): `fetchLocalAuthStatus`, `_ra_pill`,
+    `_ra_section_open`, `_isPwaInstalled`, `_pushSupported`, `_b64urlToUint8`,
+    `refreshPushDeviceList`, `refreshRemoteDevices`, `refreshRemoteSessions`,
+    `refreshEnforcerState`, `_showEnrollmentFallback`.
+  - State needs no bridges: all 5 mutable globals (`_localAuthState`,
+    `_remoteState`, `_remoteAutoPoll`, `_pushState`, `_deferredInstallPrompt`)
+    are explicitly `window.`-qualified at every read/write on BOTH sides
+    (region + inline boot/FCM code) — object identity shared via the window
+    property, same as mobile-pairing's `_mobilePairState`.
+- **Outbound deps** (all resolve at call time through the shared global
+  scope): inline globals `API_BASE`, `esc`, `showToast`, `timeAgoShort`
+  (declared twice inline at L9773/L10946 — second wins; pre-existing quirk,
+  untouched) + cross-module window prop `_applySettingsSectionVisibility`
+  (settings-drill.js, module 6) + browser globals (`confirm`,
+  `window.prompt`, `Notification`, `navigator.serviceWorker`, `atob`).
+  Strict-mode promotion audited: all 23 `this` hits are template-string
+  HTML/prose (incl. `onchange="...this.checked"` handler strings — sloppy
+  inline-handler scope, not module code); no `with`/`arguments.callee`/octals.
+- **sw.js:** `SW_VERSION` `mc-push-v7` → `mc-push-v8` (no cache list by
+  design; version bump only, same as modules 1–6).
+- **Smoke harnesses:** added `route.fulfill` for
+  `/static/js/settings-sections.js` in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios.
+  - Real-server check (throwaway `MC_PORT=5379 python server.py` in the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/settings-sections.js` → 200, `text/javascript;
+    charset=utf-8`, Content-Length 61585, `Cache-Control: no-cache`.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **strictly read-only** — the deployment is LIVE-enrolled
+    (ronl.clayrune.io, online): no enable/disable/pause/resume/disconnect/
+    sign-out/revoke/subscribe clicked) — **24/24 PASS, 0 console errors,
+    0 uncaught page errors**: all 24 window.* interop functions callable;
+    `window._pushState.swState='activated'` (boot-block ordering intact);
+    Settings via real `sidebarNav('settings')`; Connectivity sub-list shows
+    the 4 sections; **local access** renders + hydrates the gate status from
+    `/api/local-auth/status` (configured=false → "Set a passcode" pill+CTA);
+    **remote access** renders the enrolled state-3 template read-only
+    (hostname, Online pill, Copy link/Pause buttons present, bandwidth bar,
+    devices list hydrated async to "2 of 2 on free plan" incl. This-device
+    badge, sessions list "0 active") ; **push** renders + hydrates sub state
+    (SW diag row ACTIVATED, headless permission-denied banner branch,
+    "No devices subscribed yet.", `_pushState.subs === []`);
+    **mobile-pairing (module 3) end-to-end intact** (enrolled auto flow:
+    pairing host pill, label input, paired-phones list); **drill (module 6)
+    intact** (back walks detail→subs→master, live search 'passcode'
+    surfaces the moved local-access section, Escape closes with
+    `_mcSettingsNavDepth === 0`). Screenshots eyeballed (≥400 ms settle past
+    `settingsPaneIn`): all four panes fully styled.
+  - `node tools/smoke/bg-framing-check.mjs` — **identical pre-existing base
+    error** (`setBgZoom is not defined`); boots with settings-sections.js
+    fulfilled, dies at the same later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–6).
+
+### Landmines for module 8 (remaining-core map)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule; re-derive
+   boundaries + brace-depth scan; accessor-bridge handler-assigned vars via
+   the formal scan; don't "repair" quirks; settle CSS entry animations
+   before screenshots; cross-module window props are normal).
+2. **Parse-time-ordering trap GENERALIZES (this module's find):** when a
+   region's `window.x = window.x || {defaults}` init moves to a deferred
+   module, any inline parse-time code that ALSO lazy-inits the same prop
+   (`window.x = window.x || {}`) now wins, and the defaults never apply.
+   Audit every default field's read sites for falsy-tolerance before
+   accepting — here it was provably equivalent; elsewhere it may not be.
+3. **Settings family is now FULLY extracted** (modules 3+6+7: pairing,
+   drill machinery, section templates+hydration+actions). What's left of
+   the old "Global Settings" neighborhood inline: `saveSetting`/
+   `toggleSetting`/`setBriefRepliesMode`/`saveModelChoice` (generic helpers
+   used by drill-pane templates — they stay until/unless a settings-helpers
+   module is worth it), provider settings (`_renderProviderSettings` at
+   ~L12828), update/power/restart-detection sections (~L12409–12827).
+4. **The heredoc backslash trap (tooling):** the Bash tool mangles `\\` in
+   heredocs on this Windows setup — write analysis/surgery scripts to
+   `_scratch/*.py` files instead of piping them through stdin.
+5. **Remaining core (orchestrator store.js checkpoint data):** `terminal`
+   (8 refs / ~281 lines) — writer audit STILL pending; `terminalDismissed`
+   Set + `terminalEventSources` Map are read by outside code; the
+   object-identity window bridge remains viable only if all writers
+   reassign through window (this module's 5 state globals prove the
+   pattern works when BOTH sides are window-qualified by construction —
+   terminal's are NOT, they're bare `let`s). Agent-panel / projects-grid:
+   no sizing rows exist; both interleave with the conversation model,
+   `computeLiveStatus`/grid renderer, and SSE slot management — expect a
+   js/store.js prerequisite rather than a clean lift; derive fresh before
+   promising.
