@@ -10,9 +10,25 @@ import importlib
 
 
 def _server(tmp_data_dir):
-    s = importlib.import_module("server")
-    importlib.reload(s)
-    return s
+    """Reload server so memory.wire() re-binds against the isolated tmp data
+    dir, then return mc.memory — the engine moved there (mop-up extraction).
+
+    Engine fns are called as `s._X` (== mc.memory._X), so a
+    monkeypatch.setattr(s, "_native_memory_path", ...) patches the module the
+    engine actually resolves against (the Phase-0 monkeypatch landmine: patching
+    server.X would be a no-op now that _should_condense lives in mc.memory and
+    calls mc.memory._native_memory_path). CONFIG is read via mc.state.CONFIG
+    (the live alias).
+    """
+    srv = importlib.import_module("server")
+    importlib.reload(srv)
+    import mc.memory as m
+    return m
+
+
+def _config():
+    import mc.state as state
+    return state.CONFIG
 
 
 def _proj():
@@ -207,8 +223,8 @@ def _proj_with_big_claude_md(s, tmp_path, monkeypatch):
 def test_structured_trigger_ignores_huge_claude_md(tmp_data_dir, tmp_path,
                                                    monkeypatch):
     s = _server(tmp_data_dir)
-    s.CONFIG["condense_mode"] = "structured"
-    s.CONFIG["index_line_budget"] = 10
+    _config()["condense_mode"] = "structured"
+    _config()["index_line_budget"] = 10
     p = _proj_with_big_claude_md(s, tmp_path, monkeypatch)
     mp = s._get_memory_path(p)
     mp.parent.mkdir(parents=True, exist_ok=True)
@@ -228,8 +244,8 @@ def test_structured_trigger_ignores_huge_claude_md(tmp_data_dir, tmp_path,
 def test_agent_trigger_unchanged_byte_keyed(tmp_data_dir, tmp_path,
                                             monkeypatch):
     s = _server(tmp_data_dir)
-    s.CONFIG["condense_mode"] = "agent"           # legacy path = default
-    s.CONFIG["condense_threshold_kb"] = 30
+    _config()["condense_mode"] = "agent"          # legacy path = default
+    _config()["condense_threshold_kb"] = 30
     p = _proj_with_big_claude_md(s, tmp_path, monkeypatch)
     mp = s._get_memory_path(p)
     mp.parent.mkdir(parents=True, exist_ok=True)

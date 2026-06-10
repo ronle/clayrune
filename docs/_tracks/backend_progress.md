@@ -877,4 +877,158 @@ finish work the worker died before doing.
   caught it first. (c) ZERO inbound re-export aliases — unlike 1.12, nothing
   downstream in server.py calls a moved scheduler helper except the one startup
   thread-starter, which the brief already specified rewriting.
-- **Commit:** PENDING on `wt-1.13` (orchestrator merges).
+- **Commit:** `ac4a275` on `refactor/backend` (the `wt-mop-memory` base).
+
+## MOP-UP — memory/scribe/condense engine → mc/memory.py (2026-06-10)
+
+NOT a blueprint — a non-blueprint engine module (the 14 route-blueprints were
+already done). The most load-bearing code in the repo (the server-side memory
+pipeline). A **PURE MOVE**, byte-proven; zero behavior change.
+
+- **What moved:** the **50 engine functions** + **18 engine constants** →
+  `mc/memory.py` (1,727 lines). Non-contiguous in server.py (4 regions,
+  interleaved with the PID ledger, `_load_settings`, the startup backfills,
+  `serve_asset`, the distiller-reg block — ALL of which STAYED). The set,
+  verified present + closed under the call graph by an AST free-name pass
+  (`_scratch/mem_analyze.py`): transcript/session helpers
+  (`_encode_project_path`/`_session_transcript_path`/`_session_too_large`/
+  `_long_session_advisory`/`_resume_is_fragile`/`_extract_user_text`/
+  `_recent_claude_transcripts`/`_find_transcript_file`/
+  `_parse_transcript_messages`), MEMORY.md paths+Leg-0 format
+  (`_native_memory_path`/`_get_memory_path`/`_get_archive_path`/`_mem_split_full`
+  /`_mem_split`/`_mem_compose`/`_mem_migrate`), Step-6 watermarks
+  (`_wm_line`/`_wm_parse`/`_wm_find`/`_wm_upsert`/`_wm_remove`), `_memory_search`,
+  condense state (`_condense_combined_bytes`/`_set_condense_status`/
+  `_get_condense_status`/`_has_running_agent`/`_should_condense`), the
+  leaf-locked atomic write path (`_append_to_archive`/`_commit_managed_entry`/
+  `_write_session_memory`), Step-6 checkpoint (`_sha8`/`_get_checkpoint_sema`/
+  `_checkpoint_prev_offset`/`_maybe_checkpoint`/`_checkpoint_worker`), Leg-A
+  Scribe (`_scribe_stat`/`_scribe_render_lines`/`_scribe_render_transcript`/
+  `_scribe_render_delta`/`_scribe_call`/`_extract_transcript_telemetry`/
+  `_scribe_extract`/`_scribe_summarize_text`), and Leg-C structured + legacy
+  condense (`_condense_integrity_check`/`_condense_parse_json`/
+  `_validate_condense_payload`/`_condense_plan`/`_condense_apply`/
+  `_run_structured_condense`/`_dispatch_condense`). The engine constants
+  (`_MEM_*`, `_SCRIBE_*`, `_CONDENSE_*` + `_MEM_ARCHIVE_HEADER`) moved verbatim
+  WITH it.
+- **EXCLUDED (stayed in server.py), per the brief:** the PID ledger
+  (`_proc_identity`/`_persist_pid_ledger`/`_should_reap_entry`/
+  `_reap_prior_instance_strays`), `_load_settings`/`_save_settings`,
+  `serve_asset`, the startup backfills/reconcilers
+  (`_migrate_agent_log_provider_field`/`_backfill_agent_log_from_transcripts`/
+  `_backfill_all_agent_logs`/`_reconcile_unscribed_sessions`/
+  `_backfill_token_telemetry`/`_startup_memory_maintenance`/
+  `_reconcile_pending_agent_log_entries`), the distiller `register()` block,
+  all routes, all wire/register stanzas. The borderline functions called by
+  BOTH the engine and the excluded startup code (e.g. `_get_memory_path`,
+  `_commit_managed_entry`, `_write_session_memory`, `_find_transcript_file`,
+  `_extract_transcript_telemetry`, `_has_running_agent`, `_wm_find`,
+  `_recent_claude_transcripts`, `_scribe_stat`, `_dispatch_condense`) were MOVED
+  and server.py references them via `memory.X` (through inbound shims) — no
+  duplication.
+- **Wire-slot set (12 slots), DERIVED by AST free-name pass — proven complete:**
+  `_scratch/mem_analyze.py` walked all 50 functions, collected every `Name`
+  load not bound locally, and classified each against
+  mc.memory/state/core/agent_runtime/distiller/stdlib/builtins. After
+  subtracting those, EXACTLY 12 free names remained outside the engine:
+  - **6 dispatch-family fn slots** (the only `UNKNOWN`/top-assign names):
+    `load_project_fn` (project_routes 1.11; used by `_maybe_checkpoint`/
+    `_checkpoint_worker`), and `get_manager_fn`/`resolve_claude_fn`/
+    `register_process_fn`/`read_agent_stream_fn`/`hide_windows_delayed_fn`
+    (agent_routes 1.12; the legacy `_dispatch_condense` agent-spawn path).
+  - **6 path/config-root const slots:** `data_dir` (DATA_DIR), `memory_dir`
+    (MEMORY_DIR), `claude_home` (CLAUDE_HOME), `session_size_limit`
+    (_SESSION_SIZE_LIMIT), `popen_flags` (_POPEN_FLAGS), `startupinfo`
+    (_STARTUPINFO) — these stay home in server.py (other families read them);
+    wired in (the 1.7 SESSION_LABELS_PATH wired-placeholder pattern).
+  - `CONFIG` is **NOT** a slot — read live via `state.CONFIG` (the 1.7/1.10/1.11
+    `CONFIG`→`state.CONFIG` rewrite; the ONLY mechanical edit to moved bodies,
+    20 occurrences across 9 functions). All state/core names import by name from
+    mc.state/mc.core; `_agent_runtime`/`_distiller` import directly. NO import
+    cycle (asserted by a test: mc/memory.py contains no `import server`,
+    `from server`, or `mc.blueprints`).
+  - **Completeness proven:** `ruff --select E9,F821` clean + `import server`
+    clean + full pytest green — a missed slot would dangle as F821 or NameError.
+  `memory.wire(...)` is called once by server.py right after `_bp_agent` is
+  imported and BEFORE the `_bp_projects`/`_bp_guide`/`_bp_agent` wire() stanzas
+  that source memory values (passing `_bp_projects.load_project` + `_bp_agent.*`).
+- **server.py side:** `from mc import memory` + `memory.wire(...)` + a 50-name
+  inbound-shim block (`_X = memory._X`) so the startup backfills, the distiller
+  `register()` block, the AgentRuntime `oneshot` hook, and the tests that read
+  `server.<name>` keep resolving. The agent_routes wire() now passes
+  `write_session_memory_fn=memory._write_session_memory`,
+  `scribe_call_fn=memory._scribe_call`, `dispatch_condense_fn=memory._dispatch_
+  condense`, `should_condense_fn=…`, `get_condense_status_fn=…`,
+  `maybe_checkpoint_fn=…`, `memory_search_fn=…`, `get_memory_path_fn=…`,
+  `get_archive_path_fn=…`, `find_transcript_file_fn=…`,
+  `parse_transcript_messages_fn=…`, `recent_claude_transcripts_fn=…`,
+  `session_too_large_fn=…`, `long_session_advisory_fn=…`, `resume_is_fragile_fn=…`,
+  `encode_project_path_fn=…`, `extract_transcript_telemetry_fn=…` — all sourced
+  from `memory.*` (the blueprint wire INTERFACES are unchanged; only the values
+  server.py passes them). The distiller `register()` sources
+  `scribe_call`/`scribe_render_transcript`/`get_per_project_semaphore` from
+  `memory.*`. CONFIG access in server.py is unchanged (it keeps the bare module
+  global; only the MOVED bodies were rewritten to `state.CONFIG`).
+- **Typing debt, explicit:** mc/memory.py = **0 pyright errors**. The 6 wired
+  fn-placeholders are typed `Callable[...]` (the 1.13 precedent) so the verbatim
+  call sites don't trip `reportOptionalCall`; **7** genuinely-verbatim lines are
+  tagged `# pyright: ignore[<rule>]  # moved-verbatim typing debt (mop)` — 3
+  AgentRuntime private-method accesses (`reportAttributeAccessIssue`), 2 fold
+  `d.get(...)` on an Optional (`reportOptionalMemberAccess`), 2
+  `write_text(pre_mem)` with `pre_mem: str|None` (`reportArgumentType`). Whole
+  mc/ scope still **23** (the pre-existing distiller/agent_runtime baseline).
+- **Test ports (the Phase-0 monkeypatch landmine):** only **2** files needed it
+  (the rest patch the blueprint copies, already correct):
+  - `tests/test_condense_structured.py` — `_server()` now reloads server (for
+    `memory.wire()` against tmp_data_dir) but RETURNS `mc.memory`; the `s._X`
+    engine calls + `monkeypatch.setattr(s, "_native_memory_path", …)` now hit
+    `mc.memory` (patching `server._native_memory_path` would be a silent no-op
+    since `_should_condense` lives in mc.memory and resolves its own module).
+    `s.CONFIG` → `state.CONFIG` via a `_config()` helper.
+  - `tests/test_p2_1_condense_visibility.py` — passes UNMODIFIED: its
+    `s._get_condense_status`/`_set_condense_status`/`_condense_combined_bytes`
+    calls flow through the server shims (which share `state._condense_status`);
+    no patching, so no landmine.
+  (`test_auto_model_router.py` patches `_bp_agent._scribe_call` — the auto-router
+  has its OWN `_scribe_call` wire slot, distinct from the engine's; unchanged.
+  `test_guide_routes.py`/`test_project_routes.py` patch the blueprints' wired
+  `_memory_search`/`_get_memory_path`; unchanged. `test_claude_runtime.py`/
+  `test_spawn_sites.py` only mention moved names in docstrings.)
+- **New `tests/test_memory_module.py` (6 tests):** import smoke + NO-import-cycle
+  assertion (greps mc/memory.py source for `import server`/`from server`/
+  `mc.blueprints` → none), MEMORY.md Leg-0 round-trip
+  (`_mem_split`/`_mem_compose` exact + `_mem_migrate` idempotence + legacy
+  bare-header wrap), and two `_commit_managed_entry` writes under tmp projects
+  proving the managed-region sentinels + curated region + the Step-6 `clayrune:wm`
+  watermark survive the leaf-locked atomic write (one carries a live wm through,
+  one removes it on teardown).
+- **Gates (ALL pass):** url_map **209 rules** unchanged (NO routes moved) + 14
+  blueprints registered + `import mc.memory` clean ✓ · `ruff check --select
+  E9,F821 .` clean ✓ · pyright mc/memory.py **0 errors** (whole-scope 23 =
+  baseline) ✓ · **full pytest exit 0 — 624 passed, 1 skipped** (codex CLI env
+  skip; captured pytest's OWN exit code via `> _scratch/pt.txt 2>&1; echo $?`,
+  never a pipe) ✓ · isolated boot smoke (`MC_DATA_DIR=$(mktemp -d)`,
+  `MC_PORT=5380`, BOM-less config seed, CLAUDE_SKIP_AUTH_CHECK=1, FROM THE
+  WORKTREE): heartbeat 200 · `/api/system/loops` shows `scheduler` +
+  `hivemind-orchestrator` + `session-label-enforcer` fresh · boot.log
+  error-free (the `_startup_memory_maintenance` chain — which calls the wired
+  engine via the shims — ran clean) · seeded a project + MEMORY.md and hit
+  `/api/project/<id>/memory/search` → real ranked hit (proves `memory._memory_
+  search`→`_get_memory_path`→`_mem_split`→`_get_archive_path` wired live) ·
+  `taskkill /T /F` killed the tree (3 procs), port 5380 free, live :5199
+  untouched (PID 35552) ✓
+- **Byte-fidelity proof (`_scratch/verify_fidelity.py`):** for all **50
+  functions** + **18 constants**, the source segment was extracted from the
+  pre-strip server.py backup AND from mc/memory.py via `ast.get_source_segment`;
+  the original was transformed with the SAME `CONFIG`→`state.CONFIG` rewrite +
+  the moved-verbatim pyright tags stripped, then asserted byte-equal to the
+  memory version. **PASS:** 50 funcs byte-identical (modulo 20 `CONFIG`→
+  `state.CONFIG` + 7 tags), 18 consts verbatim, multiplicity exact (each moved
+  name appears EXACTLY once in mc/memory.py and ZERO times as a def in
+  server.py).
+- **server.py:** 4,010 → **2,444 lines** (−1,566). Toward the <2,000 target.
+- **Ambiguities hit:** none blocking. The distiller `register()` block (module-
+  level, runs at import) sits between two engine regions — it STAYED (it's the
+  `register()` glue, like github_sync's) and now sources its scribe/checkpoint
+  primitives from `memory.*` (memory.wire() runs above it, so memory.* is live).
+- **Commit:** PENDING on `wt-mop-memory` (orchestrator merges; do NOT merge).
