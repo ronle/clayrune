@@ -60,6 +60,8 @@ const SETTINGS_SECTIONS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'se
 const TERMINAL_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'terminal.js'), 'utf8');
 // Mermaid render pipeline ES module (Phase 3 module 9) — same rule as claydo.js above.
 const MERMAID_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'mermaid.js'), 'utf8');
+// Search-past-chats ES module (Phase 3 module 10) — same rule as claydo.js above.
+const SEARCH_CHATS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'search-chats.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 
 const ORIGIN = 'http://mc.smoke.test';   // arbitrary; every request is intercepted
@@ -111,6 +113,8 @@ async function runScenario(browser, sc) {
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: TERMINAL_JS });
     if (path === '/static/js/mermaid.js')
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MERMAID_JS });
+    if (path === '/static/js/search-chats.js')
+      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SEARCH_CHATS_JS });
     if (path === '/api/projects')
       return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config')

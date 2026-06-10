@@ -1256,3 +1256,165 @@ what moved, commit SHA, gate results.
    inline `connectAgentStream` runs the ENTIRE real pipeline (the formatter
    only needs the element to exist) — no real agent dispatch, no model
    cost, fully read-only against the server.
+
+## Phase 3 — module 10: extract search past chats → `static/js/search-chats.js` (2026-06-10)
+
+- **Module-9 SHA backfill:** module 9 (js/mermaid.js) = commit `537298c`.
+- **Sizing correction (module-4 lesson, FOURTH occurrence) — the "849L"
+  row was header-to-header and 86% foreign code.** The module-8 list quoted
+  "Search past chats 849L (5836–6684)" = the span from the
+  `// ── Search past chats by transcript content` header (5836) to the next
+  header `// ── Rich text formatting for agent output` (6685). The real
+  cleanly-separable family is **124 lines (5836–5959)** — the 5 state decls +
+  8 functions through `pickChatResult`'s closing brace. Lines **5961–6684 are
+  the conversation-model / agent-panel core** (`sessionPickerHTML`,
+  `closeAgentTab`, `dispatchAgent`, the `agentSSEWatchdogs`/`_sendInFlight`/
+  `_turnStartAcked`/`_reconcileBusy` state, `_reconcileAgentBuffer`, and an
+  image-token helper that keeps in sync with `formatAgentText`) — exactly the
+  heavily-entangled smear the module-8/9 landmines said must WAIT for the
+  store.js checkpoint. They stay inline. Trailing blank 5960 stays as the
+  separator before `sessionPickerHTML`.
+- **Inbound refs re-verified (formal whole-repo scan of all 14 region names):
+  exactly 2 cross-module/inline functional refs**, both inside the inline
+  `agentPanelHTML` modal builder (runtime-only — fire when the dispatch
+  screen renders, never at parse time):
+  1. `chatSearchHTML(p.id)` — L5300, `const chatSearch = showResume ? …`.
+  2. `searchPaneInner(p.id)` — L5301, `const searchPane = showResume ? …`.
+  (`showResume = noActiveTab && _pcaps.supports_session_resume`.) Whole-repo
+  sweep across `*.py/*.js/*.mjs/*.html/*.md/*.css/*.json`: **zero** references
+  to ANY of the 14 region identifiers in any non-index file (no server.py,
+  no demo-export, no smoke fixtures, no docs prose).
+- **Parse-time audit (brace-depth scan):** region top level = 3 `let` +
+  2 `const` + 9 `function` declarations, depth ends 0, **0 top-level
+  non-decl/comment/blank lines** — no IIFEs, no top-level calls (the module-4
+  `startRefresh` trap has no analogue). `node --input-type=module --check`
+  parses the final file.
+- **State needs NO bridges (zero outside refs):** the 3 mutable `let`s
+  (`chatSearchQuery`, `chatSearchResults`, `chatSearchLoading`) + 2 `const`s
+  (`_chatSearchTimers`, `_chatSearchSeq`) are read AND written ONLY by region
+  code (formal outside-ref scan = 0 hits each). Writer scan (wholesale
+  `(?<![\w$.])name\s*=(?![=>])` + compound + `++/--`) → exactly ONE hit each:
+  the declaration itself; every mutation is property-level (`[projectId]`
+  get/set/delete). So they stay **module-private `let`/`const`** — no
+  identity bridge, no accessor bridge. First post-terminal module whose
+  shared-looking state turned out to be fully private.
+- **What moved:** old lines 5836–5959 → `static/js/search-chats.js`,
+  **byte-verbatim** (binary reassembly assertion, two-sided: (1)
+  `before + region_bytes + after == original` proving the region is a clean
+  contiguous byte span; (2) the new index.html, with the inserted `<script>`
+  tag line removed AND the region bytes re-inserted at the cut point,
+  `== original` byte-for-byte; interop tail append-only on the js side).
+  Loaded via `<script type="module" src="/static/js/search-chats.js"></script>`
+  inserted immediately after the mermaid.js module tag, before `</body>`.
+  Anti-FOUC bootstrap untouched. Diff shape: 1 insertion, 124 deletions.
+- **Numbers:** `search-chats.js` = 6,542 bytes / 135 lines (124 moved +
+  11-line interop tail: 1 blank + 5 comment + 5 assignment; CRLF, no BOM,
+  149 non-ASCII UTF-8 bytes). `index.html` 753,117 → 747,322 bytes;
+  15,414 → 15,291 lines (BOM preserved).
+- **Interop surface: 5 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Cross-module/inline callers (2): `chatSearchHTML`, `searchPaneInner`
+    (the agent-panel modal builder, refs above).
+  - Region-generated `on*=` handler targets (3): `onChatSearchInput`
+    (search-box `oninput`), `clearChatSearch` (clear-× `onclick` + the
+    Escape branch of the input `onkeydown`), `pickChatResult` (each result
+    row's `onclick`) — resolve against the global object at event time.
+  - Module-private (9, zero outside/handler refs): `renderAgentSearchPane`,
+    `_highlightTerm`, `chatResultsHTML`, `runChatSearch` + the 5 state
+    globals. (`selectResumeSession` in `pickChatResult`'s body is an
+    OUTBOUND dep, defined inline at L5721, not re-exposed here.)
+  - Formal scans: generated-handler ASSIGNMENT scan (`="<ident>=`) EMPTY (no
+    accessor bridge); per-identifier writer scan → zero wholesale writes
+    beyond declarations; zero `typeof`/`window.`-qualified probes; zero
+    `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `esc`, `API_BASE` (L681 `const`), `convPreviewHTML` (L5771, the adjacent
+  Resume-preview section that stays inline), `selectResumeSession` (L5721,
+  same section) + browser builtins (`fetch`, `setTimeout`, `clearTimeout`,
+  `RegExp`, `encodeURIComponent`, `document.getElementById`). Same
+  classic-script global-declarative-record mechanics as modules 2–9.
+  Strict-mode promotion audited: clean.
+- **sw.js:** `SW_VERSION` `mc-push-v10` → `mc-push-v11` (no cache list by
+  design; version bump only, same as modules 1–9).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/search-chats.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs`
+  and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --input-type=module --check` parses search-chats.js in module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5390 python server.py` from the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/search-chats.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 6542, `Cache-Control: no-cache` + ETag.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **strictly read-only** — no agent dispatch, no model cost) —
+    **16/16 PASS, 0 console errors, 0 uncaught page errors**: 5/5 window.*
+    interop callable; 9/9 module-privates (fns + state) NOT leaked to window;
+    throwaway `sctest` project created (`POST /api/project/sctest`) →
+    real `openProjectModal('sctest')` → dispatch screen renders the
+    `#chat-search-sctest` box (chatSearchHTML via the agent panel);
+    **real GET `/search-chats` ran** for a no-match query → empty-state
+    "No chats mention …" rendered through `searchPaneInner`→`chatResultsHTML`;
+    **results path** via a stubbed fetch returning 2 synthetic rows (still
+    driven through the REAL `onChatSearchInput`→`runChatSearch` handler) →
+    `chatResultsHTML` header "2 chats mention …", `_highlightTerm` wrapped
+    the query in `<mark class="cp-hit">`, each row wired
+    `onclick="pickChatResult('sctest','CSID-AAA')"`; `clearChatSearch` reset
+    the input + flipped the pane off results. Throwaway project deleted
+    after. Screenshot eyeballed: fully styled search box (magnifier + clear
+    ×, rounded border) above the composer in the AGENT dispatch screen; modal
+    + sidebar + mascot all styled, no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined` at the same L78
+    evaluate, landmine 4 of module 1); page boots with search-chats.js
+    fulfilled (grid renders, gets past the card wait), dies at the same later
+    evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–9).
+
+### Landmines for module 11 (remaining-core map, post-search-chats)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule; re-derive
+   boundaries + brace-depth scan; accessor-bridge handler-assigned vars via
+   the formal scan; object-identity bridge for bare-`let` shared state;
+   don't "repair" quirks; settle CSS animations before screenshots;
+   cross-module window props are normal; surgery scripts in `_scratch/*.py`;
+   don't race region setTimeouts — waitForFunction on observable state).
+2. **The header-to-header span is now a PROVEN unreliable boundary 4×**
+   (modules 4, 9, and 10 all had foreign code in the quoted span; only
+   modules 5/6/7 matched exactly). For search-chats the quoted 849L was 86%
+   foreign — the family was 124L. **Always brace-depth-scan from the header
+   and read where the family actually ends; the "remaining candidate" line
+   counts in this log are header-to-header upper bounds, not boundaries.**
+3. **Some "shared-looking" state is fully private** (search-chats' 5 state
+   globals had ZERO outside refs despite living next to the conversation
+   model). Run the outside-ref scan BEFORE assuming an identity/accessor
+   bridge is needed — module-private `let`/`const` is the cheapest outcome
+   and needs no bridge at all.
+4. **Remaining candidate queue (sizes from the module-8 list, all
+   header-to-header upper bounds, refs UNVERIFIED — re-derive; the inline
+   section is now shifted −124 more from any quoted pre-module-10 line ≥5960):**
+   MCP family 1,128L (manager + From-URL state machine; headers ~13050/13526
+   now); Hivemind family ~1,294L (tab + dashboard + cross-project +
+   run-history shared with Scheduler — the sharing is a boundary risk);
+   Command Palette 520L (2807–3326, unshifted — BEFORE all cut points;
+   palette actions reference many feature open-functions, expect a wide
+   late-bound outbound-dep list); System status 456L; Scheduler 377L (shares
+   run-history with Hivemind); Update section 360L; provider auth/settings
+   ~630L. The genuinely-entangled agent-panel/projects-grid core
+   (conversation model, modal/tile HTML, SSE slot management, dispatch,
+   status resolver — incl. the 5961–6684 block this module deliberately left
+   behind) still WAITS for the orchestrator's js/store.js design checkpoint.
+5. **The throwaway-project + real-modal recipe (reuse it for any
+   modal-gated feature):** `POST /api/project/<id>` → `fetchProjects()` →
+   real `openProjectModal(<id>)` renders the dispatch screen; assert the
+   feature's DOM (`#chat-search-<id>` here) then drive its real handlers.
+   For a feature whose only live data is server transcripts the worktree
+   doesn't have, exercise the empty path against the REAL endpoint AND the
+   populated path through a stubbed `fetch` (restored after) — both run the
+   real in-region handlers, zero model cost, fully read-only. Delete the
+   throwaway project at the end.

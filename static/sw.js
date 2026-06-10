@@ -34,7 +34,10 @@
 // v10 (2026-06-10): /static/js/mermaid.js extracted from index.html's inline
 // <script> (mermaid render pipeline + viewers; the CDN loader stays in the
 // head module). Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v10';
+// v11 (2026-06-10): /static/js/search-chats.js extracted from index.html's
+// inline <script> (search-past-chats transcript search box + results pane).
+// Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v11';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
