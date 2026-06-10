@@ -419,3 +419,149 @@ what moved, commit SHA, gate results.
    cards, landmine 4); gate (b) fresh profile asserts the feature itself.
    ESM scratch runners can't use NODE_PATH — import playwright via relative
    path into `tools/smoke/node_modules/playwright/index.mjs`.
+
+## Phase 3 — module 5: extract skills panel → `static/js/skills-panel.js` (2026-06-09)
+
+- **Module-4 SHA backfill:** module 4 (js/walkthrough.js) = commit `75c597d`.
+- **Inbound refs re-verified: exactly 2 functional refs** from outside the
+  region (the module-2 sizing said 4 — the other 2 textual hits are the
+  sidebar/mobile-drawer items at old lines 408/648, whose static onclicks call
+  `sidebarNav('skills')`/`mobileDrawerNav('skills')`, NOT region identifiers;
+  `mobileDrawerNav` delegates to `sidebarNav`, so all nav funnels into ref 1):
+  1. Old line 2652 — `openAllSkills()` inside `sidebarNav(target)`
+     (runtime-only, user-driven).
+  2. Old line 1848 — project-modal three-dot menu, generated
+     `onclick="openAllSkillsForProject('${esc(p.id)}')"` (template literal
+     inside the menu builder — runtime, resolves at click time).
+  Whole-repo sweep (`*.py`, `*.js`, `*.html`, `*.md`, smoke fixtures): no
+  other file references any of the region's 55 identifiers (CHANGELOG hits
+  are prose).
+- **Region boundary re-derived (landmine 2):** old lines 15616–16914
+  (`// ── Skills (global + per-project …)` header through `_sibInstallHere`'s
+  closing brace) + trailing blank 16915 = **exactly the 1,300-line
+  header-to-header span this time** — unlike module 4 there is NO foreign code
+  inside it. The span contains seven sub-sections that are all one feature
+  (skills manager, Learning queue/Distiller `_proposed` UI, import shell,
+  paste/folder/Git/browse import flows), bidirectionally coupled
+  (`openAllSkills` → `loadDistillerQueue`; `promoteProposed` →
+  `loadAllSkills`) with zero outside refs into the sub-sections.
+  **Parse-time audit:** brace-depth scan + manual read prove the region's top
+  level is pure declarations — 8 single-line `let` + 47 `function`, no IIFEs,
+  no top-level calls (the module-4 `startRefresh` trap has no analogue here).
+- **What moved:** old lines 15616–16915 → `static/js/skills-panel.js`,
+  **byte-verbatim** (binary reassembly assertion: original index.html ==
+  new file with the `<script>` tag removed and the region re-inserted; the
+  interop tail is append-only). Loaded via
+  `<script type="module" src="/static/js/skills-panel.js"></script>` after
+  the walkthrough.js module tag, before `</body>`. Anti-FOUC bootstrap
+  untouched (landmine 1). Diff shape: 1 insertion, 1,300 deletions.
+- **Numbers:** `skills-panel.js` = 75,399 bytes / 1,358 lines (1,300 moved +
+  58-line interop tail; CRLF, no BOM). `index.html` 942,867 → 872,756 bytes;
+  19,151 → 17,852 lines. Biggest single extraction so far.
+- **Interop surface, 30 window function re-exposures + 3 accessor bridges:**
+  - Inbound (2): `openAllSkills` (sidebarNav), `openAllSkillsForProject`
+    (project-menu generated onclick).
+  - Region-generated `on*=` handler targets (28): `loadAllSkills`,
+    `renderAllSkills`, `loadDistillerQueue`, `promoteProposedByIdx`,
+    `rejectProposedByIdx`, `toggleProposedReadByIdx`, `openSkillEditor`,
+    `_seToggleProjectPicker`, `_seLintDescription`, `saveSkillFromEditor`,
+    `archiveSkillAction`, `deleteSkillAction`, `restoreSkillAction`,
+    `_toggleSkillsImportMenu`, `openSkillImportPaste`, `openSkillImportFolder`,
+    `openSkillImportGit`, `openSkillImportBrowse`, `_doSkillImportPaste`,
+    `_doSkillImportFolder`, `_doSkillImportGit`, `_doSkillImportGitInstallOne`,
+    `_doSkillImportGitCancel`, `_doSkillImportFullPlugin`, `_siToggleProject`,
+    `_doSkillImportBrowseSearch`, `_sibReadBody`, `_sibInstallHere`.
+  - **Accessor bridges (landmine 3), 3:** `_distillerQueueOpen` and
+    `_distillerDiagOpen` are whole-var ASSIGNED from generated onclicks
+    (`_distillerQueueOpen=!_distillerQueueOpen;…`) — get/set required;
+    `_allSkillsFilter` is resolved + property-written from four generated
+    oninput/onchange handlers (`_allSkillsFilter.search=this.value;…`) —
+    getter routes the handler's property writes into the live module object
+    (it is never wholesale-reassigned, verified; set included for symmetry).
+  - Kept module-private (17 functions + 5 vars, no outside/handler refs):
+    `loadSkillUsage`, `_distillerKindBadge`, `renderDistillerQueue`,
+    `toggleProposedRead`, `_distillerPost`, `promoteProposed`,
+    `rejectProposed`, `_renderSkillRow`, `lintSkillDescription`,
+    `_renderPluginBanner`, `_renderFullPluginButton`, `_hideSkillsImportMenu`,
+    `_defaultImportContext`, `_importContextHTML`, `_siReadContext`,
+    `_siModalShell`, `_siStatus`; `_allSkillsCache`, `_skillUsageCache`,
+    `_distillerQueueItems`, `win_gitStaging`, `win_importPluginSource`.
+    (`window._sibTimer` in the browse debounce is already explicitly
+    window-qualified — needs no bridge.)
+- **Outbound deps** all resolve at call time through the shared global scope
+  (`openModals`, `nextModalZ++` reassignment, `API_BASE`, `esc`, `allProjects`,
+  `isIncognitoProject`, `showToast`, `closeModalById`, `restoreModal`,
+  `focusModal`, `_clampModalSize`, `centerModalElement`, `confirm`) — same
+  classic-script global-declarative-record mechanics as modules 2–4.
+  **Strict-mode promotion audited:** zero `this` in module code (all hits are
+  HTML handler strings/comments), no `with`/`arguments.callee`/octals, every
+  assignment targets a declared binding or explicit `window.` property;
+  `node --check` parses the file in module goal.
+- **Deferred-module timing safe:** region top level = declarations only (no
+  side effects at all — even less surface than claydo's IIFEs).
+- **sw.js:** `SW_VERSION` `mc-push-v5` → `mc-push-v6` (still no cache list by
+  design; version bump only, same as modules 1–4).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/skills-panel.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs`
+  and `bg-framing-check.mjs` (landmine 2 of module 1).
+- **Gates:**
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios.
+  - Real-server check (throwaway `MC_PORT=5379 python server.py` in the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/skills-panel.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 75399, `Cache-Control: no-cache` + ETag (no stale-JS
+    risk); `GET /api/skills` → the machine's real 9 global skills.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`,
+    landmine 3 of module 4; **read-only** — this machine's skills are live,
+    no create/edit/archive/delete fired) — **13/13 PASS, 0 console errors,
+    0 uncaught page errors**: all 30 window.* interop functions callable;
+    all 3 accessor descriptors present (get+set) and `_distillerQueueOpen`
+    round-trips window↔module; Skills modal opens via the real
+    `sidebarNav('skills')` path; list renders 9 rows against the real
+    `GET /api/skills`; search-box generated oninput writes
+    `_allSkillsFilter.search` through the bridge end-to-end (list narrows
+    9 → 1 on "distill", then clears); detail/read view (`openSkillEditor`
+    on `mc-distill`) fetches + populates the 12,712-char body via
+    `include_body=true` and closes WITHOUT saving; Import ▾ menu opens via
+    the generated-onclick interop. Screenshots eyeballed: fully styled list
+    (badges, actions, paths), populated detail editor, import dropdown.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of
+    module 1); page boots with skills-panel.js fulfilled, dies at the same
+    later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–4).
+
+### Landmines for module 6 (settings_drill is the named candidate)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule; re-derive
+   boundaries, audit parse-time callers; accessor-bridge any
+   handler-assigned variables; don't "repair" pre-existing quirks).
+2. **settings_drill (16 refs / 662 lines per the module-2 table — RE-VERIFY
+   both):** the refs are runtime-only per the module-2 audit, and
+   mobile-pairing (module 3) already proved the settings-template interop
+   pattern (`mobilePairingSettingsHTML` + hydration call from
+   `_renderSettings`). Watch specifically for: (a) `openSettings()` callers
+   in the palette/sidebar/provider-refresh paths; (b) the drill-down's
+   depth-based hardware-back integration (History API sentinel, see
+   arch_settings_modal memory) — if back-stack state lives as region `let`s
+   read by the popstate handler OUTSIDE the region, that's the
+   terminal-class shared-mutable-global trap; audit before moving.
+3. **Object-valued region state read from handlers is bridgeable with a
+   getter-only accessor** when the binding is never wholesale-reassigned
+   (proven here with `_allSkillsFilter` — four generated handlers
+   property-write through it). Verify "never reassigned" with a
+   whole-region `(?<![\w$.])name\s*=(?![=.])` scan, not by eyeball.
+4. **The sizing table CAN be right:** skills_panel's 1,300-line
+   header-to-header span had no foreign code (unlike walkthrough's 699).
+   The lesson stays "re-derive, then trust the re-derivation" — the
+   brace-depth top-level scan (declarations only?) is a cheap, reusable
+   parse-time-safety proof.
+5. **Terminal note (for whoever attempts it):** nothing new learned this
+   module — `terminalDismissed`/`terminalEventSources` writer audit still
+   pending; the Map-identity bridge idea from module-4's landmine 4 remains
+   the candidate approach.

@@ -19,7 +19,10 @@
 // v5 (2026-06-09): /static/js/walkthrough.js extracted from index.html's
 // inline <script> (first-run tour / walkthrough). Same no-cache-list
 // rationale — version bump only.
-const SW_VERSION = 'mc-push-v5';
+// v6 (2026-06-09): /static/js/skills-panel.js extracted from index.html's
+// inline <script> (skills manager + learning queue + import flows). Same
+// no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v6';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
