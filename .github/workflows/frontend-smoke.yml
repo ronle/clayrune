@@ -14,11 +14,19 @@ on:
   push:
     paths:
       - 'static/index.html'
+      # Phase 3 splits the shell into static/css/ + static/js/ + sw.js —
+      # a CSS/JS-only commit must trigger the smoke too (Track B finding).
+      - 'static/css/**'
+      - 'static/js/**'
+      - 'static/sw.js'
       - 'tools/smoke/**'
       - '.github/workflows/frontend-smoke.yml'
   pull_request:
     paths:
       - 'static/index.html'
+      - 'static/css/**'
+      - 'static/js/**'
+      - 'static/sw.js'
       - 'tools/smoke/**'
       - '.github/workflows/frontend-smoke.yml'
   workflow_dispatch:
