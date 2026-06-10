@@ -76,4 +76,4 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
 - **Gates:** routes 209/209 ✓ · full pytest 0 ✓ · ruff E9/F821 ✓ · pyright mc/
   0 ✓ · smoke :5377 + route parity vs live :5199 (same VAPID key, same
   mobile-pair/presence responses) ✓
-- **Commit:** `(fill)` on `refactor/backend`, merged to `local/opus-effort`.
+- **Commit:** `dfb4f86` on `refactor/backend`, merged to `local/opus-effort`.
