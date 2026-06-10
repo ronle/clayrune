@@ -18,6 +18,8 @@ from unittest.mock import patch
 
 import pytest
 
+from mc.blueprints import agent_routes as _bp_agent
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
@@ -42,7 +44,7 @@ class TestRouteDispatchModel:
     def test_haiku_pick(self, tmp_path, monkeypatch):
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
-        with patch.object(s, '_scribe_call', return_value='H'):
+        with patch.object(_bp_agent, '_scribe_call', return_value='H'):
             model, source = s._route_dispatch_model('say hi', 'opus')
         assert model == s._AUTO_MODEL_VALID['H']
         assert source == 'auto'
@@ -50,7 +52,7 @@ class TestRouteDispatchModel:
     def test_sonnet_pick(self, tmp_path, monkeypatch):
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
-        with patch.object(s, '_scribe_call', return_value='S'):
+        with patch.object(_bp_agent, '_scribe_call', return_value='S'):
             model, source = s._route_dispatch_model('refactor this function', 'opus')
         assert model == s._AUTO_MODEL_VALID['S']
         assert source == 'auto'
@@ -58,7 +60,7 @@ class TestRouteDispatchModel:
     def test_opus_pick(self, tmp_path, monkeypatch):
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
-        with patch.object(s, '_scribe_call', return_value='O'):
+        with patch.object(_bp_agent, '_scribe_call', return_value='O'):
             model, source = s._route_dispatch_model('redesign the auth layer', 'sonnet')
         assert model == s._AUTO_MODEL_VALID['O']
         assert source == 'auto'
@@ -66,7 +68,7 @@ class TestRouteDispatchModel:
     def test_classifier_exception_fails_open(self, tmp_path, monkeypatch):
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
-        with patch.object(s, '_scribe_call', side_effect=RuntimeError('boom')):
+        with patch.object(_bp_agent, '_scribe_call', side_effect=RuntimeError('boom')):
             model, source = s._route_dispatch_model('anything', 'opus')
         assert model == 'opus'
         assert source == 'fallback'
@@ -75,7 +77,7 @@ class TestRouteDispatchModel:
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
         # Anything that isn't H/S/O after upper+strip+[:1] is treated as garbage.
-        with patch.object(s, '_scribe_call', return_value='I refuse to classify.'):
+        with patch.object(_bp_agent, '_scribe_call', return_value='I refuse to classify.'):
             model, source = s._route_dispatch_model('anything', 'opus')
         assert model == 'opus'
         assert source == 'fallback'
@@ -83,7 +85,7 @@ class TestRouteDispatchModel:
     def test_lowercase_token_accepted(self, tmp_path, monkeypatch):
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
-        with patch.object(s, '_scribe_call', return_value='h'):
+        with patch.object(_bp_agent, '_scribe_call', return_value='h'):
             model, source = s._route_dispatch_model('say hi', 'opus')
         assert model == s._AUTO_MODEL_VALID['H']
         assert source == 'auto'
@@ -92,7 +94,7 @@ class TestRouteDispatchModel:
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
         # Empty prompt must not invoke the classifier at all.
-        with patch.object(s, '_scribe_call') as mock_call:
+        with patch.object(_bp_agent, '_scribe_call') as mock_call:
             model, source = s._route_dispatch_model('', 'opus')
             assert not mock_call.called
         assert model == 'opus'
@@ -105,7 +107,7 @@ class TestResolveDispatchModel:
     def test_toggle_off_returns_manual(self, tmp_path, monkeypatch):
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = False
-        with patch.object(s, '_scribe_call') as mock_call:
+        with patch.object(_bp_agent, '_scribe_call') as mock_call:
             model, source = s._resolve_dispatch_model({'agent_model': 'opus'}, 'anything')
             assert not mock_call.called, 'classifier must NOT run when toggle is off'
         assert model == 'opus'
@@ -114,7 +116,7 @@ class TestResolveDispatchModel:
     def test_toggle_on_classifies(self, tmp_path, monkeypatch):
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
-        with patch.object(s, '_scribe_call', return_value='H'):
+        with patch.object(_bp_agent, '_scribe_call', return_value='H'):
             model, source = s._resolve_dispatch_model({'agent_model': 'opus'}, 'say hi')
         assert model == s._AUTO_MODEL_VALID['H']
         assert source == 'auto'
@@ -122,7 +124,7 @@ class TestResolveDispatchModel:
     def test_empty_prompt_short_circuits_to_manual(self, tmp_path, monkeypatch):
         s = _fresh_server(tmp_path, monkeypatch)
         s.CONFIG['auto_model_enabled'] = True
-        with patch.object(s, '_scribe_call') as mock_call:
+        with patch.object(_bp_agent, '_scribe_call') as mock_call:
             model, source = s._resolve_dispatch_model({'agent_model': 'opus'}, '')
             assert not mock_call.called
         assert model == 'opus'

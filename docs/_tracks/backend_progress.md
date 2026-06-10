@@ -701,3 +701,74 @@ The post-resume relaunches of 1.12 + frontend module 10 died without commits
 10,147), frontend 9 modules (index.html 15,414), all green and live. The
 resumption runbook above (64e8d77) remains exact: relaunch 1.12 worker →
 1.13 → mop-up; relaunch module 10 → mechanical queue → store.js checkpoint.
+
+## 1.12 — agent_dispatch blueprint — COMPLETED (2026-06-10, orchestrator-finished)
+
+Resumed by the orchestrator (no fresh worker). The dead 1.12 worker's
+**uncommitted extraction was salvaged**, not redone: worktree
+`agent-ad5012f1e01197183` (detached `c4db02b`) held a complete
+`mc/blueprints/agent_routes.py` + spliced `server.py`. `c4db02b` is an
+ancestor of tip `47d490e` and **`server.py` is byte-identical between them**
+(zero commits touched it) → the splice applied to current tip with zero
+drift. Transplanted the two files verbatim; everything below is validation +
+finish work the worker died before doing.
+
+- **What moved:** 33 routes (the whole agent dispatch/stream/followup/stop/
+  interrupt/session/status/guardian-reset/log + transcript/reconstruct/
+  recent-runs/conversations/plans/usage/router-stats + provider & claude auth
+  + upload-image + plan-file families) → `mc/blueprints/agent_routes.py`
+  (~5,830 lines). `agent_followup` moved WHOLE (the 492-line one).
+- **Stay-list honored:** ALL scribe/condense/checkpoint/memory-write
+  machinery stays in server.py and is late-bound via
+  `wire(*, data_dir, …, scribe_call_fn, write_session_memory_fn,
+  dispatch_condense_fn, …)` (28 slots). server.py calls `_bp_agent.wire(...)`
+  then `register_blueprint(_bp_agent.bp)`.
+- **Re-homing (the 1.11 landmine, point b):** functions whose HOME moved to
+  agent_routes are re-exported back onto server.py as module-level aliases
+  (`_resolve_claude`, `get_manager`, `_dispatch_agent_internal`,
+  `_load_agent_log`, `_route_dispatch_model`, `_mcp_server_catalog`,
+  `_resolve_project_mcp_config`, … ~33 names) so the staying machinery +
+  scheduler (1.13's `_dispatch_agent_internal`) still resolve them; the other
+  blueprints' `wire()` calls (hivemind/system/terminal/mcp) now pull their
+  `get_manager_fn`/`resolve_claude_fn`/`register_process_fn` from `_bp_agent`.
+- **Typing debt:** 19 verbatim-moved lines tripped pyright basic (the
+  wire-slot `Optional[Callable]` None-default pattern → `reportOptionalCall`,
+  plus tuple-vs-Response unions + Optional `.write/.flush/.pid`). Each tagged
+  `# pyright: ignore[<rule>]  # moved-verbatim typing debt (1.12)` (the 1.2
+  convention) — agent_routes.py back to **0 pyright errors** (remaining 23 =
+  the pre-existing distiller/agent_runtime baseline).
+- **Phase-5 test porting (the Phase-0 monkeypatch landmine, 8 failures fixed):**
+  tests that patched `server.X` for functions/deps that moved now patch
+  `mc.blueprints.agent_routes.X`:
+  - `test_auth_routes.py` — `_launch_terminal_for_binary` (moved, not
+    re-exported → server has no such attr).
+  - `test_auto_model_router.py` — all 10 `_scribe_call` patches (the 4
+    "passing" picks were silently making REAL classifier API calls that
+    happened to agree; 2 fail-opens failed because the real classifier
+    returned a valid token instead of raising/garbling — now deterministic).
+  - `test_mcp_trim.py` — `_stub_catalog` helper + the inline `_boom` in
+    `test_resolve_fails_open` (both patch `_mcp_server_catalog`).
+  - `test_telemetry.py` — `/api/usage` globs `agent_routes.DATA_DIR`; the
+    test's `server.DATA_DIR = data_dir` override now mirrored onto the
+    blueprint.
+- **New `tests/test_agent_routes.py` (8 tests):** registration parity (every
+  one of the 33 routes is present AND owned by the `agent_routes` blueprint,
+  pinned both ways so scope creep on re-merge is caught), read-only loopback
+  smokes (providers/usage/router-stats/recent-runs prove wire() bound the
+  global deps), and the app-wide LAN auth-gate contract (401 before handler).
+- **Gates:** url_map **209 rules** unchanged (AST: 209 route decorators both
+  sides; server.py 56→23, agent_routes 33; zero new duplicate paths, zero
+  route loss) ✓ · `import server` + `agent_routes` registered (13 blueprints)
+  ✓ · ruff E9/F821 clean ✓ · pyright agent_routes 0 errors ✓ · **full pytest
+  green** (8 ported + 8 new) ✓ · boot smoke `MC_PORT=5377` heartbeat 200 +
+  providers/usage/router-stats/recent-runs all 200, boot.log error-free, live
+  :5199 untouched ✓
+- **server.py:** 10,147 → **4,676 lines**.
+- **Landmines for 1.13 (scheduler):** `_dispatch_agent_internal` is now a
+  server.py alias of `_bp_agent._dispatch_agent_internal` — the scheduler's
+  run-now path resolves it through that alias (no re-wire needed). The
+  `/api/schedules*` CRUD routes (4) still sit in server.py (`get_schedules`/
+  `create_schedule`/`update_schedule`/`delete_schedule`) — they move with
+  1.13 along with `_scheduler_loop` + the thread-start-once guard +
+  `obs.heartbeat('scheduler')`.
+- **Commit:** PENDING (this entry ships in the 1.12 commit; SHA backfilled at 1.13).

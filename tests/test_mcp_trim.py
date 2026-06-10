@@ -49,7 +49,11 @@ def test_non_list_returns_none(srv):
 # ── selection logic (catalog stubbed for determinism) ─────────────────────────
 
 def _stub_catalog(srv, monkeypatch, catalog):
-    monkeypatch.setattr(srv, '_mcp_server_catalog', lambda project: dict(catalog))
+    # _resolve_project_mcp_config moved to the agent_routes blueprint (1.12) and
+    # calls ITS module-local _mcp_server_catalog — patch the blueprint, not
+    # server (backend_progress.md Phase-1 landmine).
+    from mc.blueprints import agent_routes as _bp_agent
+    monkeypatch.setattr(_bp_agent, '_mcp_server_catalog', lambda project: dict(catalog))
 
 
 def test_list_selects_named_servers(srv, monkeypatch):
@@ -85,7 +89,10 @@ def test_resolve_fails_open(srv, monkeypatch):
     """Any error in catalog build → None (fail-open to full fleet)."""
     def _boom(project):
         raise RuntimeError('disk gone')
-    monkeypatch.setattr(srv, '_mcp_server_catalog', _boom)
+    # _resolve_project_mcp_config (1.12) calls agent_routes' module-local
+    # catalog — patch the blueprint so the fail-open path is actually exercised.
+    from mc.blueprints import agent_routes as _bp_agent
+    monkeypatch.setattr(_bp_agent, '_mcp_server_catalog', _boom)
     assert srv._resolve_project_mcp_config(
         {'id': 'p', 'enabled_mcp_servers': ['filesystem']}) is None
 

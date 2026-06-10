@@ -158,6 +158,10 @@ class TestApiUsageContract:
             del sys.modules['server']
         import server
         server.DATA_DIR = data_dir
+        # /api/usage moved to the agent_routes blueprint (1.12); it globs ITS
+        # own wired DATA_DIR — mirror the test override onto the blueprint.
+        from mc.blueprints import agent_routes as _bp_agent
+        _bp_agent.DATA_DIR = data_dir
         return server, data_dir
 
     def _write_log(self, data_dir, project_id, entries):

@@ -289,9 +289,11 @@ class TestAuthRoutes:
     def test_claude_login_launch_shim_calls_generic(self):
         """POST /api/claude/login-launch delegates to agent_auth_login('claude')."""
         c, _ = _get_flask_client()
-        # Patch _launch_terminal_for_binary to avoid OS interaction
-        import server
-        with patch.object(server, '_launch_terminal_for_binary', return_value=None):
+        # Patch _launch_terminal_for_binary to avoid OS interaction.
+        # It moved to the agent_routes blueprint (1.12); the login-launch route
+        # calls ITS module-local copy, so patch there (not server).
+        from mc.blueprints import agent_routes as _bp_agent
+        with patch.object(_bp_agent, '_launch_terminal_for_binary', return_value=None):
             with patch.object(_ar.ClaudeRuntime, 'resolve_binary',
                                return_value=Path('/fake/claude')):
                 resp = c.post('/api/claude/login-launch')
