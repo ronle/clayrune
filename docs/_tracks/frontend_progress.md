@@ -1418,3 +1418,105 @@ what moved, commit SHA, gate results.
    populated path through a stubbed `fetch` (restored after) — both run the
    real in-region handlers, zero model cost, fully read-only. Delete the
    throwaway project at the end.
+
+## Phase 3 — module 11: extract backlog actions → `static/js/backlog-actions.js` (2026-06-10)
+
+- **Module-10 SHA backfill:** module 10 (js/search-chats.js) = commit `dd0d637`.
+- **Candidate selection this run (3 clean modules; cleaner end first):** of
+  the module-8 queue, the named candidates were RE-DERIVED and several
+  disqualified before picking. **System status (456L) is BLOCKED** — its boot
+  call `fetchSystemStatus()` runs at PARSE TIME at the inline script top level
+  (L14349, right after the inline `startRefresh()`), exactly the module-4
+  `startRefresh` trap; moving `fetchSystemStatus` to a deferred module would
+  ReferenceError-abort the rest of the inline boot. **Command Palette's "520L"
+  span is 80% foreign** (fifth header-to-header miss): 2807–2903 is the real
+  family (cmd state + toggle + render + input listener); L2905+ is core modal
+  engine — `restoreModal` (13 callers), `sizeAgentChat`, `updateAgentStatusUI`,
+  `guardianReset`, `refreshModalById` (9), `refreshModal` (50) — store.js
+  territory; AND the real family needs 2 accessor bridges (`cmdPaletteOpen` is
+  written by walkthrough.js's strict-module bare assignment; `cmdSelectedIndex`
+  is `++`/`=`-mutated by the shared inline keydown handler that also touches
+  `focusedModalId`/`closeModalById` and can't be split). Deferred both; picked
+  the two clean Backlog families + Scheduler instead.
+- **Inbound refs re-verified (formal whole-repo scan of all 7 region names):
+  every ref is a generated `on*=` handler in tile/modal HTML or one
+  cross-module caller — all runtime-only, zero parse-time callers:**
+  `addBacklogItem` (tile add button L1932 + `handleInputEnter` keydown L1920),
+  `toggleDone` (tile check L1556 + **cross-project backlog list L12472**, the
+  module-12 region), `cyclePriority` (L1569), `saveBacklogText` (onblur L1561),
+  `deleteBacklogItem` (L1580), `dispatchBacklogItem` (L1573),
+  `patchItem` (the Code-sync retry path L4010). Whole-repo sweep: no other file
+  references any of the 7 names.
+- **Region boundary re-derived:** old lines 5836… no — Backlog actions header
+  `// ── Backlog actions` at 3579 through `patchItem`'s closing brace (3698) +
+  trailing blank 3699; next header `// ── GitHub sync actions` at 3700 (its
+  `showToast` at 3702 stays inline). **Exactly the 121-line header-to-header
+  span — no foreign code** (like modules 5/6/7). Brace-depth top-level scan:
+  7 `async function`/`function` decls, depth ends 0, **0 top-level non-decl
+  lines** (no IIFEs, no parse-time calls, no listeners). `node --check
+  --input-type=module` (via stdin) parses.
+- **State: NONE.** The region declares zero module-level variables — purely 7
+  functions. No identity bridge, no accessor bridge. Cleanest possible move.
+- **What moved:** old lines 3579–3699 → `static/js/backlog-actions.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before +
+  region + after == original` proving the region is a clean contiguous byte
+  span; (2) the new index.html, with the inserted `<script>` tag line removed
+  AND the region bytes re-inserted at the cut point, `== original`
+  byte-for-byte; interop tail append-only on the js side). Loaded via
+  `<script type="module" src="/static/js/backlog-actions.js"></script>`
+  inserted immediately after the search-chats.js module tag, before `</body>`.
+  Anti-FOUC bootstrap untouched. Diff shape: 1 insertion, 121 deletions.
+- **Numbers:** `backlog-actions.js` = 5,726 bytes / 133 lines (121 moved +
+  12-line interop tail: 1 blank + 4 comment + 7 assignment; CRLF, no BOM,
+  189 non-ASCII UTF-8 bytes). `index.html` 747,322 → 742,287 bytes;
+  15,291 → 15,171 lines (BOM preserved).
+- **Interop surface: 7 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Generated `on*=` handler targets (6): `addBacklogItem`, `toggleDone`,
+    `cyclePriority`, `saveBacklogText`, `deleteBacklogItem`,
+    `dispatchBacklogItem` (tile + modal HTML, resolve against window at event
+    time).
+  - Cross-module callers (2, overlap): `toggleDone` (also the cross-project
+    backlog list, module 12) + `patchItem` (the Code-sync retry path L4010).
+  - Module-private: none (all 7 functions are externally referenced).
+  - Formal scans: generated-handler ASSIGNMENT scan (`="<ident>=`) EMPTY;
+    per-identifier writer scan → zero writes (no state); zero `typeof`/
+    `window.`-qualified probes; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `refreshSilent`, `esc`, `showToast`, `confirm`, `allProjects`,
+  `_pushUndo`/undo machinery, `dispatchAgent`-adjacent helpers + browser
+  builtins (`fetch`, `document.getElementById`). Same classic-script
+  global-declarative-record mechanics as modules 2–10. Strict-mode promotion
+  audited: clean (no `this`, every assignment is a `window.` property).
+- **sw.js:** `SW_VERSION` `mc-push-v11` → `mc-push-v12` (no cache list by
+  design; version bump only, same as modules 1–10).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/backlog-actions.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses backlog-actions.js in
+    module goal. (NOTE for future runs: this Node — v24 — rejects
+    `--input-type=module --check <file>`; pipe the file via stdin instead. The
+    progress log's earlier `--input-type=module --check <file>` form errors
+    here.)
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5391 python server.py` from the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/backlog-actions.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 5726, `Cache-Control: no-cache` + ETag.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`) —
+    **16/16 PASS, 0 console errors, 0 page errors**: all 7 window.* interop
+    callable; throwaway `bltest` project created (`POST /api/project/bltest`)
+    → real `openProjectModal('bltest')` rendered `#backlog-input-bltest`;
+    **real CRUD end-to-end** drove the in-region handlers against real
+    endpoints — `addBacklogItem` (verified item in `/api/projects`),
+    `cyclePriority` (normal → high, the `patchItem` path), `toggleDone`
+    (status → done), `patchItem` (text updated), `deleteBacklogItem` (backlog
+    emptied). Throwaway project deleted after.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of
+    module 1; line shifted to 81 by the added const but the same evaluate
+    step); page boots with backlog-actions.js fulfilled, dies at the same
+    later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–10).
