@@ -6288,6 +6288,8 @@ function modalContentHTML(p) {
           <div class="modal-menu-sub" id="model-sub-${esc(p.id)}">
             <button class="modal-menu-sub-item${!p.agent_model?' active':''}" onclick="setProjectModel('${esc(p.id)}','')">
               <span class="modal-menu-sub-dot" style="background:var(--text-faint)"></span> Default (global)</button>
+            <button class="modal-menu-sub-item${p.agent_model==='claude-fable-5'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-fable-5')">
+              <span class="modal-menu-sub-dot" style="background:var(--purple)"></span> Fable 5</button>
             <button class="modal-menu-sub-item${p.agent_model==='claude-sonnet-4-6'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-sonnet-4-6')">
               <span class="modal-menu-sub-dot" style="background:var(--green)"></span> Sonnet 4.6</button>
             <button class="modal-menu-sub-item${p.agent_model==='claude-opus-4-8'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-opus-4-8')">
@@ -17788,6 +17790,7 @@ async function _renderSettings() {
   const modelOptions = [
     ['__auto__', 'Auto — pick per task'],
     ['', 'Default'],
+    ['claude-fable-5', 'Fable 5'],
     ['claude-opus-4-8', 'Opus 4.8'],
     ['claude-sonnet-4-6', 'Sonnet 4.6'],
     ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
