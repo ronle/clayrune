@@ -165,3 +165,111 @@ what moved, commit SHA, gate results.
    settings drill-down template) is the natural module 3; walkthrough
    (4 refs, all late-bound: 2 onclick attrs, 1 palette action, 1 setTimeout)
    is the runner-up.
+
+## Phase 3 — module 3: extract mobile pairing → `static/js/mobile-pairing.js` (2026-06-09)
+
+- **Module-2 SHA backfill:** module 2 (js/claydo.js) = commit `1ff17c1`.
+- **Inbound refs re-verified: exactly 2 functional refs** from outside the
+  region, both inside `_renderSettings()` (runtime-only — fire when Settings
+  opens, never at parse time):
+  1. `${mobilePairingSettingsHTML()}` — old line 13511, the Connectivity
+     detail-pane template.
+  2. `try { refreshMobilePairingSection(); } catch (_) {}` — old line 13585,
+     the post-render hydration block.
+  (Third textual hit, old line 12944, is the cosmetic category subtitle
+  `'Remote access, push & mobile pairing'` — not a code ref.) Whole-repo
+  sweep: no other frontend file references any region identifier (server.py /
+  control_plane hits are the backend endpoints; distiller/docs hits are vocab).
+- **What moved:** old lines 14392–14776 (`// ── Mobile pairing` section header
+  through `_mobilePairRenderQR`'s closing brace) + trailing blank 14777 →
+  `static/js/mobile-pairing.js`, verbatim (proven by binary reassembly
+  assertion: original index.html == new file with the `<script>` tag removed
+  and the region re-inserted). Loaded via
+  `<script type="module" src="/static/js/mobile-pairing.js"></script>`
+  inserted immediately after the claydo.js module tag, before `</body>`.
+  Anti-FOUC bootstrap untouched (landmine 1). Diff shape: 1 insertion,
+  386 deletions.
+- **Numbers:** `mobile-pairing.js` = 20,725 bytes / 399 lines (385 moved +
+  14-line interop tail: 1 blank + 3 comment + 10 assignments; CRLF, no BOM).
+  `index.html` 992,812 → 973,491 bytes; 20,152 → 19,767 lines.
+- **Interop surface (window.* re-exposures), 10 functions:**
+  `mobilePairingSettingsHTML`, `refreshMobilePairingSection` (the 2 inbound
+  refs; the latter is also a generated-onclick Cancel target) +
+  `_mobilePairGenerate`, `_mobilePairRevokeToken`, `_mobilePairCopyFreshUri`,
+  `_mobilePairDismissFresh`, `_mobilePairEdit`, `_mobilePairCopyUri`,
+  `_mobilePairDelete`, `_mobilePairSave` (region-generated `onclick="..."`
+  attributes resolve against the global object at click time). Kept
+  module-private (internal-only): `_mobilePairRenderAuto`,
+  `_mobilePairRenderManual`, `_mobilePairRenderQRInto`, `_mobilePairFormHTML`,
+  `_mobilePairRenderQR`.
+- **State stays on window by construction:** the region's only top-level side
+  effect is `window._mobilePairState = {...}`; both mutable globals
+  (`_mobilePairState`, `_mobilePairFreshUri`) were already explicitly
+  window-qualified at every read/write and are touched only by region code —
+  landmine 3 (module-scoped bindings diverging) doesn't apply. Outbound deps
+  (`API_BASE`, `esc`, `showToast`, `QRCode` CDN global, `confirm`) all resolve
+  at call time. Deferred-module timing safe: every `openSettings()` caller is
+  user-driven (sidebar nav / palette / provider-refresh) — no parse-time
+  inbound calls.
+- **sw.js:** `SW_VERSION` `mc-push-v3` → `mc-push-v4` (still no cache list by
+  design; version bump only, same as modules 1–2).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/mobile-pairing.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs` (landmine 2).
+- **Gates:**
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios.
+  - Real-server check (throwaway `MC_PORT=5379 python server.py` in the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/mobile-pairing.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 20725; `GET /api/mobile-pair/config` → `{"configured":false}`
+    (the state under test).
+  - Headless Chromium exercise against that server — **24/24 PASS, 0 console
+    errors, 0 uncaught page errors**: all 10 window.* interop functions
+    callable; Settings → Connectivity → Pair Mobile App drill renders the
+    section (template + hydration interop); enrolled deployment renders the
+    auto flow (`#mobile-pair-create`, paired-token list — read-only GETs;
+    "Pair a phone" deliberately NOT clicked, it would mint a real CP token);
+    `window._mobilePairState.configured === false` handled; Advanced manual
+    form renders the three empty credential inputs with no Cancel button
+    (unconfigured branch); empty-form "Verify & save" click exercises the
+    generated-onclick interop end-to-end (validation message shown).
+    Screenshot eyeballed: fully styled drilled panel.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4); page
+    boots with mobile-pairing.js fulfilled, dies at the same later evaluate.
+    No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–2).
+
+### Landmines for module 4 (walkthrough is the named candidate)
+
+1. All module-1/2/3 landmines still apply verbatim (anti-FOUC inline
+   bootstrap; route.fulfill in BOTH harnesses per new js file; CI path-filter
+   gap for `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary
+   surgery; build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule).
+2. **Walkthrough has a BOOT-PATH inbound call:** the first-run auto-start
+   (old line ~18822, now shifted −386) runs
+   `setTimeout(() => startWalkthrough(), 600)` from the post-fetchProjects
+   init when `realProjectCount === 0 && !localStorage.walkthrough_done`.
+   Modules execute before DOMContentLoaded and the call is further delayed
+   600 ms, so ordering is safe — but `startWalkthrough` MUST be
+   window-exposed or first-run onboarding silently dies (it's also invoked
+   via 2 onclick attrs + 1 palette action).
+3. **`startWalkthrough()` calls `showDesktop()`** — it minimizes EVERY open
+   modal. Discovered live during module-3 gating: on a fresh profile +
+   zero-project worktree the auto-tour fired mid-test and display:none'd the
+   settings modal under test (`modal-window … minimized`). When gating
+   module 4 (or any module) against a throwaway server, either seed
+   `localStorage.walkthrough_done=1` via addInitScript or assert the tour
+   itself.
+4. **Fresh-worktree servers render zero grid tiles** (only the `_incognito`
+   pseudo-project exists), so `#projects-col .card` never appears against a
+   real throwaway server — wait on the app shell / boot functions instead.
+   The grid-renders gate belongs to boot-smoke's fixtures.
+5. **Duplicate-id quirk preserved, don't "fix" in a move:** the pairing
+   region renders TWO `#mobile-pair-error` divs (auto section + manual
+   form); `_mobilePairSave`'s `getElementById` resolves to the auto
+   section's. Pre-existing behavior, byte-preserved by this move. Same
+   class of trap likely exists in other regions — moves must not deduplicate
+   ids or "repair" lookups.

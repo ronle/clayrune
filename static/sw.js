@@ -13,7 +13,10 @@
 // v3 (2026-06-09): /static/js/claydo.js extracted from index.html's inline
 // <script> (Ask Claydo guide assistant). Same no-cache-list rationale —
 // version bump only.
-const SW_VERSION = 'mc-push-v3';
+// v4 (2026-06-09): /static/js/mobile-pairing.js extracted from index.html's
+// inline <script> (mobile pairing settings section). Same no-cache-list
+// rationale — version bump only.
+const SW_VERSION = 'mc-push-v4';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
