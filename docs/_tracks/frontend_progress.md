@@ -1096,3 +1096,163 @@ what moved, commit SHA, gate results.
    `agentStatusCache`, …) is the bridge pattern's stress test: dozens of
    globals, some possibly wholesale-reassigned; run the formal writer scan
    FIRST and expect accessor bridges where it fails.
+
+## Phase 3 — module 9: extract Mermaid render pipeline → `static/js/mermaid.js` (2026-06-10)
+
+- **Module-8 SHA backfill:** module 8 (js/terminal.js) = commit `28e27bb`.
+- **Sizing correction (module-4 lesson, third occurrence):** the "Mermaid
+  interception 1,127L" row measured header-to-header (`// ── Mermaid diagram
+  interception` 6939 → `// ── Agent Log Panel` 8066). The real cleanly-
+  separable family is **306 lines (6939–7244) + trailing blank 7245**; the
+  other ~820 lines of the span are the conversation model (`appendAgentLine`
+  7246, `approvePlan`, the AskUserQuestion form machinery, `sendFollowup`,
+  `stopAgent`, `fetchAgentStatus`, …) — NOT mermaid; stays inline.
+- **Boundary finding — the lazy-load/theming bootstrap is NOT monolith code
+  and STAYS in `<head>`:** the mermaid library loader lives in its own,
+  already-isolated `<script type="module">` at L112–210 (static CDN import of
+  `mermaid@11` ESM, `mermaid.initialize` with the Clayrune theme,
+  `window.mermaid`, a startup orphan-error sweep that is an inline COPY of
+  the region's sweep logic, `mermaid-ready` dispatch, and the Excalidraw
+  bridge background `import()` → `window._excalidrawAPI` +
+  `excalidraw-ready`). Merging it verbatim into a body-end mermaid.js was
+  analyzed and DISQUALIFIED as a behavior change: a top-level static CDN
+  import gates the whole module's evaluation, so the family's window
+  re-exposures would wait on a multi-hundred-KB jsdelivr fetch — but the
+  inline callers are hot paths (`appendAgentLine` → `_handleMermaidLine`
+  fires on every SSE output line; a reload-while-an-agent-streams would race
+  the CDN and throw ReferenceError per line = dropped agent output; CDN-down
+  would permanently break the formatter, vs. baseline's graceful "Building
+  diagram…" pend). The static→dynamic import rewrite that would avoid the
+  gating is not a move. Partial-scope delivery, documented here: render
+  pipeline + buffers + error handling + both viewers moved; loader/theming
+  stays as the head module it already was.
+- **What moved:** old lines 6939–7245 (`// ── Mermaid diagram interception`
+  header through `_openImageViewer`'s closing brace + trailing blank) →
+  `static/js/mermaid.js`, **byte-verbatim** (binary reassembly assertion:
+  original index.html == new file with the `<script>` tag line removed and
+  the region re-inserted at the cut point; interop tail append-only).
+  `_openImageViewer` (the image lightbox that reuses the mermaid-viewer
+  chrome) is part of the contiguous family and moved with it. Loaded via
+  `<script type="module" src="/static/js/mermaid.js"></script>` after the
+  terminal.js tag, before `</body>`. Anti-FOUC bootstrap untouched. Diff
+  shape: 1 insertion, 307 deletions.
+- **Numbers:** `mermaid.js` = 15,836 bytes / 326 lines (307 moved incl. the
+  trailing blank + 19-line interop tail; CRLF, no BOM). `index.html`
+  767,452 → 753,117 bytes; 15,720 → 15,414 lines (BOM preserved).
+- **Interop surface: 4 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Inline callers (3 fns): `_renderAllMermaidPlaceholders` (refreshModal
+    L3260 + openPlanViewer L10427, pre-move numbering),
+    `_mermaidPlaceholderHTML` (outputLines builder L5368 + openPlanViewer
+    body builder L10377), `_handleMermaidLine` (appendAgentLine L7271).
+  - Generated-onclick target (1): `_openImageViewer` — the rich-text
+    formatter emits `onclick="_openImageViewer(this.src)"` (L6675/L6738,
+    builders stay inline; resolve against the global object at click time).
+  - Module-private (6): `_mermaidBuffers` (region-internal `const` container,
+    zero outside refs — formal scan), `_resizeSvgForFit`,
+    `_sweepOrphanMermaidNodes`, `_renderViaExcalidraw`, `_renderViaMermaid`,
+    `_openMermaidViewer` (wired only via region-internal addEventListener).
+  - Formal scans: per-identifier whole-file writer scan (wholesale +
+    compound + inc/dec) → zero writes beyond the one `const` decl; zero
+    `typeof`/`window.`-qualified probes; generated-handler assignment scan
+    EMPTY; region outbound-assignment scan → zero writes to non-region
+    bindings (the viewers use their own overlay — the region never touches
+    `nextModalZ` or the modal manager at all); zero `this` in region code.
+- **Parse-time audit (brace-depth scan):** region top level = 1 `const` +
+  9 `function` declarations, depth ends 0, no IIFEs, no top-level calls.
+  Deferred-module timing: all inbound calls are ≥1 network round-trip +
+  user/SSE action past module eval (same accepted class as module 8).
+- **Outbound deps** (resolve at call time): `esc` (inline fn),
+  `window.mermaid` / `window._excalidrawAPI` (head-module products,
+  window-qualified reads), the `mermaid-ready` window event (listener armed
+  by `_renderAllMermaidPlaceholders` when the lib isn't loaded yet — the
+  lazy-load handshake is unchanged), DOM/browser builtins. No cross-module
+  deps. `node --input-type=module --check` parses.
+- **sw.js:** `SW_VERSION` `mc-push-v9` → `mc-push-v10` (no cache list by
+  design; version bump only, same as modules 1–8).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/mermaid.js` in
+  BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios.
+  - Real-server check (throwaway `MC_PORT=5379 python server.py` from the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/mermaid.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 15836, `Cache-Control: no-cache`.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`) —
+    **24/24 PASS, 0 console errors, 0 uncaught page errors**:
+    - Interop: 4/4 window fns callable; 6/6 module-privates NOT leaked.
+    - `window.mermaid` loaded LIVE from the CDN (head module evaluated; the
+      lazy-load path therefore exercised in its loaded branch).
+    - **Prescribed exercise through the REAL inline formatter path:** stubbed
+      `EventSource` post-boot, called inline `connectAgentStream`, fired
+      synthetic `{type:'output'}` SSE messages through the REAL
+      `es.onmessage` → `appendAgentLine` → module `_handleMermaidLine`:
+      placeholder created with captured source, then **the diagram SVG
+      RENDERED through the real pipeline** (13,423-char SVG;
+      `renderer=mermaid` — the Excalidraw bridge hadn't finished its
+      background esm.sh load at render time, so the designed
+      excalidraw→mermaid fallback chain fired, identical to baseline's
+      race), click-to-enlarge wired.
+    - Viewer: block click → overlay; zoom 100%→125%; source toggle shows
+      the original fence; Escape closes + keydown listener cleaned.
+    - **Error path:** invalid mermaid streamed the same way →
+      `.mermaid-error` ("Diagram error: No diagram type detected…") +
+      `.mermaid-source` raw-source block, no page errors — baseline
+      degradation shape.
+    - Rebuild-path interop: `_mermaidPlaceholderHTML` string into a fresh
+      host + `_renderAllMermaidPlaceholders(host)` → rendered SVG (the
+      L5368/L3260 shape end-to-end).
+    - Image viewer: `window._openImageViewer(dataURI)` → overlay with img,
+      zoom 100%→125%, Escape close.
+    - Screenshots eyeballed: Clayrune-themed diagram (cream nodes, orange
+      borders, clay-brown edges — head-module theming flowing through the
+      extracted pipeline), styled viewer + source pane.
+  - `node tools/smoke/bg-framing-check.mjs` — **identical pre-existing base
+    error** (`setBgZoom is not defined`, landmine 4 of module 1); boots with
+    mermaid.js fulfilled (grid renders), dies at the same later evaluate.
+    No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–8).
+
+### Landmines for module 10 (remaining-core map, post-mermaid)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule; re-derive
+   boundaries + brace-depth scan; accessor-bridge handler-assigned vars via
+   the formal scan; object-identity bridge for bare-`let` shared state;
+   don't "repair" quirks; settle CSS animations before screenshots;
+   cross-module window props are normal; surgery scripts in `_scratch/*.py`;
+   don't race region setTimeouts — waitForFunction on observable state).
+2. **NEW CLASS — head-module residency:** not every sizing-table family is
+   monolith code. Check FIRST whether part of the family lives in a separate
+   head `<script type="module">`. A top-level static CDN import gates a
+   module's entire evaluation — hot-path helpers (formatter callees, SSE
+   line handlers) must NEVER ride in a module that imports from a CDN.
+   Leave CDN loaders where they are, or the move becomes a behavior change.
+3. **Queue correction — the "Excalidraw bridge 492L" row is DEAD:** after
+   module 9, `excalidraw` appears ONLY in the head module (loader, stays
+   per landmine 2); the inline consumer `_renderViaExcalidraw` moved into
+   js/mermaid.js as module-private. There is no extractable inline
+   excalidraw code left. Strike it from the candidate list.
+4. **Remaining candidate queue (sizes from the module-8 list, all refs
+   UNVERIFIED — re-derive; post-module-9 inline section starts shifted
+   −307 from the quoted pre-move line numbers):** MCP family 1,128L
+   (manager 476 + From-URL state machine 652; headers were 13481/13957,
+   now ~13174/13650); Hivemind family ~1,294L (tab 202 + dashboard 544 +
+   cross-project 366 + run-history 182 shared with Scheduler — the sharing
+   is a boundary risk, derive carefully); Search past chats 849L
+   (5836–6684, unshifted — BEFORE the cut point); Command Palette 520L
+   (2807–3326, unshifted; palette actions reference many feature
+   open-functions — expect a wide outbound-dep list, all late-bound);
+   System status 456L (10910→~10603); Scheduler 377L (10514→~10207);
+   Update section 360L (12225→~11918); provider auth/settings ~630L.
+   The synthetic-SSE + stub-EventSource technique (modules 8–9) now covers
+   any feature whose entry point is an SSE line or marker.
+5. **The gate-host trick from this module:** for formatter-fed features,
+   a hand-made `agent-output-<sid>` container + stubbed EventSource +
+   inline `connectAgentStream` runs the ENTIRE real pipeline (the formatter
+   only needs the element to exist) — no real agent dispatch, no model
+   cost, fully read-only against the server.
