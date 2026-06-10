@@ -112,3 +112,20 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   ruff ✓ · pyright mc/ 0 ✓ · smoke :5377 — /api/mcp lists, mcp-enabled returns
   loadout ✓
 - **Commit:** `9da28cf` on `refactor/backend`, merged to `local/opus-effort`.
+
+## 1.5 — distiller_routes blueprint (2026-06-10)
+
+- **What moved:** 150 lines → `mc/blueprints/distiller_routes.py`: 7 routes
+  (plan said 5 — loop-health + proposed-artifact landed after): 5
+  `/api/distiller/*` + 2 `/api/project/<id>/distiller*` (feature cohesion).
+  **Splice-guard win:** the source region also held `/api/router/stats` +
+  `/api/project/<id>/memory/search` — the route-inventory assertion refused the
+  cut until the boundary excluded them (dispatch/memory family; they stay for
+  1.12/1.9).
+- **Seams:** `wire(load_project_fn, data_dir)`; `_resolve_project_path_or_400`
+  cross-imported from skills_routes; top-level `distiller`/`skills` imported
+  directly.
+- **Gates:** routes 209/209 ✓ · full pytest 0 ✓ · ruff ✓ · pyright mc/ 0 ✓ ·
+  smoke :5377 — loop-health returns live alerts, distiller-stats returns
+  counters ✓
+- **Commit:** `(fill15)` on `refactor/backend`, merged to `local/opus-effort`.
