@@ -49,4 +49,4 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
 - **Gates:** routes 209/209 (204 app + 5 bp) ✓ · full pytest exit 0 ✓ · ruff
   E9/F821 ✓ · pyright mc/ 0 errors ✓ · smoke boot :5377 heartbeat 200 +
   `/api/local-auth/status` correct JSON + locked-page 302 ✓
-- **Commit:** `(fill)` on `refactor/backend`, merged to `local/opus-effort`.
+- **Commit:** `276d3bd` on `refactor/backend`, merged to `local/opus-effort`.
