@@ -162,4 +162,4 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
 - **Gates:** routes 210/210 ✓ · full pytest 0 ✓ · ruff ✓ · pyright mc/ 0 ✓ ·
   isolated smoke: heartbeat + loops(200,`{}` pre-delay) + skills/mcp/distiller/
   processes/status/restart-status all 200 ✓
-- **Commit:** `(fill16)` on `refactor/backend`, merged to `local/opus-effort`.
+- **Commit:** `8ad36a7` on `refactor/backend`, merged to `local/opus-effort`.
