@@ -77,3 +77,18 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   0 ✓ · smoke :5377 + route parity vs live :5199 (same VAPID key, same
   mobile-pair/presence responses) ✓
 - **Commit:** `dfb4f86` on `refactor/backend`, merged to `local/opus-effort`.
+
+## 1.3 — skills_routes blueprint (2026-06-10)
+
+- **What moved:** 546 lines → `mc/blueprints/skills_routes.py`: 14 `/api/skills*`
+  routes (plan table said 12 — git-import grew install/cancel since). Thin glue;
+  `skills.py` keeps the logic (module named skills_routes to avoid shadowing it).
+- **Seams:** `wire(load_project_fn, load_projects_fn, app_dir)` (projects family
+  1.11 + `_APP_DIR` const). Blueprint imports top-level `skills`/`mcp` modules
+  directly (allowed — they're not server.py).
+- **Inbound shims (3):** `_install_builtin_skills` + `_install_builtin_mcps`
+  (startup installers) and `_resolve_project_path_or_400` (shared request helper
+  used by the MCP/distiller sections until 1.4/1.5 extract).
+- **Gates:** routes 209/209 ✓ · full pytest 0 ✓ · ruff ✓ · pyright mc/ 0 ✓ ·
+  smoke :5377 — /api/skills lists, /api/skills/search returns hits ✓
+- **Commit:** `(fill13)` on `refactor/backend`, merged to `local/opus-effort`.
