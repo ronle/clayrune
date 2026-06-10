@@ -111,4 +111,4 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
 - **Gates:** routes 209/209 ✓ · full pytest 0 (22/22 mcp_trim after port) ✓ ·
   ruff ✓ · pyright mc/ 0 ✓ · smoke :5377 — /api/mcp lists, mcp-enabled returns
   loadout ✓
-- **Commit:** `(fill14)` on `refactor/backend`, merged to `local/opus-effort`.
+- **Commit:** `9da28cf` on `refactor/backend`, merged to `local/opus-effort`.
