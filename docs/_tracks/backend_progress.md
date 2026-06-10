@@ -128,4 +128,4 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
 - **Gates:** routes 209/209 ✓ · full pytest 0 ✓ · ruff ✓ · pyright mc/ 0 ✓ ·
   smoke :5377 — loop-health returns live alerts, distiller-stats returns
   counters ✓
-- **Commit:** `(fill15)` on `refactor/backend`, merged to `local/opus-effort`.
+- **Commit:** `ef07c04` on `refactor/backend`, merged to `local/opus-effort`.
