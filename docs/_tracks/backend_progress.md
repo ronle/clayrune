@@ -771,4 +771,110 @@ finish work the worker died before doing.
   `create_schedule`/`update_schedule`/`delete_schedule`) — they move with
   1.13 along with `_scheduler_loop` + the thread-start-once guard +
   `obs.heartbeat('scheduler')`.
-- **Commit:** PENDING (this entry ships in the 1.12 commit; SHA backfilled at 1.13).
+- **Commit:** `5e30819` on `refactor/backend` (this entry shipped in the 1.12
+  commit; SHA backfilled at 1.13).
+
+## 1.13 — scheduler_routes blueprint + scheduler-loop obs (2026-06-10)
+
+- **What moved:** 685 source lines from FOUR regions (byte-verified: all 638
+  non-blank source lines re-found in the blueprint at ≥ source multiplicity,
+  modulo the two documented mechanical rewrites) →
+  `mc/blueprints/scheduler_routes.py` (806 lines): **6 routes** — POST
+  `/api/schedule/<id>/run-now` (schedule_run_now) + GET `/api/schedule/<id>/runs`
+  (schedule_runs) + GET/POST `/api/schedules` (get_schedules/create_schedule) +
+  PUT/DELETE `/api/schedules/<id>` (update_schedule/delete_schedule). Plus the
+  whole `## ── Scheduled Tasks ──` section: cron parser
+  (`_parse_cron_field`/`_next_cron_match`), `_compute_next_run`, the background
+  `_scheduler_loop` — **which also drives GitHub auto-sync, code-sync
+  auto-fetch, stale-session purge, and the process-tracker liveness sweep**, all
+  moved verbatim with it (the brief understated the loop; it's multi-purpose) —
+  `_start_scheduler` (daemon thread `'scheduler'`, start-once), the continuation
+  helpers (`_latest_claude_sid_for_schedule`, `_latest_session_id_for_schedule`,
+  `_newest_run_session_id_for_schedule`, `_scheduled_run_marker`,
+  `_scheduled_continue`), and the schedules store (`_load_schedules`/
+  `_save_schedules` — these live at server.py :739/:747, FAR from the rest;
+  the brief's line hint was right and they'd have been missed without the AST
+  free-name pass — F821 caught the omission on the first build).
+  The family is NOT contiguous (R0 :739–749 store; R1 :2881–2981 run-now/runs;
+  R2 :3347–3703 Scheduled-Tasks section; R3 :3706–3932 helpers+CRUD); each
+  region was boundary-asserted line-by-line before the cut, and the splice
+  re-asserted every first/last line. Layout in the blueprint is reordered to
+  R0→R2→R3→R1 so module-level definitions precede their route-level uses
+  (F821-clean); function bodies forward-reference freely (call-time lookup).
+- **Wire seams (11 slots), derived by AST free-name extraction (not the brief's
+  list — proven):** an AST walk of all 18 moved functions collected every
+  `Name` load not bound locally; after subtracting builtins, intra-family defs,
+  and the blueprint's own top imports, EXACTLY 14 free names remained →
+  `app` (becomes `bp`), `_gh_sync`/`_proj_sync` (cross-imported directly — top-
+  level modules, no Flask dep / no import side effects, 1.3/1.11 precedent;
+  their `register()` wiring stays in server.py), and the **11 wire slots**:
+  `schedules_path` (SCHEDULES_PATH — wired placeholder, the 1.7
+  SESSION_LABELS_PATH pattern; nothing else reads it), `load_project_fn` +
+  `load_projects_fn` + `log_agent_activity_fn` (projects family, 1.11), and the
+  agent-dispatch family re-homed onto `_bp_agent` at 1.12 —
+  `dispatch_agent_internal_fn` (run-now + cron dispatch), `load_agent_log_fn`
+  (runs + continuation reads), `enrich_run_entries_fn` (runs response),
+  `get_manager_fn` + `all_managers_fn` + `pid_is_alive_fn` +
+  `revive_from_agent_log_fn` (the `_scheduled_continue` revive path + the loop's
+  stale-session purge). State imports (mc.state, Phase 0): `_scheduler_stop`,
+  `agent_sessions`, `terminal_sessions`, `terminal_lock`,
+  `process_tracker_lock`, `tracked_processes`. core: `_log`, `now_iso`
+  (`time_ago` NOT used → not imported). **Inbound shims / re-export aliases:
+  ZERO** — grep proved the only server.py caller of any moved name outside the
+  family is the startup `_start_scheduler()` site (rewritten to
+  `_bp_sched._start_scheduler()`, the brief's instruction; `_start_hivemind_
+  orchestrator` at the adjacent line stays its own server.py alias from 1.10).
+- **Stanza placement:** wire()+register_blueprint sit at the R2 tombstone
+  (~:3220) — after `_bp_projects` (:1047) and `_bp_agent` (import :1032,
+  register :2817), before the startup block. `atexit.register(_scheduler_stop.
+  set)` stays VERBATIM in server.py (the Event lives in mc/state.py since
+  Phase 0; LIFO exit-hook ordering — the 1.8/1.10 lesson).
+- **Phase 2:** `_scheduler_loop` gains `obs.heartbeat('scheduler')` as the
+  first statement inside `while not _scheduler_stop.is_set():`, before the
+  `try:` — once per iteration (1.6/1.7/1.10 placement). The ONLY intentional
+  behavior addition; everything else byte-verbatim. Live-verified in
+  /api/system/loops at age 1.5s (30s tick, no boot delay), alongside
+  hivemind-orchestrator + session-label-enforcer.
+- **Typing debt, explicit:** 3 tags
+  `# pyright: ignore[reportOperatorIssue]  # moved-verbatim typing debt (1.13)`
+  on `_scheduler_loop`'s `now - last_dt` (×2, github/code-sync blocks) and
+  `ts < cutoff` (purge) — pyright flow-analysis sees `now`/`cutoff` as possibly
+  Unbound because they're assigned inside the loop's `try:` scope; verbatim
+  from server.py, zero behavior change. scheduler_routes.py back to 0 pyright
+  errors (the pre-existing 23 distiller/agent_runtime baseline unchanged).
+- **Phase 5:** new `tests/test_scheduler_routes.py` (19 tests): registration
+  parity (all 6 routes present AND owned by the blueprint, pinned both ways) +
+  blueprint-registered, GET /api/schedules empty + populated (name enrichment),
+  POST create happy (201 + persisted) + malformed ×3 (400, nothing written),
+  PUT update merge + 404, DELETE + 404, run-now via a `_DispatchRecorder`
+  (asserts trigger_type/trigger_id metadata, last_run stamp, **NO real spawn**)
+  + 404 + missing-project/task 400 + dispatch-failure 500, /runs pagination
+  over a seeded agent_log (trigger filtering, two pages, total) + 404 +
+  malformed-params-default, and the app-wide LAN auth-gate 401 (handler not
+  reached). Patches `mc.blueprints.scheduler_routes.*` ONLY (test-port rule);
+  SCHEDULES_PATH→tmp, load_project(s)/dispatch/agent-log→fakes-on-the-module,
+  restored after. /api/processes untouched → no pid-reaper fixture needed.
+- **Gates:** url_map **209 rules** unchanged (routes relocated, count
+  preserved) + `scheduler_routes` registered (14 blueprints) ✓ · `import
+  server` ✓ · ruff E9/F821 clean ✓ · pyright scheduler_routes 0 errors (full
+  scope 23 = baseline) ✓ · **full pytest exit 0** — 618 passed, 1 codex env
+  skip (619 collected; captured pytest's OWN exit code, not a pipe's) ✓ ·
+  isolated smoke (`MC_DATA_DIR=_scratch/smoke113` [Windows-resolvable path so
+  bash + Win-Python agree], `MC_PORT=5378`, BOM-less config seed,
+  CLAUDE_SKIP_AUTH_CHECK=1, FROM THE WORKTREE): heartbeat 200 · /api/schedules
+  200 `[]` · /api/system/loops shows `scheduler` fresh (age 1.5s, `last_ok`
+  set — obs.heartbeat firing) next to hivemind-orchestrator +
+  session-label-enforcer · `taskkill /T /F` killed the tree (3 procs), port
+  5378 free, live :5199 untouched (PID 35552) ✓
+- **server.py:** 4,676 → **4,010 lines** (git: 31 insertions / 697 deletions).
+- **Surprises / notes:** (a) `_scheduler_loop` is far more than a scheduler —
+  it's the catch-all 30s housekeeping loop (scheduler dispatch + github sync +
+  code sync + session purge + process-tracker sweep). All moved verbatim; the
+  obs heartbeat covers the whole loop's liveness. (b) The schedules store
+  (`_load_schedules`/`_save_schedules`) sits ~2,600 lines above the rest of the
+  family — the AST free-name pass (not the brief's enumerated list) is what
+  guaranteed completeness; F821 would have caught a miss but the analysis
+  caught it first. (c) ZERO inbound re-export aliases — unlike 1.12, nothing
+  downstream in server.py calls a moved scheduler helper except the one startup
+  thread-starter, which the brief already specified rewriting.
+- **Commit:** PENDING on `wt-1.13` (orchestrator merges).
