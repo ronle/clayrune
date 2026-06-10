@@ -273,3 +273,149 @@ what moved, commit SHA, gate results.
    section's. Pre-existing behavior, byte-preserved by this move. Same
    class of trap likely exists in other regions — moves must not deduplicate
    ids or "repair" lookups.
+
+## Phase 3 — module 4: extract walkthrough / tour → `static/js/walkthrough.js` (2026-06-09)
+
+- **Module-3 SHA backfill:** module 3 (js/mobile-pairing.js) = commit `1229ce8`.
+- **Inbound refs re-verified: exactly 4 functional refs** to `startWalkthrough`
+  from outside the region (matches the module-2 sizing):
+  1. Old line 490 — header `?` button, static `onclick="startWalkthrough()"`.
+  2. Old line 2847 — command-palette action `'Take Tour'`:
+     `action: () => { toggleCommandPalette(); startWalkthrough(); }`.
+  3. Old line 13569 — Settings template button, generated
+     `onclick="closeModalById('__settings');startWalkthrough()"`.
+  4. Old line 18823 — **boot path** (landmine 2): first-run auto-start
+     `setTimeout(() => startWalkthrough(), 600)` inside
+     `fetchProjects().then(async () => {...})` when
+     `realProjectCount === 0 && !localStorage.walkthrough_done`. Network
+     callback + 600 ms ⇒ runs long after module evaluation; safe.
+  Whole-repo sweep: no other file references any region identifier (only
+  CHANGELOG/docs prose).
+- **Region boundary — NOT the full 699-line header-to-header span.** The
+  module-2 sizing (699 lines) measured section header → next section header
+  (old 17962 → 18661), but old lines 18579–18659 are **boot code, not
+  walkthrough**: `startRefresh()` (called at parse time from the inline
+  script, old line 18826 — moving it into a deferred module would throw
+  ReferenceError and kill boot), the filter-dropdown binding,
+  `fetchDomains()`, the grid-layout fetch, density/feed/view-mode restores,
+  `applyAdvancedFlags()`, and the eager service-worker registration. Those
+  82 lines stay inline. What moved is the walkthrough feature proper.
+- **What moved:** old lines 17962–18577 (`// ── Walkthrough / Tour` section
+  header through the Escape-keydown listener's closing `});`) + trailing
+  blank 18578 → `static/js/walkthrough.js`, **byte-verbatim** (proven by
+  binary reassembly assertion: original index.html == new file with the
+  `<script>` tag removed and the region re-inserted; the interop tail is
+  append-only). Loaded via
+  `<script type="module" src="/static/js/walkthrough.js"></script>` inserted
+  after the mobile-pairing.js module tag, before `</body>`. Anti-FOUC
+  bootstrap untouched (landmine 1). Diff shape: 1 insertion, 617 deletions.
+- **Numbers:** `walkthrough.js` = 32,207 bytes / 637 lines (617 moved +
+  20-line interop tail; CRLF, no BOM). `index.html` 973,491 → 942,867 bytes;
+  19,767 → 19,151 lines.
+- **Interop surface (window.* re-exposures), 5 functions + 1 accessor:**
+  - `startWalkthrough` — the 4 inbound refs above.
+  - `wtNext`, `wtBack`, `wtSkip`, `wtEnd` — the wt-card's region-generated
+    `onclick` attributes resolve against the global object at click time.
+  - **`wtDontShow` is bridged as a window ACCESSOR, not an assignment:**
+    `Object.defineProperty(window, 'wtDontShow', { get/set → module binding })`.
+    The "Don't show this again" checkbox writes `wtDontShow=this.checked`
+    from a generated `onchange` attribute; inline handlers can't see
+    module-scoped `let` bindings, and a plain `window.wtDontShow = wtDontShow`
+    tail would copy the value once and diverge. The accessor routes
+    window-property reads/writes into the module binding — one source of
+    truth, moved code stays byte-verbatim. **Pattern note for future
+    modules:** this is the move-only answer for a mutable primitive that
+    generated inline handlers assign to.
+  Kept module-private: `wtActive`, `wtStep`, `WT_STEPS`, `wtDemoTileHTML`,
+  `wtDemoModalHTML`, `wtDemoMenuHTML`, `wtShow`, `wtPositionCard` (no
+  outside refs).
+- **Outbound deps** all resolve at call time through the shared global scope:
+  function declarations (`showDesktop`, `esc`, `refreshSilent`,
+  `setAdvancedFlag`, `renderCommandResults`, `isIncognitoProject` — global
+  object props) and classic-script top-level bindings (`API_BASE`,
+  `ADV_FEATURES`, `advancedFlags`, `cmdPaletteOpen` — global declarative
+  record, readable AND reassignable from module code per the module-2
+  precedent; the cmd-palette step's onEnter/onLeave reassign
+  `cmdPaletteOpen` and this works unchanged).
+- **Deferred-module timing safe:** the only top-level side effects are the
+  three `let` declarations + two listener registrations (`resize`,
+  Escape `keydown`). Listener-registration order is not observable here —
+  verified zero `stopImmediatePropagation` uses repo-wide; same-target
+  listener order has no other observable effect for these events. Strict-mode
+  promotion (classic → module) audited: every assignment target is a
+  declared binding or a resolvable global; no top-level `this`, no
+  block-scoped function declarations.
+- **sw.js:** `SW_VERSION` `mc-push-v4` → `mc-push-v5` (still no cache list by
+  design; version bump only, same as modules 1–3).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/walkthrough.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs`
+  and `bg-framing-check.mjs` (landmine 2).
+- **Gates:**
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios (fixtures
+    have 2 real projects ⇒ no auto-tour interference, landmine 3 N/A there).
+  - Real-server check (throwaway `MC_PORT=5379 python server.py` in the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/walkthrough.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 32207, `Cache-Control: no-cache`.
+  - Headless Chromium, **gate (a) seeded-done state** (landmine 3):
+    `localStorage.walkthrough_done=1` via addInitScript → app shell renders,
+    **NO `#wt-overlay` appears** (3 s settle > the 600 ms timer), all 5
+    window.* functions exposed, accessor descriptor present on `window`,
+    **0 console errors, 0 uncaught page errors**.
+  - Headless Chromium, **gate (b) fresh state — the critical behavior**:
+    fresh storage + zero-project worktree server → **first-run auto-tour
+    fires from the extracted module**: `#wt-overlay` renders step 1
+    ("Welcome to Clayrune", progress "1 / 16"); clicked the generated
+    "Start Tour" button (window.wtNext onclick interop) → advanced to step 2
+    ("Choose your level", "2 / 16", ADV_FEATURES checkbox list rendered —
+    proves outbound classic-script deps resolve from module code); checked +
+    unchecked "Don't show this again" → `window.wtDontShow` flipped
+    true/false through the accessor into the module binding (the onchange
+    interop end-to-end); `walkthrough_done` stayed unset mid-tour.
+    **0 console errors, 0 uncaught page errors.** Screenshots eyeballed:
+    styled wt-card over dimmed shell, both steps.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4);
+    page boots with walkthrough.js fulfilled, dies at the same later
+    evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–3).
+
+### Landmines for module 5
+
+1. All module-1/2/3 landmines still apply verbatim (anti-FOUC inline
+   bootstrap; route.fulfill in BOTH harnesses per new js file; CI path-filter
+   gap for `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary
+   surgery; build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule; don't
+   "repair" pre-existing quirks in a move).
+2. **Don't trust the sizing table's line counts as region boundaries.** The
+   walkthrough's "699 lines" included 82 lines of unrelated boot code
+   (incl. `startRefresh`, **called at parse time** — moving it would have
+   killed boot). Re-derive the real feature boundary from the code, not the
+   header-to-header span; check every function in the span for parse-time
+   callers before moving it.
+3. **Generated inline handlers that ASSIGN a region variable** (e.g.
+   `onchange="wtDontShow=this.checked"`) need the
+   `Object.defineProperty(window, …, { get/set })` accessor bridge — a plain
+   tail assignment copies the value once and silently diverges. Grep the
+   region's generated HTML for `="<ident>=` patterns when auditing.
+4. **Remaining candidates (sizes from the module-2 table, see #2 caveat):**
+   - `settings_drill` — 16 refs / 662 lines. Many refs but they're
+     runtime-only (`_renderSettings` etc.); mobile-pairing already proved
+     the settings-template interop pattern.
+   - `skills_panel` — 4 refs / ~1,300 lines, the biggest single win.
+   - `terminal` — **still blocked on shared mutable globals** per module 2
+     (`terminalDismissed`/`terminalEventSources` are read by outside code);
+     needs a js/store.js or the readers to move with it. Note the accessor
+     pattern (#3) now gives a viable bridge for *primitives*, but
+     `terminalEventSources` is a Map mutated from both sides — object
+     identity survives a plain window bridge, so terminal may be unblockable
+     with one `window.x = x` per shared object IF all writers reassign
+     through window; audit before attempting.
+5. **Throwaway-server gating recipe that worked here** (reuse it): start
+   `MC_PORT=5379 python server.py` from the worktree; gate (a) seed
+   `walkthrough_done=1` + wait on `.header` + a boot function (NOT grid
+   cards, landmine 4); gate (b) fresh profile asserts the feature itself.
+   ESM scratch runners can't use NODE_PATH — import playwright via relative
+   path into `tools/smoke/node_modules/playwright/index.mjs`.

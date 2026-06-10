@@ -16,7 +16,10 @@
 // v4 (2026-06-09): /static/js/mobile-pairing.js extracted from index.html's
 // inline <script> (mobile pairing settings section). Same no-cache-list
 // rationale — version bump only.
-const SW_VERSION = 'mc-push-v4';
+// v5 (2026-06-09): /static/js/walkthrough.js extracted from index.html's
+// inline <script> (first-run tour / walkthrough). Same no-cache-list
+// rationale — version bump only.
+const SW_VERSION = 'mc-push-v5';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
