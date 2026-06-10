@@ -28,4 +28,4 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   `ruff check --select E9,F821` clean ✓ · boot smoke `MC_PORT=5377` → heartbeat 200 ✓
   (NOTE: tracks-doc smoke command needs `MC_PORT=<free port>` — live MC owns :5199,
   a second bind fails; doc command corrected here.)
-- **Commit:** (filled after commit)
+- **Commit:** `e66ae29` on `refactor/backend`, merged to `local/opus-effort`.
