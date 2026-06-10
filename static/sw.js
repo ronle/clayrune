@@ -22,7 +22,10 @@
 // v6 (2026-06-09): /static/js/skills-panel.js extracted from index.html's
 // inline <script> (skills manager + learning queue + import flows). Same
 // no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v6';
+// v7 (2026-06-09): /static/js/settings-drill.js extracted from index.html's
+// inline <script> (settings categories + WhatsApp-style drill-down). Same
+// no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v7';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
