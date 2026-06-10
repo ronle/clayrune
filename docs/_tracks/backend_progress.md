@@ -163,3 +163,65 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   isolated smoke: heartbeat + loops(200,`{}` pre-delay) + skills/mcp/distiller/
   processes/status/restart-status all 200 ✓
 - **Commit:** `8ad36a7` on `refactor/backend`, merged to `local/opus-effort`.
+
+## 1.7 — remote_routes blueprint (2026-06-10)
+
+- **What moved:** ~1,000 lines from THREE regions → `mc/blueprints/remote_routes.py`:
+  **16 routes** (plan said 12 + `/_mc`): 12 `/api/remote/*` + the 2 device-label
+  pages (`/_mc/name-device`, POST `/api/_mc/session-label`) + the 2
+  mc-tunnel/enrollment integration points (`/api/tunnel-handshake`,
+  `/api/mc-callback` — same family: same section, same `_get_remote_provider`
+  dep). Plus the mc_remote_iface provider-discovery glue (was top-of-server.py;
+  import side-effect now fires at the blueprint import — registry is only read
+  at request/loop time), session-labels store, CF JWT machinery
+  (`_is_cf_tunneled_request` & co.), label enforcer + daemon loop,
+  `_warmup_control_plane`, and the `_redirect_unlabeled_cf_session`
+  before_request BODY (thin wrapper stays on `app` at the same position, after
+  `_local_auth_gate` — hook order unchanged). **Splice-guard exclusion:** the
+  `MC_REMOTE_LOCAL_MOCK` dev-only mock CP (`/v1/nonce`, `/v1/attest`,
+  `/api/_mock/connect`) stays in server.py — it mocks the *cloud CP*, not this
+  family, and registers conditionally on an env flag.
+- **RE-HOMING (this step's extra):** three earlier wire() seams now pass
+  `_bp_remote.*`: local_auth `is_cf_tunneled_request`, push_mobile
+  `cf_session_nonce_fn` + `get_remote_provider_fn`, system_routes
+  `is_cf_tunneled_request_fn`. Remote stanza placed ABOVE all three (the 1.2
+  import-time NameError lesson). No rebound globals to migrate (verified: no
+  `global` stmts in the moved text; `_ENFORCER_STATE`/`_enforcer_lock` already
+  live in mc/state.py since Phase 0 — blueprint imports them; 2 CONFIG reads
+  rewritten to `state.CONFIG`).
+- **Seams:** `wire(session_labels_path=…)` — the SESSION_LABELS_PATH module
+  constant became a wired placeholder (1.6 lesson). Inbound shims (2):
+  `_session_label_enforcer_loop` + `_warmup_control_plane` (startup thread
+  targets under `__main__`, call sites unchanged). Phase 2: the enforcer loop
+  gains `obs.heartbeat('session-label-enforcer')`.
+- **Counting note:** `grep -c "@app.route" server.py` includes ONE f-string doc
+  line (~3645) — real decorators are 127 where grep says 128; the 210 invariant
+  arithmetic is unaffected (the line predates Phase 0 and was always counted).
+- **Typing debt, explicit:** 1 tag (`request.args.to_dict(flat=True)` —
+  werkzeug stubs lack the `flat=True` overload) + `_CF_JWKS_CACHE: dict`
+  annotation for the mixed ts/keys cache values.
+- **Phase 5:** new `tests/test_remote_routes.py` (14 tests): status +
+  enforcer-state shapes, name-device page, session-label 403-untunneled /
+  400-malformed / persist + JWT-nonce fallback, retroactive-label parse paths,
+  redirect-hook 302 / API-exempt / labeled-passthrough. CP-proxy and
+  tunnel-mutating endpoints deliberately NOT hit (see incident).
+- **INCIDENT — isolated smoke ≠ isolated enrollment (1.8 MUST reuse this):**
+  `MC_DATA_DIR=<temp>` does NOT isolate remote identity — mc_remote stores it
+  in the **OS keystore** (keyring, user-level), so a throwaway boot on an
+  enrolled dev machine runs the label enforcer against the REAL control plane
+  with an EMPTY temp label store (every CF session looks "unnamed").
+  Guard: seed the temp dir's `config.json` with
+  `{"auto_revoke_unnamed_sessions": false}` — and write it **BOM-less**:
+  PS 5.1 `Set-Content -Encoding utf8` emits a BOM, `_load_config`'s bare
+  `json.load` then fails *silently* and defaults apply (first smoke ran with
+  the enforcer enabled; 0 revoked — CP listed no sessions; second smoke with
+  `[IO.File]::WriteAllText(..., UTF8Encoding($false))` verified `last_run:0`,
+  heartbeat still present). This exposure predates 1.7 — every prior
+  `python server.py` smoke had it; 1.7 only names it.
+- **Gates:** routes 210/210 (128 app-grep + 82 bp) ✓ · `import server` ✓ ·
+  ruff E9/F821 ✓ · pyright mc/ 0 ✓ · full pytest exit 0 (codex env skip only)
+  ✓ · isolated smoke ×2 (`MC_DATA_DIR=$TEMP\…`, `MC_PORT=5377`, taskkill +
+  port-free asserts): heartbeat, remote/status, enforcer-state,
+  /_mc/name-device, local-auth/status + push/vapid-public-key (both re-homed
+  seams), system/loops shows `session-label-enforcer` ✓
+- **Commit:** `PENDING` on `wt-1.7` (orchestrator merges).
