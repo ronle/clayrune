@@ -1,0 +1,88 @@
+"""Cross-cutting pure helpers (MODERNIZATION_PLAN.md Phase 0).
+
+Moved VERBATIM from server.py; server.py keeps `from mc.core import ...`
+shims so every existing call site is unchanged. The single permitted edit:
+_log reads the log level via `state.CONFIG` (the live alias server.py binds
+at boot) instead of the bare CONFIG global.
+
+This module must never import server.py.
+"""
+
+import builtins as _builtins
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+from flask import request
+
+from mc import state
+
+# ── Logging shim (IMPROVEMENT_PLAN_V2.md P2-3) ───────────────────────────────
+# Single chokepoint for the ~100 diagnostic _log()s. Deliberately
+# _log()-signature-compatible: *args + **kw pass straight through, so the
+# `_log(` → `_log(` sweep is purely mechanical and behavior-IDENTICAL at
+# the default level ('info' shows everything info+). Set `log_level` to
+# 'warn'/'error' to quiet the chatter, or 'debug' for more. Levels are
+# advisory — a bare `_log("...")` is 'info'; pass level='warn'/'error' at
+# noteworthy call sites over time (opportunistic, not a sweep).
+_LOG_LEVELS = {'debug': 10, 'info': 20, 'warn': 30, 'error': 40}
+
+
+def _log(*args, level='info', **kw):
+    """_log()-compatible, level-gated. Default level keeps current output
+    exactly (info threshold ≤ info). flush defaults True (most existing
+    call sites already pass flush=True; making it the default is harmless
+    and keeps subprocess-interleaved logs ordered)."""
+    threshold = _LOG_LEVELS.get(str(state.CONFIG.get('log_level', 'info')).lower(), 20)
+    if _LOG_LEVELS.get(level, 20) < threshold:
+        return
+    kw.setdefault('flush', True)
+    _builtins.print(*args, **kw)
+
+
+def _atomic_write_text(path, text, encoding='utf-8'):
+    """Write via temp-file + os.replace so a crash mid-write can't leave a
+    torn MEMORY.md/archive (SPEC §3.A.MID atomicity). Same-dir temp so
+    os.replace is atomic on the same filesystem."""
+    path = Path(path)
+    tmp = path.with_name(f'.{path.name}.tmp{os.getpid()}')
+    tmp.write_text(text, encoding=encoding)
+    os.replace(tmp, path)
+
+
+def time_ago(ts_str):
+    if not ts_str:
+        return 'never'
+    try:
+        ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        now = datetime.now(timezone.utc)
+        secs = int((now - ts).total_seconds())
+        if secs < 60:      return f'{secs}s ago'
+        elif secs < 3600:  return f'{secs // 60}m ago'
+        elif secs < 86400: return f'{secs // 3600}h ago'
+        else:              return f'{secs // 86400}d ago'
+    except:
+        return ts_str
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+
+def file_type(filename):
+    """Return a simple type hint for UI rendering."""
+    ext = Path(filename).suffix.lower()
+    images = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'}
+    if ext in images:
+        return 'image'
+    if ext == '.pdf':
+        return 'pdf'
+    return 'file'
+
+
+def _is_loopback_request() -> bool:
+    ra = (request.remote_addr or '').strip().lower()
+    if ra in ('127.0.0.1', '::1', 'localhost'):
+        return True
+    # IPv4-mapped IPv6 loopback (e.g. ::ffff:127.0.0.1)
+    return ra.startswith('::ffff:127.')

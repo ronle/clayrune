@@ -337,29 +337,70 @@ def _load_config():
 CONFIG = _load_config()
 PORT = int(os.environ.get('MC_PORT', CONFIG.get('port', 5199)))
 
-# ── Logging shim (IMPROVEMENT_PLAN_V2.md P2-3) ───────────────────────────────
-# Single chokepoint for the ~100 diagnostic _log()s. Deliberately
-# _log()-signature-compatible: *args + **kw pass straight through, so the
-# `_log(` → `_log(` sweep is purely mechanical and behavior-IDENTICAL at
-# the default level ('info' shows everything info+). Set `log_level` to
-# 'warn'/'error' to quiet the chatter, or 'debug' for more. Levels are
-# advisory — a bare `_log("...")` is 'info'; pass level='warn'/'error' at
-# noteworthy call sites over time (opportunistic, not a sweep).
-import builtins as _builtins
+# ── mc package shims (MODERNIZATION_PLAN.md Phase 0) ─────────────────────────
+# Shared state + pure helpers moved verbatim to mc/state.py and mc/core.py.
+# These explicit import-as shims keep every existing bare-name reference in
+# this file working unchanged; each name's references migrate to
+# `state.<name>` as its blueprint extracts (Phase 1). globals().update() is
+# forbidden by the plan — explicit names only.
+from mc import state as _mc_state
 
-_LOG_LEVELS = {'debug': 10, 'info': 20, 'warn': 30, 'error': 40}
+_mc_state.CONFIG = CONFIG  # live alias: mc.core._log reads log_level through this
 
-
-def _log(*args, level='info', **kw):
-    """_log()-compatible, level-gated. Default level keeps current output
-    exactly (info threshold ≤ info). flush defaults True (most existing
-    call sites already pass flush=True; making it the default is harmless
-    and keeps subprocess-interleaved logs ordered)."""
-    threshold = _LOG_LEVELS.get(str(CONFIG.get('log_level', 'info')).lower(), 20)
-    if _LOG_LEVELS.get(level, 20) < threshold:
-        return
-    kw.setdefault('flush', True)
-    _builtins.print(*args, **kw)
+from mc.core import (  # noqa: E402
+    _LOG_LEVELS,
+    _atomic_write_text,
+    _is_loopback_request,
+    _log,
+    file_type,
+    now_iso,
+    time_ago,
+)
+from mc.state import (  # noqa: E402
+    PRESENCE_FRESH_SEC,
+    _ENFORCER_STATE,
+    _UPDATE_CHECK_BOOT_DELAY_S,
+    _UPDATE_CHECK_CACHE,
+    _UPDATE_CHECK_INTERVAL_S,
+    _UPDATE_CHECK_LOCK,
+    _backlog_sync_lock,
+    _checkpoint_guard,
+    _checkpoint_inflight,
+    _checkpoint_sema,
+    _checkpoint_sema_guard,
+    _claude_auth_lock,
+    _claude_auth_state,
+    _condense_lock,
+    _condense_status,
+    _condense_triggered_at,
+    _condensing_projects,
+    _enforcer_lock,
+    _get_mem_write_lock,
+    _guardian_stop,
+    _hivemind_lock,
+    _hivemind_orch_lock,
+    _hivemind_orchestrating,
+    _hivemind_orchestrator_stop,
+    _hivemind_sessions,
+    _hivemind_sse_lock,
+    _hivemind_sse_queues,
+    _managers,
+    _managers_lock,
+    _mem_write_locks,
+    _mem_write_locks_guard,
+    _presence_lock,
+    _presence_state,
+    _provider_env_lock,
+    _push_state_lock,
+    _scheduler_stop,
+    _scribe_lock,
+    _scribing_projects,
+    agent_sessions,
+    process_tracker_lock,
+    terminal_lock,
+    terminal_sessions,
+    tracked_processes,
+)
 
 def _cors_origin_allowed(origin: str) -> bool:
     """True iff `origin` is one of our own app shells or a loopback origin.
@@ -1111,8 +1152,7 @@ def _sysprompt_cleanup(path, proc):
 
 
 # ── Agent session tracking ───────────────────────────────────────────────────
-# session_id → {proc, status, task, log_lines, started_at, session_id, project_id}
-agent_sessions = {}
+# agent_sessions moved to mc/state.py (Phase 0).
 
 
 # ── Per-project agent isolation ──────────────────────────────────────────────
@@ -1164,8 +1204,7 @@ class ProjectAgentManager:
         self._guardian_stop.set()
 
 
-_managers = {}                       # project_id -> ProjectAgentManager
-_managers_lock = threading.Lock()    # ONLY for _managers dict mutation; never held during work
+# _managers / _managers_lock moved to mc/state.py (Phase 0).
 
 
 def get_manager(project_id):
@@ -1178,36 +1217,9 @@ def get_manager(project_id):
     return m
 
 
-# SPEC §3.A.MID committee blocker #3: a dedicated per-project LEAF lock that
-# wraps ONLY the MEMORY.md read-modify-write — never the (≤180s) scribe model
-# call, never nested under get_manager(pid).lock. Ordering is strictly
-# outer(manager RLock at the teardown finally) → inner(this leaf); the
-# checkpoint path never holds the manager lock, so it's single-direction and
-# cannot deadlock. Also fixes a latent issue in already-shipped code where two
-# parallel same-project teardowns serialized on the manager RLock across the
-# scribe call.
-_mem_write_locks = {}
-_mem_write_locks_guard = threading.Lock()
-
-
-def _get_mem_write_lock(project_id):
-    """Get/create the per-project MEMORY.md write leaf-lock."""
-    with _mem_write_locks_guard:
-        lk = _mem_write_locks.get(project_id)
-        if lk is None:
-            lk = threading.Lock()
-            _mem_write_locks[project_id] = lk
-    return lk
-
-
-def _atomic_write_text(path, text, encoding='utf-8'):
-    """Write via temp-file + os.replace so a crash mid-write can't leave a
-    torn MEMORY.md/archive (SPEC §3.A.MID atomicity). Same-dir temp so
-    os.replace is atomic on the same filesystem."""
-    path = Path(path)
-    tmp = path.with_name(f'.{path.name}.tmp{os.getpid()}')
-    tmp.write_text(text, encoding=encoding)
-    os.replace(tmp, path)
+# _mem_write_locks(+guard) + _get_mem_write_lock moved to mc/state.py;
+# _atomic_write_text moved to mc/core.py (Phase 0). SPEC §3.A.MID lock
+# ordering + atomicity rationale documented at the definitions.
 
 
 def _harden_secret_perms(path) -> None:
@@ -1278,22 +1290,8 @@ def _project_guardian_loop(manager):
                 _log(f"[guardian:{manager.project_id[:8]}] Error checking {sid[:8]}: {e}")
 
 # ── Memory condensation state ────────────────────────────────────────────────
-_condensing_projects = set()
-_condense_lock = threading.Lock()
-# pid → unix timestamp of last _dispatch_condense call. Prevents the pre-
-# dispatch trigger from re-firing on every back-to-back conversation when
-# CLAUDE.md + MEMORY.md keep the total above threshold (condense is async
-# and can't shrink the files before the next dispatch check runs).
-_condense_triggered_at: dict = {}
-
-# P2-1 (IMPROVEMENT_PLAN_V2.md): per-project memory-condensation visibility.
-# Condensation is a background `claude -p` housekeeping agent the user never
-# sees. Track its state so /agent/status can surface it. Guarded by
-# _condense_lock (same lock that gates _condensing_projects, so state and
-# membership never disagree). Shape per pid:
-#   {state: idle|running|done|error, started_at, finished_at,
-#    bytes_before, bytes_after, error}
-_condense_status: dict = {}
+# _condensing_projects / _condense_lock / _condense_triggered_at /
+# _condense_status moved to mc/state.py (Phase 0).
 
 
 def _condense_combined_bytes(project):
@@ -1320,10 +1318,7 @@ def _get_condense_status(pid):
         st = _condense_status.get(pid)
         return dict(st) if st else {'state': 'idle'}
 
-# Dedicated scribe lock — distinct from condense so they never cannibalize each
-# other (SPEC §3 Leg A B6). One in-flight scribe per project.
-_scribing_projects = set()
-_scribe_lock = threading.Lock()
+# _scribing_projects / _scribe_lock moved to mc/state.py (Phase 0).
 
 
 def _has_running_agent(project_id):
@@ -1442,17 +1437,9 @@ def _should_condense(project, include_claude_md=False):
     return combined > threshold
 
 
-# ── Terminal session tracking ────────────────────────────────────────────────
-# session_id → {proc, status, command, output_lines, started_at, session_id, project_id, exit_code}
-# TTY shim: mc_tty_shim/sitecustomize.py patches isatty() + Rich for ANSI colors
-terminal_sessions = {}
-terminal_lock = threading.Lock()
-
-# ── Process tracker (PID registry) ────────────────────────────────────────────
-# pid (int) → {pid, name, type, session_id, project_id, project_name,
-#              command_preview, started_at, proc}
-tracked_processes = {}
-process_tracker_lock = threading.Lock()
+# ── Terminal session tracking + process tracker ──────────────────────────────
+# terminal_sessions / terminal_lock / tracked_processes /
+# process_tracker_lock moved to mc/state.py (Phase 0).
 
 
 def _register_process(proc, name, proc_type, session_id, project_id, command_preview=''):
@@ -1717,34 +1704,7 @@ def load_projects():
     return projects
 
 
-def time_ago(ts_str):
-    if not ts_str:
-        return 'never'
-    try:
-        ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-        now = datetime.now(timezone.utc)
-        secs = int((now - ts).total_seconds())
-        if secs < 60:      return f'{secs}s ago'
-        elif secs < 3600:  return f'{secs // 60}m ago'
-        elif secs < 86400: return f'{secs // 3600}h ago'
-        else:              return f'{secs // 86400}d ago'
-    except:
-        return ts_str
-
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-
-
-def file_type(filename):
-    """Return a simple type hint for UI rendering."""
-    ext = Path(filename).suffix.lower()
-    images = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'}
-    if ext in images:
-        return 'image'
-    if ext == '.pdf':
-        return 'pdf'
-    return 'file'
+# time_ago / now_iso / file_type moved to mc/core.py (Phase 0).
 
 
 # ── Asset serving (mascot icon, etc.) ────────────────────────────────────────
@@ -3347,14 +3307,7 @@ _AUTH_ERROR_PATTERNS = [
     (_re_auth.compile(r'invalid\s+(?:api\s+)?key', _re_auth.I), 'invalid_api_key'),
     (_re_auth.compile(r'authentication_error', _re_auth.I), 'unknown'),
 ]
-_claude_auth_state = {
-    'ok': True,
-    'reason': None,
-    'last_error_text': None,
-    'detected_at': None,
-    'last_probe_at': None,
-}
-_claude_auth_lock = threading.Lock()
+# _claude_auth_state / _claude_auth_lock moved to mc/state.py (Phase 0).
 
 
 def _scan_for_auth_error(text):
@@ -3448,7 +3401,7 @@ def agent_providers():
 # ── Provider env-var storage (Gemini API key etc.) ──────────────────────────
 
 PROVIDER_ENV_PATH = _DATA_ROOT / 'data' / 'provider_env.json'
-_provider_env_lock = threading.Lock()
+# _provider_env_lock moved to mc/state.py (Phase 0).
 
 
 def _load_provider_env_file() -> Dict[str, Dict[str, str]]:
@@ -4152,7 +4105,7 @@ def _build_agent_context(project, incognito=False, task=''):
 # Items are keyed by (session, content-hash) so repeated TodoWrite calls in the
 # same session update the same rows rather than duplicating.
 
-_backlog_sync_lock = threading.Lock()
+# _backlog_sync_lock moved to mc/state.py (Phase 0).
 
 
 def _agent_todo_ref(session_key, content):
@@ -5758,10 +5711,8 @@ def _write_session_memory(p, session, status, summary_fallback, ts_date):
 
 
 # ── Step 6: mid-session checkpoint note-taker (SPEC §3.A.MID) — default-off ──
-_checkpoint_inflight = set()           # session_ids with a worker running
-_checkpoint_guard = threading.Lock()
-_checkpoint_sema = {}                  # pid -> BoundedSemaphore (fan-out cap)
-_checkpoint_sema_guard = threading.Lock()
+# _checkpoint_inflight / _checkpoint_guard / _checkpoint_sema /
+# _checkpoint_sema_guard moved to mc/state.py (Phase 0).
 
 
 def _sha8(s):
@@ -9429,11 +9380,8 @@ def cleanup_processes():
 HIVEMIND_DIR = _DATA_ROOT / 'data' / 'hiveminds'
 HIVEMIND_DIR.mkdir(parents=True, exist_ok=True)
 
-# Global state
-_hivemind_sessions = {}           # hivemind_id → {status, worker_sessions, ...}
-_hivemind_lock = threading.Lock()
-_hivemind_sse_queues = {}         # hivemind_id → [queue, queue, ...] for SSE fan-out
-_hivemind_sse_lock = threading.Lock()
+# Global state: _hivemind_sessions / _hivemind_lock / _hivemind_sse_queues /
+# _hivemind_sse_lock moved to mc/state.py (Phase 0).
 
 
 def _hm_dir(hivemind_id):
@@ -10094,8 +10042,7 @@ def hivemind_workstream_status(hivemind_id, ws_id):
 
 # ── Hivemind: Worker Context Builder & Spawn ─────────────────────────────────
 
-_hivemind_orchestrating = set()  # hivemind_ids currently running orchestrator CLI sessions
-_hivemind_orch_lock = threading.Lock()
+# _hivemind_orchestrating / _hivemind_orch_lock moved to mc/state.py (Phase 0).
 
 
 def _hm_read_handoff(hivemind_id, ws_id):
@@ -10970,8 +10917,7 @@ def hivemind_decision_approve(hivemind_id, decision_id):
 
 
 # ── Hivemind: Server Orchestrator (background thread) ────────────────────────
-
-_hivemind_orchestrator_stop = threading.Event()
+# _hivemind_orchestrator_stop moved to mc/state.py (Phase 0).
 
 
 def _hivemind_orchestrator_loop():
@@ -13442,7 +13388,7 @@ def _compute_next_run(schedule):
     return None
 
 
-_scheduler_stop = threading.Event()
+# _scheduler_stop moved to mc/state.py (Phase 0).
 
 
 def _scheduler_loop():
@@ -13938,7 +13884,7 @@ atexit.register(_hivemind_orchestrator_stop.set)
 # Replaces the old health monitor. Detects stuck sessions and auto-recovers
 # them with exponential backoff, without discarding session context.
 
-_guardian_stop = threading.Event()
+# _guardian_stop moved to mc/state.py (Phase 0).
 GUARDIAN_CHECK_INTERVAL = 10
 # Hung threshold: 10 minutes of *both* no stdout and no CPU progress.
 # Claude can legitimately go silent for several minutes during long thinking,
@@ -14622,19 +14568,12 @@ def _provider_status_dict(p):
 PUSH_VAPID_PATH = _DATA_ROOT / 'data' / 'push_vapid.json'
 PUSH_SUBS_PATH = _DATA_ROOT / 'data' / 'push_subscriptions.json'
 
-_push_state_lock = threading.Lock()
+# _push_state_lock moved to mc/state.py (Phase 0).
 
 
 # ── Dashboard presence (push focus-suppression gate) ─────────────────────────
-# A browser/PWA that has a session's chat OPEN and the tab/window VISIBLE +
-# FOCUSED pings /api/presence every ~15s. While a fresh ping exists for
-# (project_id, session_id), push for that session is suppressed — the user is
-# already watching it, so a buzz would be pure noise. Presence is global (any
-# device watching → suppress all devices): if Ron is at a screen looking at
-# the chat, his phone shouldn't buzz either.
-_presence_state: dict = {}
-_presence_lock = threading.Lock()
-PRESENCE_FRESH_SEC = 25  # ping cadence ~15s; tolerate one missed beat + latency
+# _presence_state / _presence_lock / PRESENCE_FRESH_SEC moved to mc/state.py
+# (Phase 0); design rationale documented there.
 
 
 def _presence_touch(project_id: str, session_id: str) -> None:
@@ -15804,12 +15743,7 @@ def _local_auth_verify_cookie(val: str) -> bool:
     return (_time.time() - iat) <= _LOCAL_AUTH_MAX_AGE
 
 
-def _is_loopback_request() -> bool:
-    ra = (request.remote_addr or '').strip().lower()
-    if ra in ('127.0.0.1', '::1', 'localhost'):
-        return True
-    # IPv4-mapped IPv6 loopback (e.g. ::ffff:127.0.0.1)
-    return ra.startswith('::ffff:127.')
+# _is_loopback_request moved to mc/core.py (Phase 0).
 
 
 def _local_auth_exempt() -> bool:
@@ -16259,14 +16193,7 @@ def mc_set_session_label():
 # the sessions UI tidy: sessions that didn't go through the name-device flow
 # get cleaned up automatically. Named sessions are never touched.
 
-_ENFORCER_STATE = {
-    'last_run': 0,
-    'last_revoked_count': 0,
-    'last_skipped_count': 0,
-    'last_error': '',
-    'last_per_session_supported': None,  # None=unknown, True/False after a try
-}
-_enforcer_lock = threading.Lock()
+# _ENFORCER_STATE / _enforcer_lock moved to mc/state.py (Phase 0).
 
 
 def _enforce_session_labels_once(force: bool = False) -> dict:
@@ -17600,23 +17527,8 @@ def system_update_status():
 # every page load. Settings -> Update Clayrune still does a fresh fetch via
 # /api/system/update/status when the user actively asks.
 
-_UPDATE_CHECK_LOCK = threading.Lock()
-_UPDATE_CHECK_CACHE = {
-    'last_check_ts': 0,           # 0 = never checked yet
-    'is_git_repo': True,
-    'branch': '',
-    'commit': '',                  # local HEAD short SHA
-    'version': '',                 # synthetic build, e.g. "v1.5.1 build 180"
-    'remote_version': '',          # same for origin/<branch> at last fetch
-    'remote_commit': '',           # origin/<branch> short SHA at last fetch
-    'behind': 0,
-    'ahead': 0,
-    'has_local_changes': False,
-    'update_available': False,
-    'recent_log': '',              # `git log HEAD..origin -5 --oneline`
-}
-_UPDATE_CHECK_INTERVAL_S = 6 * 3600   # 6 hours
-_UPDATE_CHECK_BOOT_DELAY_S = 60       # wait 1 min after server start
+# _UPDATE_CHECK_LOCK / _UPDATE_CHECK_CACHE / _UPDATE_CHECK_INTERVAL_S /
+# _UPDATE_CHECK_BOOT_DELAY_S moved to mc/state.py (Phase 0).
 
 
 def _refresh_update_cache():
