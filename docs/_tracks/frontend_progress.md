@@ -565,3 +565,162 @@ what moved, commit SHA, gate results.
    module — `terminalDismissed`/`terminalEventSources` writer audit still
    pending; the Map-identity bridge idea from module-4's landmine 4 remains
    the candidate approach.
+
+## Phase 3 — module 6: extract settings drill-down → `static/js/settings-drill.js` (2026-06-09)
+
+- **Module-5 SHA backfill:** module 5 (js/skills-panel.js) = commit `daceab0`.
+- **Popstate/back-stack hazard audit (the module-specific terminal-class
+  risk) — CLEAR, move is safe:** the entire hardware-back machinery lives
+  OUTSIDE the region and stays inline *together*: sentinel `let`s
+  (`_mcSettingsHistoryActive` L1023, `_mcSettingsNavDepth` L1024), the push
+  helpers (`mcPushSettingsHistory`/`mcPushSettingsNav` L1026–1033),
+  `_mcUnwindHistory`, the popstate handler (L1084–1117), and
+  `closeModalById`'s sentinel unwind (L2319–2327). The trap direction
+  (region-declared `let`s read by the outside popstate handler) **does not
+  exist**: the region's only `let`s (`_settingsActiveCat`/`_settingsActiveSub`/
+  `_settingsView`) have ZERO outside references (formal
+  `(?<![\w$.])name\s*=(?![=.])` scan + full-identifier scan, not eyeball).
+  The two real couplings are both safe: (a) region code REASSIGNS the
+  outside `let` `_mcSettingsNavDepth` (×3: `settingsBack`, `filterSettings`,
+  `openSettings`) — module→classic-global-declarative-record writes, the
+  proven module-2/4 direction (`nextModalZ++`, `cmdPaletteOpen`); (b) the
+  popstate handler calls the region's `_settingsUpUI()` — bare-identifier
+  lookup reaches the window re-exposure at event time (runtime-only), same
+  mechanics as every generated-onclick interop since module 2.
+- **Inbound refs re-verified: 16 textual = 15 functional + 1 comment**
+  (module-2 table said 16 — exact): `_renderSettings` ×9 (setTone/setAccent/
+  setDensity/setVoice ×4 + bg setters ×4 at L4584–4926, `setBriefRepliesMode`
+  L14859 — all guarded by `getElementById('settings-body')`), `openSettings`
+  ×3 (`sidebarNav('settings')` L2647, palette action closure L2843,
+  `settingsProviderRefresh` setTimeout fallback L11833),
+  `_applySettingsSectionVisibility` ×2 (refreshLocalAccessSection L13614 +
+  refreshRemoteAccessSection L13753 re-asserts after outerHTML hydration),
+  `_settingsUpUI` ×1 (popstate L1097), + 1 comment (L12829). All late-bound
+  runtime; zero parse-time callers. Whole-repo sweep: `demo-export/
+  demo-app.js` has its own self-contained COPIES (not refs);
+  `bg-framing-check.mjs` calls openSettings/drillSettings/filterSettings via
+  page.evaluate (typeof-guarded; all three window-exposed).
+- **Region boundary re-derived:** old lines 12930–13590 (`// ── Settings
+  categories + drill-down` header through `_renderSettings`'s closing brace)
+  + trailing blank 13591 = **exactly the 662-line header-to-header span**
+  (like module 5, no foreign code). Brace-depth top-level scan: 3 `let` +
+  3 `const` + 12 `function`, no IIFEs/top-level calls; the only top-level
+  evaluation is `SETTINGS_CATS`'s initializer calling the region's own pure
+  `_settingsIcon` string builder. (Scanner ends confused by triple-nested
+  templates inside `_renderSettings`; everything above L13185 tracked in
+  clean state, and `node --input-type=module --check` parses the final file.)
+- **What moved:** old lines 12930–13591 → `static/js/settings-drill.js`,
+  **byte-verbatim** (binary reassembly assertion: original index.html == new
+  file with the `<script>` tag removed and the region re-inserted; interop
+  tail append-only). Loaded via
+  `<script type="module" src="/static/js/settings-drill.js"></script>` after
+  the skills-panel.js tag, before `</body>`. Anti-FOUC bootstrap untouched.
+  Diff shape: 1 insertion, 662 deletions.
+- **Numbers:** `settings-drill.js` = 37,615 bytes / 674 lines (662 moved +
+  12-line interop tail; CRLF, no BOM). `index.html` 872,756 → 836,560 bytes;
+  17,852 → 17,191 lines (BOM preserved).
+- **Interop surface: 8 window function re-exposures, 0 accessor bridges**
+  (the `="<ident>=` generated-handler-assignment scan is EMPTY — first
+  module since the accessor pattern landed that needs none):
+  - Outside callers (4): `openSettings`, `_renderSettings`,
+    `_applySettingsSectionVisibility`, `_settingsUpUI` (see refs above).
+  - Region-generated `on*=` targets (4): `drillSettings` (master rows +
+    profile card), `drillSettingsSub` (L2 rows), `settingsBack` (header
+    arrow), `filterSettings` (search oninput).
+  - Module-private (3 `let` + 3 `const` + 4 functions): `_settingsActiveCat`,
+    `_settingsActiveSub`, `_settingsView`; `_settingsIcon`, `SETTINGS_CATS`,
+    `_settingsRow`; `_settingsCatLabel`, `_settingsSectionEls`,
+    `_renderSettingsSubList`, `_applySettingsView`.
+- **Outbound deps** resolve at call time through the shared global scope:
+  inline declarations (`esc`, `openModals`, `nextModalZ++`, `restoreModal`,
+  `focusModal`, `_clampModalSize`, `_positionSettingsModal` (L2042),
+  `mcPushSettingsHistory`, `mcPushSettingsNav`, `_mcUnwindHistory`,
+  `_mcSettingsNavDepth` reassignment, `_ensureAgentProviders`,
+  `fetchRemoteStatus`, `refreshRemoteAccessSection`,
+  `refreshLocalAccessSection`, `refreshUpdateStatus`, `refreshPushSection`,
+  `_renderProviderSettings`, `localAccessSettingsHTML`,
+  `remoteAccessSettingsHTML`, `pushNotificationsSettingsHTML`, `API_BASE`,
+  appearance globals, `ADV_FEATURES`, `advancedFlags`) + **cross-module
+  window props from mobile-pairing.js** (`mobilePairingSettingsHTML`,
+  `refreshMobilePairingSection` — module-3 interop, document-order
+  evaluation + runtime calls make ordering moot). Strict-mode promotion
+  audited: zero module-code `this` (all hits are handler strings/comments);
+  every assignment targets a declared binding.
+- **sw.js:** `SW_VERSION` `mc-push-v6` → `mc-push-v7` (no cache list by
+  design; version bump only, same as modules 1–5).
+- **Smoke harnesses:** added `route.fulfill` for
+  `/static/js/settings-drill.js` in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios.
+  - Real-server check (throwaway `MC_PORT=5379 python server.py` in the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/settings-drill.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 37615, `Cache-Control: no-cache`.
+  - Headless Chromium, **desktop pass (1280×800), 28/28 assertions, 0
+    console / 0 page errors**: 8/8 interop functions; open via the REAL
+    `sidebarNav('settings')` path; L1 list (title/back-arrow state); 6 panes
+    stay in DOM while hidden (hydration rule); Agent → 'subs' (4 sections) →
+    Model 'detail' (only section idx 1 visible, other 5 panes hidden);
+    header back arrow walks L3→L2→L1; **adaptive skip** (Providers
+    single-section → straight to detail, back → straight to list); live
+    search ('condense' → memory pane only; no-match shows placeholder;
+    clear → list); **Connectivity → Pair Mobile App renders + hydrates the
+    module-3 mobile-pairing section** (enrolled auto-flow: pairing host,
+    "Pair a phone", token list — read-only); Escape closes the modal with
+    `_mcSettingsNavDepth === 0`.
+  - Headless Chromium, **mobile pass (412×915) — the depth-based
+    hardware-back regression risk, asserted not just rendered — 16/16
+    assertions, 0 console / 0 page errors**: open pushes the `settings`
+    sentinel (history.state verified); drill L2/L3 increments depth 0→1→2;
+    `history.back()` ×3 walks detail→subs→list→**close** with
+    `_mcSettingsNavDepth` asserted at every step and
+    `_mcSettingsHistoryActive` cleared at close (popstate → window._settingsUpUI
+    bridge end-to-end); search pushes one nav level and hardware back exits
+    it; **UI back arrow's synthetic unwind keeps the stack in sync** (after
+    arrow-back from L2, `history.state.mc === 'settings'` and a SINGLE
+    hardware back closes the modal — the desync trap).
+  - Screenshots eyeballed (desktop L1/L2/L3/search/pair + mobile L3): fully
+    styled. NOTE: `.settings-detail-pane` has a 200 ms `settingsPaneIn`
+    opacity animation — screenshots taken immediately after a drill look
+    blank/faded; settle ≥400 ms before shooting (cost one false alarm).
+  - `node tools/smoke/bg-framing-check.mjs` — **identical pre-existing base
+    error** (`setBgZoom is not defined`); boots with settings-drill.js
+    fulfilled, dies at the same later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–5).
+
+### Landmines for module 7 (agent-panel / projects-grid / terminal remain)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule; re-derive
+   boundaries + brace-depth scan; accessor-bridge handler-assigned vars
+   (verify with the formal regex scan); don't "repair" pre-existing quirks).
+2. **Screenshot gates vs. CSS entry animations:** `settingsPaneIn` (and any
+   sibling animation) makes immediately-shot panes look empty. Assert
+   class/DOM state for behavior; settle past the animation for "look"
+   evidence.
+3. **Cross-module window-prop deps are now normal:** settings-drill calls
+   mobile-pairing's window exports. Document-order module evaluation +
+   runtime-only call sites make this safe; keep new module tags AFTER the
+   modules they depend on as a courtesy, but don't rely on eval order for
+   anything parse-time.
+4. **Remaining core candidates:** `terminal` (8 refs / ~281 lines) — STILL
+   blocked on shared mutable globals (`terminalDismissed` Set,
+   `terminalEventSources` Map read by outside code); writer audit pending;
+   object-identity window bridge or js/store.js are the candidate designs —
+   this is the orchestrator's store.js design checkpoint. Agent-panel and
+   projects-grid have no sizing rows in the module-2 table — derive fresh
+   (both are deeply entangled with the conversation model / grid renderer;
+   expect heavy shared state — audit before promising a move).
+5. **The settings family is now fully split across modules 3+6** (pairing
+   templates in mobile-pairing.js, drill machinery in settings-drill.js,
+   section templates `localAccessSettingsHTML`/`remoteAccessSettingsHTML`/
+   `pushNotificationsSettingsHTML` + their refresh/hydration functions still
+   INLINE at L12933+ post-move). A future "settings-sections" module could
+   take those three template+hydration families; their only couplings are
+   `_renderSettings` (window prop now) and `_applySettingsSectionVisibility`
+   (window prop now) — both already bridged.
