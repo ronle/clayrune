@@ -1,0 +1,45 @@
+name: Dependency audit
+
+# Continuous dependency-vulnerability auditing (pip-audit + cargo audit).
+# Added 2026-06-09 (inspection remediation D8). Runs weekly so newly-disclosed
+# CVEs against pinned deps surface even without a code change, plus on PRs that
+# touch a dependency manifest. Separate workflow so a red audit alerts without
+# blocking unrelated merges.
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'   # weekly, Monday 12:00 UTC
+  pull_request:
+    paths:
+      - 'requirements.txt'
+      - 'control_plane/requirements.txt'
+      - 'mc_tunnel/Cargo.lock'
+      - 'mc_tunnel/Cargo.toml'
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pip-audit
+      - name: Audit main app deps
+        run: pip-audit -r requirements.txt
+      - name: Audit control-plane deps
+        run: pip-audit -r control_plane/requirements.txt
+
+  cargo-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mc_tunnel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
