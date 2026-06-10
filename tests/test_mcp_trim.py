@@ -182,7 +182,12 @@ def _make_project(srv, pid='p', **fields):
 def _stub_endpoint_catalog(srv, monkeypatch, names):
     cat = {n: {'command': 'x'} for n in names}
     cat.setdefault('engram', {'command': 'engram', 'args': ['mcp', '--tools=agent']})
-    monkeypatch.setattr(srv, '_mcp_server_catalog', lambda project: dict(cat))
+    # The /api/project/<id>/mcp-enabled endpoints moved to the mcp_routes
+    # blueprint (1.4) and read ITS wired binding — patch the blueprint module,
+    # not server (backend_progress.md Phase-1 landmine). server._mcp_server_catalog
+    # still backs _resolve_project_mcp_config (dispatch), patched separately above.
+    from mc.blueprints import mcp_routes as _bp_mcp
+    monkeypatch.setattr(_bp_mcp, '_mcp_server_catalog', lambda project: dict(cat))
 
 
 def test_get_mcp_enabled_default_off(srv, client, monkeypatch):

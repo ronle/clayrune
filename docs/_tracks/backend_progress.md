@@ -92,3 +92,23 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
 - **Gates:** routes 209/209 ✓ · full pytest 0 ✓ · ruff ✓ · pyright mc/ 0 ✓ ·
   smoke :5377 — /api/skills lists, /api/skills/search returns hits ✓
 - **Commit:** `aa1fb6f` on `refactor/backend`, merged to `local/opus-effort`.
+
+## 1.4 — mcp_routes blueprint (2026-06-10)
+
+- **What moved:** 412 lines → `mc/blueprints/mcp_routes.py`: 10 routes (plan
+  table said 6 — URL-install flow + per-project loadout grew after it): 8
+  `/api/mcp*` + the 2 `/api/project/<id>/mcp-enabled` loadout routes
+  (MCP-feature routes under /api/project/ — feature cohesion, same call as
+  /api/presence in 1.2).
+- **Seams:** `wire(load_project_fn, save_project_fn, data_dir,
+  mcp_server_catalog_fn)` — `_mcp_server_catalog` STAYS in server.py (also
+  feeds `_resolve_project_mcp_config` in dispatch; re-homes at 1.12).
+  `_resolve_project_path_or_400` imported cross-blueprint from skills_routes.
+- **Test port (landmine paid):** `test_mcp_trim._stub_endpoint_catalog`
+  monkeypatched `server._mcp_server_catalog`; endpoint tests now patch
+  `mc.blueprints.mcp_routes._mcp_server_catalog` (the dispatch-side stub stays
+  on server). First real instance of the Phase-0 predicted test-port.
+- **Gates:** routes 209/209 ✓ · full pytest 0 (22/22 mcp_trim after port) ✓ ·
+  ruff ✓ · pyright mc/ 0 ✓ · smoke :5377 — /api/mcp lists, mcp-enabled returns
+  loadout ✓
+- **Commit:** `(fill14)` on `refactor/backend`, merged to `local/opus-effort`.
