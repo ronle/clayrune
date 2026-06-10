@@ -43,7 +43,11 @@
 // v13 (2026-06-10): /static/js/cross-backlog.js extracted from index.html's
 // inline <script> (cross-project "All Backlog Items" modal: filter/render/jump).
 // Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v13';
+// v14 (2026-06-10): /static/js/scheduler.js extracted from index.html's inline
+// <script> (scheduled-tasks modal + form + run-list paging). 2-segment move:
+// the duplicate `timeAgoShort` stays inline. Same no-cache-list rationale —
+// version bump only.
+const SW_VERSION = 'mc-push-v14';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
