@@ -31,7 +31,10 @@
 // v9 (2026-06-09): /static/js/terminal.js extracted from index.html's inline
 // <script> (terminal pop-out client + window-bridged state). Same
 // no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v9';
+// v10 (2026-06-10): /static/js/mermaid.js extracted from index.html's inline
+// <script> (mermaid render pipeline + viewers; the CDN loader stays in the
+// head module). Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v10';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
