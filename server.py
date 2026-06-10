@@ -1285,52 +1285,8 @@ def _has_running_agent(project_id):
     return False
 
 
-def _project_live_agent(project_id):
-    """Server-authoritative live-agent state for a project, from the in-memory
-    agent_sessions map (the source of truth — fresh for ALL projects, every
-    poll).
-
-    The client's per-project agentHistory is only refreshed when that
-    project's modal is open, so for a closed project computeLiveStatus()
-    falls back to a stale errored session and mislabels an actively-running
-    project as "Error/stuck" with no live presence. Surfacing this on the
-    regularly-polled /api/projects lets friendlyStatus() trust server truth
-    instead. Returns {'state', 'task'} or None.
-
-    Priority: asking (needs the user) > working (a turn is running) > idle
-    (process alive between turns). Housekeeping/incognito sessions are
-    excluded so the public indicator respects incognito gating.
-
-    `reason` distinguishes the asking sub-state ('plan' = awaiting plan
-    approval, 'question' = awaiting an answer, else None) so the client can
-    label a CLOSED project's attention item correctly without its
-    lazily-refreshed agentStatusCache (which is only fresh for projects
-    whose modal this client has open — the same staleness this helper exists
-    to defeat).
-    """
-    best = None  # 0=idle, 1=working, 2=asking
-    rank = {'idle': 0, 'working': 1, 'asking': 2}
-    for s in agent_sessions.values():
-        if s.get('project_id') != project_id:
-            continue
-        if s.get('housekeeping') or s.get('incognito'):
-            continue
-        st = s.get('status')
-        if st not in ('running', 'idle'):
-            continue
-        reason = None
-        if s.get('waiting_for_plan_approval'):
-            state, reason = 'asking', 'plan'   # turn done, awaiting approval
-        elif s.get('waiting_for_question'):
-            state, reason = 'asking', 'question'  # awaiting an answer
-        elif st == 'running':
-            state = 'working'  # a turn is actively running
-        else:
-            state = 'idle'     # process alive, between turns, not waiting
-        if best is None or rank[state] > rank[best['state']]:
-            best = {'state': state, 'reason': reason,
-                    'task': (s.get('task') or '').strip()[:80]}
-    return best
+# _project_live_agent ── moved to mc/blueprints/project_routes.py (1.11);
+# its only caller is /api/projects (same module).
 
 
 def _should_condense(project, include_claude_md=False):
@@ -1564,99 +1520,49 @@ def _reap_prior_instance_strays():
         pass
 
 
-_ATTACHMENT_RUNTIME_FIELDS = ('_present',)
+# ── Project-record store + project/backlog/github/code-sync/attachment/
+# rules/memory-editor/order endpoints ── extracted to
+# mc/blueprints/project_routes.py (1.11): the CRUD core (load_project /
+# save_project / load_projects with the LOAD-BEARING EXCLUDED_SIDECAR_SUFFIXES
+# exclusion / update_project / delete_project), _project_live_agent,
+# _log_agent_activity (project-record activity_log writer), backlog CRUD +
+# _append_note_to_backlog_item, github + code-sync glue (the blueprint imports
+# github_sync/project_sync directly; their register() wiring stays below,
+# unchanged), attachments + serve-image + the upload-quota helpers, import,
+# rules, the memory editor-CRUD trio (locked managed-region writers stay
+# below, untouched), and projects/order + grid-layout. wire() late-binds the
+# path constants (DATA_DIR & co. stay here — other families still read them)
+# and the cross-family fns (_get_memory_path → Scribe/condense; _resolve_claude,
+# get_manager, _unregister_process, Popen consts → dispatch, 1.12). This stanza
+# sits ABOVE the other blueprints' wire() sites so they can re-home their
+# projects-family slots to _bp_projects.*.
+from mc.blueprints import project_routes as _bp_projects  # noqa: E402
 
-
-def _decorate_attachments(project):
-    """Decorate backlog-item attachments with runtime presence flags.
-
-    Each attachment gets `_present: bool` based on whether its stored file
-    still exists on disk. Lets the SPA skip <img> requests for orphaned
-    records instead of generating console-error noise on 404. The flag is
-    stripped before save (see save_project) so it never pollutes the JSON.
-    """
-    if not isinstance(project, dict):
-        return project
-    for item in project.get('backlog', []) or []:
-        for att in item.get('attachments', []) or []:
-            try:
-                att['_present'] = (UPLOADS_DIR / att.get('stored_name', '')).is_file()
-            except Exception:
-                att['_present'] = False
-    return project
-
-
-def load_project(project_id):
-    filepath = DATA_DIR / f'{project_id}.json'
-    if not filepath.exists():
-        return None
-    return _decorate_attachments(json.loads(filepath.read_text(encoding='utf-8')))
-
-
-def save_project(project_id, data):
-    # Strip runtime-only attachment fields (e.g. `_present`) before persisting
-    # so they never leak into the JSON. See _decorate_attachments.
-    if isinstance(data, dict):
-        for item in data.get('backlog', []) or []:
-            for att in item.get('attachments', []) or []:
-                for k in _ATTACHMENT_RUNTIME_FIELDS:
-                    att.pop(k, None)
-    filepath = DATA_DIR / f'{project_id}.json'
-    filepath.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
-
-
-# LOAD-BEARING: every per-project sidecar file MUST be listed here, OR be
-# moved outside DATA_DIR entirely. A stray non-project JSON here 500s
-# _get_active_restart_blockers and the restart endpoints. See CLAUDE.md
-# "LOAD-BEARING RULE — DATA_DIR pollution" and the parametric regression
-# test at tests/test_load_projects_sidecar_exclusions.py (Seat 4 v2 Cond 6
-# closure — single source of truth, parametric + next-sidecar canary).
-EXCLUDED_SIDECAR_SUFFIXES = (
-    '_agent_log.json',
-    '_scribe_stats.json',
-    '_router_stats.json',
-    '_skill_stats.json',           # Phase 4 Distiller — D9 closure
-    '_skill_stats_summary.json',   # Phase 4 Distiller cache — D3 closure
+_bp_projects.wire(
+    data_dir=DATA_DIR,
+    data_root=_DATA_ROOT,
+    uploads_dir=UPLOADS_DIR,
+    projects_base=PROJECTS_BASE,
+    shared_rules_path=SHARED_RULES_PATH,
+    get_memory_path_fn=_get_memory_path,
+    resolve_claude_fn=_resolve_claude,
+    get_manager_fn=get_manager,
+    unregister_process_fn=_unregister_process,
+    popen_flags=_POPEN_FLAGS,
+    startupinfo=_STARTUPINFO,
 )
-
-
-def load_projects():
-    projects = []
-    for f in DATA_DIR.glob('*.json'):
-        if f.name.endswith(EXCLUDED_SIDECAR_SUFFIXES):
-            continue
-        try:
-            p = json.loads(f.read_text(encoding='utf-8'))
-            if not isinstance(p, dict):
-                continue
-            p.setdefault('status', 'unknown')
-            p.setdefault('blocked', False)
-            p.setdefault('activity_log', [])
-            p.setdefault('current_task', '')
-            p.setdefault('next_action', '')
-            p.setdefault('domain', 'general')
-            p.setdefault('blocked_reason', None)
-            p.setdefault('backlog', [])
-            p.setdefault('project_path', '')
-            # Phase 4 Distiller per-project defaults (v2.1 §11 — I5 closure).
-            # Mirrors the current_task / next_action precedent. Written through
-            # on first session-end touch or first Settings-modal open via save_project.
-            p.setdefault('distiller_mode', 'proposed')
-            p.setdefault('distiller_min_recurrence', 3)
-            p.setdefault('distiller_max_topics_per_session', 3)
-            p.setdefault('distiller_max_preferences_per_session', 3)
-            p.setdefault('distiller_max_explorations_per_session', 3)
-            p.setdefault('distiller_min_turns', 5)
-            p.setdefault('distiller_skip_errors', True)
-            _decorate_attachments(p)
-            projects.append(p)
-        except Exception as e:
-            _log(f"Error loading {f}: {e}")
-    projects.sort(key=lambda p: (p.get('display_order', 9999), p.get('last_updated', '1970-01-01T00:00:00Z')))
-    # Secondary sort: within same display_order, most recently updated first
-    projects.sort(key=lambda p: p.get('last_updated', '1970-01-01T00:00:00Z'), reverse=True)
-    projects.sort(key=lambda p: p.get('display_order', 9999))
-    return projects
+app.register_blueprint(_bp_projects.bp)
+# Inbound shims — dispatch/scheduler/scribe/condense and the github/project
+# sync register() calls below keep their bare names; tests read
+# server.EXCLUDED_SIDECAR_SUFFIXES and server._upload_limit & co.
+load_project = _bp_projects.load_project
+save_project = _bp_projects.save_project
+load_projects = _bp_projects.load_projects
+EXCLUDED_SIDECAR_SUFFIXES = _bp_projects.EXCLUDED_SIDECAR_SUFFIXES
+_log_agent_activity = _bp_projects._log_agent_activity
+_upload_limit = _bp_projects._upload_limit
+_incoming_file_size = _bp_projects._incoming_file_size
+_project_attachment_usage = _bp_projects._project_attachment_usage
 
 
 # time_ago / now_iso / file_type moved to mc/core.py (Phase 0).
@@ -1699,8 +1605,8 @@ _marketing_preview.register(app)
 from mc.blueprints import guide_routes as _bp_guide  # noqa: E402
 
 _bp_guide.wire(
-    load_project_fn=load_project,
-    save_project_fn=save_project,
+    load_project_fn=_bp_projects.load_project,
+    save_project_fn=_bp_projects.save_project,
     data_dir=DATA_DIR,
     memory_search_fn=_memory_search,
     resolve_claude_fn=_resolve_claude,
@@ -1711,228 +1617,18 @@ _bp_guide.wire(
 app.register_blueprint(_bp_guide.bp)
 
 
-# ── Project endpoints ────────────────────────────────────────────────────────
-
-@app.route('/api/projects')
-def api_projects():
-    projects = load_projects()
-    for p in projects:
-        p['last_updated_relative'] = time_ago(p.get('last_updated'))
-        p['live_agent'] = _project_live_agent(p.get('id'))
-        for entry in p.get('activity_log', []):
-            entry['ts_relative'] = time_ago(entry.get('ts'))
-        for item in p.get('backlog', []):
-            item['ts_relative'] = time_ago(item.get('created_at'))
-    return jsonify(projects)
-
-
-@app.route('/api/project/<project_id>', methods=['POST'])
-def update_project(project_id):
-    data = request.get_json()
-    if not data:
-        return jsonify({'error': 'no data'}), 400
-
-    filepath = DATA_DIR / f'{project_id}.json'
-    is_new = not filepath.exists()
-    existing = json.loads(filepath.read_text(encoding='utf-8')) if not is_new else {'id': project_id}
-    existing.setdefault('backlog', [])
-
-    # ── Auto-create a dedicated workspace folder when creating a project with no path.
-    if is_new:
-        provided_path = (data.get('project_path') or '').strip()
-        if not provided_path:
-            base = Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
-            try:
-                base.mkdir(parents=True, exist_ok=True)
-                candidate = base / project_id
-                n = 1
-                while candidate.exists():
-                    candidate = base / f'{project_id}_{n}'
-                    n += 1
-                candidate.mkdir(parents=True, exist_ok=True)
-                data['project_path'] = str(candidate)
-            except Exception as e:
-                return jsonify({'error': f'could not create workspace folder: {e}'}), 500
-
-    # ── Prevent two projects from sharing the same folder.
-    candidate_path = (data.get('project_path') or '').strip()
-    if candidate_path:
-        try:
-            resolved = str(Path(candidate_path).resolve()).lower() if os.name == 'nt' else str(Path(candidate_path).resolve())
-        except Exception:
-            resolved = candidate_path
-        for pf in DATA_DIR.glob('*.json'):
-            if pf.stem == project_id or pf.stem.endswith('_agent_log'):
-                continue
-            try:
-                with open(pf, encoding='utf-8') as f:
-                    other = json.load(f)
-                op = (other.get('project_path') or '').strip()
-                if not op:
-                    continue
-                other_resolved = str(Path(op).resolve()).lower() if os.name == 'nt' else str(Path(op).resolve())
-                if other_resolved == resolved:
-                    name = other.get('name') or pf.stem
-                    return jsonify({'error': f'Path already used by project "{name}". Each project needs its own folder.'}), 409
-            except Exception:
-                continue
-
-    for k, v in data.items():
-        if k not in ('log_msg', 'backlog'):
-            existing[k] = v
-
-    existing['last_updated'] = now_iso()
-
-    if 'log_msg' in data:
-        log = existing.setdefault('activity_log', [])
-        log.insert(0, {'ts': existing['last_updated'], 'msg': data['log_msg']})
-        existing['activity_log'] = log[:20]
-
-    save_project(project_id, existing)
-
-    return jsonify({'ok': True, 'id': project_id})
-
-
-@app.route('/api/project/<project_id>/generate_summary', methods=['POST'])
-def generate_project_summary(project_id):
-    """Use Claude to pick an emoji and write a one-line summary for the project."""
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'project not found'}), 404
-
-    body = request.get_json(silent=True) or {}
-    overwrite_emoji = bool(body.get('overwrite_emoji'))
-
-    name = p.get('name') or project_id
-    description = (p.get('description') or '').strip()
-    domain = p.get('domain') or 'general'
-    activity = p.get('activity_log', [])[:5]
-    activity_str = '\n'.join(f"- {a.get('msg', '')}" for a in activity if a.get('msg'))
-
-    prompt = (
-        "You are generating a project profile for a dashboard. "
-        "Return ONLY a JSON object (no markdown, no code fences, no other text) "
-        "with exactly two fields:\n"
-        '- "emoji": a single emoji character that matches the project theme\n'
-        '- "summary": one short sentence (12-20 words) describing what the project is about\n\n'
-        f"Project name: {name}\n"
-        f"Description: {description or '(none)'}\n"
-        f"Domain: {domain}\n"
-        f"Recent activity:\n{activity_str or '(no activity yet)'}\n\n"
-        'Example: {"emoji":"\u26bd","summary":"Tracks soccer match results and ranks teams across league tables."}'
-    )
-
-    model = CONFIG.get('condense_model', '') or 'haiku'
-    cmd = [_resolve_claude(), '-p', prompt, '--model', model, '--output-format', 'json',
-           '--dangerously-skip-permissions']
-
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True, text=True, encoding='utf-8', errors='replace',
-            timeout=30,
-            creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({'error': 'generation timed out after 30s'}), 504
-    except FileNotFoundError:
-        return jsonify({'error': 'claude CLI not found'}), 500
-
-    if result.returncode != 0:
-        return jsonify({'error': f'claude exited {result.returncode}: {(result.stderr or result.stdout)[:200]}'}), 500
-
-    # Parse Claude CLI's JSON envelope -> model's JSON content
-    try:
-        envelope = json.loads(result.stdout)
-        content = (envelope.get('result') or '').strip()
-        # Strip optional ```json fences if the model added them despite instructions
-        if content.startswith('```'):
-            lines = content.splitlines()
-            if lines and lines[0].startswith('```'):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == '```':
-                lines = lines[:-1]
-            content = '\n'.join(lines).strip()
-        data = json.loads(content)
-    except (json.JSONDecodeError, KeyError, AttributeError) as e:
-        return jsonify({
-            'error': f'could not parse model output: {e}',
-            'raw': (result.stdout or '')[:500],
-        }), 500
-
-    emoji = (data.get('emoji') or '').strip()
-    summary = (data.get('summary') or '').strip()
-
-    if emoji and (overwrite_emoji or not p.get('emoji')):
-        p['emoji'] = emoji
-    if summary:
-        p['summary'] = summary
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-
-    return jsonify({
-        'ok': True,
-        'emoji': p.get('emoji', ''),
-        'summary': p.get('summary', ''),
-    })
-
-
-@app.route('/api/project/<project_id>', methods=['DELETE'])
-def delete_project(project_id):
-    filepath = DATA_DIR / f'{project_id}.json'
-    if not filepath.exists():
-        return jsonify({'error': 'not found'}), 404
-
-    # Clean up attachment files
-    p = load_project(project_id)
-    if p:
-        for item in p.get('backlog', []):
-            for att in item.get('attachments', []):
-                att_path = UPLOADS_DIR / att['stored_name']
-                if att_path.exists():
-                    att_path.unlink()
-
-    # Remove agent log file if exists
-    agent_log = DATA_DIR / f'{project_id}_agent_log.json'
-    if agent_log.exists():
-        agent_log.unlink()
-
-    # Kill any running agent sessions for this project
-    with get_manager(project_id).lock:
-        to_remove = [sid for sid, s in agent_sessions.items() if s['project_id'] == project_id]
-        for sid in to_remove:
-            session = agent_sessions[sid]
-            if session['status'] == 'running' and session.get('proc'):
-                try:
-                    session['proc'].kill()
-                except Exception:
-                    pass
-                _unregister_process(session['proc'].pid)
-            agent_sessions.pop(sid, None)
-
-    # Kill any running terminal sessions for this project
-    with terminal_lock:
-        to_remove = [sid for sid, s in terminal_sessions.items() if s['project_id'] == project_id]
-        for sid in to_remove:
-            session = terminal_sessions[sid]
-            if session['status'] == 'running':
-                _kill_terminal_session(session)
-            terminal_sessions.pop(sid, None)
-
-    # Delete project file
-    filepath.unlink()
-    return jsonify({'ok': True})
+# ── Project endpoints ── moved to mc/blueprints/project_routes.py (1.11).
 
 
 # ── Scribe telemetry (SPEC §8) ── /scribe-stats moved to mc/blueprints/guide_routes.py (1.9).
 
 
 # ── Phase 4 Distiller endpoints ── extracted to
-# mc/blueprints/distiller_routes.py (1.5). wire() late-binds projects-family
-# accessors until 1.11.
+# mc/blueprints/distiller_routes.py (1.5). Projects-family accessor re-homed
+# onto _bp_projects (1.11).
 from mc.blueprints import distiller_routes as _bp_distiller  # noqa: E402
 
-_bp_distiller.wire(load_project_fn=load_project, data_dir=DATA_DIR)
+_bp_distiller.wire(load_project_fn=_bp_projects.load_project, data_dir=DATA_DIR)
 app.register_blueprint(_bp_distiller.bp)
 
 
@@ -1985,551 +1681,15 @@ def get_router_stats_aggregate():
 # /api/project/<id>/memory/search ── moved to mc/blueprints/guide_routes.py (1.9).
 
 
-# ── Backlog endpoints ────────────────────────────────────────────────────────
-
-@app.route('/api/project/<project_id>/backlog', methods=['GET'])
-def get_backlog(project_id):
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'not found'}), 404
-    return jsonify(p.get('backlog', []))
-
-
-@app.route('/api/project/<project_id>/backlog', methods=['POST'])
-def add_backlog_item(project_id):
-    data = request.get_json()
-    if not data or not data.get('text', '').strip():
-        return jsonify({'error': 'text required'}), 400
-
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'not found'}), 404
-
-    item = {
-        'id': str(uuid.uuid4())[:8],
-        'text': data['text'].strip(),
-        'priority': data.get('priority', 'normal'),
-        'status': 'open',
-        'created_at': now_iso(),
-        'done_at': None,
-        'source': data.get('source', 'dashboard'),
-        'attachments': [],
-    }
-
-    backlog = p.setdefault('backlog', [])
-    backlog.insert(0, item)
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-    return jsonify({'ok': True, 'item': item})
-
-
-@app.route('/api/project/<project_id>/backlog/<item_id>', methods=['PATCH'])
-def update_backlog_item(project_id, item_id):
-    data = request.get_json()
-    if not data:
-        return jsonify({'error': 'no data'}), 400
-
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'project not found'}), 404
-
-    backlog = p.get('backlog', [])
-    item = next((i for i in backlog if i['id'] == item_id), None)
-    if item is None:
-        return jsonify({'error': 'item not found'}), 404
-
-    if 'text' in data:
-        item['text'] = data['text'].strip()
-    if 'priority' in data:
-        item['priority'] = data['priority']
-    if 'status' in data:
-        item['status'] = data['status']
-        if data['status'] == 'done' and not item.get('done_at'):
-            item['done_at'] = now_iso()
-        elif data['status'] == 'open':
-            item['done_at'] = None
-
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-    return jsonify({'ok': True, 'item': item})
-
-
-@app.route('/api/project/<project_id>/backlog/<item_id>/note', methods=['POST'])
-def add_backlog_note(project_id, item_id):
-    data = request.get_json() or {}
-    text = (data.get('text') or '').strip()
-    if not text:
-        return jsonify({'error': 'text required'}), 400
-    agent_code = (data.get('agent_code') or 'user').strip() or 'user'
-    if _append_note_to_backlog_item(project_id, item_id, text, agent_code):
-        return jsonify({'ok': True})
-    return jsonify({'error': 'item not found'}), 404
-
-
-@app.route('/api/project/<project_id>/backlog/<item_id>', methods=['DELETE'])
-def delete_backlog_item(project_id, item_id):
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'not found'}), 404
-
-    # Also delete any attachments for this item
-    item = next((i for i in p.get('backlog', []) if i['id'] == item_id), None)
-    if item:
-        for att in item.get('attachments', []):
-            att_path = UPLOADS_DIR / att['stored_name']
-            if att_path.exists():
-                att_path.unlink()
-
-    before = len(p.get('backlog', []))
-    p['backlog'] = [i for i in p.get('backlog', []) if i['id'] != item_id]
-    if len(p['backlog']) == before:
-        return jsonify({'error': 'item not found'}), 404
-
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-    return jsonify({'ok': True})
+# ── Backlog endpoints ── moved to mc/blueprints/project_routes.py (1.11).
 
 
 # ── Walkthrough onboarding project ── moved to mc/blueprints/guide_routes.py (1.9).
 
 
-# ── GitHub sync endpoints ────────────────────────────────────────────────────
-
-@app.route('/api/project/<project_id>/github/setup', methods=['POST'])
-def github_setup(project_id):
-    """Validate repo, save config, trigger initial sync."""
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'not found'}), 404
-    data = request.get_json() or {}
-    repo = (data.get('repo') or '').strip()
-    if not repo:
-        return jsonify({'error': 'repo required'}), 400
-
-    ok, err = _gh_sync.validate_repo(repo)
-    if not ok:
-        return jsonify({'error': err}), 400
-
-    p['github_repo'] = repo
-    p['github_sync_enabled'] = True
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-    _log_agent_activity(project_id, f"GitHub: Connected to {repo}")
-
-    # Trigger initial sync in background
-    def _initial():
-        _gh_sync.sync_project(project_id)
-    threading.Thread(target=_initial, daemon=True).start()
-
-    return jsonify({'ok': True, 'repo': repo})
-
-
-@app.route('/api/project/<project_id>/github/disconnect', methods=['POST'])
-def github_disconnect(project_id):
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'not found'}), 404
-    repo = p.get('github_repo', '')
-    p['github_sync_enabled'] = False
-    p['github_repo'] = ''
-    p['github_last_sync'] = None
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-    if repo:
-        _log_agent_activity(project_id, f"GitHub: Disconnected from {repo}")
-    return jsonify({'ok': True})
-
-
-@app.route('/api/project/<project_id>/github/sync', methods=['POST'])
-def github_sync_now(project_id):
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'not found'}), 404
-    ok, summary = _gh_sync.sync_project(project_id)
-    if not ok:
-        return jsonify({'error': summary}), 429 if 'Rate' in summary else 400
-    return jsonify({'ok': True, 'summary': summary})
-
-
-@app.route('/api/project/<project_id>/github/status')
-def github_status(project_id):
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'not found'}), 404
-    return jsonify({
-        'repo': p.get('github_repo', ''),
-        'enabled': p.get('github_sync_enabled', False),
-        'last_sync': p.get('github_last_sync'),
-    })
-
-
-# ── Code sync endpoints (spike — read-only) ─────────────────────────────────
-
-@app.route('/api/project/<project_id>/code-sync/enable', methods=['POST'])
-def code_sync_enable(project_id):
-    """Turn on code sync for a project. Creates the hidden worktree on
-    the sync branch and pushes it to the remote (best-effort)."""
-    if load_project(project_id) is None:
-        return jsonify({'error': 'not found'}), 404
-    ok, msg = _proj_sync.enable(project_id)
-    if not ok:
-        return jsonify({'error': msg}), 400
-    return jsonify({'ok': True, 'message': msg})
-
-
-@app.route('/api/project/<project_id>/code-sync/disable', methods=['POST'])
-def code_sync_disable(project_id):
-    if load_project(project_id) is None:
-        return jsonify({'error': 'not found'}), 404
-    ok, msg = _proj_sync.disable(project_id)
-    if not ok:
-        return jsonify({'error': msg}), 400
-    return jsonify({'ok': True, 'message': msg})
-
-
-@app.route('/api/project/<project_id>/code-sync/sync', methods=['POST'])
-def code_sync_sync_now(project_id):
-    if load_project(project_id) is None:
-        return jsonify({'error': 'not found'}), 404
-    ok, summary = _proj_sync.sync_now(project_id)
-    if not ok:
-        return jsonify({'error': summary}), 429 if 'rate limited' in summary else 400
-    return jsonify({'ok': True, 'summary': summary})
-
-
-@app.route('/api/project/<project_id>/code-sync/status')
-def code_sync_status(project_id):
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'not found'}), 404
-    return jsonify(_proj_sync.compute_status(p))
-
-
-@app.route('/api/project/<project_id>/code-sync/dismiss', methods=['POST'])
-def code_sync_dismiss(project_id):
-    """Reject a remote commit so it stops appearing in incoming. Spike
-    has no Accept yet — Reject is the only review action wired so far."""
-    if load_project(project_id) is None:
-        return jsonify({'error': 'not found'}), 404
-    data = request.get_json() or {}
-    sha = (data.get('sha') or '').strip()
-    ok, msg = _proj_sync.dismiss_commit(project_id, sha)
-    if not ok:
-        return jsonify({'error': msg}), 400
-    return jsonify({'ok': True, 'message': msg})
-
-
-# ── Attachment endpoints ─────────────────────────────────────────────────────
-
-# P2-2 (IMPROVEMENT_PLAN_V2.md): per-project upload quota.
-
-def _upload_limit(project, key):
-    """Resolve an upload limit: per-project override → global config → 0.
-    0 (or missing/invalid) means unlimited."""
-    val = None
-    if project is not None:
-        val = project.get(key)
-    if val is None:
-        val = CONFIG.get(key, 0)
-    try:
-        val = int(val)
-    except (TypeError, ValueError):
-        return 0
-    return val if val > 0 else 0
-
-
-def _incoming_file_size(f):
-    """Size of a werkzeug FileStorage without consuming it."""
-    try:
-        pos = f.stream.tell()
-        f.stream.seek(0, os.SEEK_END)
-        size = f.stream.tell()
-        f.stream.seek(pos)
-        return size
-    except (OSError, AttributeError):
-        return 0
-
-
-def _project_attachment_usage(project):
-    """Sum of recorded attachment sizes across all backlog items."""
-    total = 0
-    for item in project.get('backlog', []):
-        for a in item.get('attachments', []):
-            try:
-                total += int(a.get('size', 0))
-            except (TypeError, ValueError):
-                pass
-    return total
-
-
-@app.route('/api/project/<project_id>/backlog/<item_id>/attachments', methods=['POST'])
-def upload_attachment(project_id, item_id):
-    """Upload a file and attach it to a backlog item."""
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'project not found'}), 404
-
-    item = next((i for i in p.get('backlog', []) if i['id'] == item_id), None)
-    if item is None:
-        return jsonify({'error': 'item not found'}), 404
-
-    if 'file' not in request.files:
-        return jsonify({'error': 'no file'}), 400
-
-    f = request.files['file']
-    if not f.filename:
-        return jsonify({'error': 'empty filename'}), 400
-
-    # P2-2: enforce per-file + per-project cumulative upload limits before
-    # touching disk. Limits default to 0 (unlimited) so this is a no-op
-    # unless Ron sets upload_max_file_bytes / upload_quota_bytes globally
-    # or per-project.
-    incoming = _incoming_file_size(f)
-    max_file = _upload_limit(p, 'upload_max_file_bytes')
-    if max_file and incoming > max_file:
-        _log_agent_activity(
-            project_id,
-            f"Upload rejected: '{f.filename}' is {incoming} B, over the "
-            f"{max_file} B per-file limit")
-        return jsonify({'error': 'file too large',
-                        'limit_bytes': max_file,
-                        'file_bytes': incoming}), 413
-    quota = _upload_limit(p, 'upload_quota_bytes')
-    if quota:
-        used = _project_attachment_usage(p)
-        if used + incoming > quota:
-            _log_agent_activity(
-                project_id,
-                f"Upload rejected: project attachment quota exceeded "
-                f"({used}+{incoming} B > {quota} B)")
-            return jsonify({'error': 'project upload quota exceeded',
-                            'quota_bytes': quota, 'used_bytes': used,
-                            'file_bytes': incoming}), 413
-
-    original_name = f.filename
-    ext = Path(original_name).suffix.lower()
-    stored_name = f'{project_id}_{item_id}_{uuid.uuid4().hex[:8]}{ext}'
-    dest = UPLOADS_DIR / stored_name
-    f.save(str(dest))
-
-    att = {
-        'id': str(uuid.uuid4())[:8],
-        'original_name': original_name,
-        'stored_name': stored_name,
-        'size': dest.stat().st_size,
-        'type': file_type(original_name),
-        'uploaded_at': now_iso(),
-    }
-
-    item.setdefault('attachments', []).append(att)
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-    return jsonify({'ok': True, 'attachment': att})
-
-
-@app.route('/api/attachments/<stored_name>')
-def serve_attachment(stored_name):
-    """Serve an attachment file."""
-    safe = Path(stored_name).name  # prevent path traversal
-    att_path = UPLOADS_DIR / safe
-    if not att_path.exists():
-        abort(404)
-    return send_file(str(att_path), as_attachment=False)
-
-
-_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp',
-               '.svg', '.ico', '.tif', '.tiff', '.avif'}
-
-
-@app.route('/api/serve-image')
-def serve_image():
-    """Serve an image file referenced in agent output.
-
-    Security model (this is a localhost dashboard, but still): the
-    realpath-resolved target MUST be an image extension AND must live
-    under a known project working dir, the uploads dir, or the data
-    root. realpath() collapses any `..` so the prefix check can't be
-    escaped. Anything else 403/404/415s.
-    """
-    raw = (request.args.get('path') or '').strip()
-    if not raw:
-        abort(400)
-    try:
-        real = os.path.realpath(raw)
-    except Exception:
-        abort(400)
-    if os.path.splitext(real)[1].lower() not in _IMAGE_EXTS:
-        abort(415)
-    if not os.path.isfile(real):
-        abort(404)
-    allowed = [str(UPLOADS_DIR), str(_DATA_ROOT)]
-    try:
-        for p in load_projects():
-            pp = (p.get('project_path') or '').strip()
-            if pp:
-                # Don't let a project rooted at a filesystem/drive root (C:\, /,
-                # C:\Users, /home) turn serve-image into a whole-disk image read.
-                try:
-                    if len(Path(os.path.realpath(pp)).parts) < 3:
-                        continue
-                except Exception:
-                    continue
-                allowed.append(pp)
-    except Exception:
-        pass
-    rn = os.path.normcase(real)
-    ok = False
-    for a in allowed:
-        try:
-            ar = os.path.normcase(os.path.realpath(a))
-        except Exception:
-            continue
-        if rn == ar or rn.startswith(ar + os.sep):
-            ok = True
-            break
-    if not ok:
-        abort(403)
-    return send_file(real, as_attachment=False, max_age=3600)
-
-
-@app.route('/api/project/<project_id>/backlog/<item_id>/attachments/<att_id>', methods=['DELETE'])
-def delete_attachment(project_id, item_id, att_id):
-    p = load_project(project_id)
-    if p is None:
-        return jsonify({'error': 'project not found'}), 404
-
-    item = next((i for i in p.get('backlog', []) if i['id'] == item_id), None)
-    if item is None:
-        return jsonify({'error': 'item not found'}), 404
-
-    atts = item.get('attachments', [])
-    att = next((a for a in atts if a['id'] == att_id), None)
-    if att is None:
-        return jsonify({'error': 'attachment not found'}), 404
-
-    att_path = UPLOADS_DIR / att['stored_name']
-    if att_path.exists():
-        att_path.unlink()
-
-    item['attachments'] = [a for a in atts if a['id'] != att_id]
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-    return jsonify({'ok': True})
-
-
-# ── Project import ────────────────────────────────────────────────────────────
-
-def _parse_changelog(text):
-    """Parse the most recent CHANGELOG.md entry into structured sections."""
-    lines = text.split('\n')
-    # Find first ## heading (most recent entry)
-    start = None
-    for i, line in enumerate(lines):
-        if line.startswith('## '):
-            if start is None:
-                start = i
-            else:
-                # Hit the next entry, stop
-                lines = lines[start:i]
-                break
-    else:
-        if start is not None:
-            lines = lines[start:]
-        else:
-            return {}
-
-    title = lines[0].lstrip('# ').strip() if lines else ''
-    sections = {}
-    current_section = None
-    current_lines = []
-
-    for line in lines[1:]:
-        if line.startswith('### '):
-            if current_section:
-                sections[current_section] = current_lines
-            current_section = line.lstrip('# ').strip().lower()
-            current_lines = []
-        elif current_section:
-            stripped = line.strip()
-            if stripped and stripped != '---':
-                # Remove leading "- " or "* "
-                if stripped.startswith('- ') or stripped.startswith('* '):
-                    stripped = stripped[2:]
-                if stripped:
-                    current_lines.append(stripped)
-
-    if current_section:
-        sections[current_section] = current_lines
-
-    return {'title': title, 'sections': sections}
-
-
-@app.route('/api/project/<project_id>/import', methods=['POST'])
-def import_from_project(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'project not found'}), 404
-
-    pp = p.get('project_path', '')
-    if not pp or not Path(pp).is_dir():
-        return jsonify({'error': 'project_path not set or invalid'}), 400
-
-    imported = {}
-
-    # Parse CHANGELOG.md
-    changelog_path = Path(pp) / 'CHANGELOG.md'
-    if changelog_path.exists():
-        parsed = _parse_changelog(changelog_path.read_text(encoding='utf-8'))
-        sections = parsed.get('sections', {})
-        title = parsed.get('title', '')
-
-        # Done → activity log entries
-        done_items = sections.get('done', [])
-        if done_items:
-            log = p.setdefault('activity_log', [])
-            ts = now_iso()
-            for item in done_items:
-                if not any(e.get('msg') == item for e in log):
-                    log.insert(0, {'ts': ts, 'msg': item})
-            p['activity_log'] = log[:50]
-            imported['activity_log'] = len(done_items)
-
-        # State → description
-        state_items = sections.get('state', [])
-        if state_items:
-            p['description'] = '\n'.join(state_items)
-            imported['description'] = True
-
-        # Next → backlog + next_action
-        next_items = sections.get('next', [])
-        if next_items:
-            p['next_action'] = next_items[0]
-            backlog = p.setdefault('backlog', [])
-            existing_texts = {i['text'] for i in backlog}
-            added = 0
-            for item in next_items:
-                if item not in existing_texts:
-                    backlog.insert(0, {
-                        'id': str(uuid.uuid4())[:8],
-                        'text': item,
-                        'priority': 'normal',
-                        'status': 'open',
-                        'created_at': now_iso(),
-                        'done_at': None,
-                        'source': 'changelog',
-                        'attachments': [],
-                    })
-                    added += 1
-            imported['backlog'] = added
-
-        # Title → current_task if present
-        if title and not p.get('current_task'):
-            p['current_task'] = title
-            imported['current_task'] = True
-
-    p['last_updated'] = now_iso()
-    save_project(project_id, p)
-    return jsonify({'ok': True, 'imported': imported})
+# ── GitHub sync + code-sync + attachment + import endpoints ── moved to
+# mc/blueprints/project_routes.py (1.11). github_sync/project_sync register()
+# wiring stays below, unchanged.
 
 
 # ── Agent image upload ────────────────────────────────────────────────────────
@@ -3426,36 +2586,8 @@ def _agent_todo_ref(session_key, content):
     return f"agent:{h}"
 
 
-def _append_note_to_backlog_item(project_id, item_id, text, agent_code='user'):
-    """Append a dated, signed note to a backlog item. Returns True on success."""
-    text = (text or '').strip()
-    if not text or not project_id or not item_id:
-        return False
-    with _backlog_sync_lock:
-        try:
-            p = load_project(project_id)
-        except Exception:
-            return False
-        if p is None:
-            return False
-        for it in p.get('backlog', []) or []:
-            if it.get('id') == item_id:
-                notes = it.setdefault('notes', [])
-                notes.append({
-                    'ts': now_iso(),
-                    'agent_code': (agent_code or 'user')[:32],
-                    'text': text[:2000],
-                })
-                if len(notes) > 50:
-                    it['notes'] = notes[-50:]
-                it['updated_at'] = now_iso()
-                p['last_updated'] = now_iso()
-                try:
-                    save_project(project_id, p)
-                except Exception:
-                    return False
-                return True
-        return False
+# _append_note_to_backlog_item ── moved to mc/blueprints/project_routes.py (1.11)
+# with its only caller (the backlog note route).
 
 
 def _auto_snapshot_notes_on_turn(session):
@@ -4110,23 +3242,8 @@ def _auto_recover_failed_resume(session):
         _log(f"[dispatch] Fresh retry failed for {project_id}: {e}")
 
 
-def _log_agent_activity(project_id, msg, bump_updated=True):
-    """Add an entry to the project's activity_log.
-
-    bump_updated: when True (default) also refresh `last_updated`, which drives
-    the recency sort in both the desktop list and the mobile chat list. Pass
-    False for background machinery (e.g. GitHub auto-sync) that should be
-    *logged* without floating the project to the top of the recency sort.
-    """
-    p = load_project(project_id)
-    if not p:
-        return
-    log = p.setdefault('activity_log', [])
-    log.insert(0, {'ts': now_iso(), 'msg': msg})
-    p['activity_log'] = log[:20]
-    if bump_updated:
-        p['last_updated'] = now_iso()
-    save_project(project_id, p)
+# _log_agent_activity ── moved to mc/blueprints/project_routes.py (1.11); the
+# dispatch/github call sites below resolve the inbound shim at call time.
 
 
 def _log_github_sync_activity(project_id, msg):
@@ -8521,7 +7638,7 @@ from mc.blueprints import hivemind_routes as _bp_hivemind  # noqa: E402
 _bp_hivemind.wire(
     hivemind_dir=_DATA_ROOT / 'data' / 'hiveminds',
     port=PORT,
-    load_project_fn=load_project,
+    load_project_fn=_bp_projects.load_project,
     get_manager_fn=get_manager,
     register_process_fn=_register_process,
     read_agent_stream_fn=_read_agent_stream,
@@ -8529,7 +7646,7 @@ _bp_hivemind.wire(
     sysprompt_file_args_fn=_sysprompt_file_args,
     sysprompt_cleanup_fn=_sysprompt_cleanup,
     hide_windows_delayed_fn=_hide_windows_delayed,
-    log_agent_activity_fn=_log_agent_activity,
+    log_agent_activity_fn=_bp_projects._log_agent_activity,
     load_agent_log_fn=_load_agent_log,
     enrich_run_entries_fn=_enrich_run_entries,
     clayrune_universal_capabilities_fn=_clayrune_universal_capabilities,
@@ -9077,133 +8194,17 @@ def api_usage():
     })
 
 
-# ── Rules endpoints ─────────────────────────────────────────────────────────
-
-def _validate_project_path(pp):
-    """Ensure path is under PROJECTS_BASE to prevent traversal."""
-    try:
-        resolved = Path(pp).resolve()
-        return resolved.is_relative_to(PROJECTS_BASE.resolve())
-    except Exception:
-        return False
-
-
-@app.route('/api/project/<project_id>/rules')
-def get_rules(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'project not found'}), 404
-
-    agent_rules = ''
-    pp = p.get('project_path', '')
-    if pp and _validate_project_path(pp):
-        agent_path = Path(pp) / 'AGENT_RULES.md'
-        if agent_path.exists():
-            agent_rules = agent_path.read_text(encoding='utf-8')
-
-    shared_rules = ''
-    if SHARED_RULES_PATH.exists():
-        shared_rules = SHARED_RULES_PATH.read_text(encoding='utf-8')
-
-    return jsonify({'agent_rules': agent_rules, 'shared_rules': shared_rules})
-
-
-@app.route('/api/project/<project_id>/rules', methods=['PUT'])
-def save_rules(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'project not found'}), 404
-
-    pp = p.get('project_path', '')
-    if not pp or not _validate_project_path(pp):
-        return jsonify({'error': 'project_path not set or invalid'}), 400
-
-    data = request.get_json() or {}
-    agent_rules = data.get('agent_rules')
-    if agent_rules is None:
-        return jsonify({'error': 'agent_rules required'}), 400
-
-    agent_path = Path(pp) / 'AGENT_RULES.md'
-    agent_path.write_text(agent_rules, encoding='utf-8')
-    return jsonify({'ok': True})
-
-
-@app.route('/api/rules/shared')
-def get_shared_rules():
-    content = ''
-    if SHARED_RULES_PATH.exists():
-        content = SHARED_RULES_PATH.read_text(encoding='utf-8')
-    return jsonify({'shared_rules': content})
-
-
-@app.route('/api/rules/shared', methods=['PUT'])
-def save_shared_rules():
-    data = request.get_json() or {}
-    content = data.get('shared_rules')
-    if content is None:
-        return jsonify({'error': 'shared_rules required'}), 400
-
-    SHARED_RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SHARED_RULES_PATH.write_text(content, encoding='utf-8')
-    return jsonify({'ok': True})
-
-
-# ── Memory endpoints ────────────────────────────────────────────────────────
-
-@app.route('/api/project/<project_id>/memory')
-def get_memory(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'not found'}), 404
-    mem_path = _get_memory_path(p)
-    content = ''
-    if mem_path.exists():
-        content = mem_path.read_text(encoding='utf-8')
-    return jsonify({'content': content, 'path': str(mem_path)})
-
-@app.route('/api/project/<project_id>/memory', methods=['PUT'])
-def save_memory(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'not found'}), 404
-    data = request.get_json() or {}
-    content = data.get('content')
-    if content is None:
-        return jsonify({'error': 'content required'}), 400
-    mem_path = _get_memory_path(p)
-    mem_path.parent.mkdir(parents=True, exist_ok=True)
-    mem_path.write_text(content, encoding='utf-8')
-    return jsonify({'ok': True})
-
-@app.route('/api/project/<project_id>/memory/append', methods=['POST'])
-def append_memory(project_id):
-    p = load_project(project_id)
-    if not p:
-        return jsonify({'error': 'not found'}), 404
-    data = request.get_json() or {}
-    content = (data.get('content') or '').strip()
-    if not content:
-        return jsonify({'error': 'content required'}), 400
-    mem_path = _get_memory_path(p)
-    mem_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = ''
-    if mem_path.exists():
-        existing = mem_path.read_text(encoding='utf-8').rstrip()
-    if existing:
-        combined = existing + '\n\n' + content
-    else:
-        combined = content
-    mem_path.write_text(combined, encoding='utf-8')
-    return jsonify({'ok': True})
+# ── Rules + memory editor-CRUD endpoints ── moved to mc/blueprints/project_routes.py (1.11).
 
 
 
 # ── Skills endpoints ── extracted to mc/blueprints/skills_routes.py (1.3).
 # (Module named skills_routes, not skills — the top-level skills.py owns the
-# logic and the name.) wire() late-binds load_project until 1.11.
+# logic and the name.) Projects-family accessors re-homed onto _bp_projects (1.11).
 from mc.blueprints import skills_routes as _bp_skills  # noqa: E402
 
-_bp_skills.wire(load_project_fn=load_project, load_projects_fn=load_projects,
+_bp_skills.wire(load_project_fn=_bp_projects.load_project,
+                load_projects_fn=_bp_projects.load_projects,
                 app_dir=_APP_DIR)
 app.register_blueprint(_bp_skills.bp)
 # Inbound shims (startup installers + the shared request helper used by the
@@ -9213,11 +8214,12 @@ _install_builtin_mcps = _bp_skills._install_builtin_mcps
 _resolve_project_path_or_400 = _bp_skills._resolve_project_path_or_400
 
 # ── MCP endpoints (server mgmt + per-project loadout + URL installer) ──
-# extracted to mc/blueprints/mcp_routes.py (1.4). wire() late-binds the
-# projects-family accessors until 1.11.
+# extracted to mc/blueprints/mcp_routes.py (1.4). Projects-family accessors
+# re-homed onto _bp_projects (1.11).
 from mc.blueprints import mcp_routes as _bp_mcp  # noqa: E402
 
-_bp_mcp.wire(load_project_fn=load_project, save_project_fn=save_project,
+_bp_mcp.wire(load_project_fn=_bp_projects.load_project,
+             save_project_fn=_bp_projects.save_project,
              data_dir=DATA_DIR, mcp_server_catalog_fn=_mcp_server_catalog)
 app.register_blueprint(_bp_mcp.bp)
 
@@ -9449,38 +8451,7 @@ def delete_domain(domain_id):
     return jsonify({'ok': True})
 
 
-# ── Project order ────────────────────────────────────────────────────────────
-
-@app.route('/api/projects/order', methods=['POST', 'OPTIONS'])
-def save_project_order():
-    if request.method == 'OPTIONS':
-        return '', 204
-    data = request.get_json()
-    if not data or 'order' not in data:
-        return jsonify({'error': 'order array required'}), 400
-    order = data['order']
-    # Save full grid layout (with nulls for spacers)
-    layout_path = DATA_DIR.parent / 'grid_layout.json'
-    layout_path.write_text(json.dumps({'order': order}, indent=2, ensure_ascii=False), encoding='utf-8')
-    # Update display_order on each project
-    for i, project_id in enumerate(order):
-        if project_id is None:
-            continue
-        p = load_project(project_id)
-        if p:
-            p['display_order'] = i
-            save_project(project_id, p)
-    return jsonify({'ok': True})
-
-@app.route('/api/grid-layout')
-def get_grid_layout():
-    layout_path = DATA_DIR.parent / 'grid_layout.json'
-    if layout_path.exists():
-        try:
-            return jsonify(json.loads(layout_path.read_text(encoding='utf-8')))
-        except Exception:
-            pass
-    return jsonify({'order': []})
+# ── Project order + grid layout ── moved to mc/blueprints/project_routes.py (1.11).
 
 
 @app.route('/api/list-directory', methods=['POST'])
@@ -10848,14 +9819,14 @@ _warmup_control_plane = _bp_remote._warmup_control_plane
 
 # ── Web push + presence + mobile pairing ── extracted to
 # mc/blueprints/push_mobile.py (1.2). wire() late-binds _DATA_ROOT paths +
-# load_project (projects family, 1.11) + the remote-family fns (re-homed
-# onto _bp_remote at 1.7). _handle_push_signal stays importable here for the
-# stream readers until 1.12 moves them.
+# load_project (re-homed onto _bp_projects at 1.11) + the remote-family fns
+# (re-homed onto _bp_remote at 1.7). _handle_push_signal stays importable
+# here for the stream readers until 1.12 moves them.
 from mc.blueprints import push_mobile as _bp_push_mobile  # noqa: E402
 
 _bp_push_mobile.wire(
     data_root=_DATA_ROOT,
-    load_project_fn=load_project,
+    load_project_fn=_bp_projects.load_project,
     cf_session_nonce_fn=_bp_remote._cf_session_nonce_from_request,
     get_remote_provider_fn=_bp_remote._get_remote_provider,
 )
@@ -10895,7 +9866,8 @@ def _redirect_unlabeled_cf_session():
 # stream-reader touch points write state._LAST_SYSTEM_STATUS directly.
 from mc.blueprints import system_routes as _bp_system  # noqa: E402
 
-_bp_system.wire(load_project_fn=load_project, load_projects_fn=load_projects,
+_bp_system.wire(load_project_fn=_bp_projects.load_project,
+                load_projects_fn=_bp_projects.load_projects,
                 data_dir=DATA_DIR, data_root=_DATA_ROOT, app_dir=_APP_DIR,
                 popen_flags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
                 backfill_token_telemetry_fn=_backfill_token_telemetry,
@@ -10917,15 +9889,16 @@ _update_check_loop = _bp_system._update_check_loop
 # ── Terminal session endpoints ── extracted to
 # mc/blueprints/terminal_routes.py (1.8): the 5 /api/terminal/* routes +
 # /api/project/<id>/terminal/status, the reader/kill helpers, and the
-# TTY-shim env wiring. wire() late-binds load_project (projects family,
-# 1.11), get_manager + _register_process/_unregister_process (dispatch
-# family — the process ledger is shared by agent/hivemind/housekeeping
-# spawns, so the fns stay here until 1.12), the Popen platform consts, and
-# the _APP_DIR-derived shim dir (the 1.7 wired-placeholder pattern).
+# TTY-shim env wiring. wire() late-binds load_project (re-homed onto
+# _bp_projects at 1.11), get_manager + _register_process/_unregister_process
+# (dispatch family — the process ledger is shared by agent/hivemind/
+# housekeeping spawns, so the fns stay here until 1.12), the Popen platform
+# consts, and the _APP_DIR-derived shim dir (the 1.7 wired-placeholder
+# pattern).
 from mc.blueprints import terminal_routes as _bp_terminal  # noqa: E402
 
 _bp_terminal.wire(
-    load_project_fn=load_project,
+    load_project_fn=_bp_projects.load_project,
     get_manager_fn=get_manager,
     register_process_fn=_register_process,
     unregister_process_fn=_unregister_process,
@@ -10934,9 +9907,10 @@ _bp_terminal.wire(
     tty_shim_dir=str(_APP_DIR / 'mc_tty_shim'),
 )
 app.register_blueprint(_bp_terminal.bp)
-# Inbound shim: delete_project (projects family, 1.11) and the atexit
-# _cleanup_terminals hook kill terminal sessions — both call sites stay; the
-# global resolves at call time, after this binding exists.
+# Inbound shim: the atexit _cleanup_terminals hook kills terminal sessions —
+# the call site stays; the global resolves at call time, after this binding
+# exists. (delete_project moved to project_routes at 1.11 and imports
+# _kill_terminal_session cross-blueprint instead.)
 _kill_terminal_session = _bp_terminal._kill_terminal_session
 
 # ── AgentRuntime hook registration ──────────────────────────────────────────
