@@ -154,6 +154,17 @@ _ENFORCER_STATE = {
 }
 _enforcer_lock = threading.Lock()
 
+# ── System status cache + restart bookkeeping (rebound globals — moved at 1.6
+# with every reference rewritten to state.*, same treatment as _fcm_*) ────────
+_LAST_SYSTEM_STATUS = {}
+_LAST_RESTART_TIME = 0.0
+
+# ── Observability: background-loop heartbeats (mc/obs.py, Phase 2) ───────────
+# subsystem name → unix ts of the last successful iteration. Written by
+# mc.obs.heartbeat(), read by GET /api/system/loops.
+last_ok: dict = {}
+_last_ok_lock = threading.Lock()
+
 # ── Passive update check cache ───────────────────────────────────────────────
 _UPDATE_CHECK_LOCK = threading.Lock()
 _UPDATE_CHECK_CACHE = {

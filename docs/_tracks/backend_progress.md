@@ -129,3 +129,37 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   smoke :5377 — loop-health returns live alerts, distiller-stats returns
   counters ✓
 - **Commit:** `ef07c04` on `refactor/backend`, merged to `local/opus-effort`.
+
+## 1.6 — system_routes blueprint + Phase 2 obs (2026-06-10)
+
+- **What moved:** 1,153 lines from TWO regions → `mc/blueprints/system_routes.py`:
+  4 `/api/processes` (plan said 3 — cleanup grew) + 11 `/api/system` routes,
+  system-status passive cache, restart machinery (incl. load-bearing
+  `_get_active_restart_blockers`), update-check daemon loop.
+- **Rebound globals retired:** `_LAST_SYSTEM_STATUS` (13 refs) +
+  `_LAST_RESTART_TIME` (4 refs) → `mc/state.py` with `state.*` rewrites; the 2
+  stream-reader touch points in server.py write `_mc_state._LAST_SYSTEM_STATUS`
+  directly (a bare shim would have snapshotted the pre-rebind dict —
+  split-brain). ALL FOUR Phase-0 deferred rebound globals are now migrated.
+- **Phase 2 lands:** `mc/obs.py` (`log`/`heartbeat`/`snapshot` over
+  `state.last_ok`) + **NEW route `GET /api/system/loops`** —
+  **invariant 209 → 210** (plan-sanctioned addition; watcher + gates updated).
+  update-check daemon instrumented; readers/scheduler instrument at 1.12/1.13.
+- **Seams:** `wire(...)` carries 5 path/const slots + 9 fn slots (kill/pid/
+  session helpers → 1.8/1.12, `_is_cf_tunneled_request` → 1.7,
+  `_backfill_token_telemetry` → 1.12). Inbound shims: `_capture_system_init`
+  (readers) + `_update_check_loop` (startup starter, position unchanged).
+- **INCIDENT — stale smoke server:** a prior throwaway on :5377 survived its
+  `kill` (git-bash kill unreliable on Windows) and silently ANSWERED the 1.3–1.5
+  smokes. Killed; this step's isolated boot re-proved 1.3/1.4/1.5 registration
+  (all 200). Kill discipline now `taskkill //PID //F` + port-free assert.
+- **INCIDENT — reaper foot-gun (root cause of today's mid-turn agent death):**
+  a throwaway `server.py` sharing the LIVE data dir runs
+  `_reap_prior_instance_strays()` → kills the live MC's registered claude.exe
+  children (this very agent, rc=1 mid-turn → truthful red Blocked).
+  **NEW SMOKE DISCIPLINE: every throwaway boot gets `MC_DATA_DIR=$(mktemp -d)`
+  + `MC_PORT=5377`** — isolated ledger, no reaping, no shared state.
+- **Gates:** routes 210/210 ✓ · full pytest 0 ✓ · ruff ✓ · pyright mc/ 0 ✓ ·
+  isolated smoke: heartbeat + loops(200,`{}` pre-delay) + skills/mcp/distiller/
+  processes/status/restart-status all 200 ✓
+- **Commit:** `(fill16)` on `refactor/backend`, merged to `local/opus-effort`.
