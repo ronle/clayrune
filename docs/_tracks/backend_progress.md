@@ -666,3 +666,30 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   1.12 will share via `_build_agent_context`) — grep-count arithmetic
   unchanged.
 - **Commit:** `PENDING` on `wt-1.11` (orchestrator merges).
+
+## PAUSED — Anthropic monthly spend limit hit (2026-06-10 ~00:30)
+
+Both running workers died with "You've hit your monthly spend limit". All
+MERGED work is safe and live; nothing in flight was lost that matters.
+
+**State at pause:** backend 11/13 blueprints merged, server.py 10,147 lines,
+routes 210/210, full pytest green. Frontend modules 1–9 merged, index.html
+15,414 lines. All gates green at every merged step.
+
+**To resume (in order):**
+1. RELAUNCH 1.12 agent_dispatch worker — the full brief is in the orchestrator
+   session transcript; key points: 1.11's landmine map (above) + the
+   load-bearing stay-list (ALL scribe/condense/checkpoint/memory-write
+   machinery stays; wire every call) + move agent_followup WHOLE.
+   The dead worker's PARTIAL UNCOMMITTED work sits in
+   `.claude/worktrees/agent-ad5012f1e01197183` (branch wt-1.12, no commit) —
+   inspect for reusable splice scripts in its _scratch/, else discard.
+2. Then 1.13 scheduler (small): loop + thread-start-once + CRUD + run-now
+   `_dispatch_agent_internal` shim + obs.heartbeat('scheduler').
+3. Then stragglers mop-up vs the <2,000 target.
+4. Track B queue: search-past-chats 849 (module-10 worker died pre-work),
+   MCP UI ~1128 (two segments), hivemind UI ~1294 (run-history boundary
+   risk), palette 520, system-status 456, scheduler 377, update 360,
+   provider settings ~630 — then the agent-panel/projects-grid core
+   **store.js design checkpoint with Ron** (module 8's sizing + module 7/8
+   bridge findings are the input).
