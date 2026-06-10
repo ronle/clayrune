@@ -6,6 +6,21 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-09] — v2.0.1 (security release)
+
+Patch release rolling the 2026-06-09 security hardening (detailed below) into a
+tagged build. **All users should update.**
+- Closes a LAN **unauthenticated-RCE chain** — a forgeable `Cf-Access-*` header
+  could bypass the passcode gate and reach `/api/terminal/launch`. CF-tunnel
+  trust now requires a loopback peer, and CORS is a strict allowlist (no more
+  drive-by from any website the user visits).
+- `git clone` argument-injection guards; secrets-at-rest file permissions;
+  serve-image drive-root confinement; control-plane dev-auth fail-closed on
+  Cloud Run; opt-in CF Access JWT signature verification.
+- Drops the unused **Tauri** desktop target (also removes its unscoped shell
+  capability + CSP `unsafe-inline`). Browser, PyInstaller app, and installer are
+  unaffected; mobile (Capacitor) unaffected.
+
 ## [2026-06-09] — Security hardening: LAN auth bypass, CORS, git-arg injection
 
 Closes findings from an internal security review (each independently verified
