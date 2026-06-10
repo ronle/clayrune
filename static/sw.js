@@ -28,7 +28,10 @@
 // v8 (2026-06-09): /static/js/settings-sections.js extracted from index.html's
 // inline <script> (local access / remote access / web push settings sections).
 // Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v8';
+// v9 (2026-06-09): /static/js/terminal.js extracted from index.html's inline
+// <script> (terminal pop-out client + window-bridged state). Same
+// no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v9';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
