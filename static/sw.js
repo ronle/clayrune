@@ -6,7 +6,11 @@
 // Payload shape (from server.py:_notify_push):
 //   { title, body, url, project_id, session_id, kind, ts }
 
-const SW_VERSION = 'mc-push-v1';
+// v2 (2026-06-09): /static/css/app.css extracted from index.html's inline
+// <style>. This SW intentionally has NO cache list (online-first, see the
+// fetch handler below), so there is nothing to add it to — the version bump
+// alone forces the SW update cycle per the modernization tracks discipline.
+const SW_VERSION = 'mc-push-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
