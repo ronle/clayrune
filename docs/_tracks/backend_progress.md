@@ -693,3 +693,11 @@ routes 210/210, full pytest green. Frontend modules 1–9 merged, index.html
    provider settings ~630 — then the agent-panel/projects-grid core
    **store.js design checkpoint with Ron** (module 8's sizing + module 7/8
    bridge findings are the input).
+
+## PAUSED by Ron (2026-06-10 morning) — resume at end of trading day
+
+The post-resume relaunches of 1.12 + frontend module 10 died without commits
+(limit likely re-tripped). Merged state unchanged: backend 11/13 (server.py
+10,147), frontend 9 modules (index.html 15,414), all green and live. The
+resumption runbook above (64e8d77) remains exact: relaunch 1.12 worker →
+1.13 → mop-up; relaunch module 10 → mechanical queue → store.js checkpoint.
