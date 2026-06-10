@@ -25,7 +25,10 @@
 // v7 (2026-06-09): /static/js/settings-drill.js extracted from index.html's
 // inline <script> (settings categories + WhatsApp-style drill-down). Same
 // no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v7';
+// v8 (2026-06-09): /static/js/settings-sections.js extracted from index.html's
+// inline <script> (local access / remote access / web push settings sections).
+// Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v8';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
