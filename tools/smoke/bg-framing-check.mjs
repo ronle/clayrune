@@ -43,6 +43,8 @@ const MERMAID_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'mermaid.js')
 const SEARCH_CHATS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'search-chats.js'), 'utf8');
 // Backlog actions ES module (Phase 3 module 11) — same rule as claydo.js above.
 const BACKLOG_ACTIONS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'backlog-actions.js'), 'utf8');
+// Cross-project backlog ES module (Phase 3 module 12) — same rule as claydo.js above.
+const CROSS_BACKLOG_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'cross-backlog.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 const ORIGIN = 'http://mc.smoke.test';
 
@@ -70,6 +72,7 @@ try {
     if (path === '/static/js/mermaid.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MERMAID_JS });
     if (path === '/static/js/search-chats.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SEARCH_CHATS_JS });
     if (path === '/static/js/backlog-actions.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: BACKLOG_ACTIONS_JS });
+    if (path === '/static/js/cross-backlog.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CROSS_BACKLOG_JS });
     if (path === '/api/projects') return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config') return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     return route.abort();

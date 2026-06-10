@@ -40,7 +40,10 @@
 // v12 (2026-06-10): /static/js/backlog-actions.js extracted from index.html's
 // inline <script> (per-project backlog CRUD: add/toggle/priority/save/delete/
 // dispatch/patch). Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v12';
+// v13 (2026-06-10): /static/js/cross-backlog.js extracted from index.html's
+// inline <script> (cross-project "All Backlog Items" modal: filter/render/jump).
+// Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v13';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

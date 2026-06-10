@@ -1518,5 +1518,103 @@ what moved, commit SHA, gate results.
     module 1; line shifted to 81 by the added const but the same evaluate
     step); page boots with backlog-actions.js fulfilled, dies at the same
     later evaluate. No new breakage.
+- **Commit:** module 11 (js/backlog-actions.js) = commit `92b0fbc`.
+
+## Phase 3 — module 12: extract cross-project backlog → `static/js/cross-backlog.js` (2026-06-10)
+
+- **Inbound refs re-verified (formal whole-repo scan of all 4 region names):
+  exactly 2 cross-module/inline functional refs, both runtime-only:**
+  `openAllBacklog` (L2650, `sidebarNav('backlog')`) and `renderAllBacklog`
+  (L835, the central `render()` — but **guarded** by
+  `if (openModals.has('__all_backlog')) renderAllBacklog()`, so it fires only
+  once the modal is open, which is necessarily after this deferred module has
+  evaluated; never at the parse-time `startRefresh()` boot, where no modal is
+  open). `_jumpToBacklogItem` is a region-generated row `onclick`;
+  `_allBacklogFilter` has zero non-handler refs. Whole-repo sweep: no other
+  file references any of the 4 names.
+- **Region boundary re-derived (post-module-11 numbering, shifted −121):** old
+  lines 12246–12380 (`// ── Cross-project Backlog View` header through
+  `_jumpToBacklogItem`'s closing brace) + trailing blank 12380; next header
+  `// ── Run history (shared between Scheduler + Hivemind surfaces)` at 12381
+  stays inline — **the shared run-history is NOT touched** (the Scheduler/
+  Hivemind HARD-STOP boundary). **Exactly the 135-line header-to-header span,
+  no foreign code.** Brace-depth top-level scan: 1 `let` + 3 function decls,
+  depth ends 0, **0 top-level non-decl lines** (no IIFEs/parse-time calls/
+  listeners). `node --check --input-type=module` (stdin) parses.
+- **State: ONE object, OBJECT-IDENTITY bridge.** `_allBacklogFilter` (a
+  `{status, search, priority}` object) is **property-written** by 3 generated
+  handlers (`oninput="_allBacklogFilter.search=this.value;renderAllBacklog()"`,
+  two `onchange` for status/priority) — bare-identifier *property* writes that
+  resolve against window at event time. Formal wholesale-write scan
+  (`(?<![\w$.])_allBacklogFilter\s*=`) → exactly ONE hit: the declaration; the
+  handler writes are all `.`-prefixed (never reassigned). So a plain
+  `window._allBacklogFilter = _allBacklogFilter` identity bridge routes every
+  handler property-write into the module's live object — one source of truth,
+  same as mobile-pairing's `_mobilePairState` (NOT an accessor — the object is
+  never wholesale-reassigned, so a getter is unnecessary).
+- **What moved:** old lines 12246–12380 → `static/js/cross-backlog.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before +
+  region + after == original`; (2) new index.html with the inserted `<script>`
+  tag line removed AND the region re-inserted at the cut point `== original`;
+  interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/cross-backlog.js"></script>` inserted
+  immediately after the backlog-actions.js module tag (keeps it AFTER the
+  module that exposes `toggleDone`, which this region's row checkbox onclick
+  calls), before `</body>`. Anti-FOUC bootstrap untouched. Diff shape:
+  1 insertion, 135 deletions.
+- **Numbers:** `cross-backlog.js` = 8,458 bytes / 155 lines (135 moved +
+  20-line interop tail: 1 blank + 15 comment + 4 assignment; CRLF, no BOM,
+  186 non-ASCII UTF-8 bytes). `index.html` 742,287 → 735,155 bytes;
+  15,171 → 15,037 lines (BOM preserved).
+- **Interop surface: 3 window function re-exposures + 1 object-identity bridge,
+  0 accessor bridges:**
+  - Cross-module/inline callers (2): `openAllBacklog` (sidebarNav),
+    `renderAllBacklog` (guarded `render()` + `openAllBacklog`).
+  - Region-generated `on*=` target (1): `_jumpToBacklogItem` (row onclick).
+  - Object-identity bridge (1): `_allBacklogFilter` (handler property-writes).
+  - Module-private: none (all 4 region names are externally referenced).
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY (the `.search=`/`.status=`/`.priority=` are property writes, not
+    whole-var → identity bridge, not accessor); per-identifier writer scan →
+    zero wholesale writes beyond the decl; zero `typeof`/`window.`-qualified
+    probes; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `esc`, `allProjects`, `openModals`, `restoreModal`, `focusModal`,
+  `_clampModalSize`, `nextModalZ++` (module→inline-let write, proven
+  direction), `centerModalElement`, `minimizeModal` (handler),
+  `closeModalById` (handler), **`toggleDone` (handler — cross-module window
+  prop from module 11 backlog-actions.js; document-order eval + runtime call
+  makes ordering moot, and the tag order keeps 11 before 12 as a courtesy)**,
+  `openProjectModal` + browser builtins. Strict-mode promotion audited: clean.
+- **sw.js:** `SW_VERSION` `mc-push-v12` → `mc-push-v13` (no cache list by
+  design; version bump only, same as modules 1–11).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/cross-backlog.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses cross-backlog.js in
+    module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5391 python server.py` from the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/cross-backlog.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 8458.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`) —
+    **11/11 PASS, 0 console errors, 0 page errors**: 3/3 window.* interop
+    callable; `window._allBacklogFilter` exposed with the default shape;
+    throwaway `cbtest` project + one seeded backlog item
+    (`POST /api/project/cbtest/backlog`) → real `sidebarNav('backlog')`
+    rendered the `__all_backlog` modal with the seed row; **the
+    object-identity bridge asserted end-to-end** — a bare property-write
+    `window._allBacklogFilter.search='zzz…'` + `renderAllBacklog()` emptied
+    the list ("No matching backlog items"), then `='zeta'` re-surfaced the
+    seed (proves the module's `renderAllBacklog` reads the filter through the
+    shared object); `_jumpToBacklogItem` invoked without throwing. Throwaway
+    project deleted after.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of
+    module 1; line shifted to 84 by the added const, same evaluate step);
+    page boots with cross-backlog.js fulfilled, dies at the same later
+    evaluate. No new breakage.
 - **Commit:** SHA in the orchestrator report; backfill on next entry (same
-  convention as modules 1–10).
+  convention as modules 1–11).
