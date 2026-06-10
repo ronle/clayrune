@@ -38,6 +38,10 @@ import { chromium } from 'playwright';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const INDEX_HTML = readFileSync(resolve(REPO_ROOT, 'static', 'index.html'), 'utf8');
+// The SPA's styles were extracted from the inline <style> into this file
+// (modernization Phase 3 module 1) — serve the real one or the shell under
+// test renders unstyled (and any future CSS-dependent assertion lies).
+const APP_CSS = readFileSync(resolve(REPO_ROOT, 'static', 'css', 'app.css'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 
 const ORIGIN = 'http://mc.smoke.test';   // arbitrary; every request is intercepted
@@ -71,6 +75,8 @@ async function runScenario(browser, sc) {
     const path = new URL(route.request().url()).pathname;
     if (path === '/' || path === '/index.html')
       return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: INDEX_HTML });
+    if (path === '/static/css/app.css')
+      return route.fulfill({ status: 200, contentType: 'text/css; charset=utf-8', body: APP_CSS });
     if (path === '/api/projects')
       return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config')
