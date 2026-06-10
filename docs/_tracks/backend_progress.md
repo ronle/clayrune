@@ -292,3 +292,84 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   37208 + grandchildren (tree verified dead, port 5377 free, live :5199
   untouched) ✓
 - **Commit:** `PENDING` on `wt-1.8` (orchestrator merges).
+
+## 1.9 — guide_routes blueprint (2026-06-10)
+
+- **What moved:** ~530 lines from FOUR regions → `mc/blueprints/guide_routes.py`:
+  **5 routes**: `/api/guide/stream` (the plan-flagged 156-line SSE generator,
+  moved WHOLE) + `/api/guide/ask` with all Claydo glue (`_claydo_cwd`,
+  `_CLAYDO_NO_TOOLS_FLAGS`, `_claydo_recent_changelog`,
+  `_claydo_prepare_context`), `/api/project/<id>/scribe-stats` (telemetry
+  READ — route only), `/api/project/<id>/memory/search` (the 1.5
+  splice-guard leftover; read-only retrieval), and
+  `/api/walkthrough/sample-project` (+ `_clayrune_agent_rules` /
+  `_clayrune_readme` seed helpers). The family is NOT contiguous — project
+  CRUD, router-stats and backlog routes sit between the pieces; each region
+  was boundary-asserted line-by-line before the cut.
+- **Scoping calls (under-move wins):** (a) `_memory_search` STAYS in
+  server.py — shared with the deterministic read floor in
+  `_build_agent_context` (dispatch, 1.12) and walks `_get_memory_path`/
+  `_get_archive_path`/`_mem_split`; the route wires it in. (b) The
+  `/api/project/<id>/memory` GET/PUT/append trio (~11308, "Memory
+  endpoints" section) NOT moved — separate editor-CRUD region, 1.11/1.12
+  family. (c) `/api/router/stats` NOT moved (dispatch, per 1.5's note).
+  (d) ALL Scribe/condense/checkpoint machinery untouched (CLAUDE.md
+  lock+atomic discipline). (e) `_clayrune_api_reference`/
+  `_clayrune_universal_capabilities` stay — they feed `_build_agent_context`,
+  despite the `_clayrune_` name family. (f) No `/api/claydo*` routes exist;
+  the "Claydo ask" stdin-stream blocks ARE `/api/guide/ask|stream` — moved.
+- **Seams:** `wire(load_project_fn, save_project_fn, data_dir,
+  memory_search_fn, resolve_claude_fn, popen_flags, startupinfo,
+  server_dir)`. **New wired-placeholder case:** 5× `Path(__file__).parent`
+  → wired `_SERVER_DIR` (evaluated in server.py — in the blueprint,
+  `__file__` would resolve to mc/blueprints/ and silently break
+  data/claydo + USER_GUIDE/CHANGELOG paths); 1× `CONFIG.get` →
+  `state.CONFIG.get` (1.7 precedent). **Inbound shims: ZERO** — grep
+  proved no other server.py caller of any moved name (only comment
+  mentions, e.g. `_claydo_cwd` in the backfill heuristic's docstring).
+- **Typing debt, explicit:** 5 tags
+  `# pyright: ignore[reportOptionalMemberAccess]  # moved-verbatim typing debt (1.9)`
+  on guide_stream's `proc.stdin/stdout/stderr` pipe access (stubs say
+  `IO[str] | None`; PIPE guarantees non-None at runtime).
+- **Phase 5:** new `tests/test_guide_routes.py` (25 tests): guide/ask happy
+  (cmd flags + stdin stream-json + CLAUDE.md materialization) / history /
+  malformed ×3 / guide-missing 500 / claude exit·timeout·missing; SSE
+  stream happy (delta+done parse) / 400-is-JSON / spawn-fail + exit-fail
+  SSE error events; scribe-stats empty·seeded·corrupt-500; memory/search
+  passthrough + k-parse + 404 + missing-q; walkthrough create+seed-files
+  (AGENT_RULES content proves _SERVER_DIR wiring) / idempotent / no-trample;
+  401 auth-reject + loopback twins. Patches `mc.blueprints.guide_routes.*`
+  only; recorder subprocess namespace — nothing real spawns. (No
+  /api/processes touched → 1.8's pid-reaper fixture not needed.)
+- **Gates:** routes 210/210 (117 app-grep [116 real + the 1.7-noted
+  f-string line] + 93 bp) ✓ · `import server` ✓ · ruff E9/F821 ✓ · pyright
+  mc/ 0 ✓ · full pytest exit 0 (codex env skip only) ✓ · isolated smoke
+  (`MC_DATA_DIR=$TEMP\mc-smoke-19-*`, `MC_PORT=5377`, BOM-less seeds via
+  `[IO.File]::WriteAllText`, taskkill-as-own-command): heartbeat 200 ·
+  guide/ask {} → 400 question-required (route live, NO claude spawn) ·
+  scribe-stats 200 returns seeded counters · memory/search 200 ·
+  walkthrough 200 end-to-end (README/AGENT_RULES seeded in temp ws;
+  AGENT_RULES references the worktree path = _SERVER_DIR wiring proven;
+  clayrune.json in temp DATA_DIR) · enforcer-state last_run=0 ·
+  system/loops lists session-label-enforcer + update-check (the latter
+  only after its 60s boot delay — `state._UPDATE_CHECK_BOOT_DELAY_S`;
+  poll past it before calling this check failed) · taskkill /T /F killed
+  the tree, port 5377 free, live :5199 untouched ✓
+- **Landmines for 1.10 (hivemind):** (a) main region ≈ 8278–9929 (9
+  `# ── Hivemind…` sections) but **one straggler route lives outside it**:
+  `/api/hivemind/<id>/runs` at ~10152 sits in the trigger-aware run-history
+  section — the 28-route inventory assert must span both. (b) Outside-region
+  `_hm_build_worker_context` hits at ~3008/3051 are DOCSTRING mentions only
+  — no shim needed for it. (c) Real inbound touch points to shim/keep:
+  `_start_hivemind_orchestrator()` (~12771 startup) +
+  `_hm_reconcile_stale_on_startup()` (~12809 startup) +
+  `atexit.register(_hivemind_orchestrator_stop.set)` (~11847 — the stop
+  event already lives in mc/state; KEEP the atexit.register in server.py,
+  1.8's LIFO-ordering lesson). (d) Cross-family wires to expect:
+  `load_project` ×9, `get_manager` ×3, `_resolve_claude` ×3,
+  `_register_process` ×3, `_read_agent_stream*` ×2 (dispatch),
+  `_dispatch_agent_internal` ×1 (the orchestrator dispatches real agents —
+  the deepest 1.12 coupling), `_log_agent_activity` ×2, `CONFIG.get` ×4
+  (→ `state.CONFIG`), `now_iso` ×29 (mc.core). (e) hivemind state ×7 is
+  already in mc/state since Phase 0 — import, don't re-declare.
+- **Commit:** `PENDING` on `wt-1.9` (orchestrator merges).
