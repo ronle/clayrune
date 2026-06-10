@@ -498,3 +498,171 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   (e) `_project_live_agent` (status resolver) is dispatch-coupled — check
   its callers before assuming it travels with projects.
 - **Commit:** `PENDING` on `wt-1.10` (orchestrator merges).
+
+## 1.11 — project_routes blueprint (2026-06-10)
+
+- **What moved:** 1,030 lines from NINE regions (byte-verified: all 927
+  non-empty source lines re-found in the blueprint modulo the two documented
+  mechanical rewrites — route-decorator swap + 3× `CONFIG.get` →
+  `state.CONFIG.get`) → `mc/blueprints/project_routes.py` (1,209 lines):
+  **32 routes** (plan said 48 — that count included /api/project-prefixed
+  routes that already moved with their feature families [mcp-enabled 1.4,
+  distiller ×2 1.5, terminal/status 1.8, scribe-stats + memory/search 1.9]
+  or stay for 1.12 [the 11 agent/* routes + transcript/reconstruct/
+  search-chats/conversations/plans]): `/api/projects`, POST + DELETE
+  `/api/project/<id>`, generate_summary, import, backlog ×5 (incl. note),
+  github ×4, code-sync ×5, attachments upload/delete +
+  `/api/attachments/<name>` + `/api/serve-image`, rules ×4 (project +
+  shared), the memory editor-CRUD trio, `/api/projects/order` +
+  `/api/grid-layout`. Plus the store core (`load_project` / `save_project` /
+  `load_projects` with the **LOAD-BEARING** `EXCLUDED_SIDECAR_SUFFIXES` +
+  `_decorate_attachments`), `_project_live_agent` (callers checked: ONLY
+  /api/projects — moved, reads agent_sessions from mc.state),
+  `_log_agent_activity` (pure project-record activity_log writer — moved;
+  ~25 dispatch/github call sites resolve the server.py inbound shim),
+  `_append_note_to_backlog_item` (single caller = the note route), the
+  upload-quota helpers, `_parse_changelog`, `_validate_project_path`,
+  `_IMAGE_EXTS`.
+- **Scoping calls (under-move wins, all callers grepped):** (a) memory
+  GET/PUT/append trio MOVED — verified pure file-CRUD over
+  `_get_memory_path` (wired in); it never touches `_commit_managed_entry` /
+  `_get_mem_write_lock`, which stay in server.py untouched. (b)
+  `_ensure_incognito_project` STAYS — project-record-shaped but its only 2
+  callers are dispatch (/agent/dispatch + /agent/send) → 1.12's call. (c)
+  `/api/agent/upload-image` + `_downscale_image_if_huge` STAY (agent-chat
+  feature, 1.12) — they consume `_upload_limit`/`_incoming_file_size` via
+  inbound shims. (d) `/api/router/stats` STAYS (dispatch telemetry, 1.5/1.9
+  precedent). (e) transcript/reconstruct/search-chats/conversations/plans/
+  recent-runs/usage STAY — transcript + agent-log machinery, not record
+  CRUD. (f) schedule run-now/runs + schedules CRUD STAY (1.13). (g)
+  `/api/config` ×2 STAY — global settings + dispatch-coupled
+  (`_RESPAWN_TRIGGER_KEYS` flags live Mode B sessions). (h) browse ×2 +
+  list-directory + create-folder STAY — generic FS pickers (PROJECTS_BASE
+  shared with them). (i) settings/domains ×4 STAY (settings family). (j)
+  `/assets/` serve_asset STAYS (app-shell static, _APP_DIR). (k)
+  `_log_github_sync_activity` STAYS with the github_sync register() call.
+  (l) `_memory_search` STAYS (1.9 decision, read-floor shared).
+- **Seams:** `wire(data_dir, data_root, uploads_dir, projects_base,
+  shared_rules_path, get_memory_path_fn, resolve_claude_fn, get_manager_fn,
+  unregister_process_fn, popen_flags, startupinfo)` — 11 slots, ALL defined
+  above the stanza, which sits at the CRUD-core tombstone (~:1473) ABOVE all
+  8 re-homed seams (the brief's ordering requirement; deps checked:
+  `_resolve_claude`:64, `_get_memory_path`:629, `get_manager`:1182,
+  `_unregister_process`:1427 — no late dep needed). Path constants stay in
+  server.py (DATA_DIR & co. still read by many families) — the 1.4/1.5
+  wire-in pattern, NOT a placeholder move. The blueprint imports
+  `github_sync`/`project_sync` DIRECTLY (top-level modules, 1.3 precedent;
+  pure-defs modules, verified no import side effects; their `register()`
+  wiring calls stay in server.py verbatim at the original positions — same
+  module objects via sys.modules) and `_kill_terminal_session`
+  CROSS-BLUEPRINT from terminal_routes (the 1.4/1.5
+  `_resolve_project_path_or_400` precedent; called at request time only,
+  after terminal wire()). State: agent_sessions, terminal_sessions,
+  terminal_lock, _backlog_sync_lock imported from mc.state (mutated
+  in-place only, never rebound).
+- **EIGHT seams re-homed** (1.10's exact list, every fn slot now passes
+  `_bp_projects.<fn>`): guide (load+save), distiller (load), hivemind
+  (load + log_agent_activity), skills (load+load_projects), mcp
+  (load+save), push_mobile (load), system (load+load_projects), terminal
+  (load). The github/project-sync `register()` calls keep bare names —
+  identical objects through the shims.
+- **Inbound shims (8):** `load_project`, `save_project`, `load_projects`
+  (dispatch/scheduler/scribe/condense callers — dozens),
+  `EXCLUDED_SIDECAR_SUFFIXES` (tests read `server.<name>`),
+  `_log_agent_activity` (~25 dispatch sites + `_log_github_sync_activity`),
+  `_upload_limit` + `_incoming_file_size` (agent_upload_image) +
+  `_project_attachment_usage` (test_p2_2 reads it).
+- **Test ports: ZERO.** `test_load_projects_sidecar_exclusions.py` (the
+  load-bearing pin) passes unmodified — it reads
+  `server.EXCLUDED_SIDECAR_SUFFIXES`/`server.load_projects` through the
+  shims, and its `del sys.modules['server']` re-import re-runs wire() so
+  the blueprint re-binds to the fresh DATA_DIR. `test_auto_model_router.py`
+  passes unmodified — its `s.DATA_DIR = bad` rebind test targets
+  `_router_stat` (stays server-side); the exclusion tests read via shims.
+  `test_p2_2_upload_quota.py` + `test_telemetry.py` pass unmodified (CONFIG
+  in-place mutation flows through the `state.CONFIG` live alias; telemetry's
+  DATA_DIR rebinds only feed server-side agent-log fns). 42/42 across the
+  four files.
+- **Emoji-escape fidelity gotcha (new):** generate_summary's prompt has a
+  literal `⚽` ESCAPE in source; bash-heredoc layers collapse `\\u` on
+  the way into helper scripts, silently turning fidelity checks/fixes into
+  no-ops. Fix scripts built the needle with `chr(92)`. The byte-verify
+  caught it.
+- **Phase 5:** new `tests/test_project_routes.py` (35 tests): projects list
+  (live_agent field + sidecar exclusion + asking>working priority), create
+  (auto-workspace) / update (log_msg) / 400 / 409 duplicate-path,
+  generate_summary happy via recorder subprocess + claude-missing 500 +
+  timeout 504 + 404, delete full-cleanup (attachments + agent_log + session
+  kill/unregister + terminal kill via patched module fn) + 404, backlog
+  roundtrip + malformed ×5 + note append, github setup/status/disconnect +
+  thread-recorded initial sync + 429-rate / 400, code-sync lifecycle + 429,
+  attachment upload/serve/delete roundtrip + malformed ×3 + 413 cap,
+  serve-image allowlist (200 uploads / 400 / 415 / 403 outside),
+  import-from-changelog + malformed, rules roundtrip + invalid-path +
+  shared, memory GET/PUT/append + malformed/404 ×5, order + grid-layout +
+  OPTIONS 204, 401 LAN reject (handler proven not run) + loopback twin.
+  Patches `mc.blueprints.project_routes.*` only; recorder `subprocess` +
+  fake `_gh_sync`/`_proj_sync`/`threading` namespaces ON THE MODULE;
+  fixture snapshots/clears/restores agent_sessions + terminal_sessions
+  in-place (1.8 lesson). Windows gotcha: close the test-client response
+  after GET /api/attachments before deleting the file (send_file holds the
+  handle → WinError 32).
+- **Gates:** routes 210/210 (57 app-grep [56 real + the 1.7-noted f-string
+  line] + 153 bp; url_map 209 rules = 53 unconditional app + 153 mc-bp + 2
+  marketing_preview + 1 static, the 3 mock-CP conditionals env-gated) ✓ ·
+  `import server` + 32 project_routes rules in url_map ✓ · ruff E9/F821 ✓ ·
+  pyright mc/ 0 (zero new typing-debt tags) ✓ · full pytest exit 0 — 591
+  passed, 1 codex env skip ✓ · isolated smoke (`MC_DATA_DIR=$(mktemp -d)`,
+  `MC_PORT=5377`, BOM-less config seed via bash printf, port-free asserts,
+  taskkill /T /F): heartbeat 200 · GET /api/projects renders the seeded
+  scratch project WITH live_agent field · POST create (auto-workspace
+  materialized) → POST update (log_msg in activity_log) → DELETE → backlog
+  404 · backlog GET/POST · rules/shared + memory + grid-layout 200 · prior
+  blueprints 9/9 200 (local-auth/status, push vapid, skills, mcp, distiller
+  loop-health, terminal status, remote sessions/enforcer-state
+  [NOTE: full path is /api/remote/sessions/enforcer-state — the bare
+  /api/remote/enforcer-state used in earlier entries' shorthand 404s],
+  guide scribe-stats, hivemind list) · enforcer last_run=0/no error (seed
+  parsed) · system/loops shows hivemind-orchestrator +
+  session-label-enforcer + update-check · boot.log error-free · tree
+  killed, port 5377 free, live :5199 untouched ✓
+- **server.py:** 11,173 → 10,147 lines.
+- **Landmines for 1.12 (agent_dispatch — orchestrator does it inline):**
+  (a) Fn homes in the NEW server.py: providers/auth region 1739–2273
+  (`/api/agent/upload-image`:1739 + `_downscale_image_if_huge`, providers
+  :1813, provider auth :1908–2152, claude auth :2139–2152);
+  `_build_agent_context`:2334; stream readers `_read_agent_stream`:2783 +
+  `_read_agent_stream_b`:2967; `_revive_from_agent_log`:3694;
+  `_log_agent_completion`:4305; `_dispatch_agent_internal`:5747; the agent
+  route block 6072–7419 (dispatch/send/stream/followup:6377 [the 492-line
+  one — move WHOLE]/stop/interrupt/session/plan-file/status/
+  guardian-reset/log); plan-file pair :7225/:7247; transcript :7451 +
+  reconstruct :7473; recent-runs :7667; search-chats :7859; conversations
+  :7880; plans :8008; usage :8056. The memory/scribe/condense machinery
+  interleaved through 2334–6071 (`_write_session_memory`:4094 etc.) is NOT
+  dispatch — boundary-assert every cut.
+  (b) MY wire slots 1.12 re-homes when those fns move:
+  `resolve_claude_fn`, `get_manager_fn`, `unregister_process_fn` (also in
+  system/terminal/hivemind stanzas). `get_memory_path_fn` does NOT re-home
+  at 1.12 (scribe/condense stays).
+  (c) When agent_upload_image moves: kill the `_upload_limit` /
+  `_incoming_file_size` server shims by cross-importing from
+  project_routes (keep `_project_attachment_usage` shim — test_p2_2 reads
+  it off server).
+  (d) `_ensure_incognito_project`:442 + INCOGNITO_PROJECT_ID go with
+  dispatch (only callers: dispatch:~5770s + send). `p.get('_is_incognito_
+  project')` checks are scattered through scribe/condense too — those are
+  dict-key reads, not the fn.
+  (e) `_log_agent_activity` callers in the dispatch family resolve the
+  server shim today; 1.12 should cross-import from project_routes (the
+  fn's home), not re-wire.
+  (f) schedule_run_now:7517 calls `_dispatch_agent_internal` — the
+  dispatch/scheduler boundary; decide whether the schedule routes ride
+  with 1.12 or wait for 1.13 (they sit between transcript and recent-runs).
+  (g) `/api/config` PUT flags `_needs_respawn` on live Mode B sessions —
+  dispatch-coupled but left in server.py; agent_followup reads the flag.
+  (h) The f-string doc line is now :2273 (inside
+  `_clayrune_universal_capabilities`, which 1.10 wired into hivemind and
+  1.12 will share via `_build_agent_context`) — grep-count arithmetic
+  unchanged.
+- **Commit:** `PENDING` on `wt-1.11` (orchestrator merges).
