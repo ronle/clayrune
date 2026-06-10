@@ -1,5 +1,11 @@
 # Clayrune — Claude Code project notes
 
+## Type checking (added 2026-06-10)
+
+New/moved modules under `mc/` must pass `pyright` basic (scope:
+`pyrightconfig.json`; CI: `.github/workflows/pyright.yml`, non-blocking until
+the 23-error baseline in `distiller.py`/`agent_runtime.py` is cleared).
+
 ## Commit discipline — stay scoped to your own session (added 2026-06-08)
 
 When asked to commit "the work we did," stage **only the files you edited this

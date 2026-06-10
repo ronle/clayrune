@@ -6,3 +6,4 @@
 
 pytest>=8.0
 httpx>=0.27          # used by control_plane/tests fixtures (MockTransport)
+pyright>=1.1.390     # type gate for mc/ + extracted modules (pyrightconfig.json)

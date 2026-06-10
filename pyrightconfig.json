@@ -1,0 +1,13 @@
+{
+  "include": [
+    "mc",
+    "agent_runtime.py",
+    "db.py",
+    "skills.py",
+    "mcp.py",
+    "distiller.py"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "pythonVersion": "3.10"
+}
