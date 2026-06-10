@@ -894,3 +894,205 @@ what moved, commit SHA, gate results.
    `computeLiveStatus`/grid renderer, and SSE slot management — expect a
    js/store.js prerequisite rather than a clean lift; derive fresh before
    promising.
+
+## Phase 3 — module 8: extract terminal pop-out → `static/js/terminal.js` (2026-06-09)
+
+- **Module-7 SHA backfill:** module 7 (js/settings-sections.js) = commit
+  `32d571b`.
+- **First module with shared mutable globals — unblocked by the
+  object-identity window bridge.** Modules 2–7 deferred terminal because its
+  state is read by inline code that stays behind. The writer audit (module 7
+  data, re-verified formally here) proves the bridge is sound; this is also
+  the **first not-fully-byte-verbatim move**: the 5-line state block is
+  TRANSFORMED (`let` → guarded `window.` inits), everything else stays
+  byte-verbatim with the reassembly assertion adapted accordingly.
+- **Region re-derived:** old lines 10508–10756 (`// ── Terminal Pop-Out`
+  header through `cleanupTerminalModal`'s closing brace + trailing blank;
+  next header `// ── Scheduler` at 10757) = 249 lines, exactly 8 function
+  declarations (`openTerminalPopout`, `initTerminalXterm`, `termZoom`,
+  `connectTerminalStream`, `sendTerminalInput`, `stopTerminal`,
+  `fetchTerminalStatus`, `cleanupTerminalModal`). Brace-depth top-level
+  scan: declarations only, depth ends 0, no IIFEs/top-level calls. The
+  state block is old lines 5064–5069 ONLY (header + 5 `let`s) — the
+  dispatch hint's "~L5064–5095" over-spanned into hivemind/session-tab
+  helpers (L5071+), which are NOT terminal state and stay inline.
+- **Inbound refs re-verified: exactly 8 textual = the module-2 sizing** —
+  `fetchTerminalStatus` L2262 (`openProjectModal`'s
+  `Promise.all([fetchAgentStatus, fetchTerminalStatus])`),
+  `cleanupTerminalModal` L2293 (`closeModalById`, unconditional — the
+  region function self-filters via the `__terminal_` regex),
+  `openTerminalPopout` L6394 + `terminalDismissed` L6388/6395/6396 (the
+  `[terminal:sid:cmd]` marker scan inside `connectAgentStream`'s
+  `es.onmessage`), `terminalEventSources` L15306/15307 (`beforeunload` SSE
+  cleanup). All runtime-only (≥1 network round-trip + user/SSE action past
+  module eval). Whole-repo sweep: only index.html + this doc (prose).
+- **Equivalence analysis per shared global (the unblocking design — all 5
+  PASS, no STOP):** for each of `terminalInstances`, `terminalEventSources`,
+  `terminalOutputBuffers`, `terminalOutputCount`, `terminalDismissed`:
+  - **Writer scan (formal, not eyeball):** direct `(?<![\w$.])name\s*=(?!=)`
+    + compound `[+\-*/%&|^…]=` + `++/--` scans → exactly ONE hit each: the
+    declaration itself. Every other reference (46 total) is a property-level
+    op (`[sid]` get/set/delete, `.has/.add`, `.push`, `.close`, `for…in`) —
+    object identity is the only thing that matters, and property ops behave
+    identically through any resolution path.
+  - **Binding-kind change (`let` global-declarative-record → window prop)
+    observability:** zero `window.<name>` refs, zero `typeof` probes, zero
+    `delete <name>`, zero re-declarations, no DOM elements with these ids
+    (id-based window globals would poison `||` adoption), no
+    window-enumeration code. TDZ: baseline boots clean ⇒ no parse-time read
+    precedes L5065 (a pre-existing one would have TDZ-thrown at base).
+  - **Init-ordering / first-read guarding (the module-7 analysis,
+    replicated):** the inline bridge executes at the SAME parse-time line
+    the `let`s did ⇒ the props exist before any reader can possibly fire —
+    first-read-before-init is impossible *by construction* (stronger than
+    module 7, which had a genuine ordering inversion to argue). The
+    module-side re-inits `||`-short-circuit against the inline-created
+    objects (no second allocation, no divergence); defaults are identical
+    empty containers on BOTH sides, so even a hypothetical inversion is
+    vacuously equivalent — module 7's "rich defaults never apply" hazard
+    has no analogue here.
+- **Bridge design (dual-side guarded inits):** index.html's state block
+  (L5064–5069) is REPLACED in place by `window.x = window.x || {…}` lines
+  (+ bridge comment); terminal.js carries the same guarded inits as its
+  prologue. Inline runs first (parse time vs deferred), creates the
+  objects; the module adopts them by identity. Rationale for keeping the
+  inline side: with module-only inits, a `fetchProjects()` response task
+  can theoretically run between inline-script end and module eval (module
+  scripts fetch over network and the event loop runs while waiting), and a
+  bare inline read of a never-created global is a ReferenceError, not
+  undefined. The 5 inline lines eliminate that whole class.
+- **What moved:** old lines 10508–10756 → `static/js/terminal.js`,
+  **byte-verbatim** (split reassembly assertion: (1) the region segment in
+  terminal.js == original region bytes; (2) new index.html with the script
+  tag removed + region re-inserted at the deletion point + bridge block
+  swapped back to the original `let` block == original file byte-for-byte).
+  Loaded via `<script type="module" src="/static/js/terminal.js"></script>`
+  after the settings-sections.js tag, before `</body>`. Anti-FOUC bootstrap
+  untouched. Diff shape: state block 6 → 12 lines, region −249, tag +1.
+- **Numbers:** `terminal.js` = 12,304 bytes / 279 lines (249 moved +
+  13-line prologue incl. the byte-verbatim original state-header comment +
+  17-line interop tail; CRLF, no BOM). `index.html` 776,962 → 767,452
+  bytes; 15,962 → 15,720 lines (BOM preserved).
+- **Interop surface: 6 window function re-exposures + 5 identity-bridged
+  state globals, 0 accessor bridges** (generated-handler assignment scan
+  empty — handlers only CALL, never assign):
+  - Inline callers (3): `openTerminalPopout`, `fetchTerminalStatus`,
+    `cleanupTerminalModal`.
+  - Region-generated `on*=` targets (3): `stopTerminal`, `termZoom`,
+    `sendTerminalInput`.
+  - Module-private (2): `initTerminalXterm`, `connectTerminalStream` (only
+    called from `openTerminalPopout`; NOT to be confused with the INLINE
+    `connectAgentStream`, which stays).
+  - State (5): identity-bridged via window props as above — NOT re-exposed
+    functions, the objects themselves are the interface.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `esc`, `openModals` (Map method ops), `nextModalZ++`
+  (module→inline-let write, proven direction), `_clampModalSize`,
+  `centerModalElement`, `focusModal`, `restoreModal`, `closeModalById`,
+  `minimizeModal` (handler string), `_isMobileDevice` (inline const), CDN
+  classics `Terminal`/`FitAddon` (head `<script src>`, L106–107), browser
+  builtins (`EventSource`, `fetch`, `ResizeObserver`). Strict-mode
+  promotion audited: zero `this`/`with`/`callee`/octals in region code.
+- **sw.js:** `SW_VERSION` `mc-push-v8` → `mc-push-v9` (no cache list by
+  design; version bump only, same as modules 1–7).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/terminal.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios.
+  - `node --input-type=module --check` parses terminal.js in module goal.
+  - Real-server check (throwaway `MC_PORT=5379 python server.py` from the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/terminal.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 12304, `Cache-Control: no-cache` + ETag.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    throwaway `termtest` project created via `POST /api/project/termtest`
+    since fresh worktrees have zero real projects) — **24/24 PASS,
+    0 console errors, 0 uncaught page errors**:
+    - 6/6 interop functions callable; module-private fns NOT leaked; state
+      props correct shapes (4 objects + Set).
+    - **Prescribed exercise:** `POST /api/terminal/launch` with
+      `python -c "print('hello from term')"` → `openTerminalPopout` →
+      xterm attached → **"hello from term" arrived via the SSE stream**
+      into the shared buffer → status event flowed (dot → `completed`,
+      EventSource removed from the shared object).
+    - **Real inline discovery path:** second launch (print + sleep) →
+      inline `openProjectModal('termtest')` → L2262 `Promise.all` →
+      module `fetchTerminalStatus` → pop-out auto-opened, live SSE output.
+    - **THE identity gate, asserted both sides:** page-captured probes
+      (`window.__pES = window.terminalEventSources` etc. at boot) remain
+      `===` to the live globals at three points (boot / mid-exercise /
+      end); the module-created `EventSource` is `instanceof EventSource`
+      INSIDE the boot-captured object — same object, no divergence, all 5
+      globals.
+    - **Dismiss:** real `.modal-close` click → inline `closeModalById` →
+      module `cleanupTerminalModal` → `terminalDismissed.has(sid)` true
+      through BOTH references (shared Set), SSE + xterm instance cleaned
+      from the shared objects, server session deleted.
+    - **Marker path (outside reader) exercised for real:** stubbed
+      `EventSource`, called inline `connectAgentStream`, fired synthetic
+      agent-output messages through the REAL inline `es.onmessage`:
+      (a) marker for the dismissed sid → NOT reopened (inline reader
+      honored the module-written Set); (b) marker for a fresh running sid
+      → real status fetch → module `openTerminalPopout` → modal appeared +
+      stream registered in the shared object (inline scan → module call,
+      end-to-end). EventSource restored after.
+    - Screenshots eyeballed (600 ms settle): styled pop-out with output +
+      completed status; live pop-out (running dot, Stop visible) over the
+      project modal; marker-opened pop-out with the dismissed modal
+      correctly absent.
+  - `node tools/smoke/bg-framing-check.mjs` — **identical pre-existing
+    base error** (`setBgZoom is not defined`, landmine 4 of module 1);
+    boots with terminal.js fulfilled, dies at the same later evaluate. No
+    new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–7).
+
+### Landmines for module 9 (remaining-core map, post-terminal)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary
+   surgery; build-macos.spec bundles static/ wholesale; npm install in
+   fresh worktrees; deferred-module timing; module-scoped-globals rule;
+   re-derive boundaries + brace-depth scan; accessor-bridge
+   handler-assigned vars via the formal scan; don't "repair" quirks;
+   settle CSS animations before screenshots; cross-module window props
+   are normal; surgery scripts in `_scratch/*.py`, not heredocs).
+2. **The object-identity window bridge is now a proven 4th interop tool**
+   (after plain re-exposure, `Object.defineProperty` accessors, and
+   already-window-qualified state): for bare-`let` state shared across the
+   module boundary, (a) formally prove zero wholesale reassignments,
+   (b) replace the `let`s in place with guarded `window.x = window.x || …`
+   inits (parse-time creation preserved ⇒ no first-read analysis debt),
+   (c) duplicate the guarded inits at module top (self-documenting,
+   order-independent), (d) check for DOM id collisions + `typeof`/
+   `window.`-qualified probes before trusting `||` adoption.
+3. **Gate scripts must not race region `setTimeout`s:** `openTerminalPopout`
+   defers xterm/SSE wiring by 50 ms — `waitForFunction` on the observable
+   state, never assert immediately after the triggering call (cost one
+   false FAIL here).
+4. **Faking SSE for inline-handler exercise works:** stub
+   `window.EventSource` AFTER real streams are established, call the inline
+   connecter, drive `stub.onmessage({data: JSON.stringify(...)})` — runs
+   the real handler in its real scope. Restore after. (Watchdog intervals
+   keyed on fake sids no-op against an empty `agentStatusCache`.)
+5. **Remaining-core sizing (re-derived post-move, 15,720 lines total; main
+   inline script L679–15711 ≈ 15,033L).** Cleanly-liftable-LOOKING feature
+   families ≥150L (refs UNVERIFIED — re-derive before promising, module-4
+   lesson): Mermaid interception 1,127L; MCP family 1,128L (476 manager +
+   652 From-URL state machine); Hivemind family ~1,294L (202 tab + 544
+   dashboard + 366 cross-project + 182 run-history shared w/ Scheduler);
+   Search past chats 849L; Command Palette 520L; Excalidraw bridge 492L;
+   System status 456L; Scheduler 377L; Update section 360L; provider
+   auth/settings ~630L (312+165+154). Sum ≈ 7,200L of candidate families.
+   The genuinely-entangled core (agent-panel/projects-grid smear +
+   boot/modal engine): Conversation model 545L, Modal HTML 463L, Tile HTML
+   304L, Rich text formatting 254L, Deep link 256L, Three-dot menu 273L,
+   DnD grid 186L, Aero-Snap 193L, Multi-modal tiles 268L, Agent Log/Plans/
+   Console/Drawer ~670L, plus ~59 sub-150L sections (SSE slot management,
+   dispatch, status resolver, boot sequence) ≈ **~6,500–7,500L that should
+   wait for the orchestrator's js/store.js design checkpoint** — the
+   conversation model's state (`agentOutputBuffers`, `agentEventSources`,
+   `agentStatusCache`, …) is the bridge pattern's stress test: dozens of
+   globals, some possibly wholesale-reassigned; run the formal writer scan
+   FIRST and expect accessor bridges where it fails.
