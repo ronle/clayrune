@@ -373,3 +373,128 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   (→ `state.CONFIG`), `now_iso` ×29 (mc.core). (e) hivemind state ×7 is
   already in mc/state since Phase 0 — import, don't re-declare.
 - **Commit:** `PENDING` on `wt-1.9` (orchestrator merges).
+
+## 1.10 — hivemind_routes blueprint + orchestrator-loop obs (2026-06-10)
+
+- **What moved:** 1,698 lines from TWO regions (splice-asserted: exactly 28
+  routes + 61 defs, byte-equality re-checked at cut time) →
+  `mc/blueprints/hivemind_routes.py` (1,586 lines): **28 routes** — the 27
+  of the main region (9 `# ── Hivemind…` sections: data layer, management +
+  workstream CRUD, worker context builder & spawn, orchestrator CLI dispatch,
+  message bus + SSE stream, knowledge base, escalation/intervention, server
+  orchestrator loop) + the `/api/hivemind/<id>/runs` straggler from the
+  trigger-aware run-history section (1.9's landmine (a) — confirmed, moved
+  with its family). The `import shutil` inside hivemind_delete moved inline
+  verbatim.
+- **1.9 terrain note corrected:** `_dispatch_agent_internal` is **NOT used
+  by this family** — the claimed ×1 is schedule_run_now's call site
+  (~10092 pre-cut). Worker + orchestrator spawns Popen directly and use
+  `_read_agent_stream`; nothing here wires the deep dispatcher. Verified
+  counts: load_project ×4 call sites, get_manager ×3, _register_process ×3
+  (one as `rt.dispatch(register_process=…)` kwarg), _read_agent_stream ×2,
+  _resolve_claude ×2, _log_agent_activity ×2, CONFIG.get ×3 (brief said 4)
+  → `state.CONFIG.get`, now_iso ×29 + time_ago ×1 + _log ×7 → mc.core.
+- **Seams:** `wire(...)` = 13 fn slots (load_project [1.11]; get_manager,
+  _register_process, _read_agent_stream, _resolve_claude,
+  _sysprompt_file_args, _sysprompt_cleanup, _hide_windows_delayed [1.12];
+  _log_agent_activity, _load_agent_log, _enrich_run_entries [agent-log/
+  run-history family]; _clayrune_universal_capabilities,
+  _clayrune_api_reference [feed _build_agent_context too — 1.12]) + 4
+  const slots (PORT, _POPEN_FLAGS, _STARTUPINFO, hivemind_dir →
+  HIVEMIND_DIR wired placeholder, its module-level `.mkdir` moved into
+  wire() — 1.6/1.7 pattern). `agent_runtime` imported directly by the
+  blueprint (top-level module, 1.3 precedent). State: imports 5 of the
+  Phase-0 hivemind ×7 (orch set/lock, sse queues/lock, stop Event);
+  `_hivemind_sessions`/`_hivemind_lock` are NOT used by this family (only
+  system_routes' restart-blocker check reads them) — no dead imports.
+- **Stanza placement (the 1.2 lesson, paid again):** the wire stanza sits at
+  the STRAGGLER's site (post-schedule_runs), NOT at the main-region
+  tombstone — `_enrich_run_entries` is defined between the two regions and
+  wiring at the main site would NameError at import. Inbound shims (2):
+  `_start_hivemind_orchestrator` + `_hm_reconcile_stale_on_startup`
+  (startup call sites under `__main__` unchanged).
+  `atexit.register(_hivemind_orchestrator_stop.set)` stays verbatim in
+  server.py (LIFO exit-hook ordering — 1.8's lesson; the Event lives in
+  mc/state.py since Phase 0).
+- **Phase 2:** `_hivemind_orchestrator_loop` gains
+  `obs.heartbeat('hivemind-orchestrator')` at the top of each iteration
+  (1.6/1.7 precedent); live-verified in /api/system/loops at age 7.7s
+  (10s tick, no boot delay).
+- **Route-grep gotcha (new):** the blueprint docstring originally said
+  "@app.route→@bp.route" — the literal `@bp.route` text inflated the
+  inventory grep to 211. Reworded to "app-to-bp route-decorator swap".
+  When documenting decorator swaps, never write the literal pattern.
+- **Phase 5:** new `tests/test_hivemind_routes.py` (47 tests): create
+  (inline-ws materialization / decompose-dispatch branch / malformed ×3 /
+  404), list+filter, detail shape, update merge, start/pause/stop/delete
+  lifecycle + archive + 404s, workstream CRUD + invalid-status 400, spawn
+  claude-path (argv shape, worker-context content incl. wired clayrune
+  feeders, ledger recorder, agent_sessions bookkeeping, ws flip) + spawn
+  non-claude runtime-routing branch (fake `_agent_runtime` registry,
+  context-prepend) + spawn 404s/400, handoff md + open-questions + artifact,
+  bus post/finding_report/poll/history + SSE stream (real generator: push →
+  data event → close → queue unregistered), knowledge synthesis GET/PUT/
+  notify_only + decisions/findings/question-resolve, escalate/intervene/
+  review/approve, runs straggler (role/ws filters, pagination, malformed
+  params), `_hm_reconcile_stale_on_startup` direct (stale flip + paused
+  untouched), 401 auth-reject + loopback twin. Patches
+  `mc.blueprints.hivemind_routes.*` only; recorder `subprocess` AND
+  `threading` namespaces (threads recorded, never run); fixture
+  snapshot/clears/restores agent_sessions + _hivemind_orchestrating +
+  _hivemind_sse_queues (1.8 pollution lesson). /api/processes untouched →
+  pid-reaper fixture not needed.
+- **SSE test gotcha (new):** werkzeug's test client pulls the generator's
+  FIRST chunk during `.get()` (start_response trigger) — with an empty
+  queue that pull blocks ~15s until the tick-50 `: heartbeat`. Fix: no-op
+  the module's `_time.sleep` for that test and scan past comment chunks to
+  the first `data:` event.
+- **Smoke spawn-safety (new discipline for hivemind smokes):** the
+  orchestrator loop auto-spawns REAL workers for any active hivemind with
+  ready workstreams every 10s. The scratch project is seeded with a
+  NONEXISTENT `project_path` so `_hm_auto_spawn_workers`' `is_dir()` check
+  skips it — create/detail/runs/delete all exercise the family with zero
+  real claude spawns (`/api/processes` returned `[]` throughout).
+- **Gates:** routes 210/210 (89 app-grep [88 real + the 1.7-noted f-string
+  line] + 121 bp; url_map arithmetic closes: 85 unconditional app + 121
+  mc-bp + 2 marketing_preview + 1 static = 209 rules, the 3
+  MC_REMOTE_LOCAL_MOCK conditionals register only under the env flag) ✓ ·
+  `import server` + 28 hivemind rules in url_map ✓ · ruff E9/F821 ✓ ·
+  pyright mc/ 0 (no new typing-debt tags needed) ✓ · full pytest exit 0
+  (codex env skip only) ✓ · isolated smoke (`MC_DATA_DIR=$TEMP\
+  mc-smoke-110-*`, `MC_PORT=5377`, BOM-less seeds via
+  `[IO.File]::WriteAllText`, port-free asserts both ends,
+  taskkill-as-own-command; NOTE: PS 5.1 Start-Process has no -Environment
+  — boot via bash): heartbeat 200 · /api/hivemind/list 200 · create →
+  detail → runs(200) → DELETE → 404 + `_archived/` move, all in the temp
+  data dir (wired HIVEMIND_DIR proven) · system/loops shows
+  hivemind-orchestrator (age 7.7s) + session-label-enforcer · prior
+  blueprints 8/8 200 (local-auth/status, push vapid, skills, mcp,
+  distiller loop-health, terminal status, remote enforcer-state, guide
+  scribe-stats) · enforcer 0 revoked/no error · stderr error-free ·
+  taskkill /T /F killed the tree, port 5377 free, live :5199 untouched ✓
+- **server.py:** 11,414 → 9,986 lines (−1,698 deleted / +46 stanza+tombstone).
+- **Landmines for 1.11 (projects — 48 routes, the core CRUD):**
+  (a) Family fn homes in the NEW server.py: `load_project` :1589,
+  `save_project` :1596, `load_projects` :1623 (the LOAD-BEARING sidecar
+  suffix-exclusion lives here — `_agent_log.json`/`_scribe_stats.json`;
+  `tests/test_load_projects_sidecar_exclusions.py` pins it),
+  `delete_project` :1881 (route handler + deleter in one — its body calls
+  the 1.8 inbound shim `_kill_terminal_session`). `update_project` (POST
+  /api/project/<id>, create+update with auto-workspace) :1729.
+  (b) Wire seams that re-home to the projects blueprint when it lands —
+  EIGHT stanzas pass projects-family deps: guide :1702-1704
+  (load+save+DATA_DIR), distiller :1935 (load+DATA_DIR), hivemind :8524
+  (load), skills :9206 (load+load_projects), mcp :9220-21
+  (load+save+DATA_DIR), push_mobile :10858 (load), system :10898-99
+  (load+load_projects+DATA_DIR), terminal :10928 (load). remote +
+  local_auth pass none.
+  (c) DATA_DIR itself (`_DATA_ROOT / 'data' / 'projects'` :419 + mkdir) is
+  the projects family's wired-placeholder candidate.
+  (d) The plan's "48 /api/project" count includes routes that belong to
+  OTHER families feature-wise (agent/* under the project prefix are 1.12;
+  memory GET/PUT/append trio ~:9153-9178 is 1.11/1.12 per 1.9's scoping
+  call (b); backlog/github/code-sync sit between the CRUD pieces) — expect
+  the same boundary-assert discipline, the family is NOT contiguous.
+  (e) `_project_live_agent` (status resolver) is dispatch-coupled — check
+  its callers before assuming it travels with projects.
+- **Commit:** `PENDING` on `wt-1.10` (orchestrator merges).
