@@ -174,14 +174,24 @@ def mem_firestore() -> MemoryFirestore:
     from control_plane.app import firestore as cp_fs
 
     mem = MemoryFirestore()
-    cp_fs.db.cache_clear()
+    # Save module state so it can be restored after the test. Without this,
+    # cp_fs.db gets reassigned to a plain lambda and the NEXT test's
+    # cp_fs.db.cache_clear() AttributeErrors (a lambda has no .cache_clear) —
+    # the suite passed test-by-test but errored in a full run.
+    _orig_db = cp_fs.db
+    if hasattr(cp_fs.db, 'cache_clear'):
+        cp_fs.db.cache_clear()
     cp_fs.db = lambda: mem  # type: ignore[assignment]
 
     # Patch firestore.transactional decorator to a passthrough so our stub txns work
     import google.cloud.firestore as gfs  # type: ignore
+    _orig_transactional = gfs.transactional
     gfs.transactional = lambda fn: (lambda txn: fn(txn))
 
     yield mem
+
+    cp_fs.db = _orig_db  # restore so the next test's cache_clear works
+    gfs.transactional = _orig_transactional
 
 
 # ─── Cloudflare mock ─────────────────────────────────────────────────────────
