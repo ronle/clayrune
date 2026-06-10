@@ -61,8 +61,7 @@ def _resolve_data_root():
             'MC_DATA_DIR',
             str(Path(os.environ.get('APPDATA', str(Path.home()))) / 'MissionControl')
         ))
-    else:
-        return Path(__file__).parent  # Dev: repo root
+    return Path(__file__).parent  # Dev: repo root
 
 
 DATA_ROOT = _resolve_data_root()
@@ -320,11 +319,10 @@ def _install_claude_cli_windows(status_callback=None):
     _refresh_path()
     if _check_claude_cli():
         return True, 'Claude CLI installed successfully.'
-    else:
-        return False, (
-            'Claude CLI was installed but is not on PATH.\n'
-            'Please restart your computer, then relaunch Clayrune.'
-        )
+    return False, (
+        'Claude CLI was installed but is not on PATH.\n'
+        'Please restart your computer, then relaunch Clayrune.'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -376,9 +374,8 @@ def _install_dotnet_desktop_runtime():
         if r.returncode == 0:
             _refresh_path()
             return True, '.NET Desktop Runtime installed successfully.'
-        else:
-            stderr = r.stderr or r.stdout or ''
-            return False, f'winget install failed:\n{stderr[:500]}'
+        stderr = r.stderr or r.stdout or ''
+        return False, f'winget install failed:\n{stderr[:500]}'
     except FileNotFoundError:
         return False, 'winget not found.'
     except subprocess.TimeoutExpired:
@@ -423,21 +420,20 @@ def _ensure_dotnet_runtime():
                 0x40,
             )
             return True
-        else:
-            _msgbox(
-                f'Auto-install failed: {message}\n\n'
-                'Please install manually:\n'
-                '1. Open https://dotnet.microsoft.com/download/dotnet/8.0\n'
-                '2. Download ".NET Desktop Runtime" (not just Runtime)\n'
-                '3. Run the installer\n'
-                '4. Restart Clayrune\n\n'
-                'For now, opening in browser mode.',
-                'Clayrune - Install Failed',
-                0x30,
-            )
-            return False
+        _msgbox(
+            f'Auto-install failed: {message}\n\n'
+            'Please install manually:\n'
+            '1. Open https://dotnet.microsoft.com/download/dotnet/8.0\n'
+            '2. Download ".NET Desktop Runtime" (not just Runtime)\n'
+            '3. Run the installer\n'
+            '4. Restart Clayrune\n\n'
+            'For now, opening in browser mode.',
+            'Clayrune - Install Failed',
+            0x30,
+        )
+        return False
 
-    elif result == 7:  # No — open download page
+    if result == 7:  # No — open download page
         webbrowser.open('https://dotnet.microsoft.com/download/dotnet/8.0')
         _msgbox(
             'Download page opened in your browser.\n\n'
@@ -449,8 +445,8 @@ def _ensure_dotnet_runtime():
         )
         return False
 
-    else:  # Cancel — browser mode
-        return False
+    # Cancel — browser mode
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +474,7 @@ def _start_flask(port):
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
 
-    from server import app, PORT, _start_scheduler
+    from server import app, _start_scheduler
     _start_scheduler()
     app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
 
@@ -558,7 +554,7 @@ if __name__ == '__main__':
     _webview_ok = False
     try:
         import webview
-        import clr  # triggers CoreCLR + .NET load — fail fast if broken
+        import clr  # noqa: F401 — probe import: triggers CoreCLR + .NET load, fail fast if broken
         _webview_ok = True
     except Exception as _e:
         _err = f'Native window unavailable ({type(_e).__name__}: {_e})'

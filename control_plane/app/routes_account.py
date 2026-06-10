@@ -28,7 +28,6 @@ import logging
 import os
 import re
 import secrets
-import time
 import uuid
 from typing import Any, Optional
 
@@ -379,7 +378,6 @@ async def revoke_device(
     Best-effort on CF deletes — if any CF API call fails we still wipe the
     Firestore row + username claim so the user isn't stuck.
     """
-    from fastapi import Body
     rid = _request_id(request)
     try:
         body = await request.json()

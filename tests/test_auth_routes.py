@@ -10,10 +10,9 @@ Route test matrix:
 """
 import json
 import sys
-import threading
 import time as _time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 

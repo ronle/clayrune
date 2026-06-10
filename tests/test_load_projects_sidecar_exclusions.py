@@ -44,7 +44,6 @@ def server_module(tmp_data_dir, monkeypatch):
     """Import server with an isolated DATA_DIR. The tmp_data_dir fixture
     has already set MC_DATA_DIR; this reloads server so module-level
     DATA_DIR re-evaluates against the env var."""
-    import importlib
     # Force re-import so the module-level DATA_DIR evaluates against the
     # monkeypatched env var. server is heavy (imports Flask, scribe, etc.),
     # so this fixture is session-scoped via tmp_path implicitly.

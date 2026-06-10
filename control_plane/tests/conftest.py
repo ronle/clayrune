@@ -20,7 +20,6 @@ pytest in case you don't have it installed).
 """
 from __future__ import annotations
 
-import datetime as _dt
 import json
 import os
 import sys

@@ -26,8 +26,6 @@ in load_projects() or routed elsewhere).
 """
 from __future__ import annotations
 
-import json
-import os
 import re
 import socket
 import subprocess

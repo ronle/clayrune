@@ -18,8 +18,7 @@ import sys
 import subprocess
 import threading
 from pathlib import Path
-from typing import Optional
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import pytest
 

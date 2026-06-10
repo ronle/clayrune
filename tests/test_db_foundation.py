@@ -4,7 +4,6 @@ Covers the migration runner (applies, idempotent, versioned), the schema it
 creates, the tx() commit/rollback contract, the query helpers, and clean
 re-init across DB paths. No server.py import — db.py is standalone in Phase 0.
 """
-import importlib
 import sys
 from pathlib import Path
 

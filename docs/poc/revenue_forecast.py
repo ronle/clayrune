@@ -71,7 +71,7 @@ def main():
               f"{'$%.1f'%g:>7} {g/v['price']:>6.0%}")
 
     arpu, wcogs = blended(MIX)
-    print(f"\n[2] Blended per paying user (mix "
+    print("\n[2] Blended per paying user (mix "
           + ", ".join(f"{k} {v:.0%}" for k, v in MIX.items()) + ")")
     print(f"    ARPU {money(arpu)}  |  COGS {money(wcogs)}  |  "
           f"gross {money(arpu - wcogs)} ({(arpu-wcogs)/arpu:.0%})")

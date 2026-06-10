@@ -18,13 +18,10 @@ import datetime as _dt
 import hashlib
 import logging
 import os
-import re
-import secrets
-from typing import Optional
 from urllib.parse import urlencode, urlparse
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 
 from . import build_info, firestore as fs
 
@@ -179,7 +176,6 @@ async def signin_complete(
     """
     from .routes_account import (
         _verify_firebase_token, _is_username_valid, _USERNAME_RESERVED,
-        _claim_username, _release_username,
     )
     id_token  = (body.get("id_token") or "").strip()
     nonce     = (body.get("nonce") or "").strip()

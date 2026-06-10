@@ -22,7 +22,6 @@ import re
 import subprocess
 import threading
 import uuid
-from datetime import datetime, timezone
 
 # ── Injected helpers (set by register()) ─────────────────────────────────────
 

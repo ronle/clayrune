@@ -41,7 +41,6 @@ import argparse
 import asyncio
 import os
 import sys
-from typing import Any
 
 
 def _print(prefix: str, msg: str) -> None:

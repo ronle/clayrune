@@ -36,7 +36,6 @@ import argparse
 import asyncio
 import os
 import sys
-from typing import Any, Optional
 
 
 _RULE_DESCRIPTION = "mission-control: cloud-run host header override"

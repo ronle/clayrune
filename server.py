@@ -9,7 +9,6 @@ import json
 import os
 import shutil
 import uuid
-import mimetypes
 import subprocess
 import sys
 import threading
@@ -84,12 +83,11 @@ def _pid_is_alive(pid):
             kernel32.CloseHandle(handle)
             return True
         return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 def _kill_pid(pid, tree=False):
@@ -1107,7 +1105,7 @@ def _sysprompt_cleanup(path, proc):
         except OSError:
             pass
     threading.Thread(target=_wait_and_unlink, daemon=True,
-                     name=f'sysprompt-cleanup').start()
+                     name='sysprompt-cleanup').start()
 
 
 # ── Agent session tracking ───────────────────────────────────────────────────
@@ -1725,9 +1723,9 @@ def time_ago(ts_str):
         now = datetime.now(timezone.utc)
         secs = int((now - ts).total_seconds())
         if secs < 60:      return f'{secs}s ago'
-        elif secs < 3600:  return f'{secs // 60}m ago'
-        elif secs < 86400: return f'{secs // 3600}h ago'
-        else:              return f'{secs // 86400}d ago'
+        if secs < 3600:  return f'{secs // 60}m ago'
+        if secs < 86400: return f'{secs // 3600}h ago'
+        return f'{secs // 86400}d ago'
     except:
         return ts_str
 
@@ -3867,11 +3865,11 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         "genuinely doesn't surface it.",
 
         # Leg B priming — name the skill so it's reached for at the right moment.
-        f"Project memory: when you hit an unknown about this project's history, "
-        f"a prior decision, or a convention, use the mc-memory-search skill "
-        f"before guessing — it ranks the project's topic files, archive, and "
-        f"session log. Relevant memory for the current task is also "
-        f"auto-surfaced in your context under 'RELEVANT MEMORY'.",
+        "Project memory: when you hit an unknown about this project's history, "
+        "a prior decision, or a convention, use the mc-memory-search skill "
+        "before guessing — it ranks the project's topic files, archive, and "
+        "session log. Relevant memory for the current task is also "
+        "auto-surfaced in your context under 'RELEVANT MEMORY'.",
     ]
 
 
@@ -4330,23 +4328,23 @@ def _format_tool_activity(name, inp):
         fp = inp.get('file_path', '')
         short = Path(fp).name if fp else '?'
         return f'[tool: {name}] {short}'
-    elif name == 'Bash':
+    if name == 'Bash':
         cmd = (inp.get('command', '') or inp.get('description', '') or '')[:80]
         return f'[tool: Bash] {cmd}'
-    elif name in ('Grep', 'Glob'):
+    if name in ('Grep', 'Glob'):
         pat = inp.get('pattern', '')
         return f'[tool: {name}] {pat}'
-    elif name == 'Task':
+    if name == 'Task':
         desc = (inp.get('description', '') or '')[:50]
         return f'[tool: Task] {desc}'
-    elif name == 'WebSearch':
+    if name == 'WebSearch':
         q = (inp.get('query', '') or '')[:60]
         return f'[tool: WebSearch] {q}'
-    elif name == 'AskUserQuestion':
+    if name == 'AskUserQuestion':
         qs = inp.get('questions', [])
         preview = qs[0].get('question', '')[:60] if qs else ''
         return f'[tool: AskUserQuestion] {preview}'
-    elif name == 'TodoWrite':
+    if name == 'TodoWrite':
         todos = inp.get('todos', []) or []
         total = len(todos)
         done = sum(1 for t in todos if isinstance(t, dict) and t.get('status') == 'completed')
@@ -4356,8 +4354,7 @@ def _format_tool_activity(name, inp):
         if in_prog:
             summary += f' — now: {in_prog[:60]}'
         return f'[tool: TodoWrite] {summary}'
-    else:
-        return f'[tool: {name}]'
+    return f'[tool: {name}]'
 
 
 # ── Single-emit gate ─────────────────────────────────────────────────────────
@@ -8113,7 +8110,7 @@ def agent_followup(project_id):
                     _log(f"[followup] {project_id}: resume {claude_sid[:12]} died before any output, starting fresh")
                     context = _build_agent_context(p)
                     existing['log_lines'].append(
-                        f'[Resume produced no output before exiting — restarting fresh]')
+                        '[Resume produced no output before exiting — restarting fresh]')
                     message = (f"[Continuing from a previous conversation (session {claude_sid}) whose "
                                f"process exited. Start fresh but continue the user's request.]\n\n{message}")
                 else:
@@ -14221,7 +14218,7 @@ def _guardian_check_session(sid, session, now):
             with proj_lock:
                 msg = pending.pop(0)
                 session['log_lines'].append(
-                    f'[Guardian: dispatching stuck follow-up]')
+                    '[Guardian: dispatching stuck follow-up]')
             _auto_dispatch_followup(session, msg)
 
     # State 6: error session with pending recovery message — retry or trip breaker
@@ -14356,10 +14353,10 @@ def _check_port_conflict():
         "  conditions when one instance shuts down.",
         "",
         "  To fix:",
-        f"    1. Stop the other MC first, or",
-        f"    2. Use the already-running instance directly, or",
-        f"    3. Set MC_ALLOW_PORT_CONFLICT=1 if you really need both",
-        f"       (rare; only meaningful for protocol-level testing).",
+        "    1. Stop the other MC first, or",
+        "    2. Use the already-running instance directly, or",
+        "    3. Set MC_ALLOW_PORT_CONFLICT=1 if you really need both",
+        "       (rare; only meaningful for protocol-level testing).",
         "=" * 72,
         "",
     ]
@@ -14377,8 +14374,8 @@ def _check_port_conflict():
         pass
 
     if os.environ.get('MC_ALLOW_PORT_CONFLICT') == '1':
-        _log(f"[port-conflict] MC_ALLOW_PORT_CONFLICT=1 set — proceeding ANYWAY. "
-              f"You will likely see traffic split between instances.", flush=True)
+        _log("[port-conflict] MC_ALLOW_PORT_CONFLICT=1 set — proceeding ANYWAY. "
+              "You will likely see traffic split between instances.", flush=True)
         return
 
     sys.exit(2)
