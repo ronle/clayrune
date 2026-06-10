@@ -10,7 +10,10 @@
 // <style>. This SW intentionally has NO cache list (online-first, see the
 // fetch handler below), so there is nothing to add it to — the version bump
 // alone forces the SW update cycle per the modernization tracks discipline.
-const SW_VERSION = 'mc-push-v2';
+// v3 (2026-06-09): /static/js/claydo.js extracted from index.html's inline
+// <script> (Ask Claydo guide assistant). Same no-cache-list rationale —
+// version bump only.
+const SW_VERSION = 'mc-push-v3';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

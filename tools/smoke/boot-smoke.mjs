@@ -42,6 +42,10 @@ const INDEX_HTML = readFileSync(resolve(REPO_ROOT, 'static', 'index.html'), 'utf
 // (modernization Phase 3 module 1) — serve the real one or the shell under
 // test renders unstyled (and any future CSS-dependent assertion lies).
 const APP_CSS = readFileSync(resolve(REPO_ROOT, 'static', 'css', 'app.css'), 'utf8');
+// Ask Claydo ES module, extracted from the inline <script> (Phase 3 module 2).
+// Every extracted /static/js/*.js must be fulfilled here or the hermetic
+// harness aborts its request and the SPA boots without that feature.
+const CLAYDO_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'claydo.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 
 const ORIGIN = 'http://mc.smoke.test';   // arbitrary; every request is intercepted
@@ -77,6 +81,8 @@ async function runScenario(browser, sc) {
       return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: INDEX_HTML });
     if (path === '/static/css/app.css')
       return route.fulfill({ status: 200, contentType: 'text/css; charset=utf-8', body: APP_CSS });
+    if (path === '/static/js/claydo.js')
+      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CLAYDO_JS });
     if (path === '/api/projects')
       return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config')

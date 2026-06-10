@@ -22,6 +22,9 @@ const INDEX_HTML = readFileSync(resolve(REPO_ROOT, 'static', 'index.html'), 'utf
 // Real extracted stylesheet (modernization Phase 3 module 1) — without it the
 // shell under test renders unstyled.
 const APP_CSS = readFileSync(resolve(REPO_ROOT, 'static', 'css', 'app.css'), 'utf8');
+// Ask Claydo ES module (Phase 3 module 2) — fulfilled so the hermetic harness
+// doesn't abort the request (every extracted /static/js/*.js needs this).
+const CLAYDO_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'claydo.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 const ORIGIN = 'http://mc.smoke.test';
 
@@ -39,6 +42,7 @@ try {
     const path = new URL(route.request().url()).pathname;
     if (path === '/' || path === '/index.html') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: INDEX_HTML });
     if (path === '/static/css/app.css') return route.fulfill({ status: 200, contentType: 'text/css; charset=utf-8', body: APP_CSS });
+    if (path === '/static/js/claydo.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CLAYDO_JS });
     if (path === '/api/projects') return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config') return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     return route.abort();
