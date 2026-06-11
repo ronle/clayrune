@@ -63,6 +63,7 @@ const PROVIDER_SETTINGS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'pr
 const PROCESS_MANAGER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'process-manager.js'), 'utf8');
 // Cross-project Hivemind ES module (Phase 3 module 21) — same rule as claydo.js above.
 const CROSS_HIVEMIND_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'cross-hivemind.js'), 'utf8');
+const MOBILE_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'mobile.js'), 'utf8');
 const PROJECT_ACTIONS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'project-actions.js'), 'utf8');
 const COMPOSER_EXTRAS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'composer-extras.js'), 'utf8');
 const APPEARANCE_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'appearance.js'), 'utf8');
@@ -113,6 +114,7 @@ try {
     if (path === '/static/js/provider-settings.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROVIDER_SETTINGS_JS });
     if (path === '/static/js/process-manager.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROCESS_MANAGER_JS });
     if (path === '/static/js/cross-hivemind.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CROSS_HIVEMIND_JS });
+    if (path === '/static/js/mobile.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MOBILE_JS });
     if (path === '/static/js/project-actions.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROJECT_ACTIONS_JS });
     if (path === '/static/js/composer-extras.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: COMPOSER_EXTRAS_JS });
     if (path === '/static/js/appearance.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: APPEARANCE_JS });

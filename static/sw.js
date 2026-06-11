@@ -95,7 +95,7 @@
 // agentLineCls/collapseIntoPlanButton/expandAgentOutput + the rAF pin-scroll
 // pair). The conversation-model half of the old "Rich text formatting" section
 // (appendAgentLine onward) stays inline for M23. Same no-cache-list rationale.
-const SW_VERSION = 'mc-push-v35';
+const SW_VERSION = 'mc-push-v36';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

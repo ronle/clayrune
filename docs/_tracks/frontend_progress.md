@@ -3571,3 +3571,18 @@ comment fragment, empty section stubs.
 - Interop: 20 exposures (3 promotions), 4 privates → 1 (renderCreatePreviews).
 - Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 22,622B exact;
   exercise green + the forced-lateness race test.
+
+## Phase 4 — M32e: mobile UI → `static/js/mobile.js` (2026-06-10)
+
+- 4 segments [(944,993)+(996,1001)+(1006,1093)+(1112,1182)] carved around:
+  the resize arm (994), `projectLastSeen` decl + boot hydration try
+  (1002–1004 — read by moved fns via global lexical, written by both sides),
+  the `_mcDrawerHistoryActive`/`_mcSuppressPop` decls (read by the STAYING
+  popstate arm), the popstate arm itself (1183+), and the grid-render glue
+  (renderStats/setFilter/filterProjects/renderProjects — render engine,
+  stays). 215 lines / 10,958 bytes. index.html 3,337 → 3,123.
+- Interop: 18 exposures, 4 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 10,958B exact;
+  exercise **7/7 at a REAL 390px viewport** — chat list renders, drawer
+  open/close via module, markProjectSeen→inline projectLastSeen→localStorage
+  roundtrip.
