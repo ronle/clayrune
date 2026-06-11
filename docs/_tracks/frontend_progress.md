@@ -3548,3 +3548,26 @@ feature exercise, sw bump, harness route.fulfills.
 **Dead-code deletion pass (deliberate, post-track):** hivemindTabHTML +
 loadHiveminds (superseded by cross-project view), orphaned agentConvNew
 comment fragment, empty section stubs.
+
+## Phase 4 — M32d: project actions + BOOT-RACE FIX → `static/js/project-actions.js` (2026-06-10)
+
+- 2 segments [(1887,1951)+(2007,2444)] carved around showToast/
+  showActionToast (core shared glue — stays inline): create-form attachment
+  family, update-notification, GitHub sync, code-sync, backlog undo/showDone,
+  attachment/note panels + upload. 503 lines / 22,622 bytes. index.html
+  3,825 → 3,323 (then +14 for the gate comment block below).
+- **REAL BUG FOUND & FIXED — cold-boot module race.** The `fetchProjects()`
+  boot continuation calls window-exposed module fns (`_loadOpenModalsSnapshot`,
+  `openProjectModal`, `fetchAgentStatus`, `_handleDeepLinkFromUrl`). With 30+
+  deferred modules the fetch can resolve BEFORE late modules evaluate →
+  intermittent `ReferenceError` on cold load (reachable since ~M29; surfaced
+  by M32d's real-server exercise — route.fulfilled smoke loads modules
+  instantly and can't see it). Fix: `_modulesReady` promise ARMED AT PARSE
+  TIME resolving on DOMContentLoaded (deferred modules are spec-guaranteed
+  done by then); the continuation awaits it. **`document.readyState` is NOT
+  a valid gate — it reads 'interactive' before deferred modules run** (first
+  fix attempt failed exactly there; proven by a 600ms-throttled
+  modal-manager.js test: 4/4 PASS post-fix, ReferenceError pre-fix).
+- Interop: 20 exposures (3 promotions), 4 privates → 1 (renderCreatePreviews).
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 22,622B exact;
+  exercise green + the forced-lateness race test.
