@@ -3401,3 +3401,36 @@ checkpoint** for the remaining core.
 - Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server
   14,998B exact; exercise 6/6 meaningful (renderAgentConsole with seeded
   store history; inline timeAgoShort winner verified "5m ago").
+
+## Phase 4 — M29 (absorbs M28): window manager + three-dot + deep link + palette → `static/js/modal-manager.js` (2026-06-10)
+
+- **M28 collapsed into M29:** the palette's movable surface is only ~88L
+  (toggleCommandPalette + renderCommandResults) — its state
+  (`cmdSelectedIndex`) is written by the BOOT-armed global keydown + input
+  listeners which stay inline, so the decl stays inline beside them (the
+  shared_state gate would have FATALed a move). A standalone module wasn't
+  warranted.
+- 5-segment carve [(2058,2172)+(2174,2243)+(2259,2693)+(2905,2992)+
+  (2999,3012)]: prefs/snapshot machinery, deep-link handler (the SW
+  message-listener ARM at 2244 stays inline), openProjectModal/close/
+  minimize/showDesktop + the whole three-dot family + emoji picker,
+  palette pair, restoreModal. 722 lines / 32,962 bytes. index.html
+  7,634 → 6,913.
+- **Cutter fix:** decl-statement extents now suppress false "OTHER
+  top-level" hits from array-literal member lines (brace masker doesn't
+  track bracket depth; EMOJI_CHOICES tripped it).
+- Interop: 30 exposures (29 + pickEmoji promotion), 9 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server
+  32,962B exact; exercise **8/8** — real open→minimize→restore→close cycle
+  against store `openModals`, palette toggle via store `cmdPaletteOpen`,
+  0 write hits, 0 errors.
+
+### Landmines for M30 (render-core.js)
+
+1. Tile HTML (1291) + Modal HTML (1595) + List View (~2790 now shifted) +
+   sidebar/list glue stays vs moves: `render()`/`refreshModal`/
+   `refreshModalById`/`sizeAgentChat`/`updateAgentStatusUI`/`guardianReset`
+   remain INLINE (render engine + boot glue per design §7).
+2. tileHTML/modalContentHTML emit MANY on*= handlers — expect a big
+   promotion list; the whole-file on*= scan covers static HTML too.
+3. FRIENDLY_TO_VOICE (private), undoStack/showDoneMap (STORE).
