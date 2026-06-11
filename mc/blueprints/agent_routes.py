@@ -1333,6 +1333,21 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         "Clayrune theme (cream nodes, orange borders, clay-brown text) is "
         "applied automatically — do not override it.",
 
+        # The chat renderer inlines absolute image paths as thumbnails via
+        # /api/serve-image (allowlist: project root, the Clayrune repo,
+        # Clayrune's data/uploads). Markdown image syntax is NOT rendered.
+        "Images: To SHOW the user an image, output its ABSOLUTE file path on "
+        "its own line in your chat reply — Clayrune renders it as an inline "
+        "thumbnail (click to enlarge). This is a platform fact, not something "
+        "to test or hedge about. Constraints: (1) the file must live under "
+        "the project root or Clayrune's data/uploads — paths outside those "
+        "(e.g. the user's Pictures folder) are refused by the server and "
+        "degrade to a plain link; copy such files into the project first, "
+        "then output the new path. (2) Do NOT use markdown image syntax "
+        "![alt](path) — it does not render as markdown here. (3) Screenshots "
+        "or images the user attaches arrive as data/uploads paths you can "
+        "open with your file tools.",
+
         # Two schedulers exist — pick the right one for the job.
         f"Scheduler — TWO options, pick by lifespan:\n"
         f"  • Clayrune LOCAL scheduler — for LONG-TERM, REPEATABLE jobs scoped "
