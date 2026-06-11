@@ -3329,3 +3329,27 @@ checkpoint** for the remaining core.
 2. Top-level dragover/drop preventDefault listeners in the paste zone STAY
    (boot skeleton).
 3. continueInputOpen/planSelections decls in-region (private per membership).
+
+## Phase 4 — M25: extract agent-log family → `static/js/agent-log.js` (2026-06-10)
+
+- 2-segment carve [(4952,5367)+(5372,5422)] AROUND the boot dragover/drop
+  preventDefault listeners (stay inline at ~5369-5370 with their comment).
+  Agent Log Panel + Plans tab + continue + image paste. 467 lines / 21,056
+  bytes. index.html 9,185 → 8,719.
+- Interop: 20 exposures (12 ref-derived + 8 handler-target promotions —
+  the whole plans-toolbar/row onclick family), 3 privates
+  (toggleAgentLog, continueInputOpen, planSelections).
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server 200
+  21,056B exact; exercise **9/9, 0 errors, 0 write hits** (plans render
+  seeded via store plansCache; loadAgentLog real GET). Seed gotcha: plan
+  rows key on `plan_file`, not `file`.
+
+### Landmines for M26 (hivemind.js)
+
+1. Hivemind tab + Dashboard Modal headers (re-derive lines). hivemindCache
+   is STORE (step 0) — the tile/popover readers are module-side now; no
+   bridge needed.
+2. renderRunRows/renderRunsPagination (Run history) are shared with
+   scheduler.js and STAY INLINE (module-21 landmine, still true).
+3. hivemindSSE/_hmDashDebounce/_hmDashInFlight are STORE (deep-link
+   coupling); hivemindDashboardWs/_hmTabDebounce private per membership.
