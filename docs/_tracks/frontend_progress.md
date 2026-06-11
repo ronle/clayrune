@@ -3518,3 +3518,33 @@ checkpoint** for the remaining core.
 - Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 18,556B exact;
   exercise 5/5 (micBtnHTML graceful outside Capacitor, buildTaskWithImages
   empty+image roundtrip).
+
+### Store.js pass — status after M32c (2026-06-10, Fable session 1)
+
+**Done this pass (13 commits, all on refactor/frontend):** design doc ratified
+(Option A) → step-0 STORE consolidation (74 vars) → M22 rich-text → M23
+conversation → M24 resume-preview → M25 agent-log → M26 hivemind → M27
+agent-console → M29(+28) modal-manager → M30 render-core → M31 interactions
+(arm relocation) → dead-timeAgoShort deletion → M32a project-forms → M32b
+appearance → M32c composer-extras.
+**index.html 11,761 → 3,825 lines** (start-of-track 25,165). 12 new modules
+≈ 8,100L. ZERO bridges added across the entire pass — Option A held
+everywhere. Every cut: byte-verbatim two-sided reassembly, formal scans
+(shadowing/duplicates/handler-targets/parse-time code/`this`), boot-smoke
+5/5, bg-framing baseline-only, throwaway real-server exact-bytes, headless
+feature exercise, sw bump, harness route.fulfills.
+
+**Remaining queue (~1,100L, same recipe, cutter ready at
+`_scratch/cut_module.py`):**
+- Mobile UI family (~937–1290: app bar, chat list, Android-back sentinels,
+  nav drawer) — history/popstate arms are boot-coupled; expect arm
+  relocation (M31 pattern) or stay-inline verdicts per arm.
+- Feed (~2445–2628 current) + Feed Toggle; renderFeed called by render().
+- Create-form attachments (~2073+) + GitHub sync (~1952+) + update-notif
+  (~2007+) + code-sync (~2140+).
+- THEN: the inline residue is boot skeleton + STORE + shared glue
+  (esc/refreshSilent/render/refreshModal/sizeAgentChat/settings helpers/
+  run-history renderers) ≈ inline script ~2,000 → target met.
+**Dead-code deletion pass (deliberate, post-track):** hivemindTabHTML +
+loadHiveminds (superseded by cross-project view), orphaned agentConvNew
+comment fragment, empty section stubs.
