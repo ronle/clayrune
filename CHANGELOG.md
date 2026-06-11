@@ -6,6 +6,44 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-10] — Frontend modernization: store.js pass complete (index.html 11,761 → 2,939)
+
+The final phase of the frontend track. The remaining monolith core — conversation
+model, dispatch/SSE machinery, modal/window manager, render core, interactions,
+and the leaf families — extracted into 18 new ES modules (≈9,000 lines moved),
+finishing what modules 1–21 started. index.html is now **2,939 lines** (25,165
+at track start): the inline script is the designed residue — a labeled STORE
+block (74 shared globals, membership derived programmatically), the boot
+skeleton, and shared glue.
+
+**Architecture (docs/STORE_JS_DESIGN.md, "Option A"):** shared mutable state
+anchors INLINE in one consolidated block; feature code moves out as ordinary
+deferred modules referencing it bare-name through the global lexical
+environment. Zero accessor/identity bridges were introduced across the entire
+pass — the platform fact that modules can read AND assign classic-script
+top-level bindings carried every cut.
+
+**Verification per cut (18×):** byte-verbatim region moves with two-sided
+reassembly assertions; formal scans (store-shadowing, duplicate-decl shadow
+traps, generated-handler targets incl. conditional-template emission,
+parse-time top-level code, strict-mode `this`); boot-smoke 5/5; bg-framing
+baseline-only; throwaway real-server exact-byte checks; headless feature
+exercises (synthetic SSE through the real 3-module pipeline, full modal
+lifecycle, drag via relocated listener arms, 390px mobile chat list). Agent
+write endpoints were tripwired throughout — zero dispatches.
+
+**Real bug found & fixed (latent, cold-boot):** with 30+ deferred modules, the
+`fetchProjects()` boot continuation could resolve before late modules
+evaluated → intermittent `ReferenceError` restoring modals/deep links. Fixed
+with a parse-time-armed `_modulesReady` promise (resolves on DOMContentLoaded;
+`document.readyState` is NOT a valid gate — it reads 'interactive' before
+deferred modules execute). Verified under 600ms forced module lateness.
+
+**Also:** one provably-dead shadowed duplicate (`timeAgoShort`) deleted;
+`hivemindTabHTML` flagged as apparently-uncalled (deletion deferred — needs an
+operator decision, it is user-facing surface). sw.js v23→v37. Full per-cut
+detail: docs/_tracks/frontend_progress.md ("Phase 4").
+
 ## [2026-06-09] — Security hardening: LAN auth bypass, CORS, git-arg injection
 
 Closes findings from an internal security review (each independently verified

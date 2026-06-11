@@ -3586,3 +3586,33 @@ comment fragment, empty section stubs.
   exercise **7/7 at a REAL 390px viewport** — chat list renders, drawer
   open/close via module, markProjectSeen→inline projectLastSeen→localStorage
   roundtrip.
+
+## Phase 4 — M32f: feed → `static/js/feed.js` (2026-06-10)
+
+- Single span [(1727,1911)]: classifyFeedEvent, attention list/badge,
+  renderFeed. 185 lines / 8,690 bytes. index.html 3,123 → 2,939.
+  `feedCollapsed` decl + toggleFeed + the boot read stay inline.
+- Interop: 1 exposure (renderFeed ← central render()), 4 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 8,690B exact;
+  exercise 4/4 (feed column renders through render() → module).
+
+## Phase 4 — TRACK CLOSE (2026-06-10)
+
+**The store.js pass is complete.** index.html: **25,165 (track start) →
+11,761 (pass start) → 2,939**. The inline script is now ≈2,150 lines of
+exactly the designed residue: STORE block (74 vars) + boot skeleton
+(arms/pollers/boot continuation incl. the `_modulesReady` gate) + shared
+glue (esc, showToast/showActionToast, refreshSilent, render/renderProjects/
+refreshModal(ById), sizeAgentChat, settings helpers, run-history renderers
+shared with scheduler.js) + the head modules + HTML shell. 38 ES modules
+under static/js/ (18 new in this pass ≈ 9,000L moved). ZERO state bridges
+introduced across the entire pass — Option A (state anchors inline, code
+moves out) held in every single cut.
+
+**Deferred, deliberately (need product/operator decisions, NOT mechanical):**
+1. `hivemindTabHTML` appears to have zero callers (per-project Hivemind tab
+   superseded by the cross-project view?) — deletion needs Ron's confirmation
+   that the tab is gone on purpose; it's user-facing surface.
+2. Orphaned comment fragments + empty section stubs (cosmetic sweep).
+3. The remaining inline glue COULD compress further (~150L of empty
+   headers/blanks) but sits below the value line.
