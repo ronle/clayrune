@@ -3454,3 +3454,22 @@ checkpoint** for the remaining core.
   bg-framing baseline; 53,232B exact; exercise 7/7 (grid via module
   tileHTML, modal via module modalContentHTML through M29's
   openProjectModal — cross-module render chain).
+
+## Phase 4 — M31: extract interactions → `static/js/interactions.js` (2026-06-10)
+
+- 2 segments [(1887,2072)+(5429,6070)]: DnD grid + Aero-Snap + multi-modal
+  tiles + modal drag + separator drag + touch resize + ctrl+scroll zoom.
+  828 lines / 35,767 bytes. index.html 6,102 → 5,275.
+- **First whole-zone arm relocation (modules 16/17 precedent, scaled up):**
+  29 top-level listener arms + 1 idempotent localStorage purge moved WITH
+  their fns+state (`allow_toplevel` cutter flag). Arms now attach at module
+  eval (pre-DOMContentLoaded) instead of parse — behavior-equivalent; the
+  DCL listener inside still catches DCL (modules eval before it fires).
+  Required because the arm closures wholesale-write family state
+  (`dragState = {...}` in mousedown) — fns/arms/state are inseparable.
+- Interop: 8 exposures, 39 privates (the entire drag/snap state).
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 35,767B exact;
+  exercise: ctrl+wheel zoom (+1 level via store modalZoomLevels) AND real
+  modal drag (dx=120/dy=62) both through RELOCATED arms; 0 errors.
+  Synthetic-event gotcha: dispatch mousedown ON the header (no hit-testing
+  in synthetic dispatch — e.target is the dispatch node).
