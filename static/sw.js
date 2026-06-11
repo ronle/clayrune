@@ -85,7 +85,12 @@
 // refreshProcessList/killTrackedProcess/cleanupOrphanedProcesses + _formatDuration).
 // 2-segment move (the helpers were mis-filed ~480 lines from openProcessManager).
 // Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v21';
+// v22 (2026-06-10): /static/js/cross-hivemind.js extracted from index.html's
+// inline <script> (the Cross-project "All Hiveminds" modal: filter/render/load/
+// mini-tree-viz/new-from-global). Self-contained (own _allHivemindFilter identity
+// bridge + _allHivemindsCache); NOT coupled to the per-project hivemindCache tab
+// (that tab+dashboard stays for the store.js pass). Same no-cache-list rationale.
+const SW_VERSION = 'mc-push-v22';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

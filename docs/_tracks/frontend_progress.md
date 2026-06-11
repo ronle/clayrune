@@ -3006,3 +3006,140 @@ what moved, commit SHA, gate results.
      (conversation model, modal/tile HTML, SSE slot management, dispatch, status
      resolver, the worker popover, Command Palette's real ~98L + its 2 accessor
      bridges `cmdPaletteOpen`/`cmdSelectedIndex`).
+
+## Phase 3 — module 21: extract Cross-project Hivemind view → `static/js/cross-hivemind.js` (2026-06-10)
+
+- **Module-20 SHA backfill:** module 20 (js/process-manager.js) = commit `ccb221b`.
+- **Candidate selection this run — the Hivemind family SPLITS cleanly:** the
+  module-20 landmines flagged the Hivemind family as the last non-core candidate
+  but gated on whether `hivemindCache` is shared with the agent-panel core. AUDIT
+  RESULT: `hivemindCache` (declared L8320 in the Hivemind TAB region) is READ by
+  the Tile HTML core (L1200/1396) AND the store.js-coupled worker popover (L5007)
+  → the **tab + Dashboard Modal stay for the store.js pass** (extracting them would
+  push a `hivemindCache` identity bridge into the projects-grid core renderer).
+  **BUT the Cross-project Hivemind view is a SEPARATE, self-contained family** that
+  does NOT touch `hivemindCache` — it has its own `_allHivemindFilter`/
+  `_allHivemindsCache` state (the cross-backlog/all-MCP pattern). That's this module.
+- **Region re-derived — self-contained, single contiguous span (header-to-header
+  mismatch, 8th time):** old lines **10557–10840** (the `// ── Cross-project
+  Hivemind view` header through `newHivemindFromGlobal`'s close at 10839 + 1
+  trailing blank 10840). The header-to-header span (to Native FCM push at 10928)
+  ALSO held the inline boot tail — `startRefresh` (L10842, with the module-17 shim)
+  + the filter-dropdown binding + grid-layout fetch + density/feed/viewmode restores
+  + `applyAdvancedFlags()` + the SW registration (10842–10927) — the SAME recurring
+  boot-tail trap; those STAY inline. Brace-depth top-level scan of the REAL region:
+  depth ends 0, 3 state decls (`_allHivemindFilter`/`_allHivemindsCache` `let` +
+  `HM_STALE_HOURS` `const`) + 10 function decls, 0 OTHER (no IIFEs/parse-time
+  calls/listeners in the family proper).
+- **Inbound refs re-verified (formal whole-FILE refscan EXCLUDING the boot tail +
+  WHOLE-REPO sweep):** outside refs are exactly — `openAllHivemindsForProject` ×1
+  (project three-dot menu onclick L1649), `openAllHiveminds` ×1
+  (`sidebarNav('hivemind')` L2651), `renderAllHiveminds` ×1 (the central `render()`
+  L835 — but **GUARDED** by `if (openModals.has('__all_hivemind'))`, so it fires
+  only once the modal is open = necessarily after this deferred module evaluates;
+  same safe pattern as cross-backlog's `renderAllBacklog`). All other 9 names
+  (`_hmEffectiveStatus`/`_hmShortId`/`loadAllHiveminds`/`_hmTreeMiniViz`/
+  `_hmRelativeTime`/`newHivemindFromGlobal`/`_allHivemindFilter`/`_allHivemindsCache`/
+  `HM_STALE_HOURS`) are region-only. **WHOLE-REPO sweep: ZERO non-index hits** (no
+  cross-module callers in other JS modules — unlike modules 16–19).
+- **What moved:** old lines 10557–10840 → `static/js/cross-hivemind.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before + region +
+  after == original`; (2) the new index.html, with the inserted `<script>` tag line
+  removed AND the region re-inserted at the cut point, `== original` byte-for-byte;
+  interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/cross-hivemind.js"></script>` after the
+  process-manager.js module tag, before `</body>`. Diff shape: 1 insertion, 283
+  deletions.
+- **Numbers:** `cross-hivemind.js` = 14,805 bytes / 300 lines (284 moved + 16-line
+  interop tail; CRLF, no BOM, 168 non-ASCII UTF-8 bytes). `index.html` 590,543 →
+  576,941 bytes; 12,044 → 11,761 lines (BOM preserved).
+- **Interop surface: 4 window function re-exposures + 1 object-identity bridge,
+  0 accessor bridges:**
+  - Inbound/cross-region callers (3): `openAllHiveminds` (sidebarNav),
+    `openAllHivemindsForProject` (project menu), `renderAllHiveminds` (guarded
+    central render()).
+  - Region-generated `on*=` handler target (1): `newHivemindFromGlobal` (the
+    "+ New Hivemind on this project" card onclick).
+  - **Object-identity bridge (1):** `_allHivemindFilter` (a `{status,search,project}`
+    object). Generated handlers property-write it (`oninput="_allHivemindFilter.
+    search=this.value;…"`, two `onchange` for status/project — L10613/10615/10623);
+    formal wholesale-write scan → exactly ONE hit (the declaration; the in-region
+    writes at 10579/10580 are `.`-prefixed). Plain `window._allHivemindFilter =
+    _allHivemindFilter` identity bridge routes handler property-writes into the
+    module's live object — same as cross-backlog's `_allBacklogFilter` and all-MCP's
+    `_allMCPFilter` (NOT an accessor — never wholesale-reassigned).
+  - Module-private (6 fns + `_allHivemindsCache` + `HM_STALE_HOURS`):
+    `_hmEffectiveStatus`, `_hmShortId`, `loadAllHiveminds`, `_hmTreeMiniViz`,
+    `_hmRelativeTime`; `_allHivemindsCache` (wholesale-reassigned only inside the
+    module, zero outside refs), `HM_STALE_HOURS`.
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`) EMPTY
+    (handlers CALL functions / property-write `_allHivemindFilter`); zero `this`.
+- **Outbound deps** (resolve at call time through the shared global scope): the
+  inline Hivemind tab/dashboard functions `openHivemindDashboard` (L8522) +
+  `startHivemindChat` (L8473, called by `newHivemindFromGlobal`), `openModals`
+  (`const`, bare), `nextModalZ++`, `restoreModal`, `focusModal`, `centerModalElement`,
+  `_clampModalSize`, `minimizeModal`/`closeModalById` (handlers), `openProjectModal`,
+  `allProjects`, `isIncognitoProject`, `esc`, `API_BASE`, `showToast` + browser
+  builtins. Strict-mode promotion audited: zero module-code `this`; every assignment
+  targets a declared binding or a `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v21` → `mc-push-v22` (no cache list by design;
+  version bump only). Added a v22 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/cross-hivemind.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses cross-hivemind.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/cross-hivemind.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 14805 (exact match);
+    `GET /api/hivemind/list` → `[]` (the empty state).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — `newHivemindFromGlobal` (opens a project + dispatches a hivemind
+    chat = model cost) deliberately NEVER invoked) — **20/20 PASS, 0 console
+    errors, 0 page errors**: 4 window.* interop callable; `_allHivemindFilter`
+    object-identity bridge present with the default `{project,search,status}` shape;
+    all 7 module-privates NOT leaked; cross-project Hivemind modal opens via the
+    REAL `sidebarNav('hivemind')` path (`__all_hivemind` in `openModals`) + renders
+    from the real `/api/hivemind/list` (empty-state "No matching hiveminds…");
+    **identity bridge asserted end-to-end** — a property-write via
+    `window._allHivemindFilter.search/status` + `renderAllHiveminds()` reads it (no
+    throw); the **guarded `render()` path** re-renders the open modal without
+    throwing; `newHivemindFromGlobal` wired but never invoked. Screenshot eyeballed:
+    fully styled cross-project Hivemind modal (title, search, Active/All-projects
+    filters, "0 hiveminds", + New Hivemind, empty state), sidebar nav item active,
+    no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module 1;
+    line shifted to L111, same evaluate step). No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–20).
+
+### Queue status after module 21 — the move-only non-core families are EXHAUSTED
+
+The non-store.js feature queue is now empty. What remains in index.html is the
+agent-panel / projects-grid / conversation-model CORE — the **store.js design
+pass** Ron deferred to last. Specifically:
+
+- **Hivemind TAB + Dashboard Modal** (`hivemindCache` at L8320 + the tab/dashboard
+  functions, ~8318–9063) — BLOCKED on `hivemindCache` being read by the Tile HTML
+  core (L1200/1396) and the worker popover (L5007). Extractable only WITH the
+  store.js core (or with a `hivemindCache` object-identity bridge that the core
+  renderer reads — a store.js-design decision, not a clean leaf move). DEFERRED.
+- **Hivemind worker popover** (L~4900, in the agent-panel zone) — reads
+  `agentStatusCache` + `agentHistory` + `hivemindCache`; pure store.js core.
+- **Command Palette's real ~98L** — needs 2 accessor bridges (`cmdPaletteOpen`
+  bare-assigned by walkthrough.js; `cmdSelectedIndex` `++`/`=`-mutated by the
+  shared inline keydown handler). Brief says extract ONLY if it cleanly separates
+  with ≤2 accessor bridges; it's the most entangled "small" candidate — recommend
+  pairing with the store.js pass.
+- The conversation model / modal+tile HTML / SSE slot management / dispatch /
+  status resolver / Agent Console / Memory tab / agent-log / plans / rules / the
+  remaining settings-section templates — all the `agentOutputBuffers`/
+  `agentEventSources`/`agentStatusCache` smear — is the store.js pass.
+
+index.html is now **11,761 lines** (down from 14,674 at module 13 / ~25,165 at
+the start of Phase 3). 8 modules extracted this session (14–21): mcp, system-status,
+update-power, provider-auth, schedule-banner, provider-settings, process-manager,
+cross-hivemind. Recommend the orchestrator now begin the **store.js design
+checkpoint** for the remaining core.
