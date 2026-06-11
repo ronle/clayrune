@@ -63,7 +63,13 @@
 // in-region parse-time `setTimeout(()=>_checkServerRestart(),1500)` moves with
 // the region → fires post-parse as a deferred module (behavior-equivalent for a
 // delayed heartbeat seed). Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v17';
+// v18 (2026-06-10): /static/js/provider-auth.js extracted from index.html's
+// inline <script> (multi-provider Auth banner + Provider Auth helpers). One
+// 1-line inline shim: startRefresh's `setInterval(refreshAuthStatus,90000)` →
+// `setInterval(()=>window.refreshAuthStatus(),90000)` so the parse-time
+// startRefresh() defers the lookup to each 90s tick (boot-trap fix b,
+// behavior-equivalent). Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v18';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

@@ -2424,3 +2424,202 @@ what moved, commit SHA, gate results.
      the Hivemind-worker-popover if it's SSE-coupled) + Command Palette's real
      ~98L (2 accessor bridges: `cmdPaletteOpen` + `cmdSelectedIndex`) still
      WAIT for the orchestrator's js/store.js design checkpoint.
+
+## Phase 3 — module 17: extract provider-auth → `static/js/provider-auth.js` (2026-06-10)
+
+- **Module-16 SHA backfill:** module 16 (js/update-power.js) = commit `4b56b9d`.
+- **Candidate selection this run:** the "provider auth/settings (~630L)" named
+  candidate was flagged ENTANGLED / mis-headered. RE-DERIVED below: the clean
+  carveable piece is the provider-auth FAMILY (multi-provider Auth banner +
+  Provider Auth helpers) = ONE contiguous region; the Schedule Banner family
+  (mis-placed under the "Provider Auth helpers" header) stays inline. Chosen
+  over Hivemind (larger, multi-segment, shares run-history) and the Schedule
+  Banner (its own parse-time boot-trap + outbound-dep coupling to scheduler.js).
+- **Region re-derived — Auth-banner + Provider-Auth-helpers are ONE family,
+  single contiguous span:** old lines **9995–10237** (the `// ── Auth banner —
+  multi-provider` header through `_renderClaudeAuthStatusLine`'s close at 10236
+  + one trailing blank 10237). The "Provider Auth helpers" header (L10149) is a
+  SUB-section of the same family — `settingsClaudeAuthCheck` (auth-banner half)
+  calls both `_renderAuthBanner` AND `_renderClaudeAuthStatusLine`
+  (provider-helpers half), binding the two. Brace-depth top-level scan: depth
+  ends 0, 3 state decls (`_authBannerDismissed`/`_authBannerLastReason` `let` +
+  `PROVIDER_AUTH_KEYS` `const`) + 13 function decls, **0 OTHER** (declarations
+  only — no IIFEs, no parse-time calls, no listeners; the cleanest region body
+  since modules 5/6/7). The Schedule Banner `_sbState` (L9984, ABOVE this
+  header) and its functions (`refreshScheduleBanner` at L10239, BELOW) STAY
+  inline — this region lifts the provider-auth middle out from between the two
+  Schedule-Banner halves.
+- **PARSE-TIME TRAP + the one inline shim (boot-trap fix (b), the first non-move
+  edit in this track):** `refreshAuthStatus` is referenced at PARSE TIME by the
+  inline `startRefresh()` (which runs at parse time, L11806-ish) via
+  `setInterval(refreshAuthStatus, 90000)` inside its body. Moving
+  `refreshAuthStatus` to a deferred module would make that bare identifier
+  resolve to `undefined` at `startRefresh()`'s parse-time execution →
+  `setInterval(undefined, 90000)` = the 90s auth poll silently dies = BEHAVIOR
+  CHANGE. **Fix (b):** a 1-line inline edit to `startRefresh` (NOT part of the
+  moved region) — `setInterval(refreshAuthStatus, 90000)` →
+  `setInterval(() => window.refreshAuthStatus && window.refreshAuthStatus(),
+  90000)`. The arrow defers the lookup to each 90s tick (runtime, long after the
+  module evaluates), so the poll still fires at +90s. Behavior-equivalent (the
+  first tick is at +90s either way; the function is loaded by then) — this is
+  the brief's boot-trap fix (b) applied to a registration BURIED inside a
+  surviving inline function rather than a standalone top-level one. The 4
+  remaining `refreshAuthStatus` references (SSE-error handlers L6305/6343,
+  fetchProjects `.then` callback L11790) are all RUNTIME → satisfied by the
+  window export alone. **This is the ONLY inline line changed outside a moved
+  region across modules 1–17; it is documented, minimal, and provably
+  behavior-equivalent.**
+- **Inbound refs re-verified (formal whole-FILE refscan + WHOLE-REPO sweep):**
+  - In index.html: `refreshAuthStatus` ×4 (the parse-time `startRefresh`
+    `setInterval` → shimmed; 2 SSE-error handlers + 1 fetchProjects callback →
+    runtime), `dismissAuthBanner`/`claudeAuthenticate`/`claudeAuthRecheck` ×1
+    each (the STATIC auth-banner HTML onclicks at L498–500),
+    `settingsClaudeLogin`/`settingsClaudeAuthCheck`/`settingsProviderSetEnv`/
+    `settingsProviderTerminalLogin`/`settingsProviderRefresh` (generated onclicks
+    in the inline **Provider Settings section** `_renderProviderSettings`,
+    L10839–10860 — runtime), and **`PROVIDER_AUTH_KEYS` read cross-region** at
+    L10847 (`const envKey = PROVIDER_AUTH_KEYS[p.name]` inside the inline
+    `_renderProviderSettings`).
+  - **Whole-repo sweep:** `settings-drill.js` hit is a COMMENT only (mentions
+    `settingsProviderRefresh` in an `openSettings` interop note) — no code
+    caller. Otherwise CHANGELOG + this log (prose). No live cross-module caller.
+- **What moved:** old lines 9995–10237 → `static/js/provider-auth.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before +
+  region + after == original`; (2) the new index.html, with the inserted
+  `<script>` tag line removed AND the region re-inserted at the cut point,
+  `== original` byte-for-byte — asserted BEFORE the separate inline shim edit,
+  so the region move itself is provably verbatim; interop tail append-only).
+  Loaded via `<script type="module" src="/static/js/provider-auth.js"></script>`
+  inserted immediately after the update-power.js module tag, before `</body>`.
+  Anti-FOUC bootstrap untouched. Diff shape: 1 insertion (tag) + 243 deletions
+  (region) + the 1-line shim edit (4 comment lines + 1 changed line in
+  `startRefresh`).
+- **Numbers:** `provider-auth.js` = 11,503 bytes / 266 lines (243 moved +
+  23-line interop tail; CRLF, no BOM, 258 non-ASCII UTF-8 bytes). `index.html`
+  619,515 → 609,859 bytes by the region move; then the shim Edit added 4 comment
+  lines → final 12,517 lines (BOM preserved, all CRLF).
+- **Interop surface: 9 window function re-exposures + 1 window const, 0 accessor
+  bridges, 0 identity bridges:**
+  - Inbound/static-HTML/cross-region callers (6 fns + 1 const):
+    `refreshAuthStatus` (startRefresh shim + SSE + fetchProjects),
+    `dismissAuthBanner`/`claudeAuthenticate`/`claudeAuthRecheck` (static
+    auth-banner HTML), `settingsClaudeLogin`/`settingsClaudeAuthCheck` (inline
+    Provider Settings section), **`PROVIDER_AUTH_KEYS`** (read-only const read by
+    the inline `_renderProviderSettings` at render time — window-exposed so the
+    bare read resolves; it's never written, so a plain `window.X = X` suffices).
+  - Inline Provider-Settings-section generated onclicks (3): `settingsProviderSetEnv`,
+    `settingsProviderTerminalLogin`, `settingsProviderRefresh`.
+  - Module-private (4 fns + 2 state vars): `_renderAuthBanner`, `_authBannerMessage`,
+    `_renderClaudeAuthStatusLine`, `refreshProviderAuthStatus`;
+    `_authBannerDismissed`, `_authBannerLastReason` (zero outside refs, zero
+    handler-assignment).
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY for both state vars; the region itself generates NO `on*=` handlers
+    (the auth-banner buttons' onclicks live in the static HTML, outside the
+    region); zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `esc`, `showToast`, `alert`/`confirm`, `openModals` (`const`,
+  bare), `closeModalById`, `openSettings`/`refreshSettings` (the
+  `settingsProviderRefresh` fallback), `_agentProviders` (the provider list
+  global — read for display names), `setTimeout` + browser builtins. Strict-mode
+  promotion audited: zero module-code `this`; every assignment targets a declared
+  binding or an explicit `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v17` → `mc-push-v18` (no cache list by
+  design; version bump only). Added a v18 changelog line documenting the shim.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/provider-auth.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses provider-auth.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+    **This is the shim regression gate** — `startRefresh()` runs at boot with the
+    deferred `() => window.refreshAuthStatus && …` form; the SPA boots clean (a
+    leftover bare `refreshAuthStatus` would have captured undefined, but boot
+    would still pass — so the shim's *behavior* is asserted in the Chromium gate
+    below, not here; here we only confirm no boot throw).
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/provider-auth.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 11503 (exact match),
+    `Cache-Control: no-cache`; `GET /api/claude/auth-status` → `{ok:true}` (this
+    machine's claude is signed in → banner hidden).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — a hard route-guard ABORTED + asserted-zero on
+    `/api/agent/provider/*/env`, `/login-launch`, `/api/claude/login-launch`;
+    Save/Launch/Sign-in NEVER clicked) — **28/28 PASS, 0 console errors, 0 page
+    errors, NO side-effecting endpoint hit**: 9 window fns + `PROVIDER_AUTH_KEYS`
+    const exposed (`.gemini === 'GEMINI_API_KEY'`); all 6 privates (incl. 2 state
+    vars) NOT leaked; **the shim FORM asserted** — `() => window.refreshAuthStatus
+    && window.refreshAuthStatus()` is callable and drove the real
+    `/api/claude/auth-status` (ok:true → banner hidden); the **not-ok render
+    path** (stubbed `{ok:false, reason:'not_logged_in'}`) showed the banner via
+    `_renderAuthBanner` with the correct `_authBannerMessage` text
+    ("Claude isn't signed in…"); `dismissAuthBanner()` hid it; **dismiss-sticky-
+    per-reason** verified (same reason stays hidden after re-fetch);
+    `settingsClaudeAuthCheck`/`settingsProviderRefresh` wired. Screenshot
+    eyeballed: dashboard fully styled, banner correctly hidden, no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L99, same evaluate step); page boots with provider-auth.js
+    fulfilled, dies at the same later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–16).
+
+### Landmines for module 18 (remaining-core map, post-provider-auth)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap; bg-
+   framing-check broken at base; CRLF+BOM binary surgery; build-macos.spec
+   bundles static/ wholesale; npm install in fresh worktrees; deferred-module
+   timing; module-scoped-globals rule; re-derive boundaries + brace-depth scan;
+   accessor-bridge handler-assigned vars; object-identity bridge for
+   handler-property-written objects; multi-segment / boot-trap carve for
+   parse-time entanglements; in-region setTimeout/setInterval moves WITH the
+   region; **buried parse-time registrations inside a surviving inline function
+   need a 1-line inline deferral shim — fix (b) — NOT a region change**;
+   WHOLE-REPO grep is mandatory; don't "repair" quirks; cross-module window
+   props normal; `(0,eval)('openModals')` in Playwright probes; destructive-
+   feature route-guard recipe; `node --input-type=module --check <file>` ERRORS
+   on Node 24 — pipe via stdin).
+2. **A cross-region read of a `const` needs window exposure too.**
+   `PROVIDER_AUTH_KEYS` is read (not just functions called) by the inline
+   `_renderProviderSettings` — a top-level `const` is visible to inline code via
+   the global scope, but once it moves to a module the inline reader needs
+   `window.PROVIDER_AUTH_KEYS`. The refscan flags these as plain outside hits
+   (no WHOLESALE-WRITE/prop-write marker since they're reads) — don't overlook a
+   read-only cross-region binding; window-expose it (no bridge needed, it's
+   never written).
+3. **`startRefresh` is the recurring parse-time hazard.** It is called at parse
+   time (inline boot) and its body references feature functions
+   (`refreshAuthStatus` here; `refreshAuthStatus` was the only one this round).
+   ANY future module whose function is referenced inside `startRefresh`'s body
+   (or any other parse-time-executed inline function) needs the same 1-line
+   deferral shim. Grep `startRefresh` (and the inline boot tail) for the
+   region's function names before moving.
+4. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED —
+   re-derive; the inline section is now shifted −242 more from any quoted
+   pre-module-17 line ≥10238 (then +4 from the shim comment); the Schedule
+   Banner functions are now at ~9997+ after this removal):**
+   - **Schedule Banner family** — `_sbState` (was 9984) + functions
+     (`refreshScheduleBanner`/`_sbRender`/`toggleSchedulePanel`/`_sbLoadRecent`/
+     `_sbOpenTranscript`/`_sbOpenAgentLog`/etc.) now CONTIGUOUS after the
+     provider-auth removal (state + functions were split AROUND provider-auth;
+     they're adjacent again). 2 top-level `document.addEventListener` (click +
+     Escape — safe) + a parse-time `setInterval(refreshScheduleBanner, 60000)`
+     in the inline boot tail (fix (a) relocation OR fix (b) shim) AND a parse-
+     time/boot reference — AND `refreshScheduleBanner` is an OUTBOUND dep of
+     scheduler.js (window-exposed already) + the inline schedule-banner render.
+     Also `formatScheduleTime` (scheduler.js, inline) is called by `_sbRender`.
+     A tractable next module with one boot-trap; derive carefully.
+   - **Provider Settings section** (`_renderProviderSettings`, the inline reader
+     of `PROVIDER_AUTH_KEYS`/`settingsProvider*`) — a settings-family leaf (one
+     render function + maybe helpers). Now that provider-auth's helpers are a
+     module, this section's only deps are window props (already bridged) — could
+     be a small clean module or join a settings-helpers grouping.
+   - **Hivemind family (~1,294L)** — tab + dashboard modal + cross-project;
+     shares the inline run-history renderers (STAY INLINE); the "Hivemind worker
+     popover" (was 4981) sits in the agent-panel/conversation zone — audit
+     whether it's SSE/store.js-coupled before including. Largest remaining
+     non-core family.
+   - Process Manager is a small single-function region.
+   - The genuinely-entangled agent-panel/projects-grid CORE + Command Palette's
+     real ~98L (2 accessor bridges) still WAIT for js/store.js.

@@ -53,6 +53,8 @@ const MCP_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'mcp.js'), 'utf8'
 const SYSTEM_STATUS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'system-status.js'), 'utf8');
 // Update/Power/restart ES module (Phase 3 module 16) — same rule as claydo.js above.
 const UPDATE_POWER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'update-power.js'), 'utf8');
+// Provider-auth ES module (Phase 3 module 17) — same rule as claydo.js above.
+const PROVIDER_AUTH_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'provider-auth.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 const ORIGIN = 'http://mc.smoke.test';
 
@@ -85,6 +87,7 @@ try {
     if (path === '/static/js/mcp.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MCP_JS });
     if (path === '/static/js/system-status.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SYSTEM_STATUS_JS });
     if (path === '/static/js/update-power.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: UPDATE_POWER_JS });
+    if (path === '/static/js/provider-auth.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROVIDER_AUTH_JS });
     if (path === '/api/projects') return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config') return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     return route.abort();
