@@ -59,6 +59,8 @@ const PROVIDER_AUTH_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'provid
 const SCHEDULE_BANNER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'schedule-banner.js'), 'utf8');
 // Provider-settings ES module (Phase 3 module 19) — same rule as claydo.js above.
 const PROVIDER_SETTINGS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'provider-settings.js'), 'utf8');
+// Process-manager ES module (Phase 3 module 20) — same rule as claydo.js above.
+const PROCESS_MANAGER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'process-manager.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 const ORIGIN = 'http://mc.smoke.test';
 
@@ -94,6 +96,7 @@ try {
     if (path === '/static/js/provider-auth.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROVIDER_AUTH_JS });
     if (path === '/static/js/schedule-banner.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SCHEDULE_BANNER_JS });
     if (path === '/static/js/provider-settings.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROVIDER_SETTINGS_JS });
+    if (path === '/static/js/process-manager.js') return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROCESS_MANAGER_JS });
     if (path === '/api/projects') return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config') return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     return route.abort();

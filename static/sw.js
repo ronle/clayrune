@@ -80,7 +80,12 @@
 // one function; the generic settings helpers saveSetting/toggleSetting/etc. that
 // shared its header stay inline). Called by settings-drill.js via window at
 // render time. Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v20';
+// v21 (2026-06-10): /static/js/process-manager.js extracted from index.html's
+// inline <script> (the Process Manager modal: openProcessManager + the helpers
+// refreshProcessList/killTrackedProcess/cleanupOrphanedProcesses + _formatDuration).
+// 2-segment move (the helpers were mis-filed ~480 lines from openProcessManager).
+// Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v21';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

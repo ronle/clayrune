@@ -2893,3 +2893,116 @@ what moved, commit SHA, gate results.
      dispatch, status resolver, the worker popover, Command Palette's real ~98L
      with its 2 accessor bridges) is the **store.js design pass** — HARD STOP per
      the brief.
+
+## Phase 3 — module 20: extract Process Manager → `static/js/process-manager.js` (2026-06-10)
+
+- **Module-19 SHA backfill:** module 19 (js/provider-settings.js) = commit `d5a46e2`.
+- **Candidate selection this run:** the smallest clean remaining win — the Process
+  Manager modal — and the last easy non-core family before the Hivemind carve /
+  store.js pass.
+- **Region re-derived — 2-SEGMENT (the family is SPLIT, mis-filed):**
+  `openProcessManager` sits under the `// ── Process Manager` header (old 10375),
+  but its helpers `_formatDuration` + `refreshProcessList` + `killTrackedProcess` +
+  `cleanupOrphanedProcesses` are mis-filed ~480 lines down UNDER the `// ──
+  Cross-project Hivemind view` header (old 10889–10969, right before the inline
+  boot tail). So the move is two byte-verbatim segments:
+  * **segA** old 10375–10422 (header + `openProcessManager()` + 1 blank).
+  * **segB** old 10889–10970 (`_formatDuration` + `refreshProcessList` +
+    `killTrackedProcess` + `cleanupOrphanedProcesses` + 1 blank).
+  The gap (10423–10888 = Run history + Cross-project Hivemind) STAYS inline.
+  Brace-depth top-level scan of each segment: both end depth 0; segA = 1 fn, segB
+  = 4 fns; 0 OTHER in either (no IIFEs/parse-time calls/listeners). `_formatDuration`
+  is Process-Manager-PRIVATE (used only by `refreshProcessList` at one call site —
+  verified).
+- **Inbound refs re-verified (precise scan EXCLUDING BOTH segments + WHOLE-REPO
+  sweep):** only `openProcessManager` has outside refs — L2649 (`sidebarNav('processes')`)
+  + L2845 (command-palette `Processes` action) — both runtime. The other 4 names
+  have ZERO refs outside the two segments (a custom scan that excludes BOTH spans,
+  not the naive single-range refscan, was used since the segments are far apart).
+  Whole-repo sweep: only prose. No cross-module callers.
+- **What moved:** old lines 10375–10422 (segA) + 10889–10970 (segB) →
+  `static/js/process-manager.js`, **byte-verbatim** (SPLIT two-sided binary
+  reassembly assertion: (1) `seg_pre + segA + seg_mid + segB + seg_post ==
+  original` proving both spans are clean disjoint byte ranges; (2) the new
+  index.html — with the inserted `<script>` tag removed AND both segA and segB
+  re-inserted at their original cut points — `== original` byte-for-byte; interop
+  tail append-only; module body = segA + segB + tail, the only non-verbatim aspect
+  being the cosmetic join point — both segments individually verbatim, same class
+  as scheduler.js's 2-segment `timeAgoShort` carve). Loaded via
+  `<script type="module" src="/static/js/process-manager.js"></script>` after the
+  provider-settings.js module tag, before `</body>`. Diff shape: 1 insertion, 130
+  deletions across two hunks (48 segA + 82 segB).
+- **Numbers:** `process-manager.js` = 6,363 bytes / 142 lines (48 segA + 82 segB
+  moved + 12-line interop tail; CRLF, no BOM, 201 non-ASCII UTF-8 bytes).
+  `index.html` 596,063 → 590,543 bytes; 12,173 → 12,044 lines (BOM preserved).
+- **Interop surface: 4 window function re-exposures, 0 bridges:**
+  - Inbound caller (1): `openProcessManager` (sidebarNav + palette).
+  - Region-generated `on*=` handler targets (3): `refreshProcessList`,
+    `killTrackedProcess`, `cleanupOrphanedProcesses` (the modal's Refresh / Kill /
+    Cleanup buttons).
+  - Module-private (1): `_formatDuration` (used only by `refreshProcessList`).
+  - Formal scans: zero generated-handler assignment; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `openModals` (`const`, bare), `nextModalZ++`, `restoreModal`, `focusModal`,
+  `_clampModalSize`, `centerModalElement`, `minimizeModal`/`closeModalById`
+  (handlers), `API_BASE`, `esc`, `showToast`, `confirm` + browser builtins. No
+  store.js smear (`agentStatusCache`/`agentHistory`/etc. — 0 refs; the segments
+  read only DOM + `/api/processes`). Strict-mode promotion audited: zero
+  module-code `this`; every assignment targets a declared binding or a `window.`
+  property.
+- **sw.js:** `SW_VERSION` `mc-push-v20` → `mc-push-v21` (no cache list by design;
+  version bump only). Added a v21 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/process-manager.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses process-manager.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/process-manager.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 6363 (exact match);
+    `GET /api/processes` → `[]` (no tracked processes — the empty state).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — Kill + Cleanup are DESTRUCTIVE POSTs, so a hard route-guard
+    ABORTED + asserted-zero on `/api/processes/*/kill` and `/api/processes/cleanup`;
+    never clicked) — **16/16 PASS, 0 console errors, 0 page errors, NO destructive
+    endpoint hit**: 4 window.* interop callable; `_formatDuration` NOT leaked;
+    Process Manager modal opens via the REAL `sidebarNav('processes')` path
+    (`#process-list` + `#process-count` + the wired Cleanup button); list populated
+    from the real `GET /api/processes` (empty-state "No tracked processes.");
+    `refreshProcessList()` re-ran without throwing; kill/cleanup wired but never
+    invoked. Screenshot eyeballed: fully styled Process Manager modal (title,
+    counter, Refresh/Cleanup buttons, empty state), sidebar nav item active, no
+    FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module 1;
+    line shifted to L108, same evaluate step). No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–19).
+
+### Landmines for module 21 (the non-core queue is now down to Hivemind)
+
+1. All prior landmines still apply verbatim (see the module-18/19 lists).
+2. **The non-core queue is essentially EXHAUSTED. Only the Hivemind family
+   remains as a non-store.js candidate, and it is a careful carve:**
+   - **Hivemind worker popover** (was 4981, in the agent-panel zone L4854–5061) —
+     STORE.JS-COUPLED (reads `agentStatusCache` + `agentHistory` + `hivemindCache`;
+     immediately followed by `agentPanelHTML`). **Leave for the store.js pass.**
+   - **Hivemind tab + Dashboard Modal** (was 8318–9063) — reads `hivemindCache`
+     (8×) but NOT the store.js smear (verified 0 refs to `agentStatusCache`/
+     `agentHistory`/`agentOutputBuffers`/`agentEventSources`). + **Cross-project
+     Hivemind view** (was 11192, now shifted; note Process Manager's helpers were
+     removed FROM the top of that region this module, so re-derive its current
+     bounds). These THREE could form a Hivemind module IF: (a) `hivemindCache`'s
+     WRITERS are all within the Hivemind family (audit — if the agent-panel core
+     writes it, it's shared state needing an identity bridge or store.js); (b) the
+     carve goes AROUND the shared inline run-history renderers (`renderRunRows`/
+     `renderRunsPagination` — STAY inline, multi-consumer with scheduler.js); (c)
+     the exact Dashboard-Modal end is re-derived (Agent Console at old 9064 is NOT
+     hivemind). Expect a 2-/3-segment carve. **This is the last non-core module;
+     if `hivemindCache` is shared with the agent-panel core, DEFER it to store.js
+     and STOP.**
+   - Everything else is the **store.js design pass** — HARD STOP per the brief
+     (conversation model, modal/tile HTML, SSE slot management, dispatch, status
+     resolver, the worker popover, Command Palette's real ~98L + its 2 accessor
+     bridges `cmdPaletteOpen`/`cmdSelectedIndex`).
