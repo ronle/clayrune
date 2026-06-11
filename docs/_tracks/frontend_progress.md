@@ -2230,3 +2230,197 @@ what moved, commit SHA, gate results.
      leaf; Process Manager is a small single-function region.
    - The genuinely-entangled agent-panel/projects-grid CORE + Command Palette's
      real ~98L (2 accessor bridges) still WAIT for js/store.js.
+
+## Phase 3 — module 16: extract Update/Power/restart-detection → `static/js/update-power.js` (2026-06-10)
+
+- **Module-15 SHA backfill:** module 15 (js/system-status.js) = commit `8215547`.
+- **Candidate selection this run:** the Update section was flagged ENTANGLED
+  (3 headers, boot-trap) in the module-15 landmines. RE-DERIVED below: the
+  three headers (Server-restart detection / Power / Update Clayrune) are ONE
+  entangled family that moves cleanly as a SINGLE contiguous region, and the
+  parse-time boot-trap is IN-region (moves with it — fix (a) for free). Chosen
+  as the cleanest tractable cluster (Hivemind is larger + shares run-history;
+  provider/Schedule-Banner is mis-headered and split).
+- **Region re-derived — ONE family across 3 headers, single contiguous span:**
+  old lines **10797–11213** (`// ── Server-restart detection` header through
+  `showPoweredOffOverlay`'s closing brace at 11212 + one trailing blank 11213).
+  The "Global Settings" banner header (L10795) + its blank (L10796) stay inline
+  ABOVE the region; next section `// ── Provider Settings section` (L11214)
+  stays inline below. The span holds: restart-detection (`_serverStartedAt`/
+  `_restartHandlingInFlight` state + `_checkServerRestart`/`_handleServerRestart`
+  + the boot-trap setTimeout), Update (`refreshUpdateStatus`/
+  `performClayruneUpdate`), and Power (`openPowerDialog`/`performRestart`/
+  `showRestartingOverlay`/`performShutdown`/`showPoweredOffOverlay`) — bound
+  together by `_handleServerRestart`→`showRestartingOverlay` and
+  `performRestart`→`showRestartingOverlay`. Brace-depth top-level scan: depth
+  ends 0, 2 `let` state vars + 9 function decls + exactly **1 OTHER** (the
+  parse-time `setTimeout(()=>{ _checkServerRestart(); }, 1500)` at L10845).
+- **BOOT-TRAP — IN-region, moves with the region (fix (a), behavior-equivalent),
+  no separate relocation needed:** unlike module 15 (where the boot-trap was in
+  the distant inline boot tail and had to be excised + relocated), this cluster's
+  parse-time `setTimeout(()=>_checkServerRestart(),1500)` lives INSIDE the moved
+  span (L10845). When the whole region becomes a deferred `type="module"`, that
+  registration simply runs at module-eval time (post-parse) instead of mid-parse
+  — a ~hundreds-of-ms-later one-shot seed of `_serverStartedAt` from
+  `/api/system/heartbeat`. Equivalent: the seed still lands well before any
+  server restart could be detected (the detection only matters on a LATER
+  heartbeat whose `started_at` differs). Live-validated: after the relocated
+  1.5s timer, `_checkServerRestart()` returns false on the unchanged server,
+  proving the seed took and the detection runs from the module (gate below).
+- **Inbound refs re-verified (formal whole-FILE scan of all 11 names + a
+  WHOLE-REPO sweep — the latter caught 3 cross-module callers the file-only scan
+  missed):**
+  - In index.html: `_checkServerRestart` ×2 real calls (SSE-drop error handler
+    L6372 `_checkServerRestart().then(…)` + the 15s fallback `setInterval` body
+    L12232 `await _checkServerRestart()` — both runtime), `openPowerDialog` ×1
+    (sidebar Power item static `onclick` L445). (`_handleServerRestart`'s only
+    outside hit is a comment.)
+  - **In `static/js/settings-drill.js` (module 6) — 3 cross-module callers:**
+    `onclick="openPowerDialog()"` (L625, Settings→Server), `onclick=
+    "performClayruneUpdate()"` (L632, the Update button), `refreshUpdateStatus()`
+    (L650, the Server-pane render/hydration). These resolve against window at
+    call time — the established cross-module pattern (settings-drill already
+    consumes mobile-pairing's window exports). **The file-only refscan does NOT
+    see other modules — the whole-repo `Grep` sweep is mandatory; it's why
+    these 3 are exposed.**
+  - Whole-repo sweep otherwise: only CHANGELOG.md + this progress log (prose).
+- **What moved:** old lines 10797–11213 → `static/js/update-power.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before +
+  region + after == original`; (2) the new index.html, with the inserted
+  `<script>` tag line removed AND the region re-inserted at the cut point,
+  `== original` byte-for-byte; interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/update-power.js"></script>` inserted
+  immediately after the system-status.js module tag, before `</body>`. Anti-FOUC
+  bootstrap untouched. Diff shape: 1 insertion, 417 deletions.
+- **Numbers:** `update-power.js` = 22,326 bytes / 433 lines (417 moved + 16-line
+  interop tail; CRLF, no BOM, 232 non-ASCII UTF-8 bytes). `index.html` 640,717
+  → 619,515 bytes; 13,171 → 12,755 lines (BOM preserved).
+- **Interop surface: 6 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Inbound/cross-module callers (4): `_checkServerRestart` (SSE-drop handler +
+    15s fallback poll — both inline, runtime), `openPowerDialog` (sidebar Power
+    + settings-drill.js), `performClayruneUpdate` (settings-drill.js Update
+    button), `refreshUpdateStatus` (settings-drill.js render/hydration).
+  - Region-generated `on*=` handler targets (2): `performRestart`,
+    `performShutdown` (the power dialog's Restart / Shut-down buttons).
+  - Module-private (3 functions + 2 state vars): `_handleServerRestart` (called
+    only by `_checkServerRestart`), `showRestartingOverlay` (called only by
+    `_handleServerRestart` + `performRestart` — in-region), `showPoweredOffOverlay`
+    (called only by `performShutdown` — in-region); `_serverStartedAt`,
+    `_restartHandlingInFlight` (zero outside refs, zero handler-assignment).
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY for both state vars (handlers only CALL — no accessor bridge); zero
+    `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `_saveOpenModalsSnapshot` (L1997) + `_flushModalPrefs` (L1983) (modal-prefs
+  helpers, store.js territory, stay inline), `openModals` (`const`, bare
+  identifier), `nextModalZ++`, `_clampModalSize`, `centerModalElement`,
+  `focusModal`, `closeModalById` (handler), `esc`, `API_BASE`, `showToast` +
+  browser builtins (`fetch`, `setTimeout`, `document.*`, `window.location`).
+  Strict-mode promotion audited: zero module-code `this` (all hits are HTML
+  handler strings/comments), every assignment targets a declared binding or an
+  explicit `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v16` → `mc-push-v17` (no cache list by
+  design; version bump only, same as modules 1–15). Added a v17 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/update-power.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses update-power.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+    (Boot-trap regression: the inline boot no longer has the parse-time
+    `_checkServerRestart` seed; the SPA boots clean. The 15s fallback's bare
+    `_checkServerRestart` call resolves the window prop at its +15s fire, long
+    after module eval.)
+  - Real-server check (throwaway `MC_PORT=5392 python server.py` from the
+    worktree, then KILLED; live :5199 never touched): `/static/js/update-power.js`
+    → 200, `text/javascript; charset=utf-8`, Content-Length 22326 (exact match),
+    `Cache-Control: no-cache`; `GET /api/system/update/status` → real git status
+    (branch wt-fe-mech2, has_local_changes true); `GET /api/system/heartbeat` →
+    `started_at` (the seed value).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **STRICTLY read-only** — the restart/shutdown/update buttons are DESTRUCTIVE,
+    so a hard route-guard ABORTED + asserted-zero on `/api/system/restart`,
+    `/shutdown`, `/update/run`, `/update/apply`; we NEVER clicked them and never
+    called `performRestart`/`performShutdown`/`performClayruneUpdate`) —
+    **19/19 PASS, 0 console errors, 0 page errors, NO destructive endpoint hit**:
+    all 6 window.* interop callable; all 5 privates (incl. 2 state vars +
+    `showRestartingOverlay`/`showPoweredOffOverlay`) NOT leaked; **boot-trap
+    relocation asserted** — after the relocated 1.5s timer, `_checkServerRestart()`
+    returns false on the unchanged server (proves the in-region setTimeout seeded
+    `_serverStartedAt` post-parse and the detection runs from the module), and a
+    second call is idempotent-false; `refreshUpdateStatus()` populated the
+    Update hint + button from the real `/api/system/update/status` (the
+    has_local_changes → "Blocked" state); `openPowerDialog()` rendered the power
+    modal (read-only GET `/api/system/restart/status` for the active-flow list)
+    with the `performRestart(…)`/`performShutdown(…)` buttons, then closed
+    without confirming. Screenshot eyeballed: the Update status line + Blocked
+    button rendered from the real endpoint; dashboard fully styled, no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L96 by the added const, same evaluate step); page boots
+    with update-power.js fulfilled, dies at the same later evaluate. No new
+    breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–15).
+
+### Landmines for module 17 (remaining-core map, post-Update/Power)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh worktrees;
+   deferred-module timing; module-scoped-globals rule; re-derive boundaries +
+   brace-depth scan; accessor-bridge handler-assigned vars; object-identity
+   bridge for handler-property-written objects; multi-segment / boot-trap carve
+   for parse-time entanglements; in-region parse-time setTimeout/setInterval
+   moves WITH the region and becomes fix-(a) for free; don't "repair" quirks;
+   settle CSS animations before screenshots; cross-module window props are
+   normal; surgery scripts in `_scratch/*.py`; state-on-modal-entry is a
+   bridge-free win; `openModals` is a `const` — `(0,eval)('openModals')` in a
+   Playwright probe; `node --input-type=module --check <file>` ERRORS on Node 24
+   — pipe via stdin).
+2. **WHOLE-REPO `Grep` sweep is MANDATORY, not optional — the file-only refscan
+   misses cross-module callers.** Module 16's `openPowerDialog`/
+   `performClayruneUpdate`/`refreshUpdateStatus` are called from
+   `settings-drill.js` (module 6), which the index.html-only `refscan.py` does
+   NOT see. Always run the repo-wide `Grep` over `!**/index.html` before
+   finalizing the window-exposure list — an already-extracted sibling module is
+   a real consumer.
+3. **DESTRUCTIVE-feature gating recipe (reuse for any restart/delete/install
+   feature):** add a Playwright `page.route('**/<destructive-endpoint>', r =>
+   { hit.push(...); r.abort(); })` HARD GUARD up front and assert `hit.length
+   === 0` at the end; drive ONLY the read-only paths (GET-backed renders, modal
+   OPEN, the detection/seed probe) and NEVER click the action button or call its
+   handler. For the modal-OPEN assertion, detect the action buttons by their
+   generated `onclick` substring (`performRestart(`/`performShutdown(`) rather
+   than clicking.
+4. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED —
+   re-derive; the inline section is now shifted −416 more from any quoted
+   pre-module-16 line ≥11214):**
+   - **Hivemind family (~1,294L)** — tab (was 8318) + dashboard modal (was 8520)
+     + cross-project (was 11609 post-m15). Shares the inline run-history
+     renderers (`renderRunRows`/`renderRunsPagination` — multi-consumer with
+     scheduler.js, STAY INLINE per the brief); carve hivemind AROUND them. Also
+     check the "Hivemind worker popover" (was 4981) — it may be part of the
+     agent-panel core (SSE/conversation-adjacent), audit before including.
+     Largest remaining non-core family; expect a multi-segment carve.
+   - **provider auth/settings (~630L) — ENTANGLED / mis-headered** (unchanged):
+     the "Provider Auth helpers" header (was 10149 post-m15) covers ~88L; the
+     lines below are the Schedule Banner family under the wrong header; the
+     "Auth banner — multi-provider" (was 9995) is a third chunk. The Schedule
+     Banner could be its OWN clean module (2 top-level `document.addEventListener`
+     — safe, same as System status), but its `refreshScheduleBanner` is an
+     outbound dep of scheduler.js + the inline schedule-banner section, AND its
+     own `setInterval(refreshScheduleBanner, 60000)` is a parse-time boot-trap
+     in the inline tail (fix (a) relocation, same as System status). Derive all
+     three headers; the cleanest sub-extraction is probably the multi-provider
+     Auth banner OR the Schedule Banner as standalone modules.
+   - Provider Settings section (`_renderProviderSettings`, was 11214) is a
+     settings-family leaf (one render function); Process Manager is a small
+     single-function region.
+   - The genuinely-entangled agent-panel/projects-grid CORE (conversation
+     model, modal/tile HTML, SSE slot management, dispatch, status resolver,
+     the Hivemind-worker-popover if it's SSE-coupled) + Command Palette's real
+     ~98L (2 accessor bridges: `cmdPaletteOpen` + `cmdSelectedIndex`) still
+     WAIT for the orchestrator's js/store.js design checkpoint.

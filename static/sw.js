@@ -57,7 +57,13 @@
 // moved INTO the deferred module body (starts a few hundred ms later — a status
 // pill renders idle until the async fetch resolves anyway). Same no-cache-list
 // rationale — version bump only.
-const SW_VERSION = 'mc-push-v16';
+// v17 (2026-06-10): /static/js/update-power.js extracted from index.html's
+// inline <script> (server-restart detection + Update Clayrune + Power
+// restart/shutdown dialog — one entangled family across 3 headers). The
+// in-region parse-time `setTimeout(()=>_checkServerRestart(),1500)` moves with
+// the region → fires post-parse as a deferred module (behavior-equivalent for a
+// delayed heartbeat seed). Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v17';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
