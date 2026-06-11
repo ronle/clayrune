@@ -44,6 +44,36 @@ deferred modules execute). Verified under 600ms forced module lateness.
 operator decision, it is user-facing surface). sw.js v23→v37. Full per-cut
 detail: docs/_tracks/frontend_progress.md ("Phase 4").
 
+## [2026-06-09] — v2.0.2 (security + hardening)
+
+Follow-up to v2.0.1 from a second code-inspection pass. **All users should update.**
+- **`/api/terminal/launch` restricted to loopback** — the free-form `shell=True`
+  command sink now rejects non-loopback callers (defense-in-depth on the RCE
+  surface; only host-local agents use it).
+- **Dependency CVEs:** control-plane `fastapi`/`cryptography` bumped past 8 known
+  CVEs (incl. a starlette multipart-upload DoS); main-app floors raised (Pillow
+  libwebp heap-overflow, requests, flask, cryptography).
+- Continuous dependency auditing in CI (`pip-audit` + `cargo audit`), committed
+  `mc_tunnel/Cargo.lock`, narrowed a bare `except` in `time_ago`, removed dead
+  imports (ruff), and added an exception-swallowing policy.
+
+> The control-plane CVE fix is live only after the Cloud Run service is redeployed.
+
+## [2026-06-09] — v2.0.1 (security release)
+
+Patch release rolling the 2026-06-09 security hardening (detailed below) into a
+tagged build. **All users should update.**
+- Closes a LAN **unauthenticated-RCE chain** — a forgeable `Cf-Access-*` header
+  could bypass the passcode gate and reach `/api/terminal/launch`. CF-tunnel
+  trust now requires a loopback peer, and CORS is a strict allowlist (no more
+  drive-by from any website the user visits).
+- `git clone` argument-injection guards; secrets-at-rest file permissions;
+  serve-image drive-root confinement; control-plane dev-auth fail-closed on
+  Cloud Run; opt-in CF Access JWT signature verification.
+- Drops the unused **Tauri** desktop target (also removes its unscoped shell
+  capability + CSP `unsafe-inline`). Browser, PyInstaller app, and installer are
+  unaffected; mobile (Capacitor) unaffected.
+
 ## [2026-06-09] — Security hardening: LAN auth bypass, CORS, git-arg injection
 
 Closes findings from an internal security review (each independently verified
@@ -304,6 +334,43 @@ check and to the `claude` Node shim when it tries to exec `node`. Fixes:
 **Rollout.** These are source fixes; the installed `.app` is frozen, so users
 only get them via a **new signed + notarized macOS build** (`pyinstaller
 build-macos.spec` → `tools/notarize-macos.sh`; see `docs/MACOS_NOTARIZATION.md`).
+
+## [2026-06-04] — v2.0.0 (major release)
+
+First major version since v1.5.1. Headline themes: a redesigned settings
+surface, sticky/cheaper agent behavior, and runtime efficiency for long-lived
+sessions.
+
+**Highlights**
+- **Settings, redesigned.** WhatsApp-style three-level drill-down (categories →
+  sub-list → settings) with live search and depth-aware hardware-back.
+- **Sticky agent settings (default on for new installs).** Brief-replies
+  "Everywhere" is baked into each chat's spawn system prompt — cached and
+  authoritative instead of re-sent every turn. Flipping a CLI-flag setting
+  (model/effort/…) mid-session resumes the live session so it takes effect.
+  (System-prompt settings apply to fresh chats only — `claude -r` restores the
+  original prompt; verified.)
+- **Brief replies on desktop** — 3-way Off / Phone / Everywhere, prose-only
+  brevity (code, edits, and tool work are never shortened).
+- **Search past chats by transcript content** (project-scoped).
+- **PLAN tab revived** — detects plan docs without needing plan mode.
+- **`--effort` knob** — per-agent + per-project effort control.
+- **Self-learning skills (Phase 4) + SQLite migration foundation (Phase 0)** land
+  as new internal subsystems (`distiller.py`, `db.py`) with test coverage.
+
+**Efficiency**
+- **Per-project MCP trimming** — load only the servers a project needs.
+- **Idle-eviction of warm Mode B sessions** to reclaim their MCP fleet.
+- Windowless launch by default on Windows; restart + shut-down power menu.
+
+**Fixes**
+- Keep SSE open while blocked on AskUserQuestion (turn_complete race); the form
+  no longer silently fails to reappear after a DOM wipe.
+- Resumed sessions keep their transcript across a process death.
+- Restart/crash no longer orphans child processes.
+- Mobile uploads + agent-text URL linkification.
+- Modal no longer re-docks to the right after you drag it free; settings modal
+  sizes to its content.
 
 ## [2026-06-04] — Keep a conversation's window open after its process dies (detach, don't delete)
 

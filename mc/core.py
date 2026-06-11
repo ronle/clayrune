@@ -79,10 +79,10 @@ def time_ago(ts_str):
         now = datetime.now(timezone.utc)
         secs = int((now - ts).total_seconds())
         if secs < 60:      return f'{secs}s ago'
-        elif secs < 3600:  return f'{secs // 60}m ago'
-        elif secs < 86400: return f'{secs // 3600}h ago'
-        else:              return f'{secs // 86400}d ago'
-    except:
+        if secs < 3600:  return f'{secs // 60}m ago'
+        if secs < 86400: return f'{secs // 3600}h ago'
+        return f'{secs // 86400}d ago'
+    except (ValueError, TypeError, AttributeError):
         return ts_str
 
 

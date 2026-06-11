@@ -95,10 +95,10 @@ def main() -> int:
         print(f"Checking MC at http://127.0.0.1:{args.mc_port} ...", flush=True)
         if not _check_mc_alive(args.mc_port):
             print(f"  ✗ MC not responding on port {args.mc_port}.", flush=True)
-            print(f"     Start MC first (e.g. via Tauri host or 'python server.py'),", flush=True)
-            print(f"     or use --skip-mc-check to start cloudflared anyway.", flush=True)
+            print("     Start MC first (e.g. via Tauri host or 'python server.py'),", flush=True)
+            print("     or use --skip-mc-check to start cloudflared anyway.", flush=True)
             return 1
-        print(f"  ✓ MC is up", flush=True)
+        print("  ✓ MC is up", flush=True)
 
     # Fetch the token
     try:

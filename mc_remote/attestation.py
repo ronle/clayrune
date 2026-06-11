@@ -31,9 +31,8 @@ import hashlib
 import logging
 import platform
 import threading
-import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 import requests
 import rfc8785

@@ -26,7 +26,7 @@ from typing import Optional
 from .provider import (
     ProviderCaps,
     ProviderStatus,
-    RemoteAccessProvider,
+    RemoteAccessProvider,  # noqa: F401 — re-export for downstream importers
     register_provider,
 )
 

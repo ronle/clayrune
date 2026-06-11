@@ -13,6 +13,15 @@ This directory holds a copy of Cloudflare's official `cloudflared` binary, which
 - **SHA256 (Windows amd64):** `59b12880b24af581cf5b1013db601c7d843b9b097e9c78aa5957c7f39f741885`
 - **Authenticode signed by:** `CN="Cloudflare, Inc."`, issued by DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021 CA1
 - **Cert thumbprint:** `AB819AAE2A643DAE5A67DFA21BABC8C964F7C525`
+- **Last security review:** 2026-06-09
+
+## Security tracking
+
+`cloudflared` is a network-facing Go binary with its own advisory history. Before
+each Clayrune release, check
+<https://github.com/cloudflare/cloudflared/releases> and the cloudflared GitHub
+Security Advisories. If a security release is out, re-vendor via **How to update**
+below and bump the **Version** + **Last security review** date above.
 
 ## How to update
 

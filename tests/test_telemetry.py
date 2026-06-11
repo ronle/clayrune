@@ -11,15 +11,11 @@ These tests are standalone — no running server required.
 
 from __future__ import annotations
 
-import importlib
 import json
-import os
 import sys
-import types
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))

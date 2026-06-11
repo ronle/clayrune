@@ -131,7 +131,6 @@ def test_resolve_binary_windows_exe_orphan(monkeypatch, tmp_path):
 def test_resolve_binary_falls_back_to_candidate(monkeypatch, tmp_path):
     """When shutil.which returns None, check fallback paths."""
     from agent_runtime import ClaudeRuntime
-    import os
 
     # Pretend claude is not on PATH
     monkeypatch.setattr('shutil.which', lambda name: None)
@@ -382,7 +381,7 @@ def test_transcript_path_finds_existing_file(tmp_path, monkeypatch):
     """transcript_path() returns the correct Path when the .jsonl file exists.
     Mirrors _find_transcript_file() in server.py exactly.
     """
-    from agent_runtime import ClaudeRuntime, _CLAUDE_HOME
+    from agent_runtime import ClaudeRuntime
     import agent_runtime
 
     rt = ClaudeRuntime()
@@ -1175,7 +1174,7 @@ def test_parse_transcript_file_nonexistent_returns_error():
 
 def test_parse_transcript_file_skips_thinking_blocks(tmp_path):
     """Thinking blocks do not produce any display entry."""
-    from agent_runtime import ClaudeRuntime, EventType
+    from agent_runtime import ClaudeRuntime
     rt = ClaudeRuntime()
     lines = [
         json.dumps({'type': 'assistant', 'session_id': 's', 'timestamp': 'ts',

@@ -9,7 +9,6 @@ import json
 import os
 import shutil
 import uuid
-import mimetypes
 import subprocess
 import sys
 import threading
@@ -1498,10 +1497,10 @@ def _check_port_conflict():
         "  conditions when one instance shuts down.",
         "",
         "  To fix:",
-        f"    1. Stop the other MC first, or",
-        f"    2. Use the already-running instance directly, or",
-        f"    3. Set MC_ALLOW_PORT_CONFLICT=1 if you really need both",
-        f"       (rare; only meaningful for protocol-level testing).",
+        "    1. Stop the other MC first, or",
+        "    2. Use the already-running instance directly, or",
+        "    3. Set MC_ALLOW_PORT_CONFLICT=1 if you really need both",
+        "       (rare; only meaningful for protocol-level testing).",
         "=" * 72,
         "",
     ]
@@ -1519,8 +1518,8 @@ def _check_port_conflict():
         pass
 
     if os.environ.get('MC_ALLOW_PORT_CONFLICT') == '1':
-        _log(f"[port-conflict] MC_ALLOW_PORT_CONFLICT=1 set — proceeding ANYWAY. "
-              f"You will likely see traffic split between instances.", flush=True)
+        _log("[port-conflict] MC_ALLOW_PORT_CONFLICT=1 set — proceeding ANYWAY. "
+              "You will likely see traffic split between instances.", flush=True)
         return
 
     sys.exit(2)

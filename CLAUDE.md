@@ -402,6 +402,22 @@ into `_build_agent_context`, promotion-time UI flows, `auto` mode
 v2 has cleared committee. Same discipline as parent design v2 and
 Memory System §3.A.MID.
 
+## Exception-swallowing policy (added 2026-06-09)
+
+When touching any function containing `except Exception: pass`, decide: if the
+try-body is pure best-effort cosmetics (cleanup of a temp file, optional Pillow
+shrink), leave it. If it wraps **subprocess, file I/O on state files, JSON state
+load/save, or network**, convert to:
+
+```python
+except Exception as e:
+    _log(f"[<subsystem>] <operation> failed: {e}", flush=True)
+```
+
+(keep swallowing — just make it observable.) Do **not** do a bulk sweep — apply
+only when already editing the function. There are ~178 such blocks (104 in
+`server.py`, 24 in `agent_runtime.py`); a mass rewrite is out of scope.
+
 **Resumability anchors** (updated 2026-05-27):
 - `docs/SKILLS_CURATION_PHASE4_SPEC_V2.md` — CURRENT authoritative spec
 - `docs/SKILLS_CURATION_PHASE4_SPEC.md` — v1.1, reference-only

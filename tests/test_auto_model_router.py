@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from mc.blueprints import agent_routes as _bp_agent
 

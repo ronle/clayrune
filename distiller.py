@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import threading
 import time
@@ -1408,10 +1407,10 @@ def _render_preference(project_id: str, project: dict,
     # ("single observation, not a recurring preference"). Recurrence is a
     # ranking/confidence signal recorded in frontmatter, not a generation gate.
     body_in = (
-        f"Summary signals:\n" +
+        "Summary signals:\n" +
         '\n'.join(f"  - {s.get('summary', '')}"
                   for s in candidate['evidence_signals'][:10]) + "\n\n"
-        f"Evidence quotes:\n" + '\n'.join(evid_lines)
+        "Evidence quotes:\n" + '\n'.join(evid_lines)
     )
     try:
         out = _scribe_call(model, instruction, body_in)

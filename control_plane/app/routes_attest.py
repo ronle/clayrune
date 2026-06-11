@@ -21,7 +21,7 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from . import auth, firestore as fs, verify
 from .schemas import AttestationRequest

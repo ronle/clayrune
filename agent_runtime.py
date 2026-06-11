@@ -31,7 +31,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -825,7 +825,7 @@ class ClaudeRuntime(AgentRuntime):
                 timestamp=_now_iso(), payload={'blocks': blocks}, raw=msg,
             )
 
-        elif msg_type == 'result':
+        if msg_type == 'result':
             return AgentEvent(
                 type=EventType.TURN_END, provider='claude',
                 session_id=session_id, mc_session_id=mc_session_id,
@@ -839,7 +839,7 @@ class ClaudeRuntime(AgentRuntime):
                 raw=msg,
             )
 
-        elif msg_type == 'system' and msg.get('subtype') == 'init':
+        if msg_type == 'system' and msg.get('subtype') == 'init':
             return AgentEvent(
                 type=EventType.INIT, provider='claude',
                 session_id=session_id, mc_session_id=mc_session_id,
@@ -862,7 +862,7 @@ class ClaudeRuntime(AgentRuntime):
                 raw=msg,
             )
 
-        elif msg_type == 'rate_limit_event':
+        if msg_type == 'rate_limit_event':
             ri = msg.get('rate_limit_info', {}) or {}
             return AgentEvent(
                 type=EventType.RATE_LIMIT, provider='claude',
@@ -879,7 +879,7 @@ class ClaudeRuntime(AgentRuntime):
                 raw=msg,
             )
 
-        elif msg_type == 'user':
+        if msg_type == 'user':
             msg_content = msg.get('message', {}) or {}
             return AgentEvent(
                 type=EventType.USER_MESSAGE, provider='claude',
@@ -1472,7 +1472,7 @@ class GeminiRuntime(AgentRuntime):
                 session_id=session_id, mc_session_id=mc_session_id,
                 timestamp=_now_iso(), payload={'text': str(text)}, raw=msg,
             )
-        elif mtype == 'tool_use':
+        if mtype == 'tool_use':
             # Per gemini-cli PR #10883 the canonical fields are `tool_name` and
             # `parameters` (not `name` / `input` — those were guessed from
             # claude's shape and never populated, so every `[tool: call]` had a
@@ -1489,7 +1489,7 @@ class GeminiRuntime(AgentRuntime):
                                      'tool_use_id': msg.get('tool_id') or None}]},
                 raw=msg,
             )
-        elif mtype == 'tool_result':
+        if mtype == 'tool_result':
             # tool_result carries `tool_id` + `status` but NO name field — the
             # name must be recovered by correlating with the preceding
             # `tool_use` event (handled in _read_stream via the per-session
@@ -1503,7 +1503,7 @@ class GeminiRuntime(AgentRuntime):
                          'status': msg.get('status') or ''},
                 raw=msg,
             )
-        elif mtype in ('result', 'turn_end', 'done'):
+        if mtype in ('result', 'turn_end', 'done'):
             return AgentEvent(
                 type=EventType.TURN_END, provider='gemini',
                 session_id=session_id, mc_session_id=mc_session_id,
@@ -2520,9 +2520,9 @@ class CodexRuntime(AgentRuntime):
                 payload={'thread_id': session_id, 'session_id': session_id},
                 raw=msg,
             )
-        elif etype == 'turn.started':
+        if etype == 'turn.started':
             return None  # internal; suppress
-        elif etype == 'item.completed':
+        if etype == 'item.completed':
             item = msg.get('item') or {}
             item_type = item.get('type', '')
             if item_type == 'message':
@@ -2571,7 +2571,7 @@ class CodexRuntime(AgentRuntime):
                     raw=msg,
                 )
             return None
-        elif etype in ('turn.completed', 'thread.completed'):
+        if etype in ('turn.completed', 'thread.completed'):
             return AgentEvent(
                 type=EventType.TURN_END, provider='codex',
                 session_id=session_id, mc_session_id=mc_session_id,
@@ -2580,7 +2580,7 @@ class CodexRuntime(AgentRuntime):
                          'num_turns': None, 'rc': 0},
                 raw=msg,
             )
-        elif etype in ('error', 'turn.failed'):
+        if etype in ('error', 'turn.failed'):
             err_msg = (msg.get('message') or
                        (msg.get('error') or {}).get('message', '') or
                        str(msg))
@@ -2911,7 +2911,7 @@ class OpenCodeRuntime(AgentRuntime):
                          'model': props.get('model') or props.get('modelID')},
                 raw=msg,
             )
-        elif etype == 'message':
+        if etype == 'message':
             if msg.get('role') != 'assistant':
                 return None
             content = msg.get('content') or []
@@ -2938,7 +2938,7 @@ class OpenCodeRuntime(AgentRuntime):
                                timestamp=_now_iso(),
                                payload={'text': text}, raw=msg)
                     if text else None)
-        elif etype == 'tool':
+        if etype == 'tool':
             return AgentEvent(type=EventType.TOOL_USE, provider='opencode',
                               session_id=session_id, mc_session_id=mc_session_id,
                               timestamp=_now_iso(),
@@ -2946,7 +2946,7 @@ class OpenCodeRuntime(AgentRuntime):
                                                   'name': msg.get('name', ''),
                                                   'input': msg.get('input', {}),
                                                   'tool_use_id': None}]}, raw=msg)
-        elif etype in ('done', 'finish', 'complete', 'end'):
+        if etype in ('done', 'finish', 'complete', 'end'):
             info = msg.get('info') or {}
             return AgentEvent(type=EventType.TURN_END, provider='opencode',
                               session_id=session_id, mc_session_id=mc_session_id,
@@ -2954,7 +2954,7 @@ class OpenCodeRuntime(AgentRuntime):
                               payload={'usage': info.get('usage') or info,
                                       'cost_usd': info.get('cost'),
                                       'num_turns': None, 'rc': 0}, raw=msg)
-        elif etype == 'error':
+        if etype == 'error':
             err = msg.get('error') or {}
             err_msg = (err.get('message') or str(err)) if isinstance(err, dict) else str(msg)
             return AgentEvent(type=EventType.ERROR, provider='opencode',
@@ -3227,7 +3227,7 @@ class GooseRuntime(AgentRuntime):
                               timestamp=_now_iso(),
                               payload={'session_id': session_id,
                                       'model': msg.get('model')}, raw=msg)
-        elif etype in ('message', 'assistant'):
+        if etype in ('message', 'assistant'):
             if msg.get('role', 'assistant') not in ('assistant', ''):
                 return None
             content = msg.get('content') or []
@@ -3253,7 +3253,7 @@ class GooseRuntime(AgentRuntime):
                                session_id=session_id, mc_session_id=mc_session_id,
                                timestamp=_now_iso(), payload={'text': text}, raw=msg)
                     if text else None)
-        elif etype == 'tool_use':
+        if etype == 'tool_use':
             return AgentEvent(type=EventType.TOOL_USE, provider='goose',
                               session_id=session_id, mc_session_id=mc_session_id,
                               timestamp=_now_iso(),
@@ -3261,13 +3261,13 @@ class GooseRuntime(AgentRuntime):
                                                   'name': msg.get('name', ''),
                                                   'input': msg.get('input', {}),
                                                   'tool_use_id': msg.get('id')}]}, raw=msg)
-        elif etype in ('result', 'done', 'finish', 'complete', 'turn_end'):
+        if etype in ('result', 'done', 'finish', 'complete', 'turn_end'):
             return AgentEvent(type=EventType.TURN_END, provider='goose',
                               session_id=session_id, mc_session_id=mc_session_id,
                               timestamp=_now_iso(),
                               payload={'usage': msg.get('usage'), 'cost_usd': None,
                                       'num_turns': None, 'rc': 0}, raw=msg)
-        elif etype == 'error':
+        if etype == 'error':
             return AgentEvent(type=EventType.ERROR, provider='goose',
                               session_id=session_id, mc_session_id=mc_session_id,
                               timestamp=_now_iso(),
@@ -3835,13 +3835,13 @@ class KiroRuntime(AgentRuntime):
                                timestamp=_now_iso(),
                                payload={'text': str(text)}, raw=msg)
                     if text else None)
-        elif method in ('session/new', 'session/load'):
+        if method in ('session/new', 'session/load'):
             sid = (result or {}).get('session_id') or session_id if isinstance(result, dict) else session_id
             return AgentEvent(type=EventType.INIT, provider='kiro',
                               session_id=sid, mc_session_id=mc_session_id,
                               timestamp=_now_iso(),
                               payload={'session_id': sid}, raw=msg)
-        elif method == 'session/prompt' and isinstance(result, dict):
+        if method == 'session/prompt' and isinstance(result, dict):
             content = result.get('content') or result.get('text', '')
             return (AgentEvent(type=EventType.ASSISTANT_TEXT, provider='kiro',
                                session_id=session_id, mc_session_id=mc_session_id,

@@ -29,15 +29,13 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
-import time
 import urllib.request
 import urllib.parse
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────

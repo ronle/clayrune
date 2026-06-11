@@ -7,7 +7,6 @@ github_sync.py.orig restored — see IMPROVEMENT_PLAN_V2_FLAWS.md log).
 """
 import json
 
-import pytest
 
 
 def _proj(backlog):

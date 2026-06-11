@@ -25,7 +25,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path

@@ -23,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import agent_runtime
 from agent_runtime import (
-    AgentEvent,
     EventType,
     CodexRuntime,
     OpenCodeRuntime,

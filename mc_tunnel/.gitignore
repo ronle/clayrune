@@ -1,5 +1,6 @@
 /target
-Cargo.lock
+# Cargo.lock IS committed — mc_tunnel is a binary, so a pinned lockfile gives
+# reproducible + auditable builds (cargo audit). (un-ignored 2026-06-09, D8)
 
 # When build.rs runs with real CLIENT_SECRET_PRIV_HEX env var, it overwrites
 # src/client_secret.rs with a file containing the embedded private key.

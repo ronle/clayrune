@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 from flask import Blueprint, Response, jsonify, request
 
+from mc.core import _is_loopback_request
 from mc.state import agent_sessions, terminal_lock, terminal_sessions
 
 bp = Blueprint('terminal_routes', __name__)
@@ -125,6 +126,10 @@ def _kill_terminal_session(session):
 @bp.route('/api/terminal/launch', methods=['POST'])
 def terminal_launch():
     """Launch a command in a terminal session.  Called by agents via curl."""
+    # Host-only: agents curl this from localhost. LAN/tunnel sessions get the
+    # dashboard, never raw shell. (Inspection remediation 2026-06-09.)
+    if not _is_loopback_request():
+        return jsonify({'error': 'loopback_only'}), 403
     data = request.get_json() or {}
     project_id = data.get('project_id', '').strip()
     command = data.get('command', '').strip()
