@@ -3306,3 +3306,26 @@ checkpoint** for the remaining core.
 3. connectAgentStream/_reconcileAgentBuffer/_repaintAgentOutput live in the
    resume zone (5945+) — heavily called by conversation.js + boot pollers;
    expect a wide EXPOSE list.
+
+## Phase 4 — M24: extract resume-preview + dispatch/SSE → `static/js/resume-preview.js` (2026-06-10)
+
+- 2-segment carve [(4923,4923)+(4953,5765)]: the orphaned sseRetryCount decl
+  + the whole resume zone (conv preview family, closeAgentTab, dispatchAgent,
+  _reconcileAgentBuffer, _repaintAgentOutput, connectAgentStream,
+  escPromptWithImages). 814 lines / 42,793 bytes. index.html 9,997 → 9,185.
+- Interop: 10 exposures (incl. previewOpenFull handler promotion), 7 privates,
+  0 bridges. agentConvNew's orphan comment fragment left at ~4923 (M32 sweep).
+- Gates: parse ×2 PASS; boot-smoke 5/5; bg-framing baseline; real server 200
+  42,793B exact; exercise **10/10, 0 errors, 0 write hits** — highlight:
+  **3-module chain** (module connectAgentStream → module appendAgentLine →
+  module formatters) with store watchdog/buffer assertions.
+
+### Landmines for M25 (agent-log.js)
+
+1. Region = Agent Log Panel + Plans tab + continue + image paste headers
+   (re-derive; now ~4953+). agentLogPanelHTML/toggleAgentLog/loadAgentLog/
+   loadConversations/upsertConversationCache/_lastUserFromBuffer +
+   loadProjectPlans/renderPlansTab + continue/paste families.
+2. Top-level dragover/drop preventDefault listeners in the paste zone STAY
+   (boot skeleton).
+3. continueInputOpen/planSelections decls in-region (private per membership).
