@@ -34,7 +34,68 @@
 // v10 (2026-06-10): /static/js/mermaid.js extracted from index.html's inline
 // <script> (mermaid render pipeline + viewers; the CDN loader stays in the
 // head module). Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v10';
+// v11 (2026-06-10): /static/js/search-chats.js extracted from index.html's
+// inline <script> (search-past-chats transcript search box + results pane).
+// Same no-cache-list rationale — version bump only.
+// v12 (2026-06-10): /static/js/backlog-actions.js extracted from index.html's
+// inline <script> (per-project backlog CRUD: add/toggle/priority/save/delete/
+// dispatch/patch). Same no-cache-list rationale — version bump only.
+// v13 (2026-06-10): /static/js/cross-backlog.js extracted from index.html's
+// inline <script> (cross-project "All Backlog Items" modal: filter/render/jump).
+// Same no-cache-list rationale — version bump only.
+// v14 (2026-06-10): /static/js/scheduler.js extracted from index.html's inline
+// <script> (scheduled-tasks modal + form + run-list paging). 2-segment move:
+// the duplicate `timeAgoShort` stays inline. Same no-cache-list rationale —
+// version bump only.
+// v15 (2026-06-10): /static/js/mcp.js extracted from index.html's inline
+// <script> (MCP server manager + the "From URL" install state machine, one
+// coupled family; From-URL state lives on the modal entry, no shared bare-let).
+// Same no-cache-list rationale — version bump only.
+// v16 (2026-06-10): /static/js/system-status.js extracted from index.html's
+// inline <script> (the /status-equivalent header pill + popover). Boot-trap
+// relocation: the parse-time `fetchSystemStatus()` + `setInterval(…,60000)`
+// moved INTO the deferred module body (starts a few hundred ms later — a status
+// pill renders idle until the async fetch resolves anyway). Same no-cache-list
+// rationale — version bump only.
+// v17 (2026-06-10): /static/js/update-power.js extracted from index.html's
+// inline <script> (server-restart detection + Update Clayrune + Power
+// restart/shutdown dialog — one entangled family across 3 headers). The
+// in-region parse-time `setTimeout(()=>_checkServerRestart(),1500)` moves with
+// the region → fires post-parse as a deferred module (behavior-equivalent for a
+// delayed heartbeat seed). Same no-cache-list rationale — version bump only.
+// v18 (2026-06-10): /static/js/provider-auth.js extracted from index.html's
+// inline <script> (multi-provider Auth banner + Provider Auth helpers). One
+// 1-line inline shim: startRefresh's `setInterval(refreshAuthStatus,90000)` →
+// `setInterval(()=>window.refreshAuthStatus(),90000)` so the parse-time
+// startRefresh() defers the lookup to each 90s tick (boot-trap fix b,
+// behavior-equivalent). Same no-cache-list rationale — version bump only.
+// v19 (2026-06-10): /static/js/schedule-banner.js extracted from index.html's
+// inline <script> (the Schedule Banner trigger + Upcoming/Recent dropdown). The
+// standalone parse-time `setInterval(refreshScheduleBanner,60000)` boot line
+// relocated INTO the deferred module body (boot-trap fix a; the inline
+// fetchProjects().then still paints once via window.refreshScheduleBanner).
+// Same no-cache-list rationale — version bump only.
+// v20 (2026-06-10): /static/js/provider-settings.js extracted from index.html's
+// inline <script> (the _renderProviderSettings "Agent Provider" Settings block,
+// one function; the generic settings helpers saveSetting/toggleSetting/etc. that
+// shared its header stay inline). Called by settings-drill.js via window at
+// render time. Same no-cache-list rationale — version bump only.
+// v21 (2026-06-10): /static/js/process-manager.js extracted from index.html's
+// inline <script> (the Process Manager modal: openProcessManager + the helpers
+// refreshProcessList/killTrackedProcess/cleanupOrphanedProcesses + _formatDuration).
+// 2-segment move (the helpers were mis-filed ~480 lines from openProcessManager).
+// Same no-cache-list rationale — version bump only.
+// v22 (2026-06-10): /static/js/cross-hivemind.js extracted from index.html's
+// inline <script> (the Cross-project "All Hiveminds" modal: filter/render/load/
+// mini-tree-viz/new-from-global). Self-contained (own _allHivemindFilter identity
+// bridge + _allHivemindsCache); NOT coupled to the per-project hivemindCache tab
+// (that tab+dashboard stays for the store.js pass). Same no-cache-list rationale.
+// v23 (2026-06-10): /static/js/rich-text.js extracted from index.html's inline
+// <script> (M22, first store.js-pass cut: formatAgentText + the table pipeline +
+// agentLineCls/collapseIntoPlanButton/expandAgentOutput + the rAF pin-scroll
+// pair). The conversation-model half of the old "Rich text formatting" section
+// (appendAgentLine onward) stays inline for M23. Same no-cache-list rationale.
+const SW_VERSION = 'mc-push-v37';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

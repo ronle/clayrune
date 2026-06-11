@@ -1256,3 +1256,2363 @@ what moved, commit SHA, gate results.
    inline `connectAgentStream` runs the ENTIRE real pipeline (the formatter
    only needs the element to exist) — no real agent dispatch, no model
    cost, fully read-only against the server.
+
+## Phase 3 — module 10: extract search past chats → `static/js/search-chats.js` (2026-06-10)
+
+- **Module-9 SHA backfill:** module 9 (js/mermaid.js) = commit `537298c`.
+- **Sizing correction (module-4 lesson, FOURTH occurrence) — the "849L"
+  row was header-to-header and 86% foreign code.** The module-8 list quoted
+  "Search past chats 849L (5836–6684)" = the span from the
+  `// ── Search past chats by transcript content` header (5836) to the next
+  header `// ── Rich text formatting for agent output` (6685). The real
+  cleanly-separable family is **124 lines (5836–5959)** — the 5 state decls +
+  8 functions through `pickChatResult`'s closing brace. Lines **5961–6684 are
+  the conversation-model / agent-panel core** (`sessionPickerHTML`,
+  `closeAgentTab`, `dispatchAgent`, the `agentSSEWatchdogs`/`_sendInFlight`/
+  `_turnStartAcked`/`_reconcileBusy` state, `_reconcileAgentBuffer`, and an
+  image-token helper that keeps in sync with `formatAgentText`) — exactly the
+  heavily-entangled smear the module-8/9 landmines said must WAIT for the
+  store.js checkpoint. They stay inline. Trailing blank 5960 stays as the
+  separator before `sessionPickerHTML`.
+- **Inbound refs re-verified (formal whole-repo scan of all 14 region names):
+  exactly 2 cross-module/inline functional refs**, both inside the inline
+  `agentPanelHTML` modal builder (runtime-only — fire when the dispatch
+  screen renders, never at parse time):
+  1. `chatSearchHTML(p.id)` — L5300, `const chatSearch = showResume ? …`.
+  2. `searchPaneInner(p.id)` — L5301, `const searchPane = showResume ? …`.
+  (`showResume = noActiveTab && _pcaps.supports_session_resume`.) Whole-repo
+  sweep across `*.py/*.js/*.mjs/*.html/*.md/*.css/*.json`: **zero** references
+  to ANY of the 14 region identifiers in any non-index file (no server.py,
+  no demo-export, no smoke fixtures, no docs prose).
+- **Parse-time audit (brace-depth scan):** region top level = 3 `let` +
+  2 `const` + 9 `function` declarations, depth ends 0, **0 top-level
+  non-decl/comment/blank lines** — no IIFEs, no top-level calls (the module-4
+  `startRefresh` trap has no analogue). `node --input-type=module --check`
+  parses the final file.
+- **State needs NO bridges (zero outside refs):** the 3 mutable `let`s
+  (`chatSearchQuery`, `chatSearchResults`, `chatSearchLoading`) + 2 `const`s
+  (`_chatSearchTimers`, `_chatSearchSeq`) are read AND written ONLY by region
+  code (formal outside-ref scan = 0 hits each). Writer scan (wholesale
+  `(?<![\w$.])name\s*=(?![=>])` + compound + `++/--`) → exactly ONE hit each:
+  the declaration itself; every mutation is property-level (`[projectId]`
+  get/set/delete). So they stay **module-private `let`/`const`** — no
+  identity bridge, no accessor bridge. First post-terminal module whose
+  shared-looking state turned out to be fully private.
+- **What moved:** old lines 5836–5959 → `static/js/search-chats.js`,
+  **byte-verbatim** (binary reassembly assertion, two-sided: (1)
+  `before + region_bytes + after == original` proving the region is a clean
+  contiguous byte span; (2) the new index.html, with the inserted `<script>`
+  tag line removed AND the region bytes re-inserted at the cut point,
+  `== original` byte-for-byte; interop tail append-only on the js side).
+  Loaded via `<script type="module" src="/static/js/search-chats.js"></script>`
+  inserted immediately after the mermaid.js module tag, before `</body>`.
+  Anti-FOUC bootstrap untouched. Diff shape: 1 insertion, 124 deletions.
+- **Numbers:** `search-chats.js` = 6,542 bytes / 135 lines (124 moved +
+  11-line interop tail: 1 blank + 5 comment + 5 assignment; CRLF, no BOM,
+  149 non-ASCII UTF-8 bytes). `index.html` 753,117 → 747,322 bytes;
+  15,414 → 15,291 lines (BOM preserved).
+- **Interop surface: 5 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Cross-module/inline callers (2): `chatSearchHTML`, `searchPaneInner`
+    (the agent-panel modal builder, refs above).
+  - Region-generated `on*=` handler targets (3): `onChatSearchInput`
+    (search-box `oninput`), `clearChatSearch` (clear-× `onclick` + the
+    Escape branch of the input `onkeydown`), `pickChatResult` (each result
+    row's `onclick`) — resolve against the global object at event time.
+  - Module-private (9, zero outside/handler refs): `renderAgentSearchPane`,
+    `_highlightTerm`, `chatResultsHTML`, `runChatSearch` + the 5 state
+    globals. (`selectResumeSession` in `pickChatResult`'s body is an
+    OUTBOUND dep, defined inline at L5721, not re-exposed here.)
+  - Formal scans: generated-handler ASSIGNMENT scan (`="<ident>=`) EMPTY (no
+    accessor bridge); per-identifier writer scan → zero wholesale writes
+    beyond declarations; zero `typeof`/`window.`-qualified probes; zero
+    `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `esc`, `API_BASE` (L681 `const`), `convPreviewHTML` (L5771, the adjacent
+  Resume-preview section that stays inline), `selectResumeSession` (L5721,
+  same section) + browser builtins (`fetch`, `setTimeout`, `clearTimeout`,
+  `RegExp`, `encodeURIComponent`, `document.getElementById`). Same
+  classic-script global-declarative-record mechanics as modules 2–9.
+  Strict-mode promotion audited: clean.
+- **sw.js:** `SW_VERSION` `mc-push-v10` → `mc-push-v11` (no cache list by
+  design; version bump only, same as modules 1–9).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/search-chats.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs`
+  and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --input-type=module --check` parses search-chats.js in module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5390 python server.py` from the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/search-chats.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 6542, `Cache-Control: no-cache` + ETag.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **strictly read-only** — no agent dispatch, no model cost) —
+    **16/16 PASS, 0 console errors, 0 uncaught page errors**: 5/5 window.*
+    interop callable; 9/9 module-privates (fns + state) NOT leaked to window;
+    throwaway `sctest` project created (`POST /api/project/sctest`) →
+    real `openProjectModal('sctest')` → dispatch screen renders the
+    `#chat-search-sctest` box (chatSearchHTML via the agent panel);
+    **real GET `/search-chats` ran** for a no-match query → empty-state
+    "No chats mention …" rendered through `searchPaneInner`→`chatResultsHTML`;
+    **results path** via a stubbed fetch returning 2 synthetic rows (still
+    driven through the REAL `onChatSearchInput`→`runChatSearch` handler) →
+    `chatResultsHTML` header "2 chats mention …", `_highlightTerm` wrapped
+    the query in `<mark class="cp-hit">`, each row wired
+    `onclick="pickChatResult('sctest','CSID-AAA')"`; `clearChatSearch` reset
+    the input + flipped the pane off results. Throwaway project deleted
+    after. Screenshot eyeballed: fully styled search box (magnifier + clear
+    ×, rounded border) above the composer in the AGENT dispatch screen; modal
+    + sidebar + mascot all styled, no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined` at the same L78
+    evaluate, landmine 4 of module 1); page boots with search-chats.js
+    fulfilled (grid renders, gets past the card wait), dies at the same later
+    evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–9).
+
+### Landmines for module 11 (remaining-core map, post-search-chats)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule; re-derive
+   boundaries + brace-depth scan; accessor-bridge handler-assigned vars via
+   the formal scan; object-identity bridge for bare-`let` shared state;
+   don't "repair" quirks; settle CSS animations before screenshots;
+   cross-module window props are normal; surgery scripts in `_scratch/*.py`;
+   don't race region setTimeouts — waitForFunction on observable state).
+2. **The header-to-header span is now a PROVEN unreliable boundary 4×**
+   (modules 4, 9, and 10 all had foreign code in the quoted span; only
+   modules 5/6/7 matched exactly). For search-chats the quoted 849L was 86%
+   foreign — the family was 124L. **Always brace-depth-scan from the header
+   and read where the family actually ends; the "remaining candidate" line
+   counts in this log are header-to-header upper bounds, not boundaries.**
+3. **Some "shared-looking" state is fully private** (search-chats' 5 state
+   globals had ZERO outside refs despite living next to the conversation
+   model). Run the outside-ref scan BEFORE assuming an identity/accessor
+   bridge is needed — module-private `let`/`const` is the cheapest outcome
+   and needs no bridge at all.
+4. **Remaining candidate queue (sizes from the module-8 list, all
+   header-to-header upper bounds, refs UNVERIFIED — re-derive; the inline
+   section is now shifted −124 more from any quoted pre-module-10 line ≥5960):**
+   MCP family 1,128L (manager + From-URL state machine; headers ~13050/13526
+   now); Hivemind family ~1,294L (tab + dashboard + cross-project +
+   run-history shared with Scheduler — the sharing is a boundary risk);
+   Command Palette 520L (2807–3326, unshifted — BEFORE all cut points;
+   palette actions reference many feature open-functions, expect a wide
+   late-bound outbound-dep list); System status 456L; Scheduler 377L (shares
+   run-history with Hivemind); Update section 360L; provider auth/settings
+   ~630L. The genuinely-entangled agent-panel/projects-grid core
+   (conversation model, modal/tile HTML, SSE slot management, dispatch,
+   status resolver — incl. the 5961–6684 block this module deliberately left
+   behind) still WAITS for the orchestrator's js/store.js design checkpoint.
+5. **The throwaway-project + real-modal recipe (reuse it for any
+   modal-gated feature):** `POST /api/project/<id>` → `fetchProjects()` →
+   real `openProjectModal(<id>)` renders the dispatch screen; assert the
+   feature's DOM (`#chat-search-<id>` here) then drive its real handlers.
+   For a feature whose only live data is server transcripts the worktree
+   doesn't have, exercise the empty path against the REAL endpoint AND the
+   populated path through a stubbed `fetch` (restored after) — both run the
+   real in-region handlers, zero model cost, fully read-only. Delete the
+   throwaway project at the end.
+
+## Phase 3 — module 11: extract backlog actions → `static/js/backlog-actions.js` (2026-06-10)
+
+- **Module-10 SHA backfill:** module 10 (js/search-chats.js) = commit `dd0d637`.
+- **Candidate selection this run (3 clean modules; cleaner end first):** of
+  the module-8 queue, the named candidates were RE-DERIVED and several
+  disqualified before picking. **System status (456L) is BLOCKED** — its boot
+  call `fetchSystemStatus()` runs at PARSE TIME at the inline script top level
+  (L14349, right after the inline `startRefresh()`), exactly the module-4
+  `startRefresh` trap; moving `fetchSystemStatus` to a deferred module would
+  ReferenceError-abort the rest of the inline boot. **Command Palette's "520L"
+  span is 80% foreign** (fifth header-to-header miss): 2807–2903 is the real
+  family (cmd state + toggle + render + input listener); L2905+ is core modal
+  engine — `restoreModal` (13 callers), `sizeAgentChat`, `updateAgentStatusUI`,
+  `guardianReset`, `refreshModalById` (9), `refreshModal` (50) — store.js
+  territory; AND the real family needs 2 accessor bridges (`cmdPaletteOpen` is
+  written by walkthrough.js's strict-module bare assignment; `cmdSelectedIndex`
+  is `++`/`=`-mutated by the shared inline keydown handler that also touches
+  `focusedModalId`/`closeModalById` and can't be split). Deferred both; picked
+  the two clean Backlog families + Scheduler instead.
+- **Inbound refs re-verified (formal whole-repo scan of all 7 region names):
+  every ref is a generated `on*=` handler in tile/modal HTML or one
+  cross-module caller — all runtime-only, zero parse-time callers:**
+  `addBacklogItem` (tile add button L1932 + `handleInputEnter` keydown L1920),
+  `toggleDone` (tile check L1556 + **cross-project backlog list L12472**, the
+  module-12 region), `cyclePriority` (L1569), `saveBacklogText` (onblur L1561),
+  `deleteBacklogItem` (L1580), `dispatchBacklogItem` (L1573),
+  `patchItem` (the Code-sync retry path L4010). Whole-repo sweep: no other file
+  references any of the 7 names.
+- **Region boundary re-derived:** old lines 5836… no — Backlog actions header
+  `// ── Backlog actions` at 3579 through `patchItem`'s closing brace (3698) +
+  trailing blank 3699; next header `// ── GitHub sync actions` at 3700 (its
+  `showToast` at 3702 stays inline). **Exactly the 121-line header-to-header
+  span — no foreign code** (like modules 5/6/7). Brace-depth top-level scan:
+  7 `async function`/`function` decls, depth ends 0, **0 top-level non-decl
+  lines** (no IIFEs, no parse-time calls, no listeners). `node --check
+  --input-type=module` (via stdin) parses.
+- **State: NONE.** The region declares zero module-level variables — purely 7
+  functions. No identity bridge, no accessor bridge. Cleanest possible move.
+- **What moved:** old lines 3579–3699 → `static/js/backlog-actions.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before +
+  region + after == original` proving the region is a clean contiguous byte
+  span; (2) the new index.html, with the inserted `<script>` tag line removed
+  AND the region bytes re-inserted at the cut point, `== original`
+  byte-for-byte; interop tail append-only on the js side). Loaded via
+  `<script type="module" src="/static/js/backlog-actions.js"></script>`
+  inserted immediately after the search-chats.js module tag, before `</body>`.
+  Anti-FOUC bootstrap untouched. Diff shape: 1 insertion, 121 deletions.
+- **Numbers:** `backlog-actions.js` = 5,726 bytes / 133 lines (121 moved +
+  12-line interop tail: 1 blank + 4 comment + 7 assignment; CRLF, no BOM,
+  189 non-ASCII UTF-8 bytes). `index.html` 747,322 → 742,287 bytes;
+  15,291 → 15,171 lines (BOM preserved).
+- **Interop surface: 7 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Generated `on*=` handler targets (6): `addBacklogItem`, `toggleDone`,
+    `cyclePriority`, `saveBacklogText`, `deleteBacklogItem`,
+    `dispatchBacklogItem` (tile + modal HTML, resolve against window at event
+    time).
+  - Cross-module callers (2, overlap): `toggleDone` (also the cross-project
+    backlog list, module 12) + `patchItem` (the Code-sync retry path L4010).
+  - Module-private: none (all 7 functions are externally referenced).
+  - Formal scans: generated-handler ASSIGNMENT scan (`="<ident>=`) EMPTY;
+    per-identifier writer scan → zero writes (no state); zero `typeof`/
+    `window.`-qualified probes; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `refreshSilent`, `esc`, `showToast`, `confirm`, `allProjects`,
+  `_pushUndo`/undo machinery, `dispatchAgent`-adjacent helpers + browser
+  builtins (`fetch`, `document.getElementById`). Same classic-script
+  global-declarative-record mechanics as modules 2–10. Strict-mode promotion
+  audited: clean (no `this`, every assignment is a `window.` property).
+- **sw.js:** `SW_VERSION` `mc-push-v11` → `mc-push-v12` (no cache list by
+  design; version bump only, same as modules 1–10).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/backlog-actions.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses backlog-actions.js in
+    module goal. (NOTE for future runs: this Node — v24 — rejects
+    `--input-type=module --check <file>`; pipe the file via stdin instead. The
+    progress log's earlier `--input-type=module --check <file>` form errors
+    here.)
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5391 python server.py` from the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/backlog-actions.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 5726, `Cache-Control: no-cache` + ETag.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`) —
+    **16/16 PASS, 0 console errors, 0 page errors**: all 7 window.* interop
+    callable; throwaway `bltest` project created (`POST /api/project/bltest`)
+    → real `openProjectModal('bltest')` rendered `#backlog-input-bltest`;
+    **real CRUD end-to-end** drove the in-region handlers against real
+    endpoints — `addBacklogItem` (verified item in `/api/projects`),
+    `cyclePriority` (normal → high, the `patchItem` path), `toggleDone`
+    (status → done), `patchItem` (text updated), `deleteBacklogItem` (backlog
+    emptied). Throwaway project deleted after.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of
+    module 1; line shifted to 81 by the added const but the same evaluate
+    step); page boots with backlog-actions.js fulfilled, dies at the same
+    later evaluate. No new breakage.
+- **Commit:** module 11 (js/backlog-actions.js) = commit `92b0fbc`.
+
+## Phase 3 — module 12: extract cross-project backlog → `static/js/cross-backlog.js` (2026-06-10)
+
+- **Inbound refs re-verified (formal whole-repo scan of all 4 region names):
+  exactly 2 cross-module/inline functional refs, both runtime-only:**
+  `openAllBacklog` (L2650, `sidebarNav('backlog')`) and `renderAllBacklog`
+  (L835, the central `render()` — but **guarded** by
+  `if (openModals.has('__all_backlog')) renderAllBacklog()`, so it fires only
+  once the modal is open, which is necessarily after this deferred module has
+  evaluated; never at the parse-time `startRefresh()` boot, where no modal is
+  open). `_jumpToBacklogItem` is a region-generated row `onclick`;
+  `_allBacklogFilter` has zero non-handler refs. Whole-repo sweep: no other
+  file references any of the 4 names.
+- **Region boundary re-derived (post-module-11 numbering, shifted −121):** old
+  lines 12246–12380 (`// ── Cross-project Backlog View` header through
+  `_jumpToBacklogItem`'s closing brace) + trailing blank 12380; next header
+  `// ── Run history (shared between Scheduler + Hivemind surfaces)` at 12381
+  stays inline — **the shared run-history is NOT touched** (the Scheduler/
+  Hivemind HARD-STOP boundary). **Exactly the 135-line header-to-header span,
+  no foreign code.** Brace-depth top-level scan: 1 `let` + 3 function decls,
+  depth ends 0, **0 top-level non-decl lines** (no IIFEs/parse-time calls/
+  listeners). `node --check --input-type=module` (stdin) parses.
+- **State: ONE object, OBJECT-IDENTITY bridge.** `_allBacklogFilter` (a
+  `{status, search, priority}` object) is **property-written** by 3 generated
+  handlers (`oninput="_allBacklogFilter.search=this.value;renderAllBacklog()"`,
+  two `onchange` for status/priority) — bare-identifier *property* writes that
+  resolve against window at event time. Formal wholesale-write scan
+  (`(?<![\w$.])_allBacklogFilter\s*=`) → exactly ONE hit: the declaration; the
+  handler writes are all `.`-prefixed (never reassigned). So a plain
+  `window._allBacklogFilter = _allBacklogFilter` identity bridge routes every
+  handler property-write into the module's live object — one source of truth,
+  same as mobile-pairing's `_mobilePairState` (NOT an accessor — the object is
+  never wholesale-reassigned, so a getter is unnecessary).
+- **What moved:** old lines 12246–12380 → `static/js/cross-backlog.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before +
+  region + after == original`; (2) new index.html with the inserted `<script>`
+  tag line removed AND the region re-inserted at the cut point `== original`;
+  interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/cross-backlog.js"></script>` inserted
+  immediately after the backlog-actions.js module tag (keeps it AFTER the
+  module that exposes `toggleDone`, which this region's row checkbox onclick
+  calls), before `</body>`. Anti-FOUC bootstrap untouched. Diff shape:
+  1 insertion, 135 deletions.
+- **Numbers:** `cross-backlog.js` = 8,458 bytes / 155 lines (135 moved +
+  20-line interop tail: 1 blank + 15 comment + 4 assignment; CRLF, no BOM,
+  186 non-ASCII UTF-8 bytes). `index.html` 742,287 → 735,155 bytes;
+  15,171 → 15,037 lines (BOM preserved).
+- **Interop surface: 3 window function re-exposures + 1 object-identity bridge,
+  0 accessor bridges:**
+  - Cross-module/inline callers (2): `openAllBacklog` (sidebarNav),
+    `renderAllBacklog` (guarded `render()` + `openAllBacklog`).
+  - Region-generated `on*=` target (1): `_jumpToBacklogItem` (row onclick).
+  - Object-identity bridge (1): `_allBacklogFilter` (handler property-writes).
+  - Module-private: none (all 4 region names are externally referenced).
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY (the `.search=`/`.status=`/`.priority=` are property writes, not
+    whole-var → identity bridge, not accessor); per-identifier writer scan →
+    zero wholesale writes beyond the decl; zero `typeof`/`window.`-qualified
+    probes; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `esc`, `allProjects`, `openModals`, `restoreModal`, `focusModal`,
+  `_clampModalSize`, `nextModalZ++` (module→inline-let write, proven
+  direction), `centerModalElement`, `minimizeModal` (handler),
+  `closeModalById` (handler), **`toggleDone` (handler — cross-module window
+  prop from module 11 backlog-actions.js; document-order eval + runtime call
+  makes ordering moot, and the tag order keeps 11 before 12 as a courtesy)**,
+  `openProjectModal` + browser builtins. Strict-mode promotion audited: clean.
+- **sw.js:** `SW_VERSION` `mc-push-v12` → `mc-push-v13` (no cache list by
+  design; version bump only, same as modules 1–11).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/cross-backlog.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses cross-backlog.js in
+    module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5391 python server.py` from the
+    worktree, then killed; live :5199 never touched):
+    `/static/js/cross-backlog.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 8458.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`) —
+    **11/11 PASS, 0 console errors, 0 page errors**: 3/3 window.* interop
+    callable; `window._allBacklogFilter` exposed with the default shape;
+    throwaway `cbtest` project + one seeded backlog item
+    (`POST /api/project/cbtest/backlog`) → real `sidebarNav('backlog')`
+    rendered the `__all_backlog` modal with the seed row; **the
+    object-identity bridge asserted end-to-end** — a bare property-write
+    `window._allBacklogFilter.search='zzz…'` + `renderAllBacklog()` emptied
+    the list ("No matching backlog items"), then `='zeta'` re-surfaced the
+    seed (proves the module's `renderAllBacklog` reads the filter through the
+    shared object); `_jumpToBacklogItem` invoked without throwing. Throwaway
+    project deleted after.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of
+    module 1; line shifted to 84 by the added const, same evaluate step);
+    page boots with cross-backlog.js fulfilled, dies at the same later
+    evaluate. No new breakage.
+- **Commit:** module 12 (js/cross-backlog.js) = commit `3c42a6e`.
+
+## Phase 3 — module 13: extract scheduler → `static/js/scheduler.js` (2026-06-10)
+
+- **Region re-derived (post-module-11 numbering, shifted −121; modules 11/12
+  removed lines BEFORE/AFTER but only 11 was before this region):** the
+  Scheduler family is old lines 9962–10338 (`// ── Scheduler` header through
+  `deleteSchedule`'s closing brace + trailing blank 10338); next header
+  `// ── Schedule Banner` at 10339 stays inline. Brace-depth top-level scan:
+  1 `let` (`schedulerEditId`) + 16 function decls, depth ends 0, **0 top-level
+  non-decl lines** (no IIFEs/parse-time calls/listeners). 377-line span.
+- **2-SEGMENT MOVE — the duplicate-`timeAgoShort` entanglement forces a hole
+  (module-4-class, behavior-preservation).** The span DEFINES
+  `function timeAgoShort(isoStr)` (L10151, the `'… ago'` / `'never'` variant),
+  which is the **LATER of two top-level `function timeAgoShort` declarations**
+  (the other is L9227, the agent-console `'…'` / `''` variant). In a classic
+  script the later top-level declaration wins for ALL bare-identifier callers,
+  so L10151 is the **de-facto live impl** for the inline callers at L9164
+  (agent-console session time) and L11092/11100 (schedule banner). Moving
+  L10151 into a deferred module would make the inline global revert to the
+  L9227 variant → those inline callers would render `'5m'`/`''` instead of
+  `'5m ago'`/`'never'` = **BEHAVIOR CHANGE**. So `timeAgoShort` + its flanking
+  blanks (L10150–10162) **STAY INLINE** (left stranded where Scheduler was);
+  the rest moves as two segments (segA 9962–10149 = header…formatScheduleTime
+  close; segB 10163–10338 = showScheduleForm…deleteSchedule close + blank).
+  The moved module's own `timeAgoShort(s.last_run)` calls (in
+  `refreshScheduleList`) resolve through the global object to the inline
+  L10151 def → the module behaves identically too. (Same class as module 4's
+  `startRefresh` carve-out; same split-reassembly proof as module 8.)
+- **Inbound refs re-verified (formal whole-repo scan of all 17 region names):
+  cross-region callers are runtime-only** — `openScheduler` ×3 (sidebarNav
+  L2646, command-palette action L2842, schedule-banner row onclick L11097),
+  `formatScheduleTime` ×2 (schedule-banner Next-run line L11092/11100). Plus
+  `loadScheduleRunsPage` is invoked from the **pagination onclick string**
+  that the INLINE shared `renderRunsPagination` emits (so it must be
+  window-exposed). `timeAgoShort`'s 2 "outside refs" are the L9164 caller +
+  the L9227 duplicate decl (handled above). Whole-repo sweep: no other file
+  references any region name.
+- **Shared run-history is an OUTBOUND dep, NOT moved (the Scheduler/Hivemind
+  hard-stop respected):** `loadScheduleRunsPage` calls `renderRunRows` (L12288)
+  + `renderRunsPagination` (L12265), both in the `// ── Run history (shared
+  between Scheduler + Hivemind surfaces)` section that **stays inline** —
+  resolved at call time through the global scope. The Hivemind run-history
+  consumer (L8833) is untouched. `refreshScheduleBanner` (L11058, Schedule
+  Banner section) is likewise an inline outbound dep.
+- **What moved:** old lines 9962–10149 (segA) + 10163–10338 (segB) →
+  `static/js/scheduler.js`, **byte-verbatim** (split two-sided binary
+  reassembly assertion: (1) `before + segA + hole + segB + after == original`;
+  (2) the new index.html — with the inserted `<script>` tag removed, segA
+  re-inserted before the inline hole, and segB re-inserted after it —
+  `== original` byte-for-byte; interop tail append-only). Module body =
+  segA + segB + tail (no blank separator where `timeAgoShort` was — cosmetic,
+  the only non-byte-verbatim aspect is the *join point*, both segments are
+  individually verbatim). Loaded via
+  `<script type="module" src="/static/js/scheduler.js"></script>` inserted
+  after the cross-backlog.js module tag, before `</body>`. Anti-FOUC bootstrap
+  untouched. Diff shape: 1 insertion, 364 deletions across two hunks (the
+  13-line `timeAgoShort` block remains in place).
+- **Numbers:** `scheduler.js` = 19,027 bytes / 385 lines (364 moved + 21-line
+  interop tail: 1 blank + 7 comment + 13 assignment; CRLF, no BOM, 213
+  non-ASCII UTF-8 bytes). `index.html` 735,155 → 717,420 bytes;
+  15,037 → 14,674 lines (BOM preserved).
+- **Interop surface: 12 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Cross-region/inline callers (3): `openScheduler`, `formatScheduleTime`,
+    `loadScheduleRunsPage` (the last via the inline pagination onclick).
+  - Region-generated `on*=` targets (9): `showScheduleForm`, `hideScheduleForm`,
+    `setSchedType`, `saveSchedule`, `toggleScheduleEnabled`, `toggleScheduleRuns`,
+    `editSchedule`, `deleteSchedule`, `runScheduleNow`.
+  - Module-private (4): `schedulerEditId` (state — zero outside refs),
+    `refreshScheduleList`, `scheduleDescription`, `renderSchedTypeFields`.
+  - **`timeAgoShort` is NOT exposed by this module — it stays inline** (see
+    the 2-segment rationale). The tail comment documents this explicitly.
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY (handlers only CALL); `schedulerEditId` writer scan → in-region
+    writes only (decl + showScheduleForm + hideScheduleForm); zero `typeof`/
+    `window.`-qualified probes; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `esc`, `API_BASE`, `openModals`, `restoreModal`, `focusModal`,
+  `_clampModalSize`, `nextModalZ++` (module→inline-let write, proven
+  direction), `centerModalElement`, `minimizeModal`/`closeModalById`
+  (handlers), `allProjects`, `showToast`, `confirm`, `alert`, **the inline
+  `timeAgoShort` (L10151, stays)**, **the inline shared `renderRunRows`/
+  `renderRunsPagination` (run-history, stay) + `refreshScheduleBanner`
+  (schedule-banner, stays)** + browser builtins. Strict-mode promotion
+  audited: clean (zero `this`, every assignment is a declared binding or a
+  `window.` property).
+- **sw.js:** `SW_VERSION` `mc-push-v13` → `mc-push-v14` (no cache list by
+  design; version bump only, same as modules 1–12).
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/scheduler.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses scheduler.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5391 python server.py` from the
+    worktree, then SHUT DOWN; live :5199 never touched):
+    `/static/js/scheduler.js` → 200, `text/javascript; charset=utf-8`,
+    Content-Length 19027.
+  - Headless Chromium against that server (seeded `walkthrough_done=1`) —
+    **22/22 PASS, 0 console errors, 0 page errors**: all 12 window.* interop
+    callable; 4/4 module-privates NOT leaked; **the duplicate-`timeAgoShort`
+    behavior asserted** — bare `timeAgoShort(...)` still returns the inline
+    `'5m ago'` variant (empty→`'never'`), proving the 2-segment cut preserved
+    the live impl for inline + module callers alike; throwaway `schedtest`
+    project (with `project_path`) → real `sidebarNav('scheduler')` opened the
+    modal; form drill (`showScheduleForm` → `setSchedType('interval')` →
+    `renderSchedTypeFields` drew `#sched-interval`); **`saveSchedule` created
+    a REAL schedule** (interval=120, verified in `/api/schedules`) → the card
+    rendered in `#schedule-list`; **Runs panel via the shared run-history**
+    (`toggleScheduleRuns` → `loadScheduleRunsPage` → inline `renderRunRows`/
+    `renderRunsPagination` → "No runs yet."); `deleteSchedule` removed it.
+    Throwaway schedule + project cleaned up. (The schedule was created but
+    never fired — zero model cost.)
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of
+    module 1; line shifted to 87 by the added const, same evaluate step);
+    page boots with scheduler.js fulfilled, dies at the same later evaluate.
+    No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–12).
+
+### Landmines for module 14 (remaining-core map, post-scheduler)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh
+   worktrees; deferred-module timing; module-scoped-globals rule; re-derive
+   boundaries + brace-depth scan; accessor-bridge handler-assigned vars via
+   the formal scan; object-identity bridge for handler-property-written
+   objects; 2-segment carve-out for parse-time/duplicate-def entanglements;
+   don't "repair" quirks; settle CSS animations before screenshots;
+   cross-module window props are normal; surgery scripts in `_scratch/*.py`;
+   don't race region setTimeouts — waitForFunction on observable state;
+   `node --input-type=module --check <file>` ERRORS on Node 24 — pipe via
+   stdin instead).
+2. **PARSE-TIME-CALLER BLOCK is now a confirmed disqualifier — check the
+   inline boot tail (the lines AFTER the `fetchProjects().then(…)` `});`).**
+   **System status (456L) is BLOCKED:** `fetchSystemStatus()` +
+   `setInterval(fetchSystemStatus, 60000)` run at the inline-script top level
+   (right after the inline `startRefresh()`), so moving `fetchSystemStatus`
+   to a deferred module ReferenceError-aborts the rest of the inline boot.
+   Same trap would block any feature whose function is *called* (not just
+   referenced) in that top-level boot tail. Grep the boot tail for bare
+   `feature()` calls before promising a move; a `setTimeout(()=>fn(),N)` or a
+   call INSIDE the `.then` async callback is safe (runtime), a bare top-level
+   `fn()` is not.
+3. **Command Palette (520L header-to-header) is 80% FOREIGN + needs 2 accessor
+   bridges — deferred.** Real family = the cmd state + `toggleCommandPalette`
+   + `renderCommandResults` + the `cmd-input` listener (~98L, 2807–2903 in the
+   pre-module-11 numbering, now shifted). L2905+ (`restoreModal` 13 callers,
+   `sizeAgentChat`, `updateAgentStatusUI`, `guardianReset`, `refreshModalById`
+   9, `refreshModal` 50) is the conversation/modal-engine CORE → store.js
+   checkpoint. AND `cmdPaletteOpen` is bare-assigned by walkthrough.js (a
+   STRICT module → needs the `Object.defineProperty` accessor or it throws),
+   and `cmdSelectedIndex` is `++`/`=`-mutated by the SHARED inline keydown
+   handler (L3306+) that ALSO does `focusedModalId`/`closeModalById` and can't
+   be split out. Both primitives need accessor bridges. Doable but it is the
+   most entangled of the "small" candidates; recommend pairing it with the
+   store.js design pass.
+4. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED
+   — re-derive; the inline section is now shifted −364 more from any quoted
+   pre-module-13 line ≥10339, and −121 from pre-module-11 lines ≥3700):**
+   MCP family ~1,128L (manager + From-URL state machine — STOP per the brief
+   if the From-URL machine is entangled with the manager state); Hivemind
+   family ~1,294L (tab + dashboard + cross-project + the shared run-history —
+   the run-history is now a multi-consumer inline dep; STOP per the brief);
+   Update section ~360L (**ENTANGLED**: the "Update Clayrune" header's span
+   ALSO contains the Power/restart/shutdown dialog `openPowerDialog`/
+   `performRestart`/`showRestartingOverlay`/`performShutdown`/
+   `showPoweredOffOverlay` AND the server-restart-detection block with a
+   parse-time `setTimeout(()=>_checkServerRestart(),1500)` — a 2-segment or
+   3-segment carve is needed, and `_handleServerRestart`→`showRestartingOverlay`
+   couples the detection block to the power block; derive carefully);
+   provider auth/settings ~630L; the Provider Settings section
+   (`_renderProviderSettings`) is a settings-family leaf that could join a
+   settings-helpers module. Process Manager is a 48-line single function (too
+   small alone). The genuinely-entangled agent-panel/projects-grid core still
+   WAITS for the orchestrator's js/store.js design checkpoint.
+5. **The throwaway-project + REAL-write exercise recipe (extends the module-10
+   read-only recipe to write-features):** for a feature that mutates project/
+   schedule state, `POST /api/project/<id>` (with `project_path` if the
+   feature filters on it) → drive the REAL handlers against REAL endpoints
+   (create → assert in the GET → delete), overriding `window.confirm = () =>
+   true` for delete paths. Zero model cost as long as no agent is dispatched
+   (a created-but-never-fired schedule is free). Always clean up
+   (schedule + project) in the `finally`.
+
+## Phase 3 — module 14: extract MCP family → `static/js/mcp.js` (2026-06-10)
+
+- **Module-13 SHA backfill:** module 13 (js/scheduler.js) = commit `7bed9d6`.
+- **Candidate selection this run (cleaner-first):** of the post-scheduler queue
+  the MCP family was the cleanest single win. The sizing table said
+  "~1,128L (manager ~476L + From-URL state machine ~652L); may split into 2
+  modules" — RE-DERIVED below: the family is **one coupled unit**, the
+  header-to-header upper bound was wrong (foreign boot code was inside it), and
+  it does NOT split cleanly (so it ships as ONE module).
+- **Region re-derived — ONE contiguous family, NOT two modules, and the
+  header-to-header span was wrong (6th miss):** the MCP family is old lines
+  **12430–13474** (`// ── MCP servers` header through `deleteMCPAction`'s
+  closing brace at 13473 + one trailing blank 13474). The "From URL" header at
+  12906 is a SUB-section of the same family, not a separate module — the
+  manager's `openMCPEditor` renders the Manual/From-URL toggle and calls
+  `_mcpEditorSetMode`, and the From-URL flow stores ALL its state on the modal
+  `entry._mcpUrlState` object (NOT a module-level bare `let`), so there is
+  **zero shared mutable module global** between the two halves to bridge —
+  splitting would only manufacture cross-module window deps for no benefit.
+  **The header-to-header "1,128L" span (12430→13558 Native FCM push) is WRONG:**
+  old lines **13476–13556 are FOREIGN BOOT CODE** — the same inline boot tail
+  module 4 left behind: `startRefresh()` (**called at parse time**, the module-4
+  trap), the filter-dropdown binding, `fetchDomains()`, the grid-layout fetch,
+  density/feed/view-mode restores, `applyAdvancedFlags()`, and the eager
+  service-worker registration. Those 81 lines STAY INLINE (blank 13475 +
+  13476+). The MCP family proper ends at `deleteMCPAction` (13473).
+- **Parse-time audit (brace-depth scan):** the manager half (12430–12905) scans
+  clean — depth ends 0, 13 function decls + 2 `let` state vars (`_allMCPCache`,
+  `_allMCPFilter`), **0 IIFEs / 0 top-level calls / 0 listeners**. (The combined
+  scan derails to depth 5 inside the From-URL `_mcpUrlRenderPreview`'s deeply
+  nested `${\`…\`}` templates — the same known scanner limitation as modules 6/7;
+  the 25 region function declarations are all plain `function`/`async function`
+  at col 0, verified by a separate col-0 declaration listing, and
+  `node --check --input-type=module` parses the final file in module goal.)
+  **No parse-time caller of any region function exists in the inline boot tail.**
+- **Inbound refs re-verified (formal whole-file scan of all 25 region function
+  names + 2 state vars): exactly 2 cross-module functional refs, both
+  runtime-only:** `openAllMCP` (L2653, `sidebarNav('mcp')`) and
+  `openAllMCPForProject` (L1851, project-modal three-dot menu generated
+  `onclick`). Every OTHER region function with an external touch is a
+  region-generated `on*=` handler target (resolves against window at event
+  time). Whole-repo sweep (`*.py`, `*.js`, `*.html`, `*.md`, smoke fixtures):
+  only `CHANGELOG.md` (prose) — no other file references any of the 27 names.
+- **What moved:** old lines 12430–13474 → `static/js/mcp.js`, **byte-verbatim**
+  (two-sided binary reassembly assertion: (1) `before + region + after ==
+  original` proving the region is a clean contiguous byte span; (2) the new
+  index.html, with the inserted `<script>` tag line removed AND the region bytes
+  re-inserted at the cut point, `== original` byte-for-byte; interop tail
+  append-only on the js side). Loaded via
+  `<script type="module" src="/static/js/mcp.js"></script>` inserted immediately
+  after the scheduler.js module tag, before `</body>`. Anti-FOUC bootstrap
+  untouched (landmine 1). Diff shape: 1 insertion, 1,045 deletions.
+- **Numbers:** `mcp.js` = 55,559 bytes / 1,074 lines (1,045 moved + 29-line
+  interop tail: 1 blank + 11 comment + 17 assignment; CRLF, no BOM, 159
+  non-ASCII UTF-8 bytes). `index.html` 717,420 → 663,402 bytes;
+  14,674 → 13,630 lines (BOM preserved). Largest extraction since module 5.
+- **Interop surface: 16 window function re-exposures + 1 object-identity bridge,
+  0 accessor bridges:**
+  - Cross-module/inline callers (2): `openAllMCP` (sidebarNav),
+    `openAllMCPForProject` (project three-dot menu onclick).
+  - Region-generated `on*=` handler targets (14): `loadAllMCP`, `renderAllMCP`,
+    `openMCPEditor`, `_mcpToggleActive`, `_mcpResetLoadout`,
+    `_mcpEditorRenderTransport`, `_mcpEditorSetMode`, `_mcpUrlPreview`,
+    `_mcpUrlBack`, `_mcpUrlFieldChange`, `_mcpUrlSecretChange`, `_mcpUrlInstall`,
+    `saveMCPServer`, `deleteMCPAction` (enumerated from the region's generated
+    HTML `on*="fn(...)"` strings — resolve against window at event time).
+  - **Object-identity bridge (1):** `_allMCPFilter` (a `{scope,project,search}`
+    object). Generated handlers property-write it (`oninput="_allMCPFilter.
+    search=this.value;…"`, two `onchange` for scope/project — L12480/12482/12488);
+    formal wholesale-write scan (`(?<![\w$.])_allMCPFilter\s*=`) → exactly ONE
+    hit (the declaration; the two in-region property-writes at 12441/12442 are
+    `.`-prefixed). So a plain `window._allMCPFilter = _allMCPFilter` identity
+    bridge routes every handler property-write into the module's live object —
+    one source of truth, same pattern as cross-backlog's `_allBacklogFilter`
+    and mobile-pairing's `_mobilePairState` (NOT an accessor — never wholesale-
+    reassigned, so no getter needed).
+  - **From-URL state needs NO bridge:** the entire From-URL sub-state-machine
+    (`input → preview → installing → done`) lives on `entry._mcpUrlState`
+    (the modal-entry object in the shared `openModals` map), not a module
+    global — verified end-to-end in gating. The cleanest possible shared-state
+    design; survives the move untouched.
+  - Module-private (10, no outside/handler refs): `_allMCPCache` (state —
+    wholesale-reassigned only INSIDE the module, zero outside reads),
+    `_renderMCPRow`, `_mcpEditorStatus`, `_parseKVLines` (generic name, but the
+    ref scan proved zero outside collision), `_mcpUrlRender`, `_mcpUrlRenderInput`,
+    `_mcpUrlRenderPreview`, `_mcpUrlRenderInstalling`, `_mcpUrlRenderDone`,
+    `_mcpUrlAppendLog`.
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY (handlers only CALL functions / property-write `_allMCPFilter` — no
+    accessor bridge); per-identifier writer scan outside region → zero
+    wholesale writes; zero `typeof`/`window.`-qualified probes; zero `this` in
+    region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `openModals` (classic-script top-level `const` — reached via bare identifier,
+  NOT a window prop), `nextModalZ++` (module→inline-let write, the proven
+  module-2/4 direction), `restoreModal`, `focusModal`, `centerModalElement`,
+  `_clampModalSize`, `minimizeModal`/`closeModalById` (handlers), `API_BASE`,
+  `esc`, `allProjects`, `isIncognitoProject`, `showToast`, `confirm`, `alert` +
+  browser builtins (`fetch`, `TextDecoder`, `URLSearchParams`, streaming
+  `res.body.getReader()`). Strict-mode promotion audited: zero module-code
+  `this` (all hits are HTML handler strings/comments), every assignment targets
+  a declared binding or an explicit `window.` property.
+- **Deferred-module timing safe:** region top level = declarations + 2 `let`
+  state inits only; no IIFEs, no parse-time calls, no listener registrations.
+  Both inbound refs are user-driven (sidebar nav / project menu) — never fire
+  at the parse-time boot.
+- **sw.js:** `SW_VERSION` `mc-push-v14` → `mc-push-v15` (no cache list by
+  design; version bump only, same as modules 1–13). Added a v15 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/mcp.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses mcp.js in module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5392 python server.py` from the
+    worktree, then KILLED; live :5199 never touched): `/static/js/mcp.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 55559 (exact match),
+    `Cache-Control: no-cache` + ETag; `GET /api/mcp` → this machine's real
+    global MCP servers (sequential-thinking, tradingview, …).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **strictly read-only** — no MCP server created/saved/installed) —
+    **43/43 PASS, 0 console errors, 0 page errors**: all 16 window.* interop
+    functions callable; `window._allMCPFilter` object-identity bridge present
+    with the default `{project,scope,search}` shape; all 10 module-privates NOT
+    leaked to window; MCP modal opens via the REAL `sidebarNav('mcp')` path
+    (`#am-list`/`#am-search`/`#am-scope` rendered); list populated from the real
+    `GET /api/mcp`; **identity bridge asserted end-to-end** — a bare
+    `window._allMCPFilter.search='zzzz_nomatch…'` + `renderAllMCP()` produced
+    the "No MCP servers match" empty state (proves the module's `renderAllMCP`
+    reads the filter through the SHARED object), then clearing it restored the
+    list; New MCP editor opens (`#me-name`/`#me-transport`/`#me-mode-url`);
+    **From-URL state machine** toggled via `_mcpEditorSetMode(modalId,'url')`
+    rendered the `#me-url-input` (input stage) with `entry._mcpUrlState.stage
+    === 'input'` stored on the modal entry; toggle back to manual restored
+    `#me-manual-mode`. Screenshot eyeballed: fully styled MCP list modal (real
+    servers + Delete buttons) behind the styled New-MCP-server editor (Manual/
+    From URL toggle, all fields), no FOUC, mascot + sidebar styled.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined` at the same L90
+    evaluate, landmine 4 of module 1); page boots with mcp.js fulfilled (gets
+    past the grid/card stage), dies at the same later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–13).
+
+### Landmines for module 15 (remaining-core map, post-MCP)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh worktrees;
+   deferred-module timing; module-scoped-globals rule; re-derive boundaries +
+   brace-depth scan; accessor-bridge handler-assigned vars; object-identity
+   bridge for handler-property-written objects; 2-/3-segment carve for
+   parse-time/duplicate-def entanglements; don't "repair" quirks; settle CSS
+   animations before screenshots; cross-module window props are normal; surgery
+   scripts in `_scratch/*.py`; don't race region setTimeouts;
+   `node --input-type=module --check <file>` ERRORS on Node 24 — pipe via stdin).
+2. **State-on-the-modal-entry is a bridge-free win — look for it.** MCP's
+   From-URL machine stored ALL sub-state on `entry._mcpUrlState` (the
+   `openModals` map's value object), so the manager↔From-URL coupling needed
+   ZERO bridges despite being a 1,045-line two-feature region. When auditing a
+   modal-centric family, check whether its mutable state lives on the entry
+   object vs. a module `let` — the former survives the move untouched.
+3. **`openModals` is a classic-script `const` (NOT a window prop).** Module
+   code reaches it via bare identifier (lexical global). In a `page.evaluate`
+   gate you must read it via `(0,eval)('openModals')`, not `window.openModals`
+   (which is `undefined`). Same for any inline top-level `const`/`let` you want
+   to inspect from a Playwright probe.
+4. **The header-to-header span has now been WRONG 6× (modules 4, 9, 10, 13×2,
+   14).** Modules 5/6/7/11/12 matched exactly. The MCP span hid 81 lines of the
+   module-4 inline boot tail (`startRefresh` + SW registration). **Always read
+   where the family actually ends; check the lines after the last family
+   function for the `startRefresh()`/`document.getElementById(...).addEventListener`
+   boot block before trusting any header-to-header count.**
+5. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED
+   — re-derive; the inline section is now shifted −1,044 more from any quoted
+   pre-module-14 line ≥13475):**
+   - **provider auth/settings (~630L) — ENTANGLED / mis-headered.** The
+     "Provider Auth helpers" header (was 10604) covers ONLY ~88L of real
+     provider-auth code (`PROVIDER_AUTH_KEYS`, `settingsProviderSetEnv`,
+     `settingsProviderTerminalLogin`, `settingsProviderRefresh`,
+     `_renderClaudeAuthStatusLine`); the lines BELOW it (was 10694–10913) are
+     the **Schedule Banner** family (`refreshScheduleBanner`/`_sbRender`/
+     `toggleSchedulePanel`/`_sbLoadRecent`/`_sbOpenTranscript`/etc. + two
+     document-level click/keydown listeners) placed under the wrong header.
+     The "Auth banner — multi-provider" header (was 10450) is a THIRD provider
+     chunk. A provider module needs a careful multi-segment carve that
+     SEPARATES the Schedule Banner family (which is referenced by scheduler.js's
+     `refreshScheduleBanner` outbound dep + the schedule-banner inline section)
+     — derive all three headers before promising a single module. The Schedule
+     Banner could alternatively be its own module (it has 2 top-level
+     `document.addEventListener` listeners — safe, listener-order not
+     observable, same as walkthrough).
+   - **Update section (~360L) — ENTANGLED (3-segment).** The "Update Clayrune"
+     header (was 11309) span also holds the Power/restart/shutdown dialog
+     (`openPowerDialog`/`performRestart`/`showRestartingOverlay`/
+     `performShutdown`/`showPoweredOffOverlay`, header was 11302) AND the
+     server-restart-detection block (header was 11252) with a **parse-time
+     `setTimeout(()=>_checkServerRestart(),1500)`** boot registration, and
+     `_handleServerRestart`→`showRestartingOverlay` couples detection to the
+     power block. Needs a careful 2-/3-segment carve + a boot-trap decision for
+     the setTimeout (move the registration into the module body, OR a thin
+     `addEventListener('load', …)` shim — argue equivalence per case).
+   - **System status (~456L) — BLOCKED on a parse-time setInterval boot-trap.**
+     `fetchSystemStatus()` + `setInterval(fetchSystemStatus, 60000)` run at the
+     inline-script top level (the boot tail). The brief's boot-trap technique
+     (move the `setInterval` registration into the module body alongside
+     `fetchSystemStatus`, OR a `load`-event shim) makes this MOVABLE and
+     behavior-equivalent (a 60s poll starting a few hundred ms later is
+     immaterial; there's no missed first-tick that matters — the inline boot
+     ALSO calls `fetchSystemStatus()` once at parse time for the immediate
+     paint, so that one-shot must be preserved too). Re-derive the exact span
+     and the boot-tail call sites before attempting.
+   - **Hivemind family (~1,294L)** — tab (was 8318) + dashboard modal (was 8520)
+     + cross-project (was 12064); shares the inline run-history renderers
+     (`renderRunRows`/`renderRunsPagination`, now a MULTI-consumer inline dep —
+     scheduler.js also calls them via window) which **STAY INLINE** per the
+     brief; carve hivemind AROUND them.
+   - Provider Settings section (`_renderProviderSettings`, was 11669) is a
+     settings-family leaf that could join a settings-helpers module. Process
+     Manager (was 11834) is a small single-function region.
+   - The genuinely-entangled agent-panel/projects-grid CORE (conversation
+     model, modal/tile HTML, SSE slot management, dispatch, status resolver)
+     and Command Palette's real ~98L (needs 2 accessor bridges:
+     `cmdPaletteOpen` bare-assigned by walkthrough.js + `cmdSelectedIndex`
+     `++`/`=`-mutated by the shared inline keydown handler) still WAIT for the
+     orchestrator's js/store.js design checkpoint.
+
+## Phase 3 — module 15: extract System status → `static/js/system-status.js` (2026-06-10)
+
+- **Module-14 SHA backfill:** module 14 (js/mcp.js) = commit `aece9aa`.
+- **Candidate selection this run:** System status was BLOCKED in the module-14
+  landmines on a parse-time `setInterval(fetchSystemStatus, 60000)` boot-trap.
+  The orchestrator brief explicitly green-lights the boot-trap technique
+  (move the registration into the deferred module body, OR a thin `load`-event
+  shim — pick + justify equivalence per case). It's now MOVABLE; chosen as the
+  cleanest next candidate (self-contained feature, all 6 state vars private,
+  only 4 window exposures, the only entanglement was the boot-trap).
+- **Region re-derived:** old lines **9994–10448** (`// ── System status (CC
+  /status equivalent)` header through the document-level outside-click
+  listener's closing `});` at 10447 + one trailing blank 10448). Next header
+  `// ── Auth banner — multi-provider` at 10450 stays inline. Brace-depth
+  top-level scan: depth ends 0, 6 `let` state vars + 20 function decls + exactly
+  **2 top-level `addEventListener` registrations** (`window` resize L10435 +
+  `document` click L10440) — no IIFEs, **no parse-time function calls inside the
+  region**. The two listeners are safe top-level side effects (listener-order
+  not observable — same precedent as walkthrough/schedule-banner). (NOTE: the
+  Schedule Banner family is pre-existingly split — its `_sbState` decl sits at
+  L9984 just ABOVE this header, its functions live ~700 lines below under a
+  mis-placed "Provider Auth helpers" header; NOT this module's concern, left
+  exactly as-is.)
+- **BOOT-TRAP relocation (fix (a), behavior-equivalent) — the one entanglement:**
+  the inline boot tail had, at old lines 12681–12685, a 3-line comment + a
+  parse-time one-shot `fetchSystemStatus();` + `setInterval(fetchSystemStatus,
+  60000);`. `fetchSystemStatus` is module-private now, so leaving those inline
+  would ReferenceError-abort the boot. **Both lines were RELOCATED byte-verbatim
+  into the module body** (after the feature region, before the interop tail).
+  **Equivalence argument:** a `type="module"` script is deferred, so instead of
+  firing mid-parse the one-shot fetch + the 60s poll now start a few hundred ms
+  later, right after document parse when the module evaluates. This is
+  immaterial for a status pill: `fetchSystemStatus` is itself `async` and the
+  pill renders idle ("—") until the fetch resolves — which already happened
+  after parse in the original. There is **no missed first-tick that matters**;
+  the one-shot is preserved (the pill still gets its initial paint), just
+  slightly later. Live-validated: the relocated boot one-shot DID run from the
+  module and the pill rendered content (gate below). The other inline boot lines
+  (`startRefresh()` L12678, `setInterval(refreshScheduleBanner, …)` L12680) are
+  untouched and unaffected — the removal is a clean 5-line excision.
+- **Inbound refs re-verified (formal whole-file scan of all 20 region functions
+  + 6 state vars):** outside references are exactly — `fetchSystemStatus` ×2
+  (the boot-trap, RELOCATED into the module, not window-exposed),
+  `toggleSysStatusPopover` ×1 (pill static `onclick` L475 → window),
+  `_rerenderSysStatusSurfaces` ×1 (the token-usage refresher's
+  `if (typeof _rerenderSysStatusSurfaces === 'function')` runtime guard L4343 →
+  window), `_positionSysStatusPopover` ×1 (an HTML COMMENT at L571, not a code
+  ref → no exposure). All 6 state vars: **ZERO outside refs → fully
+  module-private**, no bridge. Region-generated `on*=` handler targets:
+  `_sysStatusSwitchTab` + `refreshSystemStatus` (→ window). Whole-repo sweep
+  (`*.py`/`*.js`/`*.html`/smoke fixtures): only CHANGELOG.md + this progress log
+  (prose) — no other file references any region identifier.
+- **What moved:** old lines 9994–10448 (feature region) + 12681–12685
+  (boot-trap) → `static/js/system-status.js`, **byte-verbatim** (DUAL two-sided
+  binary reassembly assertion for the two disjoint removals: (1)
+  `seg_pre + region + seg_mid + boot + seg_post == original` proving both spans
+  are clean disjoint byte ranges; (2) the new index.html, with the inserted
+  `<script>` tag line removed AND both the region and the boot block re-inserted
+  at their original cut points, `== original` byte-for-byte; the relocation
+  note + interop tail are append-only on the js side, and the moved boot lines
+  are byte-verbatim — the only non-verbatim aspect is the *join points*). Loaded
+  via `<script type="module" src="/static/js/system-status.js"></script>`
+  inserted immediately after the mcp.js module tag, before `</body>`. Anti-FOUC
+  bootstrap untouched. Diff shape: 1 insertion, 460 deletions across two hunks
+  (455 region + 5 boot).
+- **Numbers:** `system-status.js` = 23,889 bytes / 479 lines (455 region + 5
+  boot moved + 19-line notes/interop tail; CRLF, no BOM, 281 non-ASCII UTF-8
+  bytes). `index.html` 663,402 → 640,717 bytes; 13,630 → 13,171 lines (BOM
+  preserved).
+- **Interop surface: 4 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Inbound/static-handler callers (2): `toggleSysStatusPopover` (pill onclick),
+    `_rerenderSysStatusSurfaces` (typeof-guarded token-usage caller — the bare
+    `typeof` resolves the window prop via the global scope chain; asserted).
+  - Region-generated `on*=` handler targets (2): `_sysStatusSwitchTab` (tab
+    buttons), `refreshSystemStatus` (Refresh button).
+  - Module-private (16 functions + 6 state vars): `fetchSystemStatus`,
+    `fetchSystemUsage`, `renderSysStatusPill`, `renderSysStatusPopover`,
+    `renderSysStatusPanel`, `_positionSysStatusPopover`, `_ssRateLimitHealth`,
+    `_ssRelTime`, `_ssFormatTokens`, `_ssShortenModel`, `_renderProviderHealthRows`,
+    `_renderStatusTab`, `_renderConfigTab`, `_renderMcpTab`,
+    `_renderMcActivitySection`, `_renderUsageTab`; `systemStatusCache`,
+    `systemUsageCache`, `_sysStatusPopoverOpen`, `_sysStatusRefreshing`,
+    `_sysStatusActiveTab`, `_sysUsageFetching`.
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY for all 6 state vars (handlers only CALL functions — no accessor
+    bridge); per-identifier writer scan outside region → zero; zero `this` in
+    region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `esc`, `setTokenMode` (token-mode helper, handler), `mcUsageCache`
+  / token-usage globals, `_isMobileDevice` + appearance/format helpers + browser
+  builtins (`fetch`, `Date`, `Number`, `Math`, `document.*`). The two top-level
+  listeners (`window`-resize + `document`-click) moved WITH the module and fire
+  on the same events. Strict-mode promotion audited: zero module-code `this`
+  (all hits are HTML handler strings/comments), every assignment targets a
+  declared binding or an explicit `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v15` → `mc-push-v16` (no cache list by
+  design; version bump only, same as modules 1–14). Added a v16 changelog line
+  documenting the boot-trap relocation.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/system-status.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses system-status.js in
+    module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+    **This is the boot-trap regression gate** — the inline boot tail no longer
+    references `fetchSystemStatus`, and the SPA boots clean (a `fetchSystemStatus
+    is not defined` ReferenceError would have aborted boot and failed all 5).
+  - Real-server check (throwaway `MC_PORT=5392 python server.py` from the
+    worktree, then KILLED; live :5199 never touched): `/static/js/system-status.js`
+    → 200, `text/javascript; charset=utf-8`, Content-Length 23889 (exact match),
+    `Cache-Control: no-cache` + ETag; `GET /api/system/status` →
+    `{"cache_age_seconds":null}` (no agent has run on the throwaway → empty
+    cache, the realistic state).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — Refresh deliberately NOT clicked, it POSTs
+    `/api/system/status/refresh` which spawns a one-shot `claude` for `/status`;
+    zero model cost) — **40/40 PASS, 0 console errors, 0 page errors**: all 4
+    window.* interop callable; all 16 privates + 6 state vars NOT leaked to
+    window; **boot-trap relocation asserted** — `#sys-status-pill` rendered
+    content after the relocated `fetchSystemStatus()` ran post-parse from the
+    module; popover opens via the REAL `toggleSysStatusPopover(event)` pill
+    path; all 4 tabs (`status`/`config`/`mcp`/`usage`) switch via
+    `_sysStatusSwitchTab` without throwing; `refreshSystemStatus` wired (not
+    invoked); the bare `typeof _rerenderSysStatusSurfaces === 'function'` guard
+    resolves true (global-scope reaches the window prop) and the function repaints
+    without throwing; the document outside-click listener (moved with the module)
+    closes the popover. Screenshot eyeballed: fully styled dashboard, status pill
+    in the header, no FOUC, mascot + sidebar styled.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L93 by the added const, same evaluate step); page boots
+    with system-status.js fulfilled, dies at the same later evaluate. No new
+    breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–14).
+
+### Landmines for module 16 (remaining-core map, post-System-status)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh worktrees;
+   deferred-module timing; module-scoped-globals rule; re-derive boundaries +
+   brace-depth scan; accessor-bridge handler-assigned vars; object-identity
+   bridge for handler-property-written objects; multi-segment / boot-trap carve
+   for parse-time entanglements; don't "repair" quirks; settle CSS animations
+   before screenshots; cross-module window props are normal; surgery scripts in
+   `_scratch/*.py`; don't race region setTimeouts; state-on-modal-entry is a
+   bridge-free win; `openModals` is a `const` NOT a window prop — read it via
+   `(0,eval)('openModals')` in a Playwright probe;
+   `node --input-type=module --check <file>` ERRORS on Node 24 — pipe via stdin).
+2. **The boot-trap relocation (fix (a)) is PROVEN behavior-equivalent for a
+   periodic poll + idle-until-async one-shot** (System status). The recipe:
+   excise the inline `fn();`/`setInterval(fn,…)` boot lines, relocate them
+   byte-verbatim into the deferred module body after the region, and argue the
+   few-hundred-ms-later start is immaterial (no observable first-tick). Use the
+   DUAL two-sided assertion (`seg_pre + region + seg_mid + boot + seg_post ==
+   original`) when a module move also relocates a disjoint boot block. The
+   boot-smoke 5/5 IS the regression gate (a leftover ReferenceError aborts boot).
+   **Caution:** this is safe ONLY when the relocated call has no parse-time-order
+   dependency with surviving inline boot code. System status's two lines were
+   isolated (between `setInterval(refreshScheduleBanner,…)` and the Fallback
+   poll); audit that the boot lines you relocate are self-contained.
+3. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED —
+   re-derive; the inline section is now shifted −459 more from any quoted
+   pre-module-15 line ≥10449, and −1,044 from pre-module-14 lines ≥13475):**
+   - **Update section (~360L) — ENTANGLED (3-segment + boot-trap).** The
+     "Update Clayrune" header span also holds the Power/restart/shutdown dialog
+     (`openPowerDialog`/`performRestart`/`showRestartingOverlay`/
+     `performShutdown`/`showPoweredOffOverlay`) AND the server-restart-detection
+     block with a **parse-time `setTimeout(()=>_checkServerRestart(),1500)`**
+     boot registration; `_handleServerRestart`→`showRestartingOverlay` couples
+     detection↔power. ALSO note `_checkServerRestart()` is called from the
+     15s-fallback `setInterval` (old L12692, now shifted) — so it's a
+     MULTI-consumer inline dep, not just the parse-time setTimeout. A careful
+     2-/3-segment carve + a boot-trap decision for the setTimeout (the proven
+     fix-(a) relocation applies) — but check the `_checkServerRestart` fallback
+     consumer stays satisfied (window-expose it). The biggest-care candidate.
+   - **provider auth/settings (~630L) — ENTANGLED / mis-headered** (unchanged
+     from module-14 landmines): the "Provider Auth helpers" header covers only
+     ~88L; the lines below are the Schedule Banner family under the wrong header;
+     "Auth banner — multi-provider" is a third chunk. The Schedule Banner could
+     be its OWN clean module (2 top-level `document.addEventListener` listeners,
+     safe — same posture as System status's listeners) — but its
+     `refreshScheduleBanner` is an outbound dep of scheduler.js + the inline
+     schedule-banner section, so window-expose it. Derive all three headers.
+   - **Hivemind family (~1,294L)** — tab + dashboard modal + cross-project;
+     shares the inline run-history renderers (`renderRunRows`/
+     `renderRunsPagination`, multi-consumer with scheduler.js — STAY INLINE per
+     the brief); carve hivemind AROUND them.
+   - Provider Settings section (`_renderProviderSettings`) is a settings-family
+     leaf; Process Manager is a small single-function region.
+   - The genuinely-entangled agent-panel/projects-grid CORE + Command Palette's
+     real ~98L (2 accessor bridges) still WAIT for js/store.js.
+
+## Phase 3 — module 16: extract Update/Power/restart-detection → `static/js/update-power.js` (2026-06-10)
+
+- **Module-15 SHA backfill:** module 15 (js/system-status.js) = commit `8215547`.
+- **Candidate selection this run:** the Update section was flagged ENTANGLED
+  (3 headers, boot-trap) in the module-15 landmines. RE-DERIVED below: the
+  three headers (Server-restart detection / Power / Update Clayrune) are ONE
+  entangled family that moves cleanly as a SINGLE contiguous region, and the
+  parse-time boot-trap is IN-region (moves with it — fix (a) for free). Chosen
+  as the cleanest tractable cluster (Hivemind is larger + shares run-history;
+  provider/Schedule-Banner is mis-headered and split).
+- **Region re-derived — ONE family across 3 headers, single contiguous span:**
+  old lines **10797–11213** (`// ── Server-restart detection` header through
+  `showPoweredOffOverlay`'s closing brace at 11212 + one trailing blank 11213).
+  The "Global Settings" banner header (L10795) + its blank (L10796) stay inline
+  ABOVE the region; next section `// ── Provider Settings section` (L11214)
+  stays inline below. The span holds: restart-detection (`_serverStartedAt`/
+  `_restartHandlingInFlight` state + `_checkServerRestart`/`_handleServerRestart`
+  + the boot-trap setTimeout), Update (`refreshUpdateStatus`/
+  `performClayruneUpdate`), and Power (`openPowerDialog`/`performRestart`/
+  `showRestartingOverlay`/`performShutdown`/`showPoweredOffOverlay`) — bound
+  together by `_handleServerRestart`→`showRestartingOverlay` and
+  `performRestart`→`showRestartingOverlay`. Brace-depth top-level scan: depth
+  ends 0, 2 `let` state vars + 9 function decls + exactly **1 OTHER** (the
+  parse-time `setTimeout(()=>{ _checkServerRestart(); }, 1500)` at L10845).
+- **BOOT-TRAP — IN-region, moves with the region (fix (a), behavior-equivalent),
+  no separate relocation needed:** unlike module 15 (where the boot-trap was in
+  the distant inline boot tail and had to be excised + relocated), this cluster's
+  parse-time `setTimeout(()=>_checkServerRestart(),1500)` lives INSIDE the moved
+  span (L10845). When the whole region becomes a deferred `type="module"`, that
+  registration simply runs at module-eval time (post-parse) instead of mid-parse
+  — a ~hundreds-of-ms-later one-shot seed of `_serverStartedAt` from
+  `/api/system/heartbeat`. Equivalent: the seed still lands well before any
+  server restart could be detected (the detection only matters on a LATER
+  heartbeat whose `started_at` differs). Live-validated: after the relocated
+  1.5s timer, `_checkServerRestart()` returns false on the unchanged server,
+  proving the seed took and the detection runs from the module (gate below).
+- **Inbound refs re-verified (formal whole-FILE scan of all 11 names + a
+  WHOLE-REPO sweep — the latter caught 3 cross-module callers the file-only scan
+  missed):**
+  - In index.html: `_checkServerRestart` ×2 real calls (SSE-drop error handler
+    L6372 `_checkServerRestart().then(…)` + the 15s fallback `setInterval` body
+    L12232 `await _checkServerRestart()` — both runtime), `openPowerDialog` ×1
+    (sidebar Power item static `onclick` L445). (`_handleServerRestart`'s only
+    outside hit is a comment.)
+  - **In `static/js/settings-drill.js` (module 6) — 3 cross-module callers:**
+    `onclick="openPowerDialog()"` (L625, Settings→Server), `onclick=
+    "performClayruneUpdate()"` (L632, the Update button), `refreshUpdateStatus()`
+    (L650, the Server-pane render/hydration). These resolve against window at
+    call time — the established cross-module pattern (settings-drill already
+    consumes mobile-pairing's window exports). **The file-only refscan does NOT
+    see other modules — the whole-repo `Grep` sweep is mandatory; it's why
+    these 3 are exposed.**
+  - Whole-repo sweep otherwise: only CHANGELOG.md + this progress log (prose).
+- **What moved:** old lines 10797–11213 → `static/js/update-power.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before +
+  region + after == original`; (2) the new index.html, with the inserted
+  `<script>` tag line removed AND the region re-inserted at the cut point,
+  `== original` byte-for-byte; interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/update-power.js"></script>` inserted
+  immediately after the system-status.js module tag, before `</body>`. Anti-FOUC
+  bootstrap untouched. Diff shape: 1 insertion, 417 deletions.
+- **Numbers:** `update-power.js` = 22,326 bytes / 433 lines (417 moved + 16-line
+  interop tail; CRLF, no BOM, 232 non-ASCII UTF-8 bytes). `index.html` 640,717
+  → 619,515 bytes; 13,171 → 12,755 lines (BOM preserved).
+- **Interop surface: 6 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Inbound/cross-module callers (4): `_checkServerRestart` (SSE-drop handler +
+    15s fallback poll — both inline, runtime), `openPowerDialog` (sidebar Power
+    + settings-drill.js), `performClayruneUpdate` (settings-drill.js Update
+    button), `refreshUpdateStatus` (settings-drill.js render/hydration).
+  - Region-generated `on*=` handler targets (2): `performRestart`,
+    `performShutdown` (the power dialog's Restart / Shut-down buttons).
+  - Module-private (3 functions + 2 state vars): `_handleServerRestart` (called
+    only by `_checkServerRestart`), `showRestartingOverlay` (called only by
+    `_handleServerRestart` + `performRestart` — in-region), `showPoweredOffOverlay`
+    (called only by `performShutdown` — in-region); `_serverStartedAt`,
+    `_restartHandlingInFlight` (zero outside refs, zero handler-assignment).
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY for both state vars (handlers only CALL — no accessor bridge); zero
+    `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `_saveOpenModalsSnapshot` (L1997) + `_flushModalPrefs` (L1983) (modal-prefs
+  helpers, store.js territory, stay inline), `openModals` (`const`, bare
+  identifier), `nextModalZ++`, `_clampModalSize`, `centerModalElement`,
+  `focusModal`, `closeModalById` (handler), `esc`, `API_BASE`, `showToast` +
+  browser builtins (`fetch`, `setTimeout`, `document.*`, `window.location`).
+  Strict-mode promotion audited: zero module-code `this` (all hits are HTML
+  handler strings/comments), every assignment targets a declared binding or an
+  explicit `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v16` → `mc-push-v17` (no cache list by
+  design; version bump only, same as modules 1–15). Added a v17 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/update-power.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses update-power.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+    (Boot-trap regression: the inline boot no longer has the parse-time
+    `_checkServerRestart` seed; the SPA boots clean. The 15s fallback's bare
+    `_checkServerRestart` call resolves the window prop at its +15s fire, long
+    after module eval.)
+  - Real-server check (throwaway `MC_PORT=5392 python server.py` from the
+    worktree, then KILLED; live :5199 never touched): `/static/js/update-power.js`
+    → 200, `text/javascript; charset=utf-8`, Content-Length 22326 (exact match),
+    `Cache-Control: no-cache`; `GET /api/system/update/status` → real git status
+    (branch wt-fe-mech2, has_local_changes true); `GET /api/system/heartbeat` →
+    `started_at` (the seed value).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **STRICTLY read-only** — the restart/shutdown/update buttons are DESTRUCTIVE,
+    so a hard route-guard ABORTED + asserted-zero on `/api/system/restart`,
+    `/shutdown`, `/update/run`, `/update/apply`; we NEVER clicked them and never
+    called `performRestart`/`performShutdown`/`performClayruneUpdate`) —
+    **19/19 PASS, 0 console errors, 0 page errors, NO destructive endpoint hit**:
+    all 6 window.* interop callable; all 5 privates (incl. 2 state vars +
+    `showRestartingOverlay`/`showPoweredOffOverlay`) NOT leaked; **boot-trap
+    relocation asserted** — after the relocated 1.5s timer, `_checkServerRestart()`
+    returns false on the unchanged server (proves the in-region setTimeout seeded
+    `_serverStartedAt` post-parse and the detection runs from the module), and a
+    second call is idempotent-false; `refreshUpdateStatus()` populated the
+    Update hint + button from the real `/api/system/update/status` (the
+    has_local_changes → "Blocked" state); `openPowerDialog()` rendered the power
+    modal (read-only GET `/api/system/restart/status` for the active-flow list)
+    with the `performRestart(…)`/`performShutdown(…)` buttons, then closed
+    without confirming. Screenshot eyeballed: the Update status line + Blocked
+    button rendered from the real endpoint; dashboard fully styled, no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L96 by the added const, same evaluate step); page boots
+    with update-power.js fulfilled, dies at the same later evaluate. No new
+    breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–15).
+
+### Landmines for module 17 (remaining-core map, post-Update/Power)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh worktrees;
+   deferred-module timing; module-scoped-globals rule; re-derive boundaries +
+   brace-depth scan; accessor-bridge handler-assigned vars; object-identity
+   bridge for handler-property-written objects; multi-segment / boot-trap carve
+   for parse-time entanglements; in-region parse-time setTimeout/setInterval
+   moves WITH the region and becomes fix-(a) for free; don't "repair" quirks;
+   settle CSS animations before screenshots; cross-module window props are
+   normal; surgery scripts in `_scratch/*.py`; state-on-modal-entry is a
+   bridge-free win; `openModals` is a `const` — `(0,eval)('openModals')` in a
+   Playwright probe; `node --input-type=module --check <file>` ERRORS on Node 24
+   — pipe via stdin).
+2. **WHOLE-REPO `Grep` sweep is MANDATORY, not optional — the file-only refscan
+   misses cross-module callers.** Module 16's `openPowerDialog`/
+   `performClayruneUpdate`/`refreshUpdateStatus` are called from
+   `settings-drill.js` (module 6), which the index.html-only `refscan.py` does
+   NOT see. Always run the repo-wide `Grep` over `!**/index.html` before
+   finalizing the window-exposure list — an already-extracted sibling module is
+   a real consumer.
+3. **DESTRUCTIVE-feature gating recipe (reuse for any restart/delete/install
+   feature):** add a Playwright `page.route('**/<destructive-endpoint>', r =>
+   { hit.push(...); r.abort(); })` HARD GUARD up front and assert `hit.length
+   === 0` at the end; drive ONLY the read-only paths (GET-backed renders, modal
+   OPEN, the detection/seed probe) and NEVER click the action button or call its
+   handler. For the modal-OPEN assertion, detect the action buttons by their
+   generated `onclick` substring (`performRestart(`/`performShutdown(`) rather
+   than clicking.
+4. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED —
+   re-derive; the inline section is now shifted −416 more from any quoted
+   pre-module-16 line ≥11214):**
+   - **Hivemind family (~1,294L)** — tab (was 8318) + dashboard modal (was 8520)
+     + cross-project (was 11609 post-m15). Shares the inline run-history
+     renderers (`renderRunRows`/`renderRunsPagination` — multi-consumer with
+     scheduler.js, STAY INLINE per the brief); carve hivemind AROUND them. Also
+     check the "Hivemind worker popover" (was 4981) — it may be part of the
+     agent-panel core (SSE/conversation-adjacent), audit before including.
+     Largest remaining non-core family; expect a multi-segment carve.
+   - **provider auth/settings (~630L) — ENTANGLED / mis-headered** (unchanged):
+     the "Provider Auth helpers" header (was 10149 post-m15) covers ~88L; the
+     lines below are the Schedule Banner family under the wrong header; the
+     "Auth banner — multi-provider" (was 9995) is a third chunk. The Schedule
+     Banner could be its OWN clean module (2 top-level `document.addEventListener`
+     — safe, same as System status), but its `refreshScheduleBanner` is an
+     outbound dep of scheduler.js + the inline schedule-banner section, AND its
+     own `setInterval(refreshScheduleBanner, 60000)` is a parse-time boot-trap
+     in the inline tail (fix (a) relocation, same as System status). Derive all
+     three headers; the cleanest sub-extraction is probably the multi-provider
+     Auth banner OR the Schedule Banner as standalone modules.
+   - Provider Settings section (`_renderProviderSettings`, was 11214) is a
+     settings-family leaf (one render function); Process Manager is a small
+     single-function region.
+   - The genuinely-entangled agent-panel/projects-grid CORE (conversation
+     model, modal/tile HTML, SSE slot management, dispatch, status resolver,
+     the Hivemind-worker-popover if it's SSE-coupled) + Command Palette's real
+     ~98L (2 accessor bridges: `cmdPaletteOpen` + `cmdSelectedIndex`) still
+     WAIT for the orchestrator's js/store.js design checkpoint.
+
+## Phase 3 — module 17: extract provider-auth → `static/js/provider-auth.js` (2026-06-10)
+
+- **Module-16 SHA backfill:** module 16 (js/update-power.js) = commit `4b56b9d`.
+- **Candidate selection this run:** the "provider auth/settings (~630L)" named
+  candidate was flagged ENTANGLED / mis-headered. RE-DERIVED below: the clean
+  carveable piece is the provider-auth FAMILY (multi-provider Auth banner +
+  Provider Auth helpers) = ONE contiguous region; the Schedule Banner family
+  (mis-placed under the "Provider Auth helpers" header) stays inline. Chosen
+  over Hivemind (larger, multi-segment, shares run-history) and the Schedule
+  Banner (its own parse-time boot-trap + outbound-dep coupling to scheduler.js).
+- **Region re-derived — Auth-banner + Provider-Auth-helpers are ONE family,
+  single contiguous span:** old lines **9995–10237** (the `// ── Auth banner —
+  multi-provider` header through `_renderClaudeAuthStatusLine`'s close at 10236
+  + one trailing blank 10237). The "Provider Auth helpers" header (L10149) is a
+  SUB-section of the same family — `settingsClaudeAuthCheck` (auth-banner half)
+  calls both `_renderAuthBanner` AND `_renderClaudeAuthStatusLine`
+  (provider-helpers half), binding the two. Brace-depth top-level scan: depth
+  ends 0, 3 state decls (`_authBannerDismissed`/`_authBannerLastReason` `let` +
+  `PROVIDER_AUTH_KEYS` `const`) + 13 function decls, **0 OTHER** (declarations
+  only — no IIFEs, no parse-time calls, no listeners; the cleanest region body
+  since modules 5/6/7). The Schedule Banner `_sbState` (L9984, ABOVE this
+  header) and its functions (`refreshScheduleBanner` at L10239, BELOW) STAY
+  inline — this region lifts the provider-auth middle out from between the two
+  Schedule-Banner halves.
+- **PARSE-TIME TRAP + the one inline shim (boot-trap fix (b), the first non-move
+  edit in this track):** `refreshAuthStatus` is referenced at PARSE TIME by the
+  inline `startRefresh()` (which runs at parse time, L11806-ish) via
+  `setInterval(refreshAuthStatus, 90000)` inside its body. Moving
+  `refreshAuthStatus` to a deferred module would make that bare identifier
+  resolve to `undefined` at `startRefresh()`'s parse-time execution →
+  `setInterval(undefined, 90000)` = the 90s auth poll silently dies = BEHAVIOR
+  CHANGE. **Fix (b):** a 1-line inline edit to `startRefresh` (NOT part of the
+  moved region) — `setInterval(refreshAuthStatus, 90000)` →
+  `setInterval(() => window.refreshAuthStatus && window.refreshAuthStatus(),
+  90000)`. The arrow defers the lookup to each 90s tick (runtime, long after the
+  module evaluates), so the poll still fires at +90s. Behavior-equivalent (the
+  first tick is at +90s either way; the function is loaded by then) — this is
+  the brief's boot-trap fix (b) applied to a registration BURIED inside a
+  surviving inline function rather than a standalone top-level one. The 4
+  remaining `refreshAuthStatus` references (SSE-error handlers L6305/6343,
+  fetchProjects `.then` callback L11790) are all RUNTIME → satisfied by the
+  window export alone. **This is the ONLY inline line changed outside a moved
+  region across modules 1–17; it is documented, minimal, and provably
+  behavior-equivalent.**
+- **Inbound refs re-verified (formal whole-FILE refscan + WHOLE-REPO sweep):**
+  - In index.html: `refreshAuthStatus` ×4 (the parse-time `startRefresh`
+    `setInterval` → shimmed; 2 SSE-error handlers + 1 fetchProjects callback →
+    runtime), `dismissAuthBanner`/`claudeAuthenticate`/`claudeAuthRecheck` ×1
+    each (the STATIC auth-banner HTML onclicks at L498–500),
+    `settingsClaudeLogin`/`settingsClaudeAuthCheck`/`settingsProviderSetEnv`/
+    `settingsProviderTerminalLogin`/`settingsProviderRefresh` (generated onclicks
+    in the inline **Provider Settings section** `_renderProviderSettings`,
+    L10839–10860 — runtime), and **`PROVIDER_AUTH_KEYS` read cross-region** at
+    L10847 (`const envKey = PROVIDER_AUTH_KEYS[p.name]` inside the inline
+    `_renderProviderSettings`).
+  - **Whole-repo sweep:** `settings-drill.js` hit is a COMMENT only (mentions
+    `settingsProviderRefresh` in an `openSettings` interop note) — no code
+    caller. Otherwise CHANGELOG + this log (prose). No live cross-module caller.
+- **What moved:** old lines 9995–10237 → `static/js/provider-auth.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before +
+  region + after == original`; (2) the new index.html, with the inserted
+  `<script>` tag line removed AND the region re-inserted at the cut point,
+  `== original` byte-for-byte — asserted BEFORE the separate inline shim edit,
+  so the region move itself is provably verbatim; interop tail append-only).
+  Loaded via `<script type="module" src="/static/js/provider-auth.js"></script>`
+  inserted immediately after the update-power.js module tag, before `</body>`.
+  Anti-FOUC bootstrap untouched. Diff shape: 1 insertion (tag) + 243 deletions
+  (region) + the 1-line shim edit (4 comment lines + 1 changed line in
+  `startRefresh`).
+- **Numbers:** `provider-auth.js` = 11,503 bytes / 266 lines (243 moved +
+  23-line interop tail; CRLF, no BOM, 258 non-ASCII UTF-8 bytes). `index.html`
+  619,515 → 609,859 bytes by the region move; then the shim Edit added 4 comment
+  lines → final 12,517 lines (BOM preserved, all CRLF).
+- **Interop surface: 9 window function re-exposures + 1 window const, 0 accessor
+  bridges, 0 identity bridges:**
+  - Inbound/static-HTML/cross-region callers (6 fns + 1 const):
+    `refreshAuthStatus` (startRefresh shim + SSE + fetchProjects),
+    `dismissAuthBanner`/`claudeAuthenticate`/`claudeAuthRecheck` (static
+    auth-banner HTML), `settingsClaudeLogin`/`settingsClaudeAuthCheck` (inline
+    Provider Settings section), **`PROVIDER_AUTH_KEYS`** (read-only const read by
+    the inline `_renderProviderSettings` at render time — window-exposed so the
+    bare read resolves; it's never written, so a plain `window.X = X` suffices).
+  - Inline Provider-Settings-section generated onclicks (3): `settingsProviderSetEnv`,
+    `settingsProviderTerminalLogin`, `settingsProviderRefresh`.
+  - Module-private (4 fns + 2 state vars): `_renderAuthBanner`, `_authBannerMessage`,
+    `_renderClaudeAuthStatusLine`, `refreshProviderAuthStatus`;
+    `_authBannerDismissed`, `_authBannerLastReason` (zero outside refs, zero
+    handler-assignment).
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY for both state vars; the region itself generates NO `on*=` handlers
+    (the auth-banner buttons' onclicks live in the static HTML, outside the
+    region); zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `esc`, `showToast`, `alert`/`confirm`, `openModals` (`const`,
+  bare), `closeModalById`, `openSettings`/`refreshSettings` (the
+  `settingsProviderRefresh` fallback), `_agentProviders` (the provider list
+  global — read for display names), `setTimeout` + browser builtins. Strict-mode
+  promotion audited: zero module-code `this`; every assignment targets a declared
+  binding or an explicit `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v17` → `mc-push-v18` (no cache list by
+  design; version bump only). Added a v18 changelog line documenting the shim.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/provider-auth.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses provider-auth.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+    **This is the shim regression gate** — `startRefresh()` runs at boot with the
+    deferred `() => window.refreshAuthStatus && …` form; the SPA boots clean (a
+    leftover bare `refreshAuthStatus` would have captured undefined, but boot
+    would still pass — so the shim's *behavior* is asserted in the Chromium gate
+    below, not here; here we only confirm no boot throw).
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/provider-auth.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 11503 (exact match),
+    `Cache-Control: no-cache`; `GET /api/claude/auth-status` → `{ok:true}` (this
+    machine's claude is signed in → banner hidden).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — a hard route-guard ABORTED + asserted-zero on
+    `/api/agent/provider/*/env`, `/login-launch`, `/api/claude/login-launch`;
+    Save/Launch/Sign-in NEVER clicked) — **28/28 PASS, 0 console errors, 0 page
+    errors, NO side-effecting endpoint hit**: 9 window fns + `PROVIDER_AUTH_KEYS`
+    const exposed (`.gemini === 'GEMINI_API_KEY'`); all 6 privates (incl. 2 state
+    vars) NOT leaked; **the shim FORM asserted** — `() => window.refreshAuthStatus
+    && window.refreshAuthStatus()` is callable and drove the real
+    `/api/claude/auth-status` (ok:true → banner hidden); the **not-ok render
+    path** (stubbed `{ok:false, reason:'not_logged_in'}`) showed the banner via
+    `_renderAuthBanner` with the correct `_authBannerMessage` text
+    ("Claude isn't signed in…"); `dismissAuthBanner()` hid it; **dismiss-sticky-
+    per-reason** verified (same reason stays hidden after re-fetch);
+    `settingsClaudeAuthCheck`/`settingsProviderRefresh` wired. Screenshot
+    eyeballed: dashboard fully styled, banner correctly hidden, no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L99, same evaluate step); page boots with provider-auth.js
+    fulfilled, dies at the same later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–16).
+
+### Landmines for module 18 (remaining-core map, post-provider-auth)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap; bg-
+   framing-check broken at base; CRLF+BOM binary surgery; build-macos.spec
+   bundles static/ wholesale; npm install in fresh worktrees; deferred-module
+   timing; module-scoped-globals rule; re-derive boundaries + brace-depth scan;
+   accessor-bridge handler-assigned vars; object-identity bridge for
+   handler-property-written objects; multi-segment / boot-trap carve for
+   parse-time entanglements; in-region setTimeout/setInterval moves WITH the
+   region; **buried parse-time registrations inside a surviving inline function
+   need a 1-line inline deferral shim — fix (b) — NOT a region change**;
+   WHOLE-REPO grep is mandatory; don't "repair" quirks; cross-module window
+   props normal; `(0,eval)('openModals')` in Playwright probes; destructive-
+   feature route-guard recipe; `node --input-type=module --check <file>` ERRORS
+   on Node 24 — pipe via stdin).
+2. **A cross-region read of a `const` needs window exposure too.**
+   `PROVIDER_AUTH_KEYS` is read (not just functions called) by the inline
+   `_renderProviderSettings` — a top-level `const` is visible to inline code via
+   the global scope, but once it moves to a module the inline reader needs
+   `window.PROVIDER_AUTH_KEYS`. The refscan flags these as plain outside hits
+   (no WHOLESALE-WRITE/prop-write marker since they're reads) — don't overlook a
+   read-only cross-region binding; window-expose it (no bridge needed, it's
+   never written).
+3. **`startRefresh` is the recurring parse-time hazard.** It is called at parse
+   time (inline boot) and its body references feature functions
+   (`refreshAuthStatus` here; `refreshAuthStatus` was the only one this round).
+   ANY future module whose function is referenced inside `startRefresh`'s body
+   (or any other parse-time-executed inline function) needs the same 1-line
+   deferral shim. Grep `startRefresh` (and the inline boot tail) for the
+   region's function names before moving.
+4. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED —
+   re-derive; the inline section is now shifted −242 more from any quoted
+   pre-module-17 line ≥10238 (then +4 from the shim comment); the Schedule
+   Banner functions are now at ~9997+ after this removal):**
+   - **Schedule Banner family** — `_sbState` (was 9984) + functions
+     (`refreshScheduleBanner`/`_sbRender`/`toggleSchedulePanel`/`_sbLoadRecent`/
+     `_sbOpenTranscript`/`_sbOpenAgentLog`/etc.) now CONTIGUOUS after the
+     provider-auth removal (state + functions were split AROUND provider-auth;
+     they're adjacent again). 2 top-level `document.addEventListener` (click +
+     Escape — safe) + a parse-time `setInterval(refreshScheduleBanner, 60000)`
+     in the inline boot tail (fix (a) relocation OR fix (b) shim) AND a parse-
+     time/boot reference — AND `refreshScheduleBanner` is an OUTBOUND dep of
+     scheduler.js (window-exposed already) + the inline schedule-banner render.
+     Also `formatScheduleTime` (scheduler.js, inline) is called by `_sbRender`.
+     A tractable next module with one boot-trap; derive carefully.
+   - **Provider Settings section** (`_renderProviderSettings`, the inline reader
+     of `PROVIDER_AUTH_KEYS`/`settingsProvider*`) — a settings-family leaf (one
+     render function + maybe helpers). Now that provider-auth's helpers are a
+     module, this section's only deps are window props (already bridged) — could
+     be a small clean module or join a settings-helpers grouping.
+   - **Hivemind family (~1,294L)** — tab + dashboard modal + cross-project;
+     shares the inline run-history renderers (STAY INLINE); the "Hivemind worker
+     popover" (was 4981) sits in the agent-panel/conversation zone — audit
+     whether it's SSE/store.js-coupled before including. Largest remaining
+     non-core family.
+   - Process Manager is a small single-function region.
+   - The genuinely-entangled agent-panel/projects-grid CORE + Command Palette's
+     real ~98L (2 accessor bridges) still WAIT for js/store.js.
+
+## Phase 3 — module 18: extract Schedule Banner → `static/js/schedule-banner.js` (2026-06-10)
+
+- **Module-17 SHA backfill:** module 17 (js/provider-auth.js) = commit `4be9b19`.
+- **Candidate selection this run:** the Schedule Banner family became CONTIGUOUS
+  after module 17 lifted the provider-auth middle out from between its two halves
+  (`_sbState` const above, functions below). Chosen as the clean next module (one
+  standalone-line boot-trap — fix (a), like System status — vs. Hivemind's larger
+  multi-segment carve).
+- **Region re-derived:** old lines **9975–10216** (the `// ── Schedule Banner`
+  header through `_sbOpenAgentLog`'s close at 10198 + the two top-level
+  `document.addEventListener` (click L10201 + Escape-keydown L10210) + 1 trailing
+  blank 10216). Next section `// ── New Project Creation` (L10218) stays inline.
+  Brace-depth top-level scan: depth ends 0, `_sbState` const + 9 function decls +
+  exactly **2 OTHER** (the click + keydown listeners — safe, listener order not
+  observable; same posture as System status / walkthrough).
+- **BOOT-TRAP relocation (fix (a), standalone line — like module 15):** the
+  inline boot tail had, at old lines 11568–11569, a `// Refresh schedule banner
+  every 60s` comment + `setInterval(refreshScheduleBanner, 60000)`. Since
+  `refreshScheduleBanner` is now in a deferred module, this RELOCATES byte-verbatim
+  into the module body (a clean standalone excision, NOT buried in a function like
+  module 17's `startRefresh` case). Equivalent: the 60s poll starts a few hundred
+  ms post-parse; the banner is non-critical and renders from
+  `refreshScheduleBanner`'s async `/api/schedules` fetch. The initial paint is
+  preserved by the INLINE `fetchProjects().then(…)` callback's
+  `refreshScheduleBanner()` (L11550, runtime — now resolves `window.refreshScheduleBanner`).
+- **Inbound refs re-verified (formal whole-FILE refscan + WHOLE-REPO sweep):**
+  - In index.html: `refreshScheduleBanner` ×2 — the fetchProjects `.then`
+    initial-paint callback (L11550, runtime) + the boot `setInterval` (L11569,
+    relocated). All other region names (`_sbRender`/`_sbLoadRecent`/`_sbFormatAbs`/
+    `_sbState` + the handler targets) have ZERO non-region, non-handler refs.
+  - **WHOLE-REPO sweep:** `scheduler.js` (module 13) calls `refreshScheduleBanner()`
+    **×3** (in `saveSchedule`/`toggleScheduleEnabled`/`deleteSchedule`, runtime,
+    after schedule mutations) — cross-module callers that resolve
+    `window.refreshScheduleBanner` at click time. scheduler.js loads BEFORE this
+    module (tag order), but the calls are runtime (button clicks), so ordering is
+    moot. Otherwise CHANGELOG + this log (prose).
+- **What moved:** old lines 9975–10216 (region) + 11568–11569 (boot-trap) →
+  `static/js/schedule-banner.js`, **byte-verbatim** (DUAL two-sided binary
+  reassembly assertion: (1) `seg_pre + region + seg_mid + boot + seg_post ==
+  original`; (2) new index.html with the inserted `<script>` tag removed AND both
+  the region and the boot block re-inserted at their original cut points,
+  `== original` byte-for-byte; relocation note + interop tail append-only). Loaded
+  via `<script type="module" src="/static/js/schedule-banner.js"></script>`
+  inserted after the provider-auth.js module tag, before `</body>`. Diff shape:
+  1 insertion, 244 deletions across two hunks (242 region + 2 boot).
+- **Numbers:** `schedule-banner.js` = 10,235 bytes / 266 lines (242 region + 2
+  boot moved + 22-line notes/interop tail; CRLF, no BOM, 122 non-ASCII UTF-8
+  bytes). `index.html` 610,233 → 601,313 bytes; 12,517 → 12,274 lines (BOM
+  preserved).
+- **Interop surface: 6 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Inbound/cross-module callers (1): `refreshScheduleBanner` (inline
+    fetchProjects initial paint + scheduler.js ×3 mutations — all runtime).
+  - Region-generated `on*=` handler targets (5): `toggleSchedulePanel`,
+    `_sbSetTab`, `_sbSetWindow`, `_sbOpenTranscript`, `_sbOpenAgentLog` (the last
+    two via the `${handler}` template-variable indirection in `_sbRender`'s recent
+    rows — caught by scanning template-literal `'_sb…('`/`` `_sb…( `` forms, not
+    just literal `on*=`).
+  - Module-private (3 fns + 1 const): `_sbRender`, `_sbLoadRecent`, `_sbFormatAbs`,
+    `_sbState` (`const`, property-mutated only by region code; zero outside refs,
+    zero generated-handler assignment → no bridge).
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan for `_sbState`
+    EMPTY; zero `this` in region code.
+- **Pre-existing quirk discovered + BYTE-PRESERVED (NOT repaired):** with 0
+  upcoming schedules, `_sbRender` early-returns (`if (!_sbState.upcoming.length &&
+  !_sbState.open) { banner.classList.add('hidden'); return; }`) and does NOT
+  regenerate `banner.innerHTML` — so on close the stale inner `#sb-panel` keeps
+  its `.open` class while the PARENT `#schedule-banner` goes `hidden`
+  (display:none). The real "closed" signal with 0 schedules is
+  `#schedule-banner.hidden`, not `#sb-panel.open`. This is unchanged behavior;
+  the gate asserts the parent re-hide (see below). (A move must not "fix" this.)
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `esc`, `formatScheduleTime` (scheduler.js window export — called by
+  `_sbRender`), `openScheduler` (scheduler.js window export — banner-row onclick),
+  `openTranscriptViewer`, `openProjectModal`, `modalActiveTab`,
+  `_providerBadge`/`_sbFormatAbs` + browser builtins. Strict-mode promotion
+  audited: zero module-code `this`; every assignment targets a declared binding or
+  an explicit `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v18` → `mc-push-v19` (no cache list by design;
+  version bump only). Added a v19 changelog line documenting the boot relocation.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/schedule-banner.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses schedule-banner.js in
+    module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered
+    (boot-trap regression: the standalone `setInterval(refreshScheduleBanner,…)`
+    is gone from inline; the SPA boots clean).
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/schedule-banner.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 10235 (exact match),
+    `Cache-Control: no-cache`; `GET /api/schedules` → `[]`, `GET /api/recent-runs`
+    → `{runs:[]}` (the empty state).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — no agent dispatch, zero model cost) — **22/22 PASS, 0 console
+    errors, 0 page errors**: 6 window.* interop callable; 4 module-privates
+    (incl. `_sbState`) NOT leaked; `refreshScheduleBanner()` ran against the real
+    `/api/schedules` (banner correctly STAYS hidden with 0 schedules — the
+    byte-preserved quirk); `toggleSchedulePanel` opened the dropdown (un-hides +
+    renders `#sb-trigger` + the Recent/Upcoming tabs, kicks `_sbLoadRecent` →
+    `/api/recent-runs`); `_sbSetTab(upcoming)`/`_sbSetTab(recent)` switch without
+    throwing; `_sbSetWindow(24)` re-fetches the 24h window without throwing; the
+    **outside-click document listener (moved with the module) re-hides
+    `#schedule-banner`** (the correct close signal with 0 schedules). Screenshot
+    eyeballed: dashboard fully styled, banner correctly hidden, no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L102, same evaluate step); page boots with
+    schedule-banner.js fulfilled, dies at the same later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–17).
+
+### Landmines for module 19 (remaining-core map, post-Schedule-Banner)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap; bg-
+   framing-check broken at base; CRLF+BOM binary surgery; build-macos.spec
+   bundles static/ wholesale; npm install in fresh worktrees; deferred-module
+   timing; module-scoped-globals rule; re-derive boundaries + brace-depth scan;
+   accessor-bridge handler-assigned vars; object-identity bridge for handler-
+   property-written objects; multi-segment / boot-trap carve (in-region setTimeout/
+   setInterval moves WITH the region = fix (a); a standalone inline-tail boot line
+   relocates into the module = fix (a); a buried-in-an-inline-function registration
+   needs a 1-line deferral shim = fix (b)); WHOLE-REPO grep mandatory; a
+   cross-region `const` READ needs window exposure; **scan template-variable
+   `${handler}` onclicks (`'_fn('`/`` `_fn( ``), not just literal `on*=`, for the
+   full handler set**; don't "repair" pre-existing quirks (e.g. `_sbRender`'s
+   0-schedule early-return that leaves a stale inner `#sb-panel.open`); cross-
+   module window props normal; `(0,eval)('openModals')` in Playwright probes;
+   destructive-feature route-guard recipe; `node --input-type=module --check
+   <file>` ERRORS on Node 24 — pipe via stdin).
+2. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED —
+   re-derive; the inline section is now shifted −243 more from any quoted
+   pre-module-18 line ≥10217):**
+   - **Hivemind family (~1,294L)** — the LARGEST remaining non-core family: tab
+     (was 8318) + dashboard modal (was 8520) + cross-project (was 11192, now
+     shifted). Shares the inline run-history renderers (`renderRunRows`/
+     `renderRunsPagination` — multi-consumer with scheduler.js, STAY INLINE per
+     the brief); carve hivemind AROUND them. The "Hivemind worker popover" (was
+     4981) sits in the agent-panel/conversation zone (between Agent Panel L4854
+     and Conversation model L5061) — likely SSE/store.js-coupled; AUDIT whether
+     it's separable before including (it may belong to the store.js core, not the
+     Hivemind feature module). Expect a multi-segment carve + a careful
+     run-history-stays-inline boundary. This is the last big non-core win.
+   - **Provider Settings section** (`_renderProviderSettings`) — a settings-family
+     leaf; its deps on `PROVIDER_AUTH_KEYS`/`settingsProvider*` are now all window
+     props (bridged by module 17), so it could move cleanly as a small module or
+     join a settings-helpers grouping.
+   - Process Manager (small single-function region).
+   - The agent-panel/projects-grid CORE (conversation model, modal/tile HTML, SSE
+     slot management, dispatch, status resolver, the Hivemind-worker-popover if
+     SSE-coupled) + Command Palette's real ~98L (2 accessor bridges:
+     `cmdPaletteOpen` + `cmdSelectedIndex`) still WAIT for the orchestrator's
+     js/store.js design checkpoint. Once the non-core queue (Hivemind + Provider
+     Settings + Process Manager) is exhausted, the remainder IS the store.js pass.
+
+## Phase 3 — module 19: extract Provider Settings section → `static/js/provider-settings.js` (2026-06-10)
+
+- **Module-18 SHA backfill:** module 18 (js/schedule-banner.js) = commit `f62c833`.
+- **Candidate selection this run:** a small clean leaf (the `_renderProviderSettings`
+  Settings block), now fully bridgeable since module 17 made all its provider-action
+  deps window props. Chosen over the larger Hivemind carve (whose worker popover is
+  store.js-coupled — see landmines).
+- **Region re-derived — ONE function (header-to-header mismatch, 7th time):** old
+  lines **10312–10413** (the `// ── Provider Settings section` header through
+  `_renderProviderSettings`'s close at 10412 + one trailing blank 10413). The
+  header-to-header span (to Process Manager at 10477) ALSO contains the GENERIC
+  settings helpers `saveSetting`/`toggleSetting`/`setBriefRepliesMode`/
+  `saveModelChoice` (10414+) — shared settings infrastructure used by virtually
+  every settings control app-wide (store.js/settings-core territory) — those STAY
+  inline. Brace-depth top-level scan: depth ends 0, exactly 1 function decl
+  (`_renderProviderSettings`), 0 OTHER. (The "Global Settings" banner header at
+  L10310 stays inline above.)
+- **Inbound refs re-verified (formal whole-FILE refscan + WHOLE-REPO sweep):**
+  the index.html-internal refscan found ZERO outside refs — but the **WHOLE-REPO
+  sweep** caught the real caller: `settings-drill.js` (module 6) interpolates
+  `${_renderProviderSettings(cfg)}` at L371 inside `_renderSettings`'s template
+  (runtime, when Settings renders) → cross-module window caller. (Mandatory-grep
+  lesson again: the file-only scan misses sibling-module callers.) Otherwise only
+  prose hits.
+- **What moved:** old lines 10312–10413 → `static/js/provider-settings.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before + region
+  + after == original`; (2) the new index.html, with the inserted `<script>` tag
+  line removed AND the region re-inserted at the cut point, `== original`
+  byte-for-byte; interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/provider-settings.js"></script>` inserted
+  after the schedule-banner.js module tag, before `</body>`. Diff shape: 1
+  insertion, 102 deletions.
+- **Numbers:** `provider-settings.js` = 5,871 bytes / 111 lines (102 moved +
+  9-line interop tail; CRLF, no BOM, 179 non-ASCII UTF-8 bytes). `index.html`
+  601,313 → 596,063 bytes; 12,274 → 12,173 lines (BOM preserved).
+- **Interop surface: 1 window function re-exposure, 0 bridges:**
+  - Cross-module caller (1): `_renderProviderSettings` (settings-drill.js's
+    `_renderSettings` template — runtime).
+  - Module-private: none (the single function IS the export).
+  - Formal scans: zero generated-handler assignment; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `_agentProviders` (the provider list global, inline), `esc`, and the **module-17
+  window props** `PROVIDER_AUTH_KEYS` / `settingsClaudeLogin` / `settingsClaudeAuthCheck`
+  / `settingsProviderSetEnv` / `settingsProviderTerminalLogin` /
+  `settingsProviderRefresh` (referenced inside the generated `on*=` handler strings
+  this function builds — resolved at click time against window). `saveSetting`
+  (the default-provider dropdown onchange — stays inline as shared settings infra).
+  Strict-mode promotion audited: zero module-code `this`; the single assignment is
+  the `window.` export.
+- **sw.js:** `SW_VERSION` `mc-push-v19` → `mc-push-v20` (no cache list by design;
+  version bump only). Added a v20 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/provider-settings.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses provider-settings.js in
+    module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/provider-settings.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 5871 (exact match).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — Sign-in/Save/Launch never clicked) — **9/9 PASS, 0 console
+    errors, 0 page errors**: `window._renderProviderSettings` exposed + callable
+    (returns the `#settings-providers-section` markup with the Claude sign-in
+    control); the **REAL caller path** verified — `openSettings()` →
+    `drillSettings('agent')` rendered `#settings-providers-section` via
+    settings-drill.js calling `window._renderProviderSettings`, with the
+    cross-module `settingsClaudeLogin` onclick (module-17 interop) intact.
+    Screenshot caught the `settingsPaneIn` fade mid-animation (the documented
+    landmine — DOM assertions are the source of truth, all passed).
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L105, same evaluate step). No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–18).
+
+### Landmines for module 20 (remaining-core map, post-Provider-Settings)
+
+1. All prior landmines still apply verbatim (see the module-18 list — anti-FOUC,
+   route.fulfill ×2, CI path-filter gap, bg-framing-check broken at base,
+   CRLF+BOM binary surgery, build-macos.spec, npm install, deferred-module
+   timing, module-scoped-globals, re-derive + brace-scan, accessor/identity
+   bridges, multi-segment/boot-trap carves + the three boot-trap fixes,
+   WHOLE-REPO grep mandatory, cross-region const reads, template-`${handler}`
+   scanning, don't repair quirks, `(0,eval)('openModals')`, destructive-feature
+   route-guard, settle `settingsPaneIn` before screenshots, `node
+   --input-type=module --check <file>` ERRORS on Node 24 — pipe via stdin).
+2. **The non-core queue is nearly exhausted. What remains:**
+   - **Hivemind family** — the LAST big non-core win, but a careful carve:
+     * The **Hivemind worker popover** (was 4981, in the agent-panel zone L4854–5061)
+       reads `agentStatusCache` + `agentHistory` + `hivemindCache` — STORE.JS-
+       COUPLED (the smear the brief reserves for last). It is immediately followed
+       by `let _skipAgentOutput` + `agentPanelHTML` (the agent-panel core). **Leave
+       the worker popover for the store.js pass.**
+     * The **Hivemind tab (was 8318) + Dashboard Modal (was 8520)** span (8318–9063)
+       reads `hivemindCache` (8×) but does NOT read the store.js smear
+       (`agentStatusCache`/`agentHistory`/`agentOutputBuffers`/`agentEventSources`
+       = 0 refs each — verified). Plus **Cross-project Hivemind view** (was 11192).
+       These THREE are likely carveable as a Hivemind module IF `hivemindCache` is a
+       Hivemind-family global (verify it isn't written by the agent-panel core) AND
+       around the shared inline run-history renderers (`renderRunRows`/
+       `renderRunsPagination` — STAY inline, multi-consumer with scheduler.js). The
+       Hivemind run-history consumer the module-13 entry noted is here. Expect a
+       2-/3-segment carve. **Re-derive the exact dashboard-modal end (the Agent
+       Console at 9064 is NOT hivemind) and audit `hivemindCache`'s writers before
+       committing to a move.**
+   - **Process Manager** (`openProcessManager` + `refreshProcessList`, ~48L, was
+     10477) — a small single-feature region; check it doesn't read the store.js
+     smear, then it's a clean small module. Likely the easiest remaining win.
+   - Everything else (conversation model, modal/tile HTML, SSE slot management,
+     dispatch, status resolver, the worker popover, Command Palette's real ~98L
+     with its 2 accessor bridges) is the **store.js design pass** — HARD STOP per
+     the brief.
+
+## Phase 3 — module 20: extract Process Manager → `static/js/process-manager.js` (2026-06-10)
+
+- **Module-19 SHA backfill:** module 19 (js/provider-settings.js) = commit `d5a46e2`.
+- **Candidate selection this run:** the smallest clean remaining win — the Process
+  Manager modal — and the last easy non-core family before the Hivemind carve /
+  store.js pass.
+- **Region re-derived — 2-SEGMENT (the family is SPLIT, mis-filed):**
+  `openProcessManager` sits under the `// ── Process Manager` header (old 10375),
+  but its helpers `_formatDuration` + `refreshProcessList` + `killTrackedProcess` +
+  `cleanupOrphanedProcesses` are mis-filed ~480 lines down UNDER the `// ──
+  Cross-project Hivemind view` header (old 10889–10969, right before the inline
+  boot tail). So the move is two byte-verbatim segments:
+  * **segA** old 10375–10422 (header + `openProcessManager()` + 1 blank).
+  * **segB** old 10889–10970 (`_formatDuration` + `refreshProcessList` +
+    `killTrackedProcess` + `cleanupOrphanedProcesses` + 1 blank).
+  The gap (10423–10888 = Run history + Cross-project Hivemind) STAYS inline.
+  Brace-depth top-level scan of each segment: both end depth 0; segA = 1 fn, segB
+  = 4 fns; 0 OTHER in either (no IIFEs/parse-time calls/listeners). `_formatDuration`
+  is Process-Manager-PRIVATE (used only by `refreshProcessList` at one call site —
+  verified).
+- **Inbound refs re-verified (precise scan EXCLUDING BOTH segments + WHOLE-REPO
+  sweep):** only `openProcessManager` has outside refs — L2649 (`sidebarNav('processes')`)
+  + L2845 (command-palette `Processes` action) — both runtime. The other 4 names
+  have ZERO refs outside the two segments (a custom scan that excludes BOTH spans,
+  not the naive single-range refscan, was used since the segments are far apart).
+  Whole-repo sweep: only prose. No cross-module callers.
+- **What moved:** old lines 10375–10422 (segA) + 10889–10970 (segB) →
+  `static/js/process-manager.js`, **byte-verbatim** (SPLIT two-sided binary
+  reassembly assertion: (1) `seg_pre + segA + seg_mid + segB + seg_post ==
+  original` proving both spans are clean disjoint byte ranges; (2) the new
+  index.html — with the inserted `<script>` tag removed AND both segA and segB
+  re-inserted at their original cut points — `== original` byte-for-byte; interop
+  tail append-only; module body = segA + segB + tail, the only non-verbatim aspect
+  being the cosmetic join point — both segments individually verbatim, same class
+  as scheduler.js's 2-segment `timeAgoShort` carve). Loaded via
+  `<script type="module" src="/static/js/process-manager.js"></script>` after the
+  provider-settings.js module tag, before `</body>`. Diff shape: 1 insertion, 130
+  deletions across two hunks (48 segA + 82 segB).
+- **Numbers:** `process-manager.js` = 6,363 bytes / 142 lines (48 segA + 82 segB
+  moved + 12-line interop tail; CRLF, no BOM, 201 non-ASCII UTF-8 bytes).
+  `index.html` 596,063 → 590,543 bytes; 12,173 → 12,044 lines (BOM preserved).
+- **Interop surface: 4 window function re-exposures, 0 bridges:**
+  - Inbound caller (1): `openProcessManager` (sidebarNav + palette).
+  - Region-generated `on*=` handler targets (3): `refreshProcessList`,
+    `killTrackedProcess`, `cleanupOrphanedProcesses` (the modal's Refresh / Kill /
+    Cleanup buttons).
+  - Module-private (1): `_formatDuration` (used only by `refreshProcessList`).
+  - Formal scans: zero generated-handler assignment; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `openModals` (`const`, bare), `nextModalZ++`, `restoreModal`, `focusModal`,
+  `_clampModalSize`, `centerModalElement`, `minimizeModal`/`closeModalById`
+  (handlers), `API_BASE`, `esc`, `showToast`, `confirm` + browser builtins. No
+  store.js smear (`agentStatusCache`/`agentHistory`/etc. — 0 refs; the segments
+  read only DOM + `/api/processes`). Strict-mode promotion audited: zero
+  module-code `this`; every assignment targets a declared binding or a `window.`
+  property.
+- **sw.js:** `SW_VERSION` `mc-push-v20` → `mc-push-v21` (no cache list by design;
+  version bump only). Added a v21 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/process-manager.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses process-manager.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/process-manager.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 6363 (exact match);
+    `GET /api/processes` → `[]` (no tracked processes — the empty state).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — Kill + Cleanup are DESTRUCTIVE POSTs, so a hard route-guard
+    ABORTED + asserted-zero on `/api/processes/*/kill` and `/api/processes/cleanup`;
+    never clicked) — **16/16 PASS, 0 console errors, 0 page errors, NO destructive
+    endpoint hit**: 4 window.* interop callable; `_formatDuration` NOT leaked;
+    Process Manager modal opens via the REAL `sidebarNav('processes')` path
+    (`#process-list` + `#process-count` + the wired Cleanup button); list populated
+    from the real `GET /api/processes` (empty-state "No tracked processes.");
+    `refreshProcessList()` re-ran without throwing; kill/cleanup wired but never
+    invoked. Screenshot eyeballed: fully styled Process Manager modal (title,
+    counter, Refresh/Cleanup buttons, empty state), sidebar nav item active, no
+    FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module 1;
+    line shifted to L108, same evaluate step). No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–19).
+
+### Landmines for module 21 (the non-core queue is now down to Hivemind)
+
+1. All prior landmines still apply verbatim (see the module-18/19 lists).
+2. **The non-core queue is essentially EXHAUSTED. Only the Hivemind family
+   remains as a non-store.js candidate, and it is a careful carve:**
+   - **Hivemind worker popover** (was 4981, in the agent-panel zone L4854–5061) —
+     STORE.JS-COUPLED (reads `agentStatusCache` + `agentHistory` + `hivemindCache`;
+     immediately followed by `agentPanelHTML`). **Leave for the store.js pass.**
+   - **Hivemind tab + Dashboard Modal** (was 8318–9063) — reads `hivemindCache`
+     (8×) but NOT the store.js smear (verified 0 refs to `agentStatusCache`/
+     `agentHistory`/`agentOutputBuffers`/`agentEventSources`). + **Cross-project
+     Hivemind view** (was 11192, now shifted; note Process Manager's helpers were
+     removed FROM the top of that region this module, so re-derive its current
+     bounds). These THREE could form a Hivemind module IF: (a) `hivemindCache`'s
+     WRITERS are all within the Hivemind family (audit — if the agent-panel core
+     writes it, it's shared state needing an identity bridge or store.js); (b) the
+     carve goes AROUND the shared inline run-history renderers (`renderRunRows`/
+     `renderRunsPagination` — STAY inline, multi-consumer with scheduler.js); (c)
+     the exact Dashboard-Modal end is re-derived (Agent Console at old 9064 is NOT
+     hivemind). Expect a 2-/3-segment carve. **This is the last non-core module;
+     if `hivemindCache` is shared with the agent-panel core, DEFER it to store.js
+     and STOP.**
+   - Everything else is the **store.js design pass** — HARD STOP per the brief
+     (conversation model, modal/tile HTML, SSE slot management, dispatch, status
+     resolver, the worker popover, Command Palette's real ~98L + its 2 accessor
+     bridges `cmdPaletteOpen`/`cmdSelectedIndex`).
+
+## Phase 3 — module 21: extract Cross-project Hivemind view → `static/js/cross-hivemind.js` (2026-06-10)
+
+- **Module-20 SHA backfill:** module 20 (js/process-manager.js) = commit `ccb221b`.
+- **Candidate selection this run — the Hivemind family SPLITS cleanly:** the
+  module-20 landmines flagged the Hivemind family as the last non-core candidate
+  but gated on whether `hivemindCache` is shared with the agent-panel core. AUDIT
+  RESULT: `hivemindCache` (declared L8320 in the Hivemind TAB region) is READ by
+  the Tile HTML core (L1200/1396) AND the store.js-coupled worker popover (L5007)
+  → the **tab + Dashboard Modal stay for the store.js pass** (extracting them would
+  push a `hivemindCache` identity bridge into the projects-grid core renderer).
+  **BUT the Cross-project Hivemind view is a SEPARATE, self-contained family** that
+  does NOT touch `hivemindCache` — it has its own `_allHivemindFilter`/
+  `_allHivemindsCache` state (the cross-backlog/all-MCP pattern). That's this module.
+- **Region re-derived — self-contained, single contiguous span (header-to-header
+  mismatch, 8th time):** old lines **10557–10840** (the `// ── Cross-project
+  Hivemind view` header through `newHivemindFromGlobal`'s close at 10839 + 1
+  trailing blank 10840). The header-to-header span (to Native FCM push at 10928)
+  ALSO held the inline boot tail — `startRefresh` (L10842, with the module-17 shim)
+  + the filter-dropdown binding + grid-layout fetch + density/feed/viewmode restores
+  + `applyAdvancedFlags()` + the SW registration (10842–10927) — the SAME recurring
+  boot-tail trap; those STAY inline. Brace-depth top-level scan of the REAL region:
+  depth ends 0, 3 state decls (`_allHivemindFilter`/`_allHivemindsCache` `let` +
+  `HM_STALE_HOURS` `const`) + 10 function decls, 0 OTHER (no IIFEs/parse-time
+  calls/listeners in the family proper).
+- **Inbound refs re-verified (formal whole-FILE refscan EXCLUDING the boot tail +
+  WHOLE-REPO sweep):** outside refs are exactly — `openAllHivemindsForProject` ×1
+  (project three-dot menu onclick L1649), `openAllHiveminds` ×1
+  (`sidebarNav('hivemind')` L2651), `renderAllHiveminds` ×1 (the central `render()`
+  L835 — but **GUARDED** by `if (openModals.has('__all_hivemind'))`, so it fires
+  only once the modal is open = necessarily after this deferred module evaluates;
+  same safe pattern as cross-backlog's `renderAllBacklog`). All other 9 names
+  (`_hmEffectiveStatus`/`_hmShortId`/`loadAllHiveminds`/`_hmTreeMiniViz`/
+  `_hmRelativeTime`/`newHivemindFromGlobal`/`_allHivemindFilter`/`_allHivemindsCache`/
+  `HM_STALE_HOURS`) are region-only. **WHOLE-REPO sweep: ZERO non-index hits** (no
+  cross-module callers in other JS modules — unlike modules 16–19).
+- **What moved:** old lines 10557–10840 → `static/js/cross-hivemind.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before + region +
+  after == original`; (2) the new index.html, with the inserted `<script>` tag line
+  removed AND the region re-inserted at the cut point, `== original` byte-for-byte;
+  interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/cross-hivemind.js"></script>` after the
+  process-manager.js module tag, before `</body>`. Diff shape: 1 insertion, 283
+  deletions.
+- **Numbers:** `cross-hivemind.js` = 14,805 bytes / 300 lines (284 moved + 16-line
+  interop tail; CRLF, no BOM, 168 non-ASCII UTF-8 bytes). `index.html` 590,543 →
+  576,941 bytes; 12,044 → 11,761 lines (BOM preserved).
+- **Interop surface: 4 window function re-exposures + 1 object-identity bridge,
+  0 accessor bridges:**
+  - Inbound/cross-region callers (3): `openAllHiveminds` (sidebarNav),
+    `openAllHivemindsForProject` (project menu), `renderAllHiveminds` (guarded
+    central render()).
+  - Region-generated `on*=` handler target (1): `newHivemindFromGlobal` (the
+    "+ New Hivemind on this project" card onclick).
+  - **Object-identity bridge (1):** `_allHivemindFilter` (a `{status,search,project}`
+    object). Generated handlers property-write it (`oninput="_allHivemindFilter.
+    search=this.value;…"`, two `onchange` for status/project — L10613/10615/10623);
+    formal wholesale-write scan → exactly ONE hit (the declaration; the in-region
+    writes at 10579/10580 are `.`-prefixed). Plain `window._allHivemindFilter =
+    _allHivemindFilter` identity bridge routes handler property-writes into the
+    module's live object — same as cross-backlog's `_allBacklogFilter` and all-MCP's
+    `_allMCPFilter` (NOT an accessor — never wholesale-reassigned).
+  - Module-private (6 fns + `_allHivemindsCache` + `HM_STALE_HOURS`):
+    `_hmEffectiveStatus`, `_hmShortId`, `loadAllHiveminds`, `_hmTreeMiniViz`,
+    `_hmRelativeTime`; `_allHivemindsCache` (wholesale-reassigned only inside the
+    module, zero outside refs), `HM_STALE_HOURS`.
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`) EMPTY
+    (handlers CALL functions / property-write `_allHivemindFilter`); zero `this`.
+- **Outbound deps** (resolve at call time through the shared global scope): the
+  inline Hivemind tab/dashboard functions `openHivemindDashboard` (L8522) +
+  `startHivemindChat` (L8473, called by `newHivemindFromGlobal`), `openModals`
+  (`const`, bare), `nextModalZ++`, `restoreModal`, `focusModal`, `centerModalElement`,
+  `_clampModalSize`, `minimizeModal`/`closeModalById` (handlers), `openProjectModal`,
+  `allProjects`, `isIncognitoProject`, `esc`, `API_BASE`, `showToast` + browser
+  builtins. Strict-mode promotion audited: zero module-code `this`; every assignment
+  targets a declared binding or a `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v21` → `mc-push-v22` (no cache list by design;
+  version bump only). Added a v22 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/cross-hivemind.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses cross-hivemind.js in module
+    goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/cross-hivemind.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 14805 (exact match);
+    `GET /api/hivemind/list` → `[]` (the empty state).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — `newHivemindFromGlobal` (opens a project + dispatches a hivemind
+    chat = model cost) deliberately NEVER invoked) — **20/20 PASS, 0 console
+    errors, 0 page errors**: 4 window.* interop callable; `_allHivemindFilter`
+    object-identity bridge present with the default `{project,search,status}` shape;
+    all 7 module-privates NOT leaked; cross-project Hivemind modal opens via the
+    REAL `sidebarNav('hivemind')` path (`__all_hivemind` in `openModals`) + renders
+    from the real `/api/hivemind/list` (empty-state "No matching hiveminds…");
+    **identity bridge asserted end-to-end** — a property-write via
+    `window._allHivemindFilter.search/status` + `renderAllHiveminds()` reads it (no
+    throw); the **guarded `render()` path** re-renders the open modal without
+    throwing; `newHivemindFromGlobal` wired but never invoked. Screenshot eyeballed:
+    fully styled cross-project Hivemind modal (title, search, Active/All-projects
+    filters, "0 hiveminds", + New Hivemind, empty state), sidebar nav item active,
+    no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module 1;
+    line shifted to L111, same evaluate step). No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–20).
+
+### Queue status after module 21 — the move-only non-core families are EXHAUSTED
+
+The non-store.js feature queue is now empty. What remains in index.html is the
+agent-panel / projects-grid / conversation-model CORE — the **store.js design
+pass** Ron deferred to last. Specifically:
+
+- **Hivemind TAB + Dashboard Modal** (`hivemindCache` at L8320 + the tab/dashboard
+  functions, ~8318–9063) — BLOCKED on `hivemindCache` being read by the Tile HTML
+  core (L1200/1396) and the worker popover (L5007). Extractable only WITH the
+  store.js core (or with a `hivemindCache` object-identity bridge that the core
+  renderer reads — a store.js-design decision, not a clean leaf move). DEFERRED.
+- **Hivemind worker popover** (L~4900, in the agent-panel zone) — reads
+  `agentStatusCache` + `agentHistory` + `hivemindCache`; pure store.js core.
+- **Command Palette's real ~98L** — needs 2 accessor bridges (`cmdPaletteOpen`
+  bare-assigned by walkthrough.js; `cmdSelectedIndex` `++`/`=`-mutated by the
+  shared inline keydown handler). Brief says extract ONLY if it cleanly separates
+  with ≤2 accessor bridges; it's the most entangled "small" candidate — recommend
+  pairing with the store.js pass.
+- The conversation model / modal+tile HTML / SSE slot management / dispatch /
+  status resolver / Agent Console / Memory tab / agent-log / plans / rules / the
+  remaining settings-section templates — all the `agentOutputBuffers`/
+  `agentEventSources`/`agentStatusCache` smear — is the store.js pass.
+
+index.html is now **11,761 lines** (down from 14,674 at module 13 / ~25,165 at
+the start of Phase 3). 8 modules extracted this session (14–21): mcp, system-status,
+update-power, provider-auth, schedule-banner, provider-settings, process-manager,
+cross-hivemind. Recommend the orchestrator now begin the **store.js design
+checkpoint** for the remaining core.
+
+## Phase 4 — step 0: STORE consolidation (2026-06-10, Fable driving)
+
+- **Design ratified:** `docs/STORE_JS_DESIGN.md` (commit `13c5834`). Option A —
+  state anchors INLINE (global lexical environment is module-visible in both
+  directions; bridges were only ever needed for state that moved INTO modules).
+  Ron approved: Option A + full hollow-out + Fable drives.
+- **Membership derived, not curated** (`_scratch/store_membership.py`): a var is
+  STORE iff its non-decl refs span ≥2 families (families = target modules
+  M22–M31, M32 sub-families, each shipped js module, INLINE). Result: **74
+  STORE / 60 family-private / 0 dead** of 134 top-level state decls (133
+  statements; one 2-name decl). Notable derivation wins over the hand list:
+  `agentEventSources`/`agentSSEWatchdogs` span INLINE+M22+M24 (not M23);
+  `cmdSelectedIndex` confirmed palette-private (no bridge ever needed);
+  6 orphaned decls flagged `[DECL OUTSIDE FAMILY]` for pull-in at their
+  family's cut (`newProjDomain`, `TOKEN_MODES`, `sseRetryCount`, `acExpanded`,
+  `exitPlanModeCount` + one more in membership.json).
+- **What moved:** 73 decl statements (API_BASE already in place = member #1)
+  → one `// ── STORE ──` block at L683–822 directly after API_BASE. Decl
+  statements moved byte-verbatim INCLUDING their var-describing leading
+  comment blocks (8 reviewed); 2 comment blocks stayed put as
+  section-mechanism docs (`_mcModalHistoryActive` Android-back explainer,
+  `bgMode` background-posture note — NO_LEAD override in the script).
+- **Order:** original file order, topo-adjusted for eager init deps
+  (Kahn, stable). Only real edge: `_orderKey` → `projectOrder` (already
+  satisfied). Eager-init identifier scan: every identifier resolves to
+  builtin / hoisted function / earlier store member (object-literal keys and
+  regex flags excluded); zero refs to family-private state; one eager
+  `window.innerWidth` read (`_isMobileDevice`) — pure window metric,
+  position-independent.
+- **Assertions (all in `_scratch/store_surgery.py`):** cut-lines multiset ==
+  inserted-lines multiset (byte-exact); unmoved-line sequence preserved
+  exactly; +10 lines total = block header(8)+footer(2); post-surgery re-scan:
+  133 top-level decl statements, brace depth 0; `node --check` PASS (classic
+  goal).
+- **Gates:** boot-smoke **5/5 PASS**; bg-framing-check **identical pre-existing
+  base error** (`setBgZoom`, L111 evaluate — landmine 4 of module 1), no new
+  breakage; throwaway real server `MC_PORT=5391` (killed; :5199 untouched):
+  heartbeat OK, `GET /` → 200 (577,678 bytes), STORE block present in served
+  HTML. No new js file ⇒ no sw.js bump, no harness route.fulfill changes.
+- **index.html:** 11,761 → 11,771 lines.
+
+### Landmines for M22 (rich-text.js)
+
+1. All module-1–21 landmines apply verbatim.
+2. **Never re-declare a store name at a module's top level** — silent state
+   fork; add a declared-names ∩ STORE check to every module's formal scans
+   (the STORE list lives in `_scratch/membership.json`; regenerate after each
+   cut since line numbers shift).
+3. Empty/near-empty section stubs left behind by decl moves (e.g. "Enter Key
+   Behavior" is now header+comment-less) are EXPECTED; sweep at M32, don't
+   "fix" mid-queue.
+4. M22's family-private captures: `_pinScrollQueue`, `_aqCounter`,
+   `_EMPTY_SET`, `_recentlyStoppedSessions`, `exitPlanModeCount` (decl
+   currently in the Agent Panel zone — orphaned, pull into the module).
+5. Line numbers in membership.json are PRE-step-0; re-derive everything
+   against the committed file before cutting.
+
+## Phase 4 — M22: extract rich-text formatter → `static/js/rich-text.js` (2026-06-10)
+
+- **First post-STORE cut; cutter is now parameterized** (`_scratch/cut_module.py`:
+  scans + cut + assertions + sw bump + harness patching in one deterministic
+  script; per-module config at top).
+- **Sizing correction (module-4 lesson, 4th occurrence):** the "Rich text
+  formatting 1,074L" row was header-to-header. The REAL formatter family is
+  **253L (6474–6726)**; the other ~815L of the old section (appendAgentLine
+  6727 → fetchAgentStatus end ~7540) is conversation model — stays for M23.
+  M22 = formatAgentText + isTableLine/formatTableLine/isPipeTable/
+  isSeparatorLine/buildPipeTable + agentLineCls + collapseIntoPlanButton +
+  expandAgentOutput + _isAgentOutputPinned/_scheduleAgentPinScroll +
+  `_pinScrollQueue` (module-private const).
+- **What moved:** L6474–6726 byte-verbatim (two-sided reassembly asserted);
+  12-line interop tail. `rich-text.js` = 265 lines / 12,004 bytes (CRLF, no
+  BOM). index.html 11,771 → 11,519 lines.
+- **Interop surface: 10 window re-exposures, 2 module-privates, 0 bridges:**
+  - The table pipeline is NOT private — `isTableLine`/`formatTableLine`/
+    `isPipeTable`/`buildPipeTable` are called by the transcript renderer
+    (conversation model ~5284–5342), agent-log panel (~7838–7852), console/
+    hivemind zone (~8983–9231), plan viewer (~9857). They expose with the
+    rest; only `isSeparatorLine` + `_pinScrollQueue` are private.
+  - `_scheduleAgentPinScroll`/`_isAgentOutputPinned` callers include inline
+    appendAgentLine (M23-pending) + cmd-palette zone (3032) + boot-zone
+    repin (11050).
+  - Generated handlers emitted by region: only `_openImageViewer` (outbound
+    to mermaid.js's export — unchanged pattern).
+- **Scans:** zero top-level parse-time code in region; zero `this`; zero
+  STORE-name shadowing (new per-cut gate per step-0 landmine #2).
+- **Store proof under fire:** module code reads/writes `expandedOutputSessions`,
+  `agentStatusCache` etc. bare-name via global lexical env — exercised live.
+- **sw.js:** v22 → v23 + changelog line.
+- **Gates:** module+inline `node --check` PASS; boot-smoke **5/5**;
+  bg-framing-check **identical base error** (`setBgZoom`, evaluate step
+  unchanged, now L113 after harness insert); throwaway real server
+  `MC_PORT=5393`: `/static/js/rich-text.js` → 200, **12,004B exact**;
+  headless exercise **13/13 PASS, 0 console / 0 page errors** — 10/10
+  exposures callable, privates not leaked, direct formatter checks (hl-h,
+  linkify, agent-img + viewer onclick, inline code), **synthetic-SSE through
+  the REAL inline `connectAgentStream` → `es.onmessage` → `appendAgentLine`
+  → module formatters** (header + collapsed `<table>` + linkified URL, 3
+  blocks), STORE read/write from page scope. Screenshot eyeballed (rendered
+  header/table/link on booted dashboard).
+- **Gotcha for the next synthetic-SSE user:** the stream payload field is
+  `msg.text`, NOT `msg.line` ({type:'output', text}).
+
+### Landmines for M23 (conversation.js)
+
+1. M23's true region is THREE pieces: Agent Panel (~4904–4993 current),
+   worker popover (~5031–5111), Conversation model section (5116–5660),
+   PLUS the orphaned conversation half of old rich-text (appendAgentLine
+   ~6475 → fetchAgentStatus end ~7290 post-M22 shift) — re-derive exact
+   bounds + the AskUserQuestion machinery ownership (it sits between
+   approvePlan and sendFollowup).
+2. `connectAgentStream` (~6127 pre-M22, now shifted) holds top-level-armed
+   watchdog `setInterval`s INSIDE the function (fine) — but the REGION
+   around it includes `_repaintAgentOutput`/`_reconcileAgentBuffer` used by
+   boot-zone pollers; expect a wide EXPOSE list.
+3. `updateConsoleOutput` is called from the onmessage path but lives in the
+   Agent Console family (M27) — leave it inline until M27; cross-module
+   call via global scope works either way.
+4. exitPlanModeCount decl is in the agent-panel zone but its refs live in
+   the appendAgentLine block — decl rides with M23 (membership says
+   single-family M22 by SECTION attribution; reality is M23 by function).
+
+## Phase 4 — M23: extract conversation model → `static/js/conversation.js` (2026-06-10)
+
+- **The heart, 5-segment carve:** [4923–4924]+[4930–4939]+[4952–4998]+
+  [5012–5660]+[6474–7288] — Agent Panel header/composer family, the popover
+  helpers mis-filed under the terminal-state section (isHivemindWorker/
+  Orchestrator/getProjectSessions/getProjectTabSessions), worker popover,
+  agentPanelHTML→selectResumeSession (the indented "Conversation model"
+  header is INSIDE agentPanelHTML), and the orphan appendAgentLine→
+  fetchAgentStatus block from old rich-text. **Carved AROUND:** sseRetryCount
+  decl (M24's), the session-metrics `setInterval` (boot skeleton), acExpanded
+  decl (M27's), the terminal window-bridge block.
+- `conversation.js` = 1,540 lines / 85,338 bytes. index.html 11,519 → 9,997.
+- **Interop: 28 window re-exposures, 17 privates, 0 bridges.** Includes 7
+  handler-target promotions — **NEW CUTTER GATE:** region fns named inside
+  `on*="…"` attribute values (incl. conditional/nested-template emission like
+  `onclick="${incForced ? '' : \`toggleIncognito(...)\`}"`) are auto-promoted
+  to EXPOSE even with zero outside source refs; attribute handlers resolve via
+  window at event time. `toggleIncognito` was the catch — literal-name scan
+  missed it.
+- **Gates:** parse ×2 PASS; boot-smoke 5/5; bg-framing baseline-only;
+  real server 200 **85,338B exact**; exercise **12/12, 0 errors,
+  0 write-endpoint hits** (dispatch/followup/stop route-guard tripwire) —
+  28/28 callable, panel renders, synthetic-SSE through MODULE
+  connectAgentStream→appendAgentLine→rich-text module (header+table),
+  AskUserQuestion form render + DOM-dedup re-render, fetchAgentStatus
+  graceful, store agentHistory↔getProjectSessions roundtrip.
+- **Cutter fix:** subprocess node-stdin parse gate needs encoding='utf-8'
+  (cp1252 chokes on ── box chars).
+
+### Landmines for M24 (resume-preview.js)
+
+1. Region ≈ 5661→? (current numbering POST-M23: re-derive; the old
+   6440-zone escPromptWithImages sits at the region tail — it's called by
+   conversation.js (appendAgentLine/agentPanelHTML) → will need EXPOSE).
+2. sseRetryCount decl now sits orphaned at ~4925 with agentConvNew's
+   leftover comment fragment — pull both decl+comment into M24's region or
+   leave; membership says M24-private.
+3. connectAgentStream/_reconcileAgentBuffer/_repaintAgentOutput live in the
+   resume zone (5945+) — heavily called by conversation.js + boot pollers;
+   expect a wide EXPOSE list.
+
+## Phase 4 — M24: extract resume-preview + dispatch/SSE → `static/js/resume-preview.js` (2026-06-10)
+
+- 2-segment carve [(4923,4923)+(4953,5765)]: the orphaned sseRetryCount decl
+  + the whole resume zone (conv preview family, closeAgentTab, dispatchAgent,
+  _reconcileAgentBuffer, _repaintAgentOutput, connectAgentStream,
+  escPromptWithImages). 814 lines / 42,793 bytes. index.html 9,997 → 9,185.
+- Interop: 10 exposures (incl. previewOpenFull handler promotion), 7 privates,
+  0 bridges. agentConvNew's orphan comment fragment left at ~4923 (M32 sweep).
+- Gates: parse ×2 PASS; boot-smoke 5/5; bg-framing baseline; real server 200
+  42,793B exact; exercise **10/10, 0 errors, 0 write hits** — highlight:
+  **3-module chain** (module connectAgentStream → module appendAgentLine →
+  module formatters) with store watchdog/buffer assertions.
+
+### Landmines for M25 (agent-log.js)
+
+1. Region = Agent Log Panel + Plans tab + continue + image paste headers
+   (re-derive; now ~4953+). agentLogPanelHTML/toggleAgentLog/loadAgentLog/
+   loadConversations/upsertConversationCache/_lastUserFromBuffer +
+   loadProjectPlans/renderPlansTab + continue/paste families.
+2. Top-level dragover/drop preventDefault listeners in the paste zone STAY
+   (boot skeleton).
+3. continueInputOpen/planSelections decls in-region (private per membership).
+
+## Phase 4 — M25: extract agent-log family → `static/js/agent-log.js` (2026-06-10)
+
+- 2-segment carve [(4952,5367)+(5372,5422)] AROUND the boot dragover/drop
+  preventDefault listeners (stay inline at ~5369-5370 with their comment).
+  Agent Log Panel + Plans tab + continue + image paste. 467 lines / 21,056
+  bytes. index.html 9,185 → 8,719.
+- Interop: 20 exposures (12 ref-derived + 8 handler-target promotions —
+  the whole plans-toolbar/row onclick family), 3 privates
+  (toggleAgentLog, continueInputOpen, planSelections).
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server 200
+  21,056B exact; exercise **9/9, 0 errors, 0 write hits** (plans render
+  seeded via store plansCache; loadAgentLog real GET). Seed gotcha: plan
+  rows key on `plan_file`, not `file`.
+
+### Landmines for M26 (hivemind.js)
+
+1. Hivemind tab + Dashboard Modal headers (re-derive lines). hivemindCache
+   is STORE (step 0) — the tile/popover readers are module-side now; no
+   bridge needed.
+2. renderRunRows/renderRunsPagination (Run history) are shared with
+   scheduler.js and STAY INLINE (module-21 landmine, still true).
+3. hivemindSSE/_hmDashDebounce/_hmDashInFlight are STORE (deep-link
+   coupling); hivemindDashboardWs/_hmTabDebounce private per membership.
+
+## Phase 4 — M26: extract hivemind tab+dashboard → `static/js/hivemind.js` (2026-06-10)
+
+- Single span [(5284,6025)]: tab builders + dashboard modal + runs modal +
+  SSE + directives. 742 lines / 37,644 bytes. index.html 8,719 → 7,978.
+- Unblocked by step 0 (hivemindCache in STORE — tile/popover readers now
+  module-side conversation.js, zero bridges).
+- Interop: 11 exposures (3 ref-derived + 8 handler promotions), 12 privates.
+- **Finding: `hivemindTabHTML` + `loadHiveminds` have ZERO callers anywhere**
+  — the per-project Hivemind tab appears superseded by the cross-project
+  view (module 21). Dead code moves with its family (no-behavior-change
+  discipline); flagged for a deliberate deletion pass post-track.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server 200
+  37,644B exact; exercise **6/6** — incl. unknown-id failure shape asserted
+  IDENTICAL to d736126 baseline (unguarded 404 → TypeError reading 'goal';
+  pre-existing, not a regression).
+
+### Landmines for M27 (agent-console.js)
+
+1. Region: Agent Console header (~5284 now) through Memory tab / Tab switch /
+   Tab search families — re-derive; updateHistoryStatus/updateAgentStatusUI/
+   renderAgentConsole/updateConsoleOutput are called from conversation.js +
+   resume-preview.js → wide EXPOSE.
+2. acExpanded decl (M27's) still orphaned near ~4920 — pull in (segment).
+3. memoryCache (private), acOpenSessions (STORE).
+
+## Phase 4 — M27: extract agent console + memory tab + tab switch/search → `static/js/agent-console.js` (2026-06-10)
+
+- 4-segment carve [(4938,4938)+(5284,5446)+(5468,5563)+(5612,5696)]:
+  orphaned acExpanded decl, console family, memory tab (openRulesModal
+  EXCLUDED — rules family, stays), tab switch + search. 345 lines /
+  14,998 bytes. index.html 7,978 → 7,634.
+- **Duplicate-function shadow trap (NEW lesson):** the file has TWO inline
+  `function timeAgoShort` decls (console zone 5447: returns "5m"; run-history
+  zone 6183: returns "5m ago" + 'never' fallback). The SECOND wins at parse
+  time — the console-zone copy has been DEAD since it was written. Moving it
+  would have RESURRECTED it module-locally and changed console labels
+  ("5m" vs "5m ago"). Excluded from the region; stays inline + shadowed
+  (M32 sweep candidate). **Add to every future cut: check region fn names
+  against a whole-file duplicate-decl scan.**
+- Note: classic-script top-level `function` decls are window props by
+  spec — `window.timeAgoShort` === the inline winner; only MODULE fns need
+  exposure tails.
+- Interop: 12 exposures (10 + saveMemory/toggleConsoleSession promotions),
+  7 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server
+  14,998B exact; exercise 6/6 meaningful (renderAgentConsole with seeded
+  store history; inline timeAgoShort winner verified "5m ago").
+
+## Phase 4 — M29 (absorbs M28): window manager + three-dot + deep link + palette → `static/js/modal-manager.js` (2026-06-10)
+
+- **M28 collapsed into M29:** the palette's movable surface is only ~88L
+  (toggleCommandPalette + renderCommandResults) — its state
+  (`cmdSelectedIndex`) is written by the BOOT-armed global keydown + input
+  listeners which stay inline, so the decl stays inline beside them (the
+  shared_state gate would have FATALed a move). A standalone module wasn't
+  warranted.
+- 5-segment carve [(2058,2172)+(2174,2243)+(2259,2693)+(2905,2992)+
+  (2999,3012)]: prefs/snapshot machinery, deep-link handler (the SW
+  message-listener ARM at 2244 stays inline), openProjectModal/close/
+  minimize/showDesktop + the whole three-dot family + emoji picker,
+  palette pair, restoreModal. 722 lines / 32,962 bytes. index.html
+  7,634 → 6,913.
+- **Cutter fix:** decl-statement extents now suppress false "OTHER
+  top-level" hits from array-literal member lines (brace masker doesn't
+  track bracket depth; EMOJI_CHOICES tripped it).
+- Interop: 30 exposures (29 + pickEmoji promotion), 9 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server
+  32,962B exact; exercise **8/8** — real open→minimize→restore→close cycle
+  against store `openModals`, palette toggle via store `cmdPaletteOpen`,
+  0 write hits, 0 errors.
+
+### Landmines for M30 (render-core.js)
+
+1. Tile HTML (1291) + Modal HTML (1595) + List View (~2790 now shifted) +
+   sidebar/list glue stays vs moves: `render()`/`refreshModal`/
+   `refreshModalById`/`sizeAgentChat`/`updateAgentStatusUI`/`guardianReset`
+   remain INLINE (render engine + boot glue per design §7).
+2. tileHTML/modalContentHTML emit MANY on*= handlers — expect a big
+   promotion list; the whole-file on*= scan covers static HTML too.
+3. FRIENDLY_TO_VOICE (private), undoStack/showDoneMap (STORE).
+
+## Phase 4 — M30: extract render core → `static/js/render-core.js` (2026-06-10)
+
+- 3 segments [(1291,1594)+(1595,2057)+(2170,2214)]: status resolver family
+  (computeLiveStatus/friendlyStatus/friendlySummary + FRIENDLY_TO_VOICE),
+  tileHTML, the 460L modalContentHTML, renderListView/listRowHTML. 812
+  lines / 53,232 bytes. index.html 6,913 → 6,102. `render()` /
+  `refreshModal(ById)` / `sizeAgentChat` stay inline (render engine glue,
+  design §7).
+- The templates' huge on*= emission list is all NON-region callees (inline
+  or already-exposed module fns) — zero promotions needed; the one
+  name-position dynamic handler (`onclick="${onclick}"` in the provider
+  submenu) names showToast/setProjectProvider — both globally resolvable.
+- Boot-order note: render() fires after the /api/projects fetch resolves —
+  always after deferred-module eval (sync on main thread post-parse);
+  empirically 5/5 boot scenarios with instant route.fulfill.
+- Interop: 6 exposures, 2 privates. Gates: parse ×2; boot-smoke 5/5;
+  bg-framing baseline; 53,232B exact; exercise 7/7 (grid via module
+  tileHTML, modal via module modalContentHTML through M29's
+  openProjectModal — cross-module render chain).
+
+## Phase 4 — M31: extract interactions → `static/js/interactions.js` (2026-06-10)
+
+- 2 segments [(1887,2072)+(5429,6070)]: DnD grid + Aero-Snap + multi-modal
+  tiles + modal drag + separator drag + touch resize + ctrl+scroll zoom.
+  828 lines / 35,767 bytes. index.html 6,102 → 5,275.
+- **First whole-zone arm relocation (modules 16/17 precedent, scaled up):**
+  29 top-level listener arms + 1 idempotent localStorage purge moved WITH
+  their fns+state (`allow_toplevel` cutter flag). Arms now attach at module
+  eval (pre-DOMContentLoaded) instead of parse — behavior-equivalent; the
+  DCL listener inside still catches DCL (modules eval before it fires).
+  Required because the arm closures wholesale-write family state
+  (`dragState = {...}` in mousedown) — fns/arms/state are inseparable.
+- Interop: 8 exposures, 39 privates (the entire drag/snap state).
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 35,767B exact;
+  exercise: ctrl+wheel zoom (+1 level via store modalZoomLevels) AND real
+  modal drag (dx=120/dy=62) both through RELOCATED arms; 0 errors.
+  Synthetic-event gotcha: dispatch mousedown ON the header (no hit-testing
+  in synthetic dispatch — e.target is the dispatch node).
+
+## Phase 4 — M32a: dead-copy deletion + project-forms → `static/js/project-forms.js` (2026-06-10)
+
+- **Pre-cut commit `07ae962`:** deleted the dead shadowed `timeAgoShort`
+  (console-zone copy, unreachable since birth — the parse-order winner at
+  the plan-viewer zone overwrites it). Deletion was REQUIRED to move the
+  winner: a leftover script-level decl would shadow the module's window
+  exposure for bare inline callers and resurrect the "no-ago" variant.
+- One span [(3621,4453)]: path editor, folder picker (fp*), shared-rules
+  editor, plan viewer + planFileLabel + the WINNER timeAgoShort, new-project
+  form + autoSlug, folder browser, domain picker, createProject. 833 lines /
+  37,304 bytes. index.html 5,264 → 4,432.
+- Interop: 25 exposures (8 ref-derived incl. timeAgoShort×6-module callers +
+  17 handler promotions), 21 privates. newProjDomain decl stays inline near
+  the store block (global-lexical resolution; sweep later).
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 37,304B exact;
+  exercise green (timeAgoShort variant check "5m ago" — the load-bearing
+  assertion; new-project form renders; 0 write hits).
+
+## Phase 4 — M32b: appearance + bg crop editor → `static/js/appearance.js` (2026-06-10)
+
+- 2 segments [(2808,2846)+(2966,3156)]: tone/accent/density/voice setters +
+  the interactive crop-box editor + bg setters/pickers. 230 lines / 10,557
+  bytes. index.html 4,432 → 4,203.
+- **The boot-paint path STAYS INLINE** (`_applyAppearanceOnInit` + its
+  parse-time call + `applyDashboardBackground` + clamp/dims helpers + the
+  bg resize arm): relocating it to module eval risks a default-bg flash —
+  the exact FOUC class landmine #1 exists for. Only user-action surface
+  moved.
+- Interop: 14 exposures (all settings-drill.js callers), 5 privates.
+- Gates: parse ×2; boot-smoke 5/5 (incl. the 3 bg scenarios); bg-framing
+  baseline; 10,557B exact; exercise 5/5 (setTone flips body class;
+  setBgMode drives the INLINE apply chain).
+
+## Phase 4 — M32c: mic + image-attach + rules → `static/js/composer-extras.js` (2026-06-10)
+
+- 2 segments [(3005,3333)+(3341,3390)] carved around autoSizeNameInput:
+  mic/voice transcription family, the agent image-attach helpers
+  (upload/build/clear/remove/previews — conversation.js + resume-preview.js
+  callers), rules panel + flashSaved + openRulesModal. 379 lines / 18,556
+  bytes. index.html 4,203 → 3,825.
+- Interop: 13 exposures (5 handler promotions), 16 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 18,556B exact;
+  exercise 5/5 (micBtnHTML graceful outside Capacitor, buildTaskWithImages
+  empty+image roundtrip).
+
+### Store.js pass — status after M32c (2026-06-10, Fable session 1)
+
+**Done this pass (13 commits, all on refactor/frontend):** design doc ratified
+(Option A) → step-0 STORE consolidation (74 vars) → M22 rich-text → M23
+conversation → M24 resume-preview → M25 agent-log → M26 hivemind → M27
+agent-console → M29(+28) modal-manager → M30 render-core → M31 interactions
+(arm relocation) → dead-timeAgoShort deletion → M32a project-forms → M32b
+appearance → M32c composer-extras.
+**index.html 11,761 → 3,825 lines** (start-of-track 25,165). 12 new modules
+≈ 8,100L. ZERO bridges added across the entire pass — Option A held
+everywhere. Every cut: byte-verbatim two-sided reassembly, formal scans
+(shadowing/duplicates/handler-targets/parse-time code/`this`), boot-smoke
+5/5, bg-framing baseline-only, throwaway real-server exact-bytes, headless
+feature exercise, sw bump, harness route.fulfills.
+
+**Remaining queue (~1,100L, same recipe, cutter ready at
+`_scratch/cut_module.py`):**
+- Mobile UI family (~937–1290: app bar, chat list, Android-back sentinels,
+  nav drawer) — history/popstate arms are boot-coupled; expect arm
+  relocation (M31 pattern) or stay-inline verdicts per arm.
+- Feed (~2445–2628 current) + Feed Toggle; renderFeed called by render().
+- Create-form attachments (~2073+) + GitHub sync (~1952+) + update-notif
+  (~2007+) + code-sync (~2140+).
+- THEN: the inline residue is boot skeleton + STORE + shared glue
+  (esc/refreshSilent/render/refreshModal/sizeAgentChat/settings helpers/
+  run-history renderers) ≈ inline script ~2,000 → target met.
+**Dead-code deletion pass (deliberate, post-track):** hivemindTabHTML +
+loadHiveminds (superseded by cross-project view), orphaned agentConvNew
+comment fragment, empty section stubs.
+
+## Phase 4 — M32d: project actions + BOOT-RACE FIX → `static/js/project-actions.js` (2026-06-10)
+
+- 2 segments [(1887,1951)+(2007,2444)] carved around showToast/
+  showActionToast (core shared glue — stays inline): create-form attachment
+  family, update-notification, GitHub sync, code-sync, backlog undo/showDone,
+  attachment/note panels + upload. 503 lines / 22,622 bytes. index.html
+  3,825 → 3,323 (then +14 for the gate comment block below).
+- **REAL BUG FOUND & FIXED — cold-boot module race.** The `fetchProjects()`
+  boot continuation calls window-exposed module fns (`_loadOpenModalsSnapshot`,
+  `openProjectModal`, `fetchAgentStatus`, `_handleDeepLinkFromUrl`). With 30+
+  deferred modules the fetch can resolve BEFORE late modules evaluate →
+  intermittent `ReferenceError` on cold load (reachable since ~M29; surfaced
+  by M32d's real-server exercise — route.fulfilled smoke loads modules
+  instantly and can't see it). Fix: `_modulesReady` promise ARMED AT PARSE
+  TIME resolving on DOMContentLoaded (deferred modules are spec-guaranteed
+  done by then); the continuation awaits it. **`document.readyState` is NOT
+  a valid gate — it reads 'interactive' before deferred modules run** (first
+  fix attempt failed exactly there; proven by a 600ms-throttled
+  modal-manager.js test: 4/4 PASS post-fix, ReferenceError pre-fix).
+- Interop: 20 exposures (3 promotions), 4 privates → 1 (renderCreatePreviews).
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 22,622B exact;
+  exercise green + the forced-lateness race test.
+
+## Phase 4 — M32e: mobile UI → `static/js/mobile.js` (2026-06-10)
+
+- 4 segments [(944,993)+(996,1001)+(1006,1093)+(1112,1182)] carved around:
+  the resize arm (994), `projectLastSeen` decl + boot hydration try
+  (1002–1004 — read by moved fns via global lexical, written by both sides),
+  the `_mcDrawerHistoryActive`/`_mcSuppressPop` decls (read by the STAYING
+  popstate arm), the popstate arm itself (1183+), and the grid-render glue
+  (renderStats/setFilter/filterProjects/renderProjects — render engine,
+  stays). 215 lines / 10,958 bytes. index.html 3,337 → 3,123.
+- Interop: 18 exposures, 4 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 10,958B exact;
+  exercise **7/7 at a REAL 390px viewport** — chat list renders, drawer
+  open/close via module, markProjectSeen→inline projectLastSeen→localStorage
+  roundtrip.
+
+## Phase 4 — M32f: feed → `static/js/feed.js` (2026-06-10)
+
+- Single span [(1727,1911)]: classifyFeedEvent, attention list/badge,
+  renderFeed. 185 lines / 8,690 bytes. index.html 3,123 → 2,939.
+  `feedCollapsed` decl + toggleFeed + the boot read stay inline.
+- Interop: 1 exposure (renderFeed ← central render()), 4 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 8,690B exact;
+  exercise 4/4 (feed column renders through render() → module).
+
+## Phase 4 — TRACK CLOSE (2026-06-10)
+
+**The store.js pass is complete.** index.html: **25,165 (track start) →
+11,761 (pass start) → 2,939**. The inline script is now ≈2,150 lines of
+exactly the designed residue: STORE block (74 vars) + boot skeleton
+(arms/pollers/boot continuation incl. the `_modulesReady` gate) + shared
+glue (esc, showToast/showActionToast, refreshSilent, render/renderProjects/
+refreshModal(ById), sizeAgentChat, settings helpers, run-history renderers
+shared with scheduler.js) + the head modules + HTML shell. 35 ES modules
+under static/js/ (15 new in this pass ≈ 9,000L moved). ZERO state bridges
+introduced across the entire pass — Option A (state anchors inline, code
+moves out) held in every single cut.
+
+**Deferred, deliberately (need product/operator decisions, NOT mechanical):**
+1. `hivemindTabHTML` appears to have zero callers (per-project Hivemind tab
+   superseded by the cross-project view?) — deletion needs Ron's confirmation
+   that the tab is gone on purpose; it's user-facing surface.
+2. Orphaned comment fragments + empty section stubs (cosmetic sweep).
+3. The remaining inline glue COULD compress further (~150L of empty
+   headers/blanks) but sits below the value line.
