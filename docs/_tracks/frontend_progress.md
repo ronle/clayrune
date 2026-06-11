@@ -3506,3 +3506,15 @@ checkpoint** for the remaining core.
 - Gates: parse ×2; boot-smoke 5/5 (incl. the 3 bg scenarios); bg-framing
   baseline; 10,557B exact; exercise 5/5 (setTone flips body class;
   setBgMode drives the INLINE apply chain).
+
+## Phase 4 — M32c: mic + image-attach + rules → `static/js/composer-extras.js` (2026-06-10)
+
+- 2 segments [(3005,3333)+(3341,3390)] carved around autoSizeNameInput:
+  mic/voice transcription family, the agent image-attach helpers
+  (upload/build/clear/remove/previews — conversation.js + resume-preview.js
+  callers), rules panel + flashSaved + openRulesModal. 379 lines / 18,556
+  bytes. index.html 4,203 → 3,825.
+- Interop: 13 exposures (5 handler promotions), 16 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 18,556B exact;
+  exercise 5/5 (micBtnHTML graceful outside Capacitor, buildTaskWithImages
+  empty+image roundtrip).
