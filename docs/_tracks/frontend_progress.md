@@ -2779,3 +2779,117 @@ what moved, commit SHA, gate results.
      `cmdPaletteOpen` + `cmdSelectedIndex`) still WAIT for the orchestrator's
      js/store.js design checkpoint. Once the non-core queue (Hivemind + Provider
      Settings + Process Manager) is exhausted, the remainder IS the store.js pass.
+
+## Phase 3 — module 19: extract Provider Settings section → `static/js/provider-settings.js` (2026-06-10)
+
+- **Module-18 SHA backfill:** module 18 (js/schedule-banner.js) = commit `f62c833`.
+- **Candidate selection this run:** a small clean leaf (the `_renderProviderSettings`
+  Settings block), now fully bridgeable since module 17 made all its provider-action
+  deps window props. Chosen over the larger Hivemind carve (whose worker popover is
+  store.js-coupled — see landmines).
+- **Region re-derived — ONE function (header-to-header mismatch, 7th time):** old
+  lines **10312–10413** (the `// ── Provider Settings section` header through
+  `_renderProviderSettings`'s close at 10412 + one trailing blank 10413). The
+  header-to-header span (to Process Manager at 10477) ALSO contains the GENERIC
+  settings helpers `saveSetting`/`toggleSetting`/`setBriefRepliesMode`/
+  `saveModelChoice` (10414+) — shared settings infrastructure used by virtually
+  every settings control app-wide (store.js/settings-core territory) — those STAY
+  inline. Brace-depth top-level scan: depth ends 0, exactly 1 function decl
+  (`_renderProviderSettings`), 0 OTHER. (The "Global Settings" banner header at
+  L10310 stays inline above.)
+- **Inbound refs re-verified (formal whole-FILE refscan + WHOLE-REPO sweep):**
+  the index.html-internal refscan found ZERO outside refs — but the **WHOLE-REPO
+  sweep** caught the real caller: `settings-drill.js` (module 6) interpolates
+  `${_renderProviderSettings(cfg)}` at L371 inside `_renderSettings`'s template
+  (runtime, when Settings renders) → cross-module window caller. (Mandatory-grep
+  lesson again: the file-only scan misses sibling-module callers.) Otherwise only
+  prose hits.
+- **What moved:** old lines 10312–10413 → `static/js/provider-settings.js`,
+  **byte-verbatim** (two-sided binary reassembly assertion: (1) `before + region
+  + after == original`; (2) the new index.html, with the inserted `<script>` tag
+  line removed AND the region re-inserted at the cut point, `== original`
+  byte-for-byte; interop tail append-only). Loaded via
+  `<script type="module" src="/static/js/provider-settings.js"></script>` inserted
+  after the schedule-banner.js module tag, before `</body>`. Diff shape: 1
+  insertion, 102 deletions.
+- **Numbers:** `provider-settings.js` = 5,871 bytes / 111 lines (102 moved +
+  9-line interop tail; CRLF, no BOM, 179 non-ASCII UTF-8 bytes). `index.html`
+  601,313 → 596,063 bytes; 12,274 → 12,173 lines (BOM preserved).
+- **Interop surface: 1 window function re-exposure, 0 bridges:**
+  - Cross-module caller (1): `_renderProviderSettings` (settings-drill.js's
+    `_renderSettings` template — runtime).
+  - Module-private: none (the single function IS the export).
+  - Formal scans: zero generated-handler assignment; zero `this` in region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `_agentProviders` (the provider list global, inline), `esc`, and the **module-17
+  window props** `PROVIDER_AUTH_KEYS` / `settingsClaudeLogin` / `settingsClaudeAuthCheck`
+  / `settingsProviderSetEnv` / `settingsProviderTerminalLogin` /
+  `settingsProviderRefresh` (referenced inside the generated `on*=` handler strings
+  this function builds — resolved at click time against window). `saveSetting`
+  (the default-provider dropdown onchange — stays inline as shared settings infra).
+  Strict-mode promotion audited: zero module-code `this`; the single assignment is
+  the `window.` export.
+- **sw.js:** `SW_VERSION` `mc-push-v19` → `mc-push-v20` (no cache list by design;
+  version bump only). Added a v20 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/provider-settings.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses provider-settings.js in
+    module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/provider-settings.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 5871 (exact match).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — Sign-in/Save/Launch never clicked) — **9/9 PASS, 0 console
+    errors, 0 page errors**: `window._renderProviderSettings` exposed + callable
+    (returns the `#settings-providers-section` markup with the Claude sign-in
+    control); the **REAL caller path** verified — `openSettings()` →
+    `drillSettings('agent')` rendered `#settings-providers-section` via
+    settings-drill.js calling `window._renderProviderSettings`, with the
+    cross-module `settingsClaudeLogin` onclick (module-17 interop) intact.
+    Screenshot caught the `settingsPaneIn` fade mid-animation (the documented
+    landmine — DOM assertions are the source of truth, all passed).
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L105, same evaluate step). No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–18).
+
+### Landmines for module 20 (remaining-core map, post-Provider-Settings)
+
+1. All prior landmines still apply verbatim (see the module-18 list — anti-FOUC,
+   route.fulfill ×2, CI path-filter gap, bg-framing-check broken at base,
+   CRLF+BOM binary surgery, build-macos.spec, npm install, deferred-module
+   timing, module-scoped-globals, re-derive + brace-scan, accessor/identity
+   bridges, multi-segment/boot-trap carves + the three boot-trap fixes,
+   WHOLE-REPO grep mandatory, cross-region const reads, template-`${handler}`
+   scanning, don't repair quirks, `(0,eval)('openModals')`, destructive-feature
+   route-guard, settle `settingsPaneIn` before screenshots, `node
+   --input-type=module --check <file>` ERRORS on Node 24 — pipe via stdin).
+2. **The non-core queue is nearly exhausted. What remains:**
+   - **Hivemind family** — the LAST big non-core win, but a careful carve:
+     * The **Hivemind worker popover** (was 4981, in the agent-panel zone L4854–5061)
+       reads `agentStatusCache` + `agentHistory` + `hivemindCache` — STORE.JS-
+       COUPLED (the smear the brief reserves for last). It is immediately followed
+       by `let _skipAgentOutput` + `agentPanelHTML` (the agent-panel core). **Leave
+       the worker popover for the store.js pass.**
+     * The **Hivemind tab (was 8318) + Dashboard Modal (was 8520)** span (8318–9063)
+       reads `hivemindCache` (8×) but does NOT read the store.js smear
+       (`agentStatusCache`/`agentHistory`/`agentOutputBuffers`/`agentEventSources`
+       = 0 refs each — verified). Plus **Cross-project Hivemind view** (was 11192).
+       These THREE are likely carveable as a Hivemind module IF `hivemindCache` is a
+       Hivemind-family global (verify it isn't written by the agent-panel core) AND
+       around the shared inline run-history renderers (`renderRunRows`/
+       `renderRunsPagination` — STAY inline, multi-consumer with scheduler.js). The
+       Hivemind run-history consumer the module-13 entry noted is here. Expect a
+       2-/3-segment carve. **Re-derive the exact dashboard-modal end (the Agent
+       Console at 9064 is NOT hivemind) and audit `hivemindCache`'s writers before
+       committing to a move.**
+   - **Process Manager** (`openProcessManager` + `refreshProcessList`, ~48L, was
+     10477) — a small single-feature region; check it doesn't read the store.js
+     smear, then it's a clean small module. Likely the easiest remaining win.
+   - Everything else (conversation model, modal/tile HTML, SSE slot management,
+     dispatch, status resolver, the worker popover, Command Palette's real ~98L
+     with its 2 accessor bridges) is the **store.js design pass** — HARD STOP per
+     the brief.

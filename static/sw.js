@@ -75,7 +75,12 @@
 // relocated INTO the deferred module body (boot-trap fix a; the inline
 // fetchProjects().then still paints once via window.refreshScheduleBanner).
 // Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v19';
+// v20 (2026-06-10): /static/js/provider-settings.js extracted from index.html's
+// inline <script> (the _renderProviderSettings "Agent Provider" Settings block,
+// one function; the generic settings helpers saveSetting/toggleSetting/etc. that
+// shared its header stay inline). Called by settings-drill.js via window at
+// render time. Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v20';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
