@@ -3200,3 +3200,68 @@ checkpoint** for the remaining core.
    currently in the Agent Panel zone — orphaned, pull into the module).
 5. Line numbers in membership.json are PRE-step-0; re-derive everything
    against the committed file before cutting.
+
+## Phase 4 — M22: extract rich-text formatter → `static/js/rich-text.js` (2026-06-10)
+
+- **First post-STORE cut; cutter is now parameterized** (`_scratch/cut_module.py`:
+  scans + cut + assertions + sw bump + harness patching in one deterministic
+  script; per-module config at top).
+- **Sizing correction (module-4 lesson, 4th occurrence):** the "Rich text
+  formatting 1,074L" row was header-to-header. The REAL formatter family is
+  **253L (6474–6726)**; the other ~815L of the old section (appendAgentLine
+  6727 → fetchAgentStatus end ~7540) is conversation model — stays for M23.
+  M22 = formatAgentText + isTableLine/formatTableLine/isPipeTable/
+  isSeparatorLine/buildPipeTable + agentLineCls + collapseIntoPlanButton +
+  expandAgentOutput + _isAgentOutputPinned/_scheduleAgentPinScroll +
+  `_pinScrollQueue` (module-private const).
+- **What moved:** L6474–6726 byte-verbatim (two-sided reassembly asserted);
+  12-line interop tail. `rich-text.js` = 265 lines / 12,004 bytes (CRLF, no
+  BOM). index.html 11,771 → 11,519 lines.
+- **Interop surface: 10 window re-exposures, 2 module-privates, 0 bridges:**
+  - The table pipeline is NOT private — `isTableLine`/`formatTableLine`/
+    `isPipeTable`/`buildPipeTable` are called by the transcript renderer
+    (conversation model ~5284–5342), agent-log panel (~7838–7852), console/
+    hivemind zone (~8983–9231), plan viewer (~9857). They expose with the
+    rest; only `isSeparatorLine` + `_pinScrollQueue` are private.
+  - `_scheduleAgentPinScroll`/`_isAgentOutputPinned` callers include inline
+    appendAgentLine (M23-pending) + cmd-palette zone (3032) + boot-zone
+    repin (11050).
+  - Generated handlers emitted by region: only `_openImageViewer` (outbound
+    to mermaid.js's export — unchanged pattern).
+- **Scans:** zero top-level parse-time code in region; zero `this`; zero
+  STORE-name shadowing (new per-cut gate per step-0 landmine #2).
+- **Store proof under fire:** module code reads/writes `expandedOutputSessions`,
+  `agentStatusCache` etc. bare-name via global lexical env — exercised live.
+- **sw.js:** v22 → v23 + changelog line.
+- **Gates:** module+inline `node --check` PASS; boot-smoke **5/5**;
+  bg-framing-check **identical base error** (`setBgZoom`, evaluate step
+  unchanged, now L113 after harness insert); throwaway real server
+  `MC_PORT=5393`: `/static/js/rich-text.js` → 200, **12,004B exact**;
+  headless exercise **13/13 PASS, 0 console / 0 page errors** — 10/10
+  exposures callable, privates not leaked, direct formatter checks (hl-h,
+  linkify, agent-img + viewer onclick, inline code), **synthetic-SSE through
+  the REAL inline `connectAgentStream` → `es.onmessage` → `appendAgentLine`
+  → module formatters** (header + collapsed `<table>` + linkified URL, 3
+  blocks), STORE read/write from page scope. Screenshot eyeballed (rendered
+  header/table/link on booted dashboard).
+- **Gotcha for the next synthetic-SSE user:** the stream payload field is
+  `msg.text`, NOT `msg.line` ({type:'output', text}).
+
+### Landmines for M23 (conversation.js)
+
+1. M23's true region is THREE pieces: Agent Panel (~4904–4993 current),
+   worker popover (~5031–5111), Conversation model section (5116–5660),
+   PLUS the orphaned conversation half of old rich-text (appendAgentLine
+   ~6475 → fetchAgentStatus end ~7290 post-M22 shift) — re-derive exact
+   bounds + the AskUserQuestion machinery ownership (it sits between
+   approvePlan and sendFollowup).
+2. `connectAgentStream` (~6127 pre-M22, now shifted) holds top-level-armed
+   watchdog `setInterval`s INSIDE the function (fine) — but the REGION
+   around it includes `_repaintAgentOutput`/`_reconcileAgentBuffer` used by
+   boot-zone pollers; expect a wide EXPOSE list.
+3. `updateConsoleOutput` is called from the onmessage path but lives in the
+   Agent Console family (M27) — leave it inline until M27; cross-module
+   call via global scope works either way.
+4. exitPlanModeCount decl is in the agent-panel zone but its refs live in
+   the appendAgentLine block — decl rides with M23 (membership says
+   single-family M22 by SECTION attribution; reality is M23 by function).

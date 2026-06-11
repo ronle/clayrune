@@ -90,7 +90,12 @@
 // mini-tree-viz/new-from-global). Self-contained (own _allHivemindFilter identity
 // bridge + _allHivemindsCache); NOT coupled to the per-project hivemindCache tab
 // (that tab+dashboard stays for the store.js pass). Same no-cache-list rationale.
-const SW_VERSION = 'mc-push-v22';
+// v23 (2026-06-10): /static/js/rich-text.js extracted from index.html's inline
+// <script> (M22, first store.js-pass cut: formatAgentText + the table pipeline +
+// agentLineCls/collapseIntoPlanButton/expandAgentOutput + the rAF pin-scroll
+// pair). The conversation-model half of the old "Rich text formatting" section
+// (appendAgentLine onward) stays inline for M23. Same no-cache-list rationale.
+const SW_VERSION = 'mc-push-v23';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
