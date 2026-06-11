@@ -983,7 +983,7 @@ def system_update_status():
     and how far behind origin master we are. The Settings UI uses this to
     show a "X commits behind" badge.
     """
-    repo_root = Path(__file__).parent
+    repo_root = _APP_DIR  # repo root in dev, app dir frozen; __file__ here is mc/blueprints/ — not the checkout
     if not (repo_root / '.git').exists():
         return jsonify({
             'is_git_repo': False,
@@ -1059,7 +1059,7 @@ def system_update_status():
 def _refresh_update_cache():
     """Run git fetch + recompute the update status, store in
     _UPDATE_CHECK_CACHE. Idempotent; safe to call from any thread."""
-    repo_root = Path(__file__).parent
+    repo_root = _APP_DIR  # repo root in dev, app dir frozen; __file__ here is mc/blueprints/ — not the checkout
     if not (repo_root / '.git').exists():
         with _UPDATE_CHECK_LOCK:
             _UPDATE_CHECK_CACHE.update({
@@ -1151,7 +1151,7 @@ def system_update():
     after the user confirms. Returns the git output so the user sees what
     changed. Does NOT auto-restart — the UI prompts the user separately.
     """
-    repo_root = Path(__file__).parent
+    repo_root = _APP_DIR  # repo root in dev, app dir frozen; __file__ here is mc/blueprints/ — not the checkout
     if not (repo_root / '.git').exists():
         return jsonify({'error': 'install dir is not a git checkout'}), 400
 
