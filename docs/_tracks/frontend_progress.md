@@ -3604,8 +3604,8 @@ exactly the designed residue: STORE block (74 vars) + boot skeleton
 (arms/pollers/boot continuation incl. the `_modulesReady` gate) + shared
 glue (esc, showToast/showActionToast, refreshSilent, render/renderProjects/
 refreshModal(ById), sizeAgentChat, settings helpers, run-history renderers
-shared with scheduler.js) + the head modules + HTML shell. 38 ES modules
-under static/js/ (18 new in this pass ≈ 9,000L moved). ZERO state bridges
+shared with scheduler.js) + the head modules + HTML shell. 35 ES modules
+under static/js/ (15 new in this pass ≈ 9,000L moved). ZERO state bridges
 introduced across the entire pass — Option A (state anchors inline, code
 moves out) held in every single cut.
 

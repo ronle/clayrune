@@ -10,7 +10,7 @@
 
 The final phase of the frontend track. The remaining monolith core — conversation
 model, dispatch/SSE machinery, modal/window manager, render core, interactions,
-and the leaf families — extracted into 18 new ES modules (≈9,000 lines moved),
+and the leaf families — extracted into 15 new ES modules (≈9,000 lines moved),
 finishing what modules 1–21 started. index.html is now **2,939 lines** (25,165
 at track start): the inline script is the designed residue — a labeled STORE
 block (74 shared globals, membership derived programmatically), the boot
