@@ -3378,3 +3378,26 @@ checkpoint** for the remaining core.
    resume-preview.js → wide EXPOSE.
 2. acExpanded decl (M27's) still orphaned near ~4920 — pull in (segment).
 3. memoryCache (private), acOpenSessions (STORE).
+
+## Phase 4 — M27: extract agent console + memory tab + tab switch/search → `static/js/agent-console.js` (2026-06-10)
+
+- 4-segment carve [(4938,4938)+(5284,5446)+(5468,5563)+(5612,5696)]:
+  orphaned acExpanded decl, console family, memory tab (openRulesModal
+  EXCLUDED — rules family, stays), tab switch + search. 345 lines /
+  14,998 bytes. index.html 7,978 → 7,634.
+- **Duplicate-function shadow trap (NEW lesson):** the file has TWO inline
+  `function timeAgoShort` decls (console zone 5447: returns "5m"; run-history
+  zone 6183: returns "5m ago" + 'never' fallback). The SECOND wins at parse
+  time — the console-zone copy has been DEAD since it was written. Moving it
+  would have RESURRECTED it module-locally and changed console labels
+  ("5m" vs "5m ago"). Excluded from the region; stays inline + shadowed
+  (M32 sweep candidate). **Add to every future cut: check region fn names
+  against a whole-file duplicate-decl scan.**
+- Note: classic-script top-level `function` decls are window props by
+  spec — `window.timeAgoShort` === the inline winner; only MODULE fns need
+  exposure tails.
+- Interop: 12 exposures (10 + saveMemory/toggleConsoleSession promotions),
+  7 privates.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server
+  14,998B exact; exercise 6/6 meaningful (renderAgentConsole with seeded
+  store history; inline timeAgoShort winner verified "5m ago").
