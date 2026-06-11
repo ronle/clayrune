@@ -484,7 +484,12 @@ def _extraction_prompt(project_id: str, project: dict) -> str:
         "OUTPUT SCHEMA (exact keys):\n"
         '{"scope_tag": "cross-project"|"project-specific"|"ambiguous",\n'
         ' "signals": {\n'
-        '   "topics": [{"phrase": "<verb>-<noun>[-<modifier>]"}, ...],\n'
+        '   "topics": [{"phrase": "<verb>-<noun>[-<modifier>]", '
+        '"summary": "<one-line: what this work was>", '
+        '"problem": "<the triggering symptom/condition a future agent would '
+        'SEE — observable, not session-bound>", '
+        '"resolution": "<what resolved it: concrete steps / the procedure / '
+        'the gotcha, not a paraphrase of what happened>"}, ...],\n'
         '   "preferences": [{"phrase": "<verb>-<noun>[-<modifier>]", '
         '"summary": "<one-line>", "evidence_quote": "<verbatim quote>"}, ...],\n'
         '   "explorations": [{"phrase": "<verb>-<noun>[-<modifier>]", '
@@ -517,6 +522,16 @@ def _extraction_prompt(project_id: str, project: dict) -> str:
         "ONLY when the evidence references project-local files, paths, "
         "configs, or services not shared across projects. Use `ambiguous` "
         "when you genuinely cannot tell.\n\n"
+        "TOPICS — the `phrase` is a closed-vocab fingerprint used to COUNT "
+        "recurrence; `summary`/`problem`/`resolution` are the procedural "
+        "content a future SKILL.md is built from. Make problem + resolution "
+        "CONCRETE and recognition-bound: problem = what the agent would "
+        "observe (an error string, a symptom, a file/condition), resolution = "
+        "the actual steps or invariant that fixed it (so a future agent can "
+        "act, not just read a label). If a topic was purely navigational with "
+        "no problem/fix, leave problem/resolution as empty strings — recurrence "
+        "alone still tracks it, and the skill renderer will refuse cleanly "
+        "rather than fabricate a procedure.\n\n"
         "PREFERENCES — only emit when the user expressed a behavioral "
         "preference, correction, confirmation, or constraint. "
         "`evidence_quote` MUST be a verbatim user-message substring. If "
@@ -559,7 +574,13 @@ _SKILL_PROMPT_PREAMBLE = (
     "  7. **Recognition-test phrasing** — the TRIGGER must describe what the "
     "agent SEES that maps to the skill. Bad: `TRIGGER when debugging X`. "
     "Good: `TRIGGER when the user reports <observable> AND <observable> in "
-    "<observable>`. Pattern-bound, not session-bound."
+    "<observable>`. Pattern-bound, not session-bound.\n\n"
+    "EVIDENCE FIELDS — each session carries `problem` (the observable that "
+    "should drive your TRIGGER) and `resolution` (the steps that become your "
+    "operating procedure). Synthesize across the N sessions; do not transcribe "
+    "one. If `problem`/`resolution` are absent or too thin across the evidence "
+    "to form a real procedure, take the REFUSE path — a recurring label alone "
+    "is not a skill."
 )
 
 _EXPLORATION_PROMPT_PREAMBLE = (
@@ -783,6 +804,12 @@ def _normalize_signals(project_id: str, sid: str, parsed: dict) -> list[dict]:
             'sid': sid, 'ts': ts, 'scope_tag': scope_tag,
             'kind': 'topic', 'phrase': phrase,
             'exact': exact, 'coarse': coarse,
+            # Procedural content for skill authoring (see _build_evidence_block).
+            # Bare phrase-only topics produce REFUSEs at the renderer; these
+            # fields are what let a recurring topic become a real SKILL.md.
+            'summary': str(sig.get('summary', '') or '').strip()[:500],
+            'problem': str(sig.get('problem', '') or '').strip()[:1000],
+            'resolution': str(sig.get('resolution', '') or '').strip()[:2000],
         })
     # Preferences
     for sig in (signals.get('preferences') or []):
@@ -1408,6 +1435,10 @@ def _build_evidence_block(signals: list[dict]) -> str:
         lines.append(f"    phrase: {s.get('phrase', '')}")
         if s.get('summary'):
             lines.append(f"    summary: {s.get('summary')}")
+        if s.get('problem'):
+            lines.append(f"    problem: {s.get('problem')[:400]}")
+        if s.get('resolution'):
+            lines.append(f"    resolution: {s.get('resolution')[:600]}")
         if s.get('evidence_quote'):
             lines.append(f"    quote: \"{s.get('evidence_quote', '')[:300]}\"")
         if s.get('question'):
