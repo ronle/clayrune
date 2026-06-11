@@ -84,6 +84,7 @@ const PROVIDER_SETTINGS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'pr
 const PROCESS_MANAGER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'process-manager.js'), 'utf8');
 // Cross-project Hivemind ES module (Phase 3 module 21) — same rule as claydo.js above.
 const CROSS_HIVEMIND_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'cross-hivemind.js'), 'utf8');
+const CONVERSATION_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'conversation.js'), 'utf8');
 const RICH_TEXT_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'rich-text.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 
@@ -160,6 +161,8 @@ async function runScenario(browser, sc) {
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROCESS_MANAGER_JS });
     if (path === '/static/js/cross-hivemind.js')
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CROSS_HIVEMIND_JS });
+    if (path === '/static/js/conversation.js')
+      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CONVERSATION_JS });
     if (path === '/static/js/rich-text.js')
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: RICH_TEXT_JS });
     if (path === '/api/projects')

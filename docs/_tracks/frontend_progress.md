@@ -3265,3 +3265,44 @@ checkpoint** for the remaining core.
 4. exitPlanModeCount decl is in the agent-panel zone but its refs live in
    the appendAgentLine block — decl rides with M23 (membership says
    single-family M22 by SECTION attribution; reality is M23 by function).
+
+## Phase 4 — M23: extract conversation model → `static/js/conversation.js` (2026-06-10)
+
+- **The heart, 5-segment carve:** [4923–4924]+[4930–4939]+[4952–4998]+
+  [5012–5660]+[6474–7288] — Agent Panel header/composer family, the popover
+  helpers mis-filed under the terminal-state section (isHivemindWorker/
+  Orchestrator/getProjectSessions/getProjectTabSessions), worker popover,
+  agentPanelHTML→selectResumeSession (the indented "Conversation model"
+  header is INSIDE agentPanelHTML), and the orphan appendAgentLine→
+  fetchAgentStatus block from old rich-text. **Carved AROUND:** sseRetryCount
+  decl (M24's), the session-metrics `setInterval` (boot skeleton), acExpanded
+  decl (M27's), the terminal window-bridge block.
+- `conversation.js` = 1,540 lines / 85,338 bytes. index.html 11,519 → 9,997.
+- **Interop: 28 window re-exposures, 17 privates, 0 bridges.** Includes 7
+  handler-target promotions — **NEW CUTTER GATE:** region fns named inside
+  `on*="…"` attribute values (incl. conditional/nested-template emission like
+  `onclick="${incForced ? '' : \`toggleIncognito(...)\`}"`) are auto-promoted
+  to EXPOSE even with zero outside source refs; attribute handlers resolve via
+  window at event time. `toggleIncognito` was the catch — literal-name scan
+  missed it.
+- **Gates:** parse ×2 PASS; boot-smoke 5/5; bg-framing baseline-only;
+  real server 200 **85,338B exact**; exercise **12/12, 0 errors,
+  0 write-endpoint hits** (dispatch/followup/stop route-guard tripwire) —
+  28/28 callable, panel renders, synthetic-SSE through MODULE
+  connectAgentStream→appendAgentLine→rich-text module (header+table),
+  AskUserQuestion form render + DOM-dedup re-render, fetchAgentStatus
+  graceful, store agentHistory↔getProjectSessions roundtrip.
+- **Cutter fix:** subprocess node-stdin parse gate needs encoding='utf-8'
+  (cp1252 chokes on ── box chars).
+
+### Landmines for M24 (resume-preview.js)
+
+1. Region ≈ 5661→? (current numbering POST-M23: re-derive; the old
+   6440-zone escPromptWithImages sits at the region tail — it's called by
+   conversation.js (appendAgentLine/agentPanelHTML) → will need EXPOSE).
+2. sseRetryCount decl now sits orphaned at ~4925 with agentConvNew's
+   leftover comment fragment — pull both decl+comment into M24's region or
+   leave; membership says M24-private.
+3. connectAgentStream/_reconcileAgentBuffer/_repaintAgentOutput live in the
+   resume zone (5945+) — heavily called by conversation.js + boot pollers;
+   expect a wide EXPOSE list.
