@@ -3491,3 +3491,18 @@ checkpoint** for the remaining core.
 - Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 37,304B exact;
   exercise green (timeAgoShort variant check "5m ago" — the load-bearing
   assertion; new-project form renders; 0 write hits).
+
+## Phase 4 — M32b: appearance + bg crop editor → `static/js/appearance.js` (2026-06-10)
+
+- 2 segments [(2808,2846)+(2966,3156)]: tone/accent/density/voice setters +
+  the interactive crop-box editor + bg setters/pickers. 230 lines / 10,557
+  bytes. index.html 4,432 → 4,203.
+- **The boot-paint path STAYS INLINE** (`_applyAppearanceOnInit` + its
+  parse-time call + `applyDashboardBackground` + clamp/dims helpers + the
+  bg resize arm): relocating it to module eval risks a default-bg flash —
+  the exact FOUC class landmine #1 exists for. Only user-action surface
+  moved.
+- Interop: 14 exposures (all settings-drill.js callers), 5 privates.
+- Gates: parse ×2; boot-smoke 5/5 (incl. the 3 bg scenarios); bg-framing
+  baseline; 10,557B exact; exercise 5/5 (setTone flips body class;
+  setBgMode drives the INLINE apply chain).
