@@ -3353,3 +3353,28 @@ checkpoint** for the remaining core.
    scheduler.js and STAY INLINE (module-21 landmine, still true).
 3. hivemindSSE/_hmDashDebounce/_hmDashInFlight are STORE (deep-link
    coupling); hivemindDashboardWs/_hmTabDebounce private per membership.
+
+## Phase 4 — M26: extract hivemind tab+dashboard → `static/js/hivemind.js` (2026-06-10)
+
+- Single span [(5284,6025)]: tab builders + dashboard modal + runs modal +
+  SSE + directives. 742 lines / 37,644 bytes. index.html 8,719 → 7,978.
+- Unblocked by step 0 (hivemindCache in STORE — tile/popover readers now
+  module-side conversation.js, zero bridges).
+- Interop: 11 exposures (3 ref-derived + 8 handler promotions), 12 privates.
+- **Finding: `hivemindTabHTML` + `loadHiveminds` have ZERO callers anywhere**
+  — the per-project Hivemind tab appears superseded by the cross-project
+  view (module 21). Dead code moves with its family (no-behavior-change
+  discipline); flagged for a deliberate deletion pass post-track.
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; real server 200
+  37,644B exact; exercise **6/6** — incl. unknown-id failure shape asserted
+  IDENTICAL to d736126 baseline (unguarded 404 → TypeError reading 'goal';
+  pre-existing, not a regression).
+
+### Landmines for M27 (agent-console.js)
+
+1. Region: Agent Console header (~5284 now) through Memory tab / Tab switch /
+   Tab search families — re-derive; updateHistoryStatus/updateAgentStatusUI/
+   renderAgentConsole/updateConsoleOutput are called from conversation.js +
+   resume-preview.js → wide EXPOSE.
+2. acExpanded decl (M27's) still orphaned near ~4920 — pull in (segment).
+3. memoryCache (private), acOpenSessions (STORE).
