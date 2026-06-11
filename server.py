@@ -353,28 +353,9 @@ _SESSION_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB — resume becomes too slow above 
 # leaf-lock+atomic MEMORY.md write discipline lives wholly in mc/memory.py now.
 
 
-DEFAULT_DOMAINS = [
-    {'id': 'general', 'label': 'General', 'color': 'var(--text-dim)', 'bg': 'var(--surface3)'},
-    {'id': 'trading', 'label': 'Trading', 'color': 'var(--accent)', 'bg': 'var(--accent-dim)'},
-    {'id': 'infra', 'label': 'Infra', 'color': 'var(--purple-text)', 'bg': 'var(--purple-dim)'},
-    {'id': 'hobby', 'label': 'Hobby', 'color': 'var(--amber-text)', 'bg': 'var(--amber-dim)'},
-]
-
-def _load_settings():
-    defaults = {'domains': list(DEFAULT_DOMAINS)}
-    if SETTINGS_PATH.exists():
-        try:
-            with open(SETTINGS_PATH, encoding='utf-8') as f:
-                saved = json.load(f)
-            for k, v in saved.items():
-                defaults[k] = v
-        except Exception:
-            pass
-    return defaults
-
-def _save_settings(settings):
-    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_PATH.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding='utf-8')
+# ── DEFAULT_DOMAINS + settings.json store (_load_settings / _save_settings) ──
+# extracted to mc/blueprints/settings_routes.py (1.14) with the 10
+# settings/config/browse routes. SETTINGS_PATH (above) stays home, wired in.
 
 
 # _load_schedules / _save_schedules (schedules.json store) -- moved to
@@ -394,155 +375,22 @@ def _save_settings(settings):
 # _condense_status moved to mc/state.py (Phase 0).
 
 
-# ── Memory / Scribe / Condense engine ── extracted VERBATIM to mc/memory.py
-# (mop-up, no behavior change). server.py keeps inbound shims (memory.X) for
-# the names its startup backfills / runtime hooks / blueprint wire() sites and
-# the tests still reference; the agent_routes/project_routes/guide_routes wire()
-# stanzas now source the memory values from memory.*. The load-bearing
-# leaf-lock+atomic MEMORY.md write discipline lives wholly in mc/memory.py now.
-
-
 # ── Terminal session tracking + process tracker ──────────────────────────────
 # terminal_sessions / terminal_lock / tracked_processes /
 # process_tracker_lock moved to mc/state.py (Phase 0).
 
 
 # _register_process / _unregister_process ── moved to
-# mc/blueprints/agent_routes.py (1.12); _proc_identity + _persist_pid_ledger
-# stay here with the reaper (startup family) and are wired in.
+# mc/blueprints/agent_routes.py (1.12).
 
 
-# ── MC-spawned child PID ledger + startup orphan reaper ──────────────────────
-# server.py restarts by re-exec'ing via os._exit(): any child not killed inside
-# the bounded graceful-stop window is orphaned, and the new instance never knew
-# its PIDs (tracked_processes is in-memory only). Net effect: claude.exe + their
-# MCP-server trees (node/cmd/engram) leak across every restart/crash. We persist
-# the live child PIDs to a ledger and, at the next startup, reap any that are
-# STILL alive AND still the same process (image-name + creation-time guard
-# defeats PID reuse, so we can never friendly-fire an unrelated process).
-# Everything here is best-effort: it never raises, never blocks a spawn or
-# startup, and degrades to a no-op if identity can't be confirmed. [2026-06-03]
+# ── MC-spawned child PID ledger + startup orphan reaper ── extracted VERBATIM
+# to mc/process_ledger.py (mop-up, the mc/memory.py non-blueprint pattern).
+# _PID_LEDGER_PATH (data/ const) stays home + wired in (1.7 placeholder); the
+# reaper's _pid_is_alive/_kill_pid (agent_routes 1.12) wire in too. wire() +
+# import live at the dispatch stanza below; __main__ calls
+# process_ledger._reap_prior_instance_strays().
 _PID_LEDGER_PATH = _DATA_ROOT / 'data' / 'mc_child_pids.json'
-
-
-def _proc_identity(pid):
-    """Return (image_basename_lower, creation_epoch_float) for a live PID, or
-    (None, None) if it can't be read. Dependency-free ctypes on Windows so the
-    reaper works without psutil; psutil elsewhere. Used purely as a PID-reuse
-    guard — a failure here just means "can't confirm", which is treated as
-    "don't reap"."""
-    if sys.platform == 'win32':
-        try:
-            import ctypes
-            from ctypes import wintypes
-            k32 = ctypes.windll.kernel32
-            k32.OpenProcess.restype = wintypes.HANDLE
-            k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
-            if not h:
-                return (None, None)
-            try:
-                name = None
-                buf = ctypes.create_unicode_buffer(32768)
-                size = wintypes.DWORD(32768)
-                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
-                    name = buf.value.rsplit('\\', 1)[-1].lower()
-                ct = None
-                creation, exit_, kern, user = (wintypes.FILETIME(), wintypes.FILETIME(),
-                                               wintypes.FILETIME(), wintypes.FILETIME())
-                if k32.GetProcessTimes(h, ctypes.byref(creation), ctypes.byref(exit_),
-                                       ctypes.byref(kern), ctypes.byref(user)):
-                    ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
-                    # FILETIME = 100ns ticks since 1601-01-01 → unix epoch seconds.
-                    ct = ticks / 1e7 - 11644473600.0
-                return (name, ct)
-            finally:
-                k32.CloseHandle(h)
-        except Exception:
-            return (None, None)
-    else:
-        try:
-            import psutil
-            p = psutil.Process(int(pid))
-            return (p.name().lower(), float(p.create_time()))
-        except Exception:
-            return (None, None)
-
-
-def _persist_pid_ledger():
-    """Snapshot the live tracked-process PIDs to disk (atomic, best-effort).
-    Called after every register/unregister; read once at the next startup by
-    _reap_prior_instance_strays(), then cleared. Lives in data/ (NOT
-    data/projects/) so load_projects() never sees it."""
-    try:
-        with process_tracker_lock:
-            entries = [{
-                'pid': e.get('pid'),
-                'name': e.get('name', ''),
-                'type': e.get('type', ''),
-                'os_image': e.get('os_image'),
-                'create_time': e.get('create_time'),
-            } for e in tracked_processes.values()]
-        _atomic_write_text(_PID_LEDGER_PATH, json.dumps(
-            {'mc_pid': os.getpid(), 'written_at': now_iso(), 'children': entries}))
-    except Exception:
-        pass  # ledger is best-effort; a write failure must never break a spawn
-
-
-def _should_reap_entry(entry, live_image, live_ct):
-    """Pure predicate: should the startup reaper kill this ledgered PID?
-
-    Reap ONLY if the PID is still the same process MC spawned — guarded by an
-    exact image-name match and, when both sides have it, a creation-time match
-    (within 2s). A reused PID (different image, or a creation time newer than
-    recorded) is skipped. Missing identity on either side → do not reap."""
-    rec_img = (entry.get('os_image') or '')
-    if not rec_img or not live_image:
-        return False
-    if rec_img.lower() != live_image.lower():
-        return False
-    rec_ct = entry.get('create_time')
-    if rec_ct is not None and live_ct is not None:
-        if abs(float(rec_ct) - float(live_ct)) > 2.0:
-            return False
-    return True
-
-
-def _reap_prior_instance_strays():
-    """Startup: kill child process trees orphaned by a prior MC instance that
-    exited (restart/crash) without tearing them down. Reads the prior instance's
-    PID ledger, reaps anything still alive AND still the same process, then
-    clears the ledger. Best-effort; never blocks startup."""
-    try:
-        if not _PID_LEDGER_PATH.exists():
-            return
-        data = json.loads(_PID_LEDGER_PATH.read_text(encoding='utf-8'))
-    except Exception:
-        return
-    me = os.getpid()
-    prior_mc = data.get('mc_pid')
-    reaped = 0
-    for entry in (data.get('children') or []):
-        try:
-            pid = int(entry.get('pid'))
-        except Exception:
-            continue
-        if pid == me or pid == prior_mc or not _pid_is_alive(pid):
-            continue
-        live_image, live_ct = _proc_identity(pid)
-        if not _should_reap_entry(entry, live_image, live_ct):
-            continue
-        if _kill_pid(pid, tree=True):
-            reaped += 1
-    try:
-        if reaped:
-            _log(f"[reaper] killed {reaped} orphaned child tree(s) from a prior MC "
-                 f"instance (was PID {prior_mc})")
-        _atomic_write_text(_PID_LEDGER_PATH, json.dumps(
-            {'mc_pid': me, 'written_at': now_iso(), 'children': []}))
-    except Exception:
-        pass
 
 
 # ── Project-record store + project/backlog/github/code-sync/attachment/
@@ -572,6 +420,12 @@ from mc.blueprints import project_routes as _bp_projects  # noqa: E402
 # agent_routes itself cross-imports project_routes/push_mobile/system_routes
 # defs at import time (request/stream-time calls only — safe before wire()).
 from mc.blueprints import agent_routes as _bp_agent  # noqa: E402
+
+# ── MC-spawned child PID ledger (mop-up: mc/process_ledger.py) ───────────────
+# Imported here (its _proc_identity/_persist_pid_ledger feed the _bp_agent.wire()
+# slots below); process_ledger.wire() runs after that stanza, once _bp_agent's
+# _pid_is_alive/_kill_pid exist. Leaf module (mc.state/mc.core only — no cycle).
+from mc import process_ledger  # noqa: E402
 
 # ── Memory / Scribe / Condense engine (mop-up: mc/memory.py) ─────────────────
 # The engine was extracted VERBATIM to mc/memory.py (no behavior change). Its
@@ -1204,9 +1058,9 @@ except Exception as _distiller_reg_err:
 # _get_memory_path/_get_archive_path, _find_transcript_file/_parse_transcript_
 # messages/_recent_claude_transcripts, _session_too_large, _long_session_advisory,
 # _resume_is_fragile, _encode_project_path, _extract_transcript_telemetry), plus
-# the reaper-family internals and the path/Popen consts that stay in server.py.
-# The module was imported at the project_routes stanza above; wire() runs HERE
-# because the reaper stayers (_proc_identity/_persist_pid_ledger) are above too.
+# the path/Popen consts that stay in server.py. The reaper-family writers
+# (_proc_identity/_persist_pid_ledger) now live in mc/process_ledger.py (mop-up);
+# the two slots below source them from there (process_ledger.*, imported above).
 _bp_agent.wire(
     data_dir=DATA_DIR,
     uploads_dir=UPLOADS_DIR,
@@ -1237,8 +1091,8 @@ _bp_agent.wire(
     resume_is_fragile_fn=memory._resume_is_fragile,
     encode_project_path_fn=memory._encode_project_path,
     extract_transcript_telemetry_fn=memory._extract_transcript_telemetry,
-    proc_identity_fn=_proc_identity,
-    persist_pid_ledger_fn=_persist_pid_ledger,
+    proc_identity_fn=process_ledger._proc_identity,
+    persist_pid_ledger_fn=process_ledger._persist_pid_ledger,
 )
 app.register_blueprint(_bp_agent.bp)
 # Inbound shims — stayer call sites keep their bare names: the reaper
@@ -1288,6 +1142,17 @@ _route_dispatch_model = _bp_agent._route_dispatch_model
 _resolve_dispatch_model = _bp_agent._resolve_dispatch_model
 _router_stat = _bp_agent._router_stat
 _AUTO_MODEL_VALID = _bp_agent._AUTO_MODEL_VALID
+
+# ── PID-ledger reaper wiring (mop-up: mc/process_ledger.py) ──────────────────
+# wire() runs HERE — after _bp_agent's _pid_is_alive/_kill_pid are bound above
+# (the reaper calls them). No inbound shims: every caller uses process_ledger.*
+# directly (the wire slots + the __main__ reaper call); the test patches
+# mc.process_ledger.* (the test-port rule).
+process_ledger.wire(
+    pid_ledger_path=_PID_LEDGER_PATH,
+    pid_is_alive_fn=_bp_agent._pid_is_alive,
+    kill_pid_fn=_bp_agent._kill_pid,
+)
 
 
 # ── Agent endpoints (dispatch/send/stream/followup/stop/interrupt/session/
@@ -1389,286 +1254,32 @@ _bp_mcp.wire(load_project_fn=_bp_projects.load_project,
              mcp_server_catalog_fn=_bp_agent._mcp_server_catalog)
 app.register_blueprint(_bp_mcp.bp)
 
-# ── Global config endpoints ────────────────────────────────────────────────
+# ── Global config + folder-browse + domain settings endpoints (10 routes:
+# /api/config GET+PUT, /api/browse/folders + create_folder, the 4
+# /api/settings/domains, and below the project-order tombstone
+# /api/list-directory + /api/create-folder) ── extracted to
+# mc/blueprints/settings_routes.py (1.14, the final app-level API blueprint).
+# wire() late-binds CONFIG_PATH + PROJECTS_BASE (both STAY home — _load_config +
+# project_routes.wire() read them) + SETTINGS_PATH (placeholder). CONFIG is
+# read+mutated live via state.CONFIG (same dict).
+from mc.blueprints import settings_routes as _bp_settings  # noqa: E402
 
-_CONFIG_EDITABLE_KEYS = {
-    'user_name', 'agent_name', 'agent_model', 'agent_effort', 'agent_max_turns',
-    'agent_permission_mode', 'agent_channels', 'agent_remote_control',
-    'use_streaming_agent', 'condense_enabled', 'condense_threshold_kb',
-    'condense_model', 'condense_mode', 'index_line_budget',
-    'index_line_hard_floor',
-    'scribe_enabled', 'scribe_model', 'scribe_reconcile_enabled',
-    'scribe_reconcile_cap', 'scribe_checkpoint_enabled',
-    'scribe_checkpoint_kb', 'read_floor_topk',
-    'long_session_advisory_enabled', 'long_session_advisory_turns',
-    'idle_eviction_enabled', 'idle_eviction_minutes',
-    'projects_base', 'shared_rules_path', 'port', 'log_level',
-    'mobile_brief_replies_enabled', 'brief_replies_always_enabled',
-    'auto_model_enabled', 'auto_model_classifier_model',
-    'auto_model_classifier_timeout_secs',
-    'sticky_agent_settings',
-    # Phase 4 Distiller (v2.1 §11 global keys).
-    'distiller_enabled_global', 'distiller_cross_project_enabled',
-    'distiller_model', 'distiller_window_days',
-    'distiller_cost_cap_tokens_per_project_per_day',
-    'distiller_proposal_dedupe_days',
-    'distiller_cross_project_walk_debounce_session_count',
-    'distiller_cross_project_walk_debounce_seconds',
-}
-
-# Respawn-trigger ("Tier-1a") settings: passed as CLI FLAGS at process launch and
-# re-applied on a `-r` respawn, so flipping one mid-session and resuming actually
-# changes behavior (this is exactly how the auto-router switches --model live).
-# When `sticky_agent_settings` is on, flipping any of these marks live Mode B
-# sessions to resume into a fresh process at the next turn boundary.
-#
-# DELIBERATELY EXCLUDED — system-prompt ("Tier-1b") settings (brief-reply
-# directive `brief_replies_always_enabled`, `read_floor_topk`, rules-file edits):
-# these live in --append-system-prompt-file, and a canary test (2026-06-04, Haiku)
-# proved `claude -r` RESTORES the session's original system prompt and IGNORES a
-# resume-time append (fresh+append → applied; -r+append → ignored, 0/4 trials;
-# continuity probe confirmed -r really resumed). So a respawn can't apply them to
-# a resumed chat — they only take effect on a FRESH spawn. Including them would
-# just burn a re-prefill for no behavior change. See discovery memory
-# claude-resume-ignores-append-system-prompt.
-#
-# Also excluded: per-turn settings (brief phone-mode, auto-router,
-# scribe-checkpoint) take effect next turn for free; agent_name/user_name change
-# rarely; MCP set is per-project (not a global key here).
-_RESPAWN_TRIGGER_KEYS = {
-    'agent_model', 'agent_effort', 'agent_max_turns', 'agent_permission_mode',
-    'agent_channels', 'agent_remote_control', 'use_streaming_agent',
-}
-
-@app.route('/api/config')
-def get_config():
-    """Return all editable config keys."""
-    return jsonify({k: CONFIG.get(k) for k in _CONFIG_EDITABLE_KEYS})
-
-@app.route('/api/config', methods=['PUT'])
-def update_config():
-    """Update config keys and persist to config.json."""
-    data = request.get_json() or {}
-    updated = {}
-    for k, v in data.items():
-        if k in _CONFIG_EDITABLE_KEYS:
-            CONFIG[k] = v
-            updated[k] = v
-    if updated:
-        try:
-            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-                json.dump(CONFIG, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            return jsonify({'error': f'failed to save config: {e}'}), 500
-    # Sticky settings: if a spawn-baked (Tier-1) key changed, flag live Mode B
-    # claude sessions to resume into a fresh process at their next turn boundary
-    # so the change actually takes effect (a running CLI can't see spawn-baked
-    # changes). Best-effort; agent_followup reads `_needs_respawn` under lock.
-    respawn_flagged = 0
-    if CONFIG.get('sticky_agent_settings', False):
-        flipped = [k for k in updated if k in _RESPAWN_TRIGGER_KEYS]
-        if flipped:
-            for _sess in list(agent_sessions.values()):
-                if (_sess.get('mode') == 'B'
-                        and (_sess.get('provider') or 'claude').lower() == 'claude'
-                        and _sess.get('process_alive')):
-                    _sess['_needs_respawn'] = True
-                    respawn_flagged += 1
-            if respawn_flagged:
-                _log(f"[sticky-settings] {flipped} changed → flagged "
-                     f"{respawn_flagged} live Mode B session(s) for respawn")
-    return jsonify({'ok': True, 'updated': list(updated.keys()),
-                    'respawn_flagged': respawn_flagged})
-
-
-# ── Folder browse (for project_path picker) ─────────────────────────────────
-
-@app.route('/api/browse/folders')
-def browse_folders():
-    """List immediate subdirectories of the requested path. Used by the
-    project_path picker UI so users can choose a folder without typing.
-    Hidden / dot-prefixed dirs are filtered out."""
-    raw = (request.args.get('path') or '').strip()
-    if not raw:
-        # Default landing: the auto-workspace base (creates if missing).
-        base = Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
-        try:
-            base.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        target = base
-    else:
-        target = Path(raw).expanduser()
-
-    try:
-        target = target.resolve()
-    except Exception:
-        return jsonify({'error': 'invalid path'}), 400
-
-    if not target.exists() or not target.is_dir():
-        return jsonify({'error': 'not a directory', 'path': str(target)}), 404
-
-    folders = []
-    try:
-        for entry in sorted(target.iterdir(), key=lambda p: p.name.lower()):
-            try:
-                if not entry.is_dir():
-                    continue
-                if entry.name.startswith('.'):
-                    continue
-                folders.append({'name': entry.name, 'path': str(entry)})
-            except Exception:
-                continue
-    except PermissionError:
-        return jsonify({'error': 'permission denied', 'path': str(target)}), 403
-    except Exception as e:
-        return jsonify({'error': str(e), 'path': str(target)}), 500
-
-    parent = str(target.parent) if target.parent != target else None
-    home = str(Path.home())
-    base = str(Path(CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl')))
-    return jsonify({
-        'path': str(target),
-        'parent': parent,
-        'folders': folders,
-        'home': home,
-        'workspace_base': base,
-    })
-
-
-@app.route('/api/browse/create_folder', methods=['POST'])
-def browse_create_folder():
-    """Create a new subdirectory inside the given parent. Used by the picker
-    so users can spin up a fresh workspace folder without leaving the UI."""
-    data = request.get_json() or {}
-    parent = (data.get('parent') or '').strip()
-    name = (data.get('name') or '').strip()
-    if not parent or not name:
-        return jsonify({'error': 'parent and name required'}), 400
-    # Reject path-traversal / absolute names.
-    if any(c in name for c in ('/', '\\', ':')) or name in ('.', '..'):
-        return jsonify({'error': 'invalid folder name'}), 400
-    target = Path(parent).expanduser() / name
-    try:
-        target.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
-        return jsonify({'error': 'folder already exists', 'path': str(target)}), 409
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    return jsonify({'ok': True, 'path': str(target)})
-
-
-# ── Domain settings ─────────────────────────────────────────────────────────
-
-@app.route('/api/settings/domains')
-def get_domains():
-    settings = _load_settings()
-    return jsonify(settings.get('domains', []))
-
-@app.route('/api/settings/domains/add', methods=['POST'])
-def add_domain():
-    data = request.get_json() or {}
-    domain_id = (data.get('id') or '').strip().lower().replace(' ', '_')
-    domain_id = ''.join(c for c in domain_id if c.isalnum() or c == '_')
-    if not domain_id:
-        return jsonify({'error': 'id required'}), 400
-    label = data.get('label', domain_id.capitalize())
-    color = data.get('color', 'var(--text-dim)')
-    bg = data.get('bg', 'var(--surface3)')
-    settings = _load_settings()
-    domains = settings.get('domains', [])
-    if any(d['id'] == domain_id for d in domains):
-        return jsonify({'error': 'domain already exists'}), 409
-    domains.append({'id': domain_id, 'label': label, 'color': color, 'bg': bg})
-    settings['domains'] = domains
-    _save_settings(settings)
-    return jsonify({'ok': True, 'domain': domains[-1]})
-
-@app.route('/api/settings/domains/<domain_id>', methods=['PATCH'])
-def update_domain(domain_id):
-    data = request.get_json() or {}
-    settings = _load_settings()
-    domains = settings.get('domains', [])
-    domain = next((d for d in domains if d['id'] == domain_id), None)
-    if not domain:
-        return jsonify({'error': 'not found'}), 404
-    if 'color' in data:
-        domain['color'] = data['color']
-    if 'bg' in data:
-        domain['bg'] = data['bg']
-    if 'label' in data:
-        domain['label'] = data['label']
-    settings['domains'] = domains
-    _save_settings(settings)
-    return jsonify({'ok': True})
-
-@app.route('/api/settings/domains/<domain_id>', methods=['DELETE'])
-def delete_domain(domain_id):
-    if domain_id == 'general':
-        return jsonify({'error': 'cannot delete general domain'}), 400
-    settings = _load_settings()
-    domains = settings.get('domains', [])
-    before = len(domains)
-    domains = [d for d in domains if d['id'] != domain_id]
-    if len(domains) == before:
-        return jsonify({'error': 'not found'}), 404
-    settings['domains'] = domains
-    _save_settings(settings)
-    return jsonify({'ok': True})
+_bp_settings.wire(
+    config_path=CONFIG_PATH,
+    projects_base=PROJECTS_BASE,
+    settings_path=SETTINGS_PATH,
+)
+app.register_blueprint(_bp_settings.bp)
+# Inbound shim: test_p2_3_log_shim reads server._CONFIG_EDITABLE_KEYS off the
+# module (the _project_attachment_usage precedent; handlers run on the blueprint).
+_CONFIG_EDITABLE_KEYS = _bp_settings._CONFIG_EDITABLE_KEYS
 
 
 # ── Project order + grid layout ── moved to mc/blueprints/project_routes.py (1.11).
 
 
-@app.route('/api/list-directory', methods=['POST'])
-def list_directory():
-    data = request.get_json() or {}
-    path = (data.get('path') or '').strip()
-    target = Path(path) if path else PROJECTS_BASE
-    try:
-        target = target.resolve()
-    except Exception as e:
-        return jsonify({'error': f'Invalid path: {e}'}), 400
-    if not target.is_dir():
-        return jsonify({'error': f'Not a directory: {target}'}), 400
-    try:
-        dirs = sorted(
-            item.name for item in target.iterdir()
-            if item.is_dir() and not item.name.startswith('.')
-        )
-        return jsonify({
-            'path': str(target),
-            'parent': str(target.parent) if target.parent != target else None,
-            'dirs': dirs,
-            'projects_base': str(PROJECTS_BASE),
-        })
-    except PermissionError:
-        return jsonify({'error': f'Permission denied: {target}'}), 403
-    except Exception as e:
-        return jsonify({'error': f'Failed to list directory: {e}'}), 500
-
-
-@app.route('/api/create-folder', methods=['POST'])
-def create_folder():
-    data = request.get_json()
-    folder_name = (data or {}).get('name', '').strip()
-    parent = (data or {}).get('parent', '').strip()
-    if not folder_name:
-        return jsonify({'error': 'Folder name is required'}), 400
-    # Prevent path traversal in folder name
-    if '..' in folder_name or folder_name.startswith(('/', '\\')):
-        return jsonify({'error': 'Invalid folder name'}), 400
-    base = Path(parent) if parent else PROJECTS_BASE
-    if not base.is_dir():
-        return jsonify({'error': f'Parent directory does not exist: {base}'}), 400
-    target = base / folder_name
-    if target.exists():
-        return jsonify({'error': 'Folder already exists', 'path': str(target)}), 409
-    try:
-        target.mkdir(parents=True, exist_ok=False)
-    except Exception as e:
-        return jsonify({'error': f'Failed to create folder: {e}'}), 500
-    return jsonify({'ok': True, 'path': str(target)})
+# /api/list-directory + /api/create-folder ── moved to
+# mc/blueprints/settings_routes.py (1.14) with the rest of the settings family.
 
 
 # ── Scheduled Tasks ── moved to mc/blueprints/scheduler_routes.py (1.13):
@@ -2384,7 +1995,7 @@ if __name__ == '__main__':
     # instance persisted; identity-guarded so it can't friendly-fire. Must run
     # before any subsystem spawns its own children. [leak fix 2026-06-03]
     try:
-        _reap_prior_instance_strays()
+        process_ledger._reap_prior_instance_strays()
     except Exception as e:
         _log(f"[reaper] startup reap failed: {e}")
     _bp_sched._start_scheduler()

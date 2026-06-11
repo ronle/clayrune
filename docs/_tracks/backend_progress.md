@@ -1032,3 +1032,147 @@ pipeline). A **PURE MOVE**, byte-proven; zero behavior change.
   `register()` glue, like github_sync's) and now sources its scribe/checkpoint
   primitives from `memory.*` (memory.wire() runs above it, so memory.* is live).
 - **Commit:** PENDING on `wt-mop-memory` (orchestrator merges; do NOT merge).
+
+## 1.14 — settings_routes blueprint + process_ledger module (MOP-UP, 2026-06-10)
+
+The FINAL app-level API blueprint (1.14) + the PID ledger as a non-blueprint
+module (the mc/memory.py sibling). Two PURE MOVES, byte-proven; zero behavior
+change.
+
+- **A) `mc/blueprints/settings_routes.py` (385 lines): 10 routes** —
+  `/api/config` GET (get_config) + PUT (update_config), `/api/browse/folders`
+  (browse_folders) + `/api/browse/create_folder` POST (browse_create_folder),
+  the 4 `/api/settings/domains` routes (get_domains / add_domain `…/add` /
+  update_domain `…/<id>` PATCH / delete_domain DELETE), `/api/list-directory`
+  POST (list_directory) + `/api/create-folder` POST (create_folder). Plus the
+  helpers used ONLY by these routes (re-derived by AST free-name pass —
+  `_scratch/freenames.py`): `DEFAULT_DOMAINS`, `_load_settings`/`_save_settings`
+  (settings.json store), `_CONFIG_EDITABLE_KEYS`, `_RESPAWN_TRIGGER_KEYS`.
+  **LEFT on `app` (per the brief — entry-point/static, NOT API):** `/` (index),
+  `/sw.js`, `/manifest.json`, `/assets/<filename>` (serve_asset), and the
+  env-gated mock-CP routes (`/v1/nonce`, `/v1/attest`, `/api/_mock/connect`).
+  Confirmed by grep: the only `@app.route`s remaining in server.py are exactly
+  those 7.
+  - **Wire-slot set (3 path/const slots), DERIVED by AST free-name pass — proven
+    complete:** the union of free names across all 12 moved functions (minus
+    builtins / flask / stdlib / intra-module defs / state+core imports) was
+    `{CONFIG, CONFIG_PATH, PROJECTS_BASE, SETTINGS_PATH}`. `CONFIG` is **NOT** a
+    slot — read live via `state.CONFIG` (get_config / browse_folders) AND
+    mutated-in-place + persisted (update_config) via the SAME dict object
+    (`_mc_state.CONFIG = CONFIG`); the `CONFIG`→`state.CONFIG` rewrite is the
+    ONLY mechanical edit to the moved bodies (the 1.7/1.10/1.11/memory
+    precedent). The 3 wire slots: `config_path` (CONFIG_PATH — STAYS home,
+    `_load_config` reads it at module init; update_config's persist target),
+    `projects_base` (PROJECTS_BASE — STAYS home, project_routes.wire() also
+    passes it; the list-dir/create-folder default base), `settings_path`
+    (SETTINGS_PATH — wired placeholder, the 1.7 SESSION_LABELS_PATH pattern;
+    nothing else reads it). `agent_sessions` is imported from mc.state and only
+    **mutated in-place** in update_config's respawn-flag path
+    (`_sess['_needs_respawn'] = True` on live Mode-B sessions) — never rebound,
+    so the respawn mechanism is fully self-contained (no extra fn slot; the 1.6
+    rebound-global problem does not apply). **Completeness proven:** ruff
+    `--select E9,F821` clean + `import server` clean + full pytest green — a
+    missed slot would dangle as F821 / NameError.
+  - **Inbound shim (1):** `_CONFIG_EDITABLE_KEYS = _bp_settings._CONFIG_EDITABLE_KEYS`
+    (test_p2_3_log_shim reads it off `server.*` — the _project_attachment_usage
+    precedent). The route handlers run on the blueprint.
+  - **Stanza:** `from mc.blueprints import settings_routes` + `wire(config_path,
+    projects_base, settings_path)` + `register_blueprint` at the config/domains
+    tombstone (after the path consts + state.CONFIG are bound at server top).
+- **B) `mc/process_ledger.py` (~165 lines): 4 functions** — `_proc_identity`,
+  `_persist_pid_ledger`, `_should_reap_entry`, `_reap_prior_instance_strays`
+  (+ the ledger const stays home). A non-blueprint module (`from mc import
+  state, core` only; **NO import cycle** — asserted by a test: the source AST
+  contains no `import server`/`from server`/`mc.blueprints`). PURE MOVE — NO
+  mechanical rewrite needed (every name resolves identically:
+  `process_tracker_lock`/`tracked_processes` from mc.state; `_atomic_write_text`/
+  `_log`/`now_iso` from mc.core).
+  - **Wire-slot set (3 slots):** `pid_ledger_path` (_PID_LEDGER_PATH — STAYS
+    home in server.py, wired placeholder) + the two dispatch-family helpers the
+    reaper calls, `pid_is_alive_fn`/`kill_pid_fn` (agent_routes 1.12).
+    `process_ledger.wire(...)` runs just AFTER the `_bp_agent` shim block (it
+    needs `_bp_agent._pid_is_alive`/`_kill_pid`, bound there); the module is
+    imported right after the agent_routes import.
+  - **Re-homing into agent_routes (the brief's instruction):**
+    `_bp_agent.wire(...)` now passes `proc_identity_fn=process_ledger._proc_identity`
+    + `persist_pid_ledger_fn=process_ledger._persist_pid_ledger` (were the local
+    names). The startup reaper call in `__main__` is now
+    `process_ledger._reap_prior_instance_strays()`. **No inbound shims** — every
+    caller uses `process_ledger.*` directly.
+- **Test ports (the Phase-0 monkeypatch landmine):** **1** file —
+  `tests/test_pid_reaper.py` (the reaper resolves `_pid_is_alive`/`_kill_pid`/
+  `_proc_identity`/`_PID_LEDGER_PATH` from its OWN module globals now, so a
+  `server.<name>` rebind no longer reaches it). The 9 tests now patch
+  `mc.process_ledger.*`; the `srv` fixture returns `(server, process_ledger)`
+  and reads `tracked_processes`/`process_tracker_lock` off `server.*` (still
+  mc.state-backed). No settings test needed porting (no test patched a moved
+  settings name except `_CONFIG_EDITABLE_KEYS`, kept as a server shim → passes
+  unmodified).
+- **New tests:** `tests/test_settings_routes.py` (35 tests): registration
+  parity (all 8 rules present + owned by the blueprint, pinned both ways),
+  config GET (editable-key projection) + PUT happy/ignore-non-editable/empty +
+  the **live Mode-B respawn-flag path** (agent_sessions seeded: only the live
+  Mode-B session flagged; dead-B/Mode-A spared; sticky-off + non-Tier-1-key
+  no-ops), domains CRUD round-trips + 400/409/404, browse-folders happy +
+  not-a-dir 404, browse-create-folder + traversal guards, list-directory happy
+  + not-a-dir 400 + default-to-PROJECTS_BASE, create-folder happy + traversal +
+  409 + missing-name 400, app-wide LAN auth-gate 401 (GET + POST, handler not
+  reached). Snapshots/restores state.CONFIG + agent_sessions in-place (so the
+  respawn test can't leak). `tests/test_process_ledger.py` (21 tests, 1
+  conditional skip): import smoke, the no-import-cycle AST assertion +
+  "importing process_ledger alone doesn't drag in server" guard,
+  `_persist_pid_ledger` round-trip (tmp ledger; the live Popen never
+  serialized) + empty-tracker + never-raises-on-bad-path, and a 12-case
+  `_should_reap_entry` truth table (exact/drift-boundary/name-mismatch/
+  newer-ct/case-insensitive/missing-identity/no-ct cases). Both patch the new
+  modules ONLY (test-port rule).
+- **Byte-fidelity proof (`_scratch/fidelity.py`):** all **16 moved functions**
+  (4 ledger + 12 settings) extracted from HEAD server.py AND the new modules via
+  `ast.get_source_segment`; the HEAD side transformed with the documented
+  `CONFIG`→`state.CONFIG` rewrite, then asserted byte-equal line-by-line.
+  **PASS:** all 16 byte-identical (modulo the rewrite + the `@app.route`→
+  `@bp.route` decorator swap, which `get_source_segment` excludes).
+- **Debris cleanup (comment-only, behavior-neutral):** removed the single
+  VERBATIM-DUPLICATE 6-line "Memory / Scribe / Condense engine" tombstone the
+  memory mop-up left (two identical copies; one kept) + collapsed 3+ blank-line
+  runs to 2. No code byte touched.
+- **Gates:** url_map **209 rules** unchanged (routes relocated, count preserved)
+  + `settings_routes` registered (**15 blueprints**) + `import mc.process_ledger`
+  clean ✓ · `import server` clean ✓ · `ruff check --select E9,F821 .` clean ✓ ·
+  pyright settings_routes.py + process_ledger.py **0 errors, 0 warnings** (no
+  moved-verbatim debt tags needed; whole mc/ scope = the pre-existing 23
+  distiller/agent_runtime baseline, unchanged — 0 errors + 1 psutil import
+  warning) ✓ · **full pytest exit 0 — 674 passed, 2 skipped** (codex CLI env
+  skip + the process_ledger "server already imported" conditional skip; captured
+  pytest's OWN exit via `> _scratch/pt.txt 2>&1; echo $?`) ✓ · isolated boot
+  smoke (`MC_DATA_DIR=$(mktemp -d)`, `MC_PORT=5383`, BOM-less config seed,
+  CLAUDE_SKIP_AUTH_CHECK=1, FROM THE WORKTREE): heartbeat 200 · `/api/config`
+  200 (44 keys, log_level=info) · `/api/settings/domains` 200 (4 defaults) ·
+  `/api/list-directory` POST 200 · boot.log error-free (the startup reaper ran
+  via `process_ledger._reap_prior_instance_strays()` clean — "Clayrune running"
+  reached) · `taskkill /T /F` killed the tree (3 procs), port 5383 free, live
+  :5199 untouched ✓
+- **server.py: 2,444 → 2,056 lines** (−388). **DID NOT cross the <2,000 target
+  by 56 lines.** Per the brief's escape clause ("if it won't cross after both
+  A+B, report — don't pad"): the chartered A+B work is COMPLETE and verified
+  (both deliverables fully extracted, byte-proven, all other gates green; the
+  only remaining `@app.route`s are the 7 the brief said to LEAVE — there is no
+  more app-level API to move). The 56-line residual is **pure tombstone-comment
+  density**, not code: server.py is now **1,338 lines of actual code** + ~485
+  comment + ~233 blank. ~95 of those comment lines are the verbose
+  crash-recovery tombstones authored by 7 prior extraction steps (1.11 project /
+  1.12 agent / 1.10 hivemind / 1.7 remote / 1.9 guide / 1.8 terminal / 1.13
+  scheduler — 13–18 lines each). Condensing those to concise pointers (a
+  comment-only, behavior-neutral change that recovers ~74 lines → ~1,982) is the
+  clear path to <2,000, but it rewrites OTHER steps' documentation choices, so it
+  is flagged here for the orchestrator's decision rather than done unilaterally
+  in a commit titled "extract settings_routes + process_ledger". (My own
+  freshly-added tombstones were already condensed to minimal house-style; the
+  dead-duplicate memory tombstone was removed.)
+- **Ambiguities hit:** the brief flagged update_config's `_needs_respawn`
+  coupling as the one thing to STOP-and-report-if-ambiguous. It was NOT
+  ambiguous: the respawn path mutates `state.CONFIG` (in-place) + `agent_sessions`
+  (in-place, `_needs_respawn` value-write) — both the SAME objects the module
+  imports, no rebind, no extra wire slot. Verified by a dedicated test (live
+  Mode-B flagged, dead-B/Mode-A/sticky-off/non-Tier-1 all correctly skipped).
+- **Commit:** PENDING on `wt-mop-final` (orchestrator merges; do NOT merge).
