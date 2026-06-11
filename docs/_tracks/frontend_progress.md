@@ -3473,3 +3473,21 @@ checkpoint** for the remaining core.
   modal drag (dx=120/dy=62) both through RELOCATED arms; 0 errors.
   Synthetic-event gotcha: dispatch mousedown ON the header (no hit-testing
   in synthetic dispatch — e.target is the dispatch node).
+
+## Phase 4 — M32a: dead-copy deletion + project-forms → `static/js/project-forms.js` (2026-06-10)
+
+- **Pre-cut commit `07ae962`:** deleted the dead shadowed `timeAgoShort`
+  (console-zone copy, unreachable since birth — the parse-order winner at
+  the plan-viewer zone overwrites it). Deletion was REQUIRED to move the
+  winner: a leftover script-level decl would shadow the module's window
+  exposure for bare inline callers and resurrect the "no-ago" variant.
+- One span [(3621,4453)]: path editor, folder picker (fp*), shared-rules
+  editor, plan viewer + planFileLabel + the WINNER timeAgoShort, new-project
+  form + autoSlug, folder browser, domain picker, createProject. 833 lines /
+  37,304 bytes. index.html 5,264 → 4,432.
+- Interop: 25 exposures (8 ref-derived incl. timeAgoShort×6-module callers +
+  17 handler promotions), 21 privates. newProjDomain decl stays inline near
+  the store block (global-lexical resolution; sweep later).
+- Gates: parse ×2; boot-smoke 5/5; bg-framing baseline; 37,304B exact;
+  exercise green (timeAgoShort variant check "5m ago" — the load-bearing
+  assertion; new-project form renders; 0 write hits).
