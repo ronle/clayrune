@@ -680,9 +680,148 @@
 // ── API base: same-origin (served by Flask — browser or PyInstaller app). ──
 const API_BASE = '';
 
+// ── STORE: shared mutable state — read/written across families and modules ──
+// Contract: docs/STORE_JS_DESIGN.md §5. Modules and generated on*= handlers
+// reference these bare-name via the global lexical environment; never
+// re-declare a store name at a module's top level (silent state fork).
+// Membership is derived, not curated: _scratch/store_membership.py.
+// (API_BASE above is store member #1; family-private state stays with its
+// feature and moves out with it at extraction time.)
 let allProjects = [];
 let _globalConfig = {};  // cached global config — used to resolve effective per-project mode
 let _agentProviders = null;  // [{name, display_name, installed, capabilities, ...}] — loaded once
+const _CLAUDE_DEFAULT_CAPS = {
+  supports_mode_a: true, supports_mode_b: true, mode_b_kind: 'native',
+  default_mode: 'B', supports_session_resume: true, supports_mcp: true,
+  supports_skills: true, supports_plan_mode: true, supports_ask_user_question: true,
+  supports_streaming_text: true, emits_usage: true, emits_cost: true,
+  emits_num_turns: true, emits_rate_limit: true, image_input: true,
+  context_window: null, context_injection: 'flag', context_file_name: 'CLAUDE.md',
+  oneshot_supported: true,
+};
+const _isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
+const _orderKey = _isMobileDevice ? 'projectOrder_mobile' : 'projectOrder';
+let projectOrder = JSON.parse(localStorage.getItem(_orderKey) || '[]');
+let activeFilter = 'all';
+let showDoneMap = {};
+let modalSearchQuery = {};  // projectId → search filter string
+let openAttPanels = new Set();
+let openNotesPanels = new Set();
+let undoStack = [];  // [{type, projectId, itemId, data, label}]
+let modalActiveTab = {};  // projectId → 'backlog' | 'agent' | 'agent-log' | 'activity'
+let textareaHeights = {}; // textarea id → height string (persists user resize across refreshes)
+let textareaValues = {};  // textarea id → value string (persists content across tab switches)
+let lastDragEnd = 0;
+let domainsList = [];
+const COLOR_PRESETS = [
+  { label: 'Blue',   color: 'var(--accent)',      bg: 'var(--accent-dim)' },
+  { label: 'Purple', color: 'var(--purple-text)', bg: 'var(--purple-dim)' },
+  { label: 'Green',  color: 'var(--green-text)',  bg: 'var(--green-dim)' },
+  { label: 'Amber',  color: 'var(--amber-text)',  bg: 'var(--amber-dim)' },
+  { label: 'Red',    color: 'var(--red-text)',    bg: 'var(--red-dim)' },
+  { label: 'Gray',   color: 'var(--text-dim)',    bg: 'var(--surface3)' },
+];
+let _mcModalHistoryActive  = false;  // L1 sentinel present
+let _mcConvHistoryActive   = false;  // L2 sentinel present
+// Settings modal has its own two-level depth (master list ↔ detail screen), so
+// it gets its own sentinels: hardware back steps detail → list → close, instead
+// of tearing the whole modal down (the bug Ron hit). Gated to touch devices /
+// narrow viewports — desktop browser back is left alone, same as the others.
+let _mcSettingsHistoryActive = false;  // settings modal open (innermost back = close)
+let _mcSettingsNavDepth = 0;           // # of in-settings sub-navigation steps pushed (list→subs→detail)
+const openModals = new Map();   // modalId -> { projectId, element, minimized, zIndex }
+let focusedModalId = null;
+let nextModalZ = 201;
+let currentView = localStorage.getItem('mc_view') || 'grid';
+let cmdPaletteOpen = false;
+const pendingFiles = new Map();
+let tokenCounterMode = localStorage.getItem('tc_mode') || 'all';
+// MC-scoped token counter — was a header pill, now folded into the system-
+// status popover's Usage tab. `mcUsageCache` holds the last fetched totals
+// for the active range; `fetchGlobalUsage` populates it and re-renders
+// any popover surface that's open.
+let mcUsageCache = null;
+// 'enter' = Enter sends, Shift+Enter for newline
+// 'ctrl-enter' = Ctrl/Cmd+Enter sends, Enter for newline (default)
+let enterKeyMode = localStorage.getItem('enter_mode') || 'enter';
+// Keys: tokens, tool-lines, github, agent-log, memory
+const ADV_FEATURES = [
+  { key: 'tokens',     label: 'Token usage counter',   hint: 'Header pill with running token/cost totals' },
+  { key: 'tool-lines', label: 'Tool call lines',       hint: 'Show [tool: ExitPlanMode] / [tool: Read] markers in agent output' },
+  { key: 'github',     label: 'GitHub sync badges',    hint: 'Issue links and sync buttons on backlog/modal' },
+  { key: 'agent-log',  label: 'Agent Log tab',         hint: 'Per-project history of past agent sessions' },
+  { key: 'memory',     label: 'Memory & Rules menu',   hint: 'Edit per-project Memory and Rules from the three-dot menu' },
+];
+let advancedFlags = _loadAdvancedFlags();
+let currentTone   = localStorage.getItem('mc_tone')   || 'warm';
+let currentAccent = localStorage.getItem('mc_accent') || '';
+let currentVoice  = localStorage.getItem('mc_voice')  || 'pro';
+let bgMode  = localStorage.getItem('mc_bg_mode')  || 'default';   // default | color | image
+let bgColor = localStorage.getItem('mc_bg_color') || '#0c0e14';
+let bgDim   = parseInt(localStorage.getItem('mc_bg_dim') || '40', 10); // scrim alpha %, 0..80
+let agentEventSources = {};   // session_id → EventSource
+let agentOutputBuffers = {};   // session_id → string[]
+let agentServerLines = {};     // session_id → count of lines received from server (for SSE since param)
+let agentStatusCache = {};     // session_id → {status, task, projectId, startedAt}
+let agentHistory = [];         // [{projectId, sessionId, projectName, task, status, startedAt}]
+let activeAgentTab = {};       // project_id → session_id (which tab is active in modal)
+let agentConvNew = {};         // project_id → true when the user explicitly chose
+let agentPendingImages = {};   // key (projectId or sessionId) → [{file, objectUrl, serverPath}]
+let acOpenSessions = new Set(); // session_id → expanded in console
+let planViewerContent = {};    // session_id → string[] of raw plan text lines
+let planFileTitle = {};        // session_id → extracted first heading from plan file
+let pendingResumeId = {};      // project_id → claude_session_id to resume (null = fresh)
+let incognitoToggle = {};      // project_id → bool — when true, next dispatch is incognito (skips MEMORY/RULES/log)
+let _skipAgentOutput = false;  // set by refreshModalById to skip expensive output rendering
+let agentSSEWatchdogs = {};  // sessionId → timer ID
+// sessionId → timestamp ms of the last SSE event (data or heartbeat). Mirrors
+// connectAgentStream's closure-local lastEventTime so the foreground freshness
+// reconciler (an external timer) can detect a ZOMBIE stream — an EventSource
+// whose handle still reports "open" but whose socket died silently under Doze,
+// firing no onerror. Age past SSE_ZOMBIE_MS ⇒ reap + rebuild.
+let agentLastEventAt = {};
+let followupTimeouts = {};  // sessionId → { timerId, projectId }
+// sessionId → timestamp ms. Set in sendFollowup, cleared after we've seen the
+// first `turn_start` from the new turn (or after 8s timeout). While truthy,
+// SSE handlers must NOT act on a `turn_complete` / `status` event — that
+// event is from the PRIOR (idle) state we opened SSE on, not the new turn.
+// Without this gate, the eager-opened SSE in sendFollowup sees current
+// status=idle, emits turn_complete, closes SSE on the client → and the
+// post-POST status=running transition is never seen → UI stays IDLE.
+let _sendInFlight = {};
+// sessionId → true once turn_start has been received for the current send.
+// Guards the 12s AbortController catch path from restoring textarea text when
+// the server actually did receive the message (turn_start proves it did).
+// Reset to false at send time; set true at turn_start.
+let _turnStartAcked = {};
+const expandedOutputSessions = new Set();  // sessions where user clicked "load all"
+// Question_ids the user has answered THIS turn. The server keeps mirroring the
+// question until it processes the follow-up, so a poll/reconnect can land in
+// the gap between answering and turn_start; this stops the re-render path from
+// resurrecting an answered (and possibly DOM-wiped) form. Cleared on turn_start.
+const _answeredQuestionIds = {};
+let agentLogCache = {};  // project_id → entries[]
+let conversationsCache = {};  // project_id → [{claude_session_id, status, label, last_user, first_user, turns, ts_relative, ...}]
+let agentLogOpen = {};   // project_id → bool
+let plansCache = {};
+let rulesLoaded = {}; // project_id → {agent_rules, shared_rules}
+const hivemindCache = {};  // projectId -> { hiveminds: [...], loaded: true }
+let hivemindSSE = {};  // hivemindId -> EventSource
+let _hmDashDebounce = {};   // hivemindId -> setTimeout timer ID
+let _hmDashInFlight = {};   // hivemindId -> true if fetch in progress
+const _transcriptCache = {};  // csid -> {messages, size, message_count}
+// SSE_ZOMBIE_MS must stay comfortably ABOVE the server's 15s SSE heartbeat
+// (server.py emits a `data:{type:'heartbeat'}` every ~15s — a real event, so it
+// fires onmessage and refreshes agentLastEventAt). A threshold ≤15s would
+// false-reap a HEALTHY idle stream in the gap between heartbeats. 25s = one
+// missed heartbeat + margin, and still beats the 30s in-stream watchdog so the
+// visible chat recovers sooner than a backgrounded one.
+const SSE_ZOMBIE_MS = 25000;
+const modalZoomLevels = {}; // modalId → current font-size in px
+// ── /STORE ──────────────────────────────────────────────────────────────────
+
+
 async function _ensureAgentProviders() {
   if (_agentProviders !== null) return _agentProviders;
   try {
@@ -706,15 +845,6 @@ _ensureAgentProviders();
 // All return safe defaults matching Claude's behavior, so claude-only deployments
 // are pixel-identical to pre-multi-provider. Only non-claude providers suppress UI.
 
-const _CLAUDE_DEFAULT_CAPS = {
-  supports_mode_a: true, supports_mode_b: true, mode_b_kind: 'native',
-  default_mode: 'B', supports_session_resume: true, supports_mcp: true,
-  supports_skills: true, supports_plan_mode: true, supports_ask_user_question: true,
-  supports_streaming_text: true, emits_usage: true, emits_cost: true,
-  emits_num_turns: true, emits_rate_limit: true, image_input: true,
-  context_window: null, context_injection: 'flag', context_file_name: 'CLAUDE.md',
-  oneshot_supported: true,
-};
 
 function _getProviderCaps(providerName) {
   if (!providerName || providerName === 'claude') return _CLAUDE_DEFAULT_CAPS;
@@ -735,9 +865,6 @@ function _providerBadge(name) {
   const cls = 'provider-badge prov-' + name.replace(/[^a-z]/gi, '').toLowerCase();
   return `<span class="${cls}" title="Provider: ${esc(label)}">${esc(name)}</span>`;
 }
-const _isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-    || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
-const _orderKey = _isMobileDevice ? 'projectOrder_mobile' : 'projectOrder';
 function _clampModalSize(el, w, h) {
   if (_isMobileDevice) {
     el.style.width = Math.min(w, window.innerWidth) + 'px';
@@ -747,30 +874,10 @@ function _clampModalSize(el, w, h) {
     if (h) el.style.height = h + 'px';
   }
 }
-let projectOrder = JSON.parse(localStorage.getItem(_orderKey) || '[]');
-let activeFilter = 'all';
-let showDoneMap = {};
-let modalSearchQuery = {};  // projectId → search filter string
-let openAttPanels = new Set();
-let openNotesPanels = new Set();
-let undoStack = [];  // [{type, projectId, itemId, data, label}]
-let modalActiveTab = {};  // projectId → 'backlog' | 'agent' | 'agent-log' | 'activity'
-let textareaHeights = {}; // textarea id → height string (persists user resize across refreshes)
-let textareaValues = {};  // textarea id → value string (persists content across tab switches)
 let refreshCountdown = 30;
 let refreshInterval, countdownInterval;
-let lastDragEnd = 0;
-let domainsList = [];
 let newProjDomain = 'general';
 
-const COLOR_PRESETS = [
-  { label: 'Blue',   color: 'var(--accent)',      bg: 'var(--accent-dim)' },
-  { label: 'Purple', color: 'var(--purple-text)', bg: 'var(--purple-dim)' },
-  { label: 'Green',  color: 'var(--green-text)',  bg: 'var(--green-dim)' },
-  { label: 'Amber',  color: 'var(--amber-text)',  bg: 'var(--amber-dim)' },
-  { label: 'Red',    color: 'var(--red-text)',    bg: 'var(--red-dim)' },
-  { label: 'Gray',   color: 'var(--text-dim)',    bg: 'var(--surface3)' },
-];
 
 async function fetchDomains() {
   try {
@@ -1000,8 +1107,6 @@ function renderMobileChatList(col) {
 // On-screen affordances (X / Esc / "← All conversations") keep the stack in
 // sync by synthetically unwinding via _mcSuppressPop (mirrors the proven
 // closeModalById pattern: clear the flag, then navigate, popstate no-ops).
-let _mcModalHistoryActive  = false;  // L1 sentinel present
-let _mcConvHistoryActive   = false;  // L2 sentinel present
 let _mcDrawerHistoryActive = false;  // drawer-open sentinel (higher priority)
 let _mcSuppressPop = false;          // next popstate is our own synthetic nav
 function mcPushModalHistory() {
@@ -1016,12 +1121,6 @@ function mcPushDrawerHistory() {
   if (_mcDrawerHistoryActive) return;
   try { history.pushState({ mc: 'drawer' }, ''); _mcDrawerHistoryActive = true; } catch (e) {}
 }
-// Settings modal has its own two-level depth (master list ↔ detail screen), so
-// it gets its own sentinels: hardware back steps detail → list → close, instead
-// of tearing the whole modal down (the bug Ron hit). Gated to touch devices /
-// narrow viewports — desktop browser back is left alone, same as the others.
-let _mcSettingsHistoryActive = false;  // settings modal open (innermost back = close)
-let _mcSettingsNavDepth = 0;           // # of in-settings sub-navigation steps pushed (list→subs→detail)
 function _settingsWantsBackNav() { return _isMobileDevice || window.innerWidth <= 960; }
 function mcPushSettingsHistory() {
   if (!_settingsWantsBackNav() || _mcSettingsHistoryActive) return;
@@ -1958,9 +2057,6 @@ function modalContentHTML(p) {
 
 // ── Multi-modal window manager ──────────────────────────────────────────────
 
-const openModals = new Map();   // modalId -> { projectId, element, minimized, zIndex }
-let focusedModalId = null;
-let nextModalZ = 201;
 
 // ── Persistent modal prefs (per-project size+zoom) and open-list snapshot ───
 // mc_modal_prefs: { [projectId]: { width, height, zoom } } — survives reboot,
@@ -2674,7 +2770,6 @@ function renderSidebarProjects() {
 }
 
 // ── View Toggle (Grid / List) ───────────────────────────────────────────────
-let currentView = localStorage.getItem('mc_view') || 'grid';
 
 function setView(mode) {
   currentView = mode;
@@ -2805,7 +2900,6 @@ document.addEventListener('click', (e) => {
 });
 
 // ── Command Palette ─────────────────────────────────────────────────────────
-let cmdPaletteOpen = false;
 let cmdSelectedIndex = 0;
 
 function toggleCommandPalette() {
@@ -3512,7 +3606,6 @@ document.addEventListener('touchend', () => { cancelTileLongPress(); endTileDrag
 
 // ── Create-form attachment handling ──────────────────────────────────────────
 
-const pendingFiles = new Map();
 
 function handleCreatePaste(e, projectId) {
   const items = Array.from(e.clipboardData?.items || []);
@@ -4283,7 +4376,6 @@ const TOKEN_MODES = [
   { id: 'month',   label: 'This Month' },
 ];
 
-let tokenCounterMode = localStorage.getItem('tc_mode') || 'all';
 
 function formatTokens(n) {
   if (!n || n === 0) return '0';
@@ -4324,11 +4416,6 @@ function getTokenSince(mode) {
   return ''; // 'all' — no filter
 }
 
-// MC-scoped token counter — was a header pill, now folded into the system-
-// status popover's Usage tab. `mcUsageCache` holds the last fetched totals
-// for the active range; `fetchGlobalUsage` populates it and re-renders
-// any popover surface that's open.
-let mcUsageCache = null;
 
 async function fetchGlobalUsage() {
   try {
@@ -4351,19 +4438,8 @@ function setTokenMode(mode) {
 
 // ── Enter Key Behavior ──────────────────────────────────────────────────────
 
-// 'enter' = Enter sends, Shift+Enter for newline
-// 'ctrl-enter' = Ctrl/Cmd+Enter sends, Enter for newline (default)
-let enterKeyMode = localStorage.getItem('enter_mode') || 'enter';
 
 // ── Advanced feature toggles (default OFF = hidden) ─────────────────────────
-// Keys: tokens, tool-lines, github, agent-log, memory
-const ADV_FEATURES = [
-  { key: 'tokens',     label: 'Token usage counter',   hint: 'Header pill with running token/cost totals' },
-  { key: 'tool-lines', label: 'Tool call lines',       hint: 'Show [tool: ExitPlanMode] / [tool: Read] markers in agent output' },
-  { key: 'github',     label: 'GitHub sync badges',    hint: 'Issue links and sync buttons on backlog/modal' },
-  { key: 'agent-log',  label: 'Agent Log tab',         hint: 'Per-project history of past agent sessions' },
-  { key: 'memory',     label: 'Memory & Rules menu',   hint: 'Edit per-project Memory and Rules from the three-dot menu' },
-];
 function _loadAdvancedFlags() {
   try {
     const raw = localStorage.getItem('mc_advanced_flags');
@@ -4374,7 +4450,6 @@ function _loadAdvancedFlags() {
 function _saveAdvancedFlags(flags) {
   localStorage.setItem('mc_advanced_flags', JSON.stringify(flags));
 }
-let advancedFlags = _loadAdvancedFlags();
 function applyAdvancedFlags() {
   for (const f of ADV_FEATURES) {
     const on = !!advancedFlags[f.key];
@@ -4411,9 +4486,6 @@ function setEnterMode(mode) {
 }
 
 // ── Appearance: tone / accent / density / voice ─────────────────────────────
-let currentTone   = localStorage.getItem('mc_tone')   || 'warm';
-let currentAccent = localStorage.getItem('mc_accent') || '';
-let currentVoice  = localStorage.getItem('mc_voice')  || 'pro';
 
 const VOICE_LABELS = {
   status_active:    { casual: 'Working on it', pro: 'In progress' },
@@ -4522,9 +4594,6 @@ function _applyAppearanceOnInit() {
 // `let` is not hoisted, so declaring them after the call put them in the temporal
 // dead zone → a ReferenceError aborted the whole boot script and the dashboard
 // hung on "loading" (no project grid). Keep the call below this block.
-let bgMode  = localStorage.getItem('mc_bg_mode')  || 'default';   // default | color | image
-let bgColor = localStorage.getItem('mc_bg_color') || '#0c0e14';
-let bgDim   = parseInt(localStorage.getItem('mc_bg_dim') || '40', 10); // scrim alpha %, 0..80
 // Image framing (image mode only). zoom = % of the cover baseline (100 = exactly
 // fills the screen, like before); posX/posY = focal point 0..100 for crop/pan.
 // MUST be declared before _applyAppearanceOnInit() for the same TDZ reason above.
@@ -4853,14 +4922,7 @@ function sessionMetricsHTML(session, caps) {
 
 // ── Agent Panel ─────────────────────────────────────────────────────────────
 
-let agentEventSources = {};   // session_id → EventSource
 let sseRetryCount = {};       // session_id → number of consecutive reconnect attempts
-let agentOutputBuffers = {};   // session_id → string[]
-let agentServerLines = {};     // session_id → count of lines received from server (for SSE since param)
-let agentStatusCache = {};     // session_id → {status, task, projectId, startedAt}
-let agentHistory = [];         // [{projectId, sessionId, projectName, task, status, startedAt}]
-let activeAgentTab = {};       // project_id → session_id (which tab is active in modal)
-let agentConvNew = {};         // project_id → true when the user explicitly chose
                                // "New conversation" from the multi-conversation
                                // drill-down list (forces the dispatch screen
                                // instead of the list / a drilled-in chat)
@@ -4886,14 +4948,8 @@ setInterval(() => {
     if (_tickCaps.emits_usage) el.innerHTML = sessionMetricsHTML(cached, _tickCaps);
   }
 }, 1000);
-let agentPendingImages = {};   // key (projectId or sessionId) → [{file, objectUrl, serverPath}]
-let acOpenSessions = new Set(); // session_id → expanded in console
 let acExpanded = false;
-let planViewerContent = {};    // session_id → string[] of raw plan text lines
-let planFileTitle = {};        // session_id → extracted first heading from plan file
 let exitPlanModeCount = {};    // session_id → number of consecutive ExitPlanMode calls
-let pendingResumeId = {};      // project_id → claude_session_id to resume (null = fresh)
-let incognitoToggle = {};      // project_id → bool — when true, next dispatch is incognito (skips MEMORY/RULES/log)
 let pendingDispatchProvider = {};  // project_id → provider chosen in the new-chat composer (per-conversation, not per-project)
 
 // Provider is bound per-conversation. The new-chat composer picks it; the
@@ -5042,7 +5098,6 @@ function cancelHideHmPopover() {
   if (hmPopoverTimer) { clearTimeout(hmPopoverTimer); hmPopoverTimer = null; }
 }
 
-let _skipAgentOutput = false;  // set by refreshModalById to skip expensive output rendering
 
 function agentPanelHTML(p) {
   const pp = p.project_path || '';
@@ -5967,28 +6022,7 @@ async function dispatchAgent(projectId) {
   }
 }
 
-let agentSSEWatchdogs = {};  // sessionId → timer ID
-// sessionId → timestamp ms of the last SSE event (data or heartbeat). Mirrors
-// connectAgentStream's closure-local lastEventTime so the foreground freshness
-// reconciler (an external timer) can detect a ZOMBIE stream — an EventSource
-// whose handle still reports "open" but whose socket died silently under Doze,
-// firing no onerror. Age past SSE_ZOMBIE_MS ⇒ reap + rebuild.
-let agentLastEventAt = {};
-let followupTimeouts = {};  // sessionId → { timerId, projectId }
-// sessionId → timestamp ms. Set in sendFollowup, cleared after we've seen the
-// first `turn_start` from the new turn (or after 8s timeout). While truthy,
-// SSE handlers must NOT act on a `turn_complete` / `status` event — that
-// event is from the PRIOR (idle) state we opened SSE on, not the new turn.
-// Without this gate, the eager-opened SSE in sendFollowup sees current
-// status=idle, emits turn_complete, closes SSE on the client → and the
-// post-POST status=running transition is never seen → UI stays IDLE.
-let _sendInFlight = {};
 
-// sessionId → true once turn_start has been received for the current send.
-// Guards the 12s AbortController catch path from restoring textarea text when
-// the server actually did receive the message (turn_start proves it did).
-// Reset to false at send time; set true at turn_start.
-let _turnStartAcked = {};
 
 // Per-session lock so concurrent reconcile triggers don't double-apply.
 let _reconcileBusy = {};
@@ -6645,7 +6679,6 @@ function collapseIntoPlanButton(sessionId, container) {
   container.insertBefore(btn, wrapper);
 }
 
-const expandedOutputSessions = new Set();  // sessions where user clicked "load all"
 
 function expandAgentOutput(sessionId) {
   expandedOutputSessions.add(sessionId);
@@ -6896,11 +6929,6 @@ function approvePlan(projectId, sessionId) {
 }
 
 let _aqCounter = 0;
-// Question_ids the user has answered THIS turn. The server keeps mirroring the
-// question until it processes the follow-up, so a poll/reconnect can land in
-// the gap between answering and turn_start; this stops the re-render path from
-// resurrecting an answered (and possibly DOM-wiped) form. Cleared on turn_start.
-const _answeredQuestionIds = {};
 const _EMPTY_SET = new Set();  // shared read-only fallback for the answered-id lookup
 
 // Cache a pending question on the session so a later panel rebuild can restore
@@ -7513,9 +7541,6 @@ async function fetchAgentStatus(projectId) {
 
 // ── Agent Log Panel ──────────────────────────────────────────────────────────
 
-let agentLogCache = {};  // project_id → entries[]
-let conversationsCache = {};  // project_id → [{claude_session_id, status, label, last_user, first_user, turns, ts_relative, ...}]
-let agentLogOpen = {};   // project_id → bool
 let continueInputOpen = {};  // entryId → true (tracks which continue input is expanded)
 
 function agentLogPanelHTML(p) {
@@ -7670,7 +7695,6 @@ function _lastUserFromBuffer(sessionId) {
 
 // ── Plans tab ─────────────────────────────────────────────────────────────────
 
-let plansCache = {};
 let planSelections = {};  // projectId → Set of plan_file paths
 
 async function loadProjectPlans(projectId) {
@@ -8195,7 +8219,6 @@ function clearAgentImages(key) {
 
 // ── Rules Panel ─────────────────────────────────────────────────────────────
 
-let rulesLoaded = {}; // project_id → {agent_rules, shared_rules}
 
 function rulesTabHTML(p) {
   const pp = p.project_path || '';
@@ -8317,11 +8340,7 @@ function flashSaved(elId) {
 
 // ── Hivemind tab ─────────────────────────────────────────────────────────────
 
-const hivemindCache = {};  // projectId -> { hiveminds: [...], loaded: true }
 const hivemindDashboardWs = {};  // hivemindId -> selected workstream id (or null for overview)
-let hivemindSSE = {};  // hivemindId -> EventSource
-let _hmDashDebounce = {};   // hivemindId -> setTimeout timer ID
-let _hmDashInFlight = {};   // hivemindId -> true if fetch in progress
 let _hmTabDebounce = {};    // projectId -> setTimeout timer ID
 
 function hivemindTabHTML(p) {
@@ -10469,7 +10488,6 @@ function _jumpToLiveRun(projectId, sessionId) {
   }, 200);
 }
 
-const _transcriptCache = {};  // csid -> {messages, size, message_count}
 
 async function openTranscriptViewer(projectId, csid, label, provider) {
   const modalId = '__transcript_' + csid;
@@ -10887,13 +10905,6 @@ setInterval(async () => {
 // the 6-slot cap and true streaming resumes. Idle SSE is still never reopened
 // here, so the slot discipline the 15s poll protects is preserved.
 const FRESHNESS_TICK_MS = 5000;
-// SSE_ZOMBIE_MS must stay comfortably ABOVE the server's 15s SSE heartbeat
-// (server.py emits a `data:{type:'heartbeat'}` every ~15s — a real event, so it
-// fires onmessage and refreshes agentLastEventAt). A threshold ≤15s would
-// false-reap a HEALTHY idle stream in the gap between heartbeats. 25s = one
-// missed heartbeat + margin, and still beats the 30s in-stream watchdog so the
-// visible chat recovers sooner than a backgrounded one.
-const SSE_ZOMBIE_MS = 25000;
 setInterval(() => {
   if (document.visibilityState !== 'visible') return;
   for (const [, entry] of openModals) {
@@ -11708,7 +11719,6 @@ document.addEventListener('touchend', (e) => {
 
 // ── Ctrl+Scroll zoom on all modal content ───────────────────────────────────
 
-const modalZoomLevels = {}; // modalId → current font-size in px
 
 function applyModalZoom(modal, size) {
   // Set on modal-content for elements that inherit

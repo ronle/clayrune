@@ -3143,3 +3143,60 @@ the start of Phase 3). 8 modules extracted this session (14–21): mcp, system-s
 update-power, provider-auth, schedule-banner, provider-settings, process-manager,
 cross-hivemind. Recommend the orchestrator now begin the **store.js design
 checkpoint** for the remaining core.
+
+## Phase 4 — step 0: STORE consolidation (2026-06-10, Fable driving)
+
+- **Design ratified:** `docs/STORE_JS_DESIGN.md` (commit `13c5834`). Option A —
+  state anchors INLINE (global lexical environment is module-visible in both
+  directions; bridges were only ever needed for state that moved INTO modules).
+  Ron approved: Option A + full hollow-out + Fable drives.
+- **Membership derived, not curated** (`_scratch/store_membership.py`): a var is
+  STORE iff its non-decl refs span ≥2 families (families = target modules
+  M22–M31, M32 sub-families, each shipped js module, INLINE). Result: **74
+  STORE / 60 family-private / 0 dead** of 134 top-level state decls (133
+  statements; one 2-name decl). Notable derivation wins over the hand list:
+  `agentEventSources`/`agentSSEWatchdogs` span INLINE+M22+M24 (not M23);
+  `cmdSelectedIndex` confirmed palette-private (no bridge ever needed);
+  6 orphaned decls flagged `[DECL OUTSIDE FAMILY]` for pull-in at their
+  family's cut (`newProjDomain`, `TOKEN_MODES`, `sseRetryCount`, `acExpanded`,
+  `exitPlanModeCount` + one more in membership.json).
+- **What moved:** 73 decl statements (API_BASE already in place = member #1)
+  → one `// ── STORE ──` block at L683–822 directly after API_BASE. Decl
+  statements moved byte-verbatim INCLUDING their var-describing leading
+  comment blocks (8 reviewed); 2 comment blocks stayed put as
+  section-mechanism docs (`_mcModalHistoryActive` Android-back explainer,
+  `bgMode` background-posture note — NO_LEAD override in the script).
+- **Order:** original file order, topo-adjusted for eager init deps
+  (Kahn, stable). Only real edge: `_orderKey` → `projectOrder` (already
+  satisfied). Eager-init identifier scan: every identifier resolves to
+  builtin / hoisted function / earlier store member (object-literal keys and
+  regex flags excluded); zero refs to family-private state; one eager
+  `window.innerWidth` read (`_isMobileDevice`) — pure window metric,
+  position-independent.
+- **Assertions (all in `_scratch/store_surgery.py`):** cut-lines multiset ==
+  inserted-lines multiset (byte-exact); unmoved-line sequence preserved
+  exactly; +10 lines total = block header(8)+footer(2); post-surgery re-scan:
+  133 top-level decl statements, brace depth 0; `node --check` PASS (classic
+  goal).
+- **Gates:** boot-smoke **5/5 PASS**; bg-framing-check **identical pre-existing
+  base error** (`setBgZoom`, L111 evaluate — landmine 4 of module 1), no new
+  breakage; throwaway real server `MC_PORT=5391` (killed; :5199 untouched):
+  heartbeat OK, `GET /` → 200 (577,678 bytes), STORE block present in served
+  HTML. No new js file ⇒ no sw.js bump, no harness route.fulfill changes.
+- **index.html:** 11,761 → 11,771 lines.
+
+### Landmines for M22 (rich-text.js)
+
+1. All module-1–21 landmines apply verbatim.
+2. **Never re-declare a store name at a module's top level** — silent state
+   fork; add a declared-names ∩ STORE check to every module's formal scans
+   (the STORE list lives in `_scratch/membership.json`; regenerate after each
+   cut since line numbers shift).
+3. Empty/near-empty section stubs left behind by decl moves (e.g. "Enter Key
+   Behavior" is now header+comment-less) are EXPECTED; sweep at M32, don't
+   "fix" mid-queue.
+4. M22's family-private captures: `_pinScrollQueue`, `_aqCounter`,
+   `_EMPTY_SET`, `_recentlyStoppedSessions`, `exitPlanModeCount` (decl
+   currently in the Agent Panel zone — orphaned, pull into the module).
+5. Line numbers in membership.json are PRE-step-0; re-derive everything
+   against the committed file before cutting.
