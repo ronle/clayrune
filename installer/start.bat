@@ -66,12 +66,16 @@ if not defined MC_APPBROWSER if exist "%ProgramFiles%\Microsoft\Edge\Application
 REM No Chromium browser found: open a normal tab in the default browser (old behaviour).
 if not defined MC_APPBROWSER start "" "http://localhost:5199"
 
-REM Chromium found: wait for the port to accept connections, THEN open the app
-REM window. Unlike a tab, an --app window shows a hard error page on
-REM connection-refused and won't auto-retry, so we poll first. Done in a
+REM Chromium found: launch-app-window.ps1 waits for the port to accept
+REM connections (an --app window shows a hard error page on connection-refused
+REM and won't auto-retry), opens the app window, then stamps the window's
+REM taskbar identity (AppUserModelID + relaunch icon/name) so the taskbar
+REM shows the Clayrune icon. The stamp matters on Edge: unlike Chrome, Edge
+REM sets the app window's relaunch icon to msedge.exe, so Edge-only machines
+REM (fresh Windows installs) would otherwise show the Edge logo. Done in a
 REM detached, hidden PowerShell so neither the windowless nor the dev launch
 REM flashes a console.
-if defined MC_APPBROWSER start "" /b powershell.exe -NoProfile -WindowStyle Hidden -Command "$b='%MC_APPBROWSER%'; for($i=0;$i -lt 150;$i++){ try{ $c=New-Object Net.Sockets.TcpClient; $c.Connect('localhost',5199); $c.Close(); break }catch{ Start-Sleep -Milliseconds 200 } }; Start-Process -FilePath $b -ArgumentList '--app=http://localhost:5199','--no-first-run','--no-default-browser-check'"
+if defined MC_APPBROWSER start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%CLAYRUNE_DIR%\installer\launch-app-window.ps1" -Browser "%MC_APPBROWSER%" -IconPath "%CLAYRUNE_DIR%\assets\clayrune.ico"
 
 REM Always keep a log directory available for the windowless launch path.
 if not exist "%CLAYRUNE_DIR%\data\logs" mkdir "%CLAYRUNE_DIR%\data\logs"

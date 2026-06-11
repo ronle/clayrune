@@ -626,15 +626,14 @@ if ($serverUp) {
 }
 Write-Host ''
 
-# -- [STEP 5/5] Open the dashboard in the default browser ------------------
-Write-Host '[STEP 5/5] Opening dashboard in your browser...' -ForegroundColor White
-try {
-    Start-Process 'http://localhost:5199'
-    Write-Host '[STEP 5/5] OK' -ForegroundColor Green
-} catch {
-    Write-Host "[STEP 5/5] WARN could not auto-open browser: $_" -ForegroundColor Yellow
-    Write-Host '          Open http://localhost:5199 manually.' -ForegroundColor Yellow
-}
+# -- [STEP 5/5] Dashboard window --------------------------------------------
+# start.bat (launched in Step 4) already opens Clayrune as a standalone app
+# window with its own taskbar icon once the server is up (via
+# installer\launch-app-window.ps1). Opening another tab here would put a
+# duplicate, browser-iconed window on top of it — so don't.
+Write-Host '[STEP 5/5] Clayrune window opens automatically once the server is ready.' -ForegroundColor White
+Write-Host '          If nothing appears, open http://localhost:5199 manually.'
+Write-Host '[STEP 5/5] OK' -ForegroundColor Green
 Write-Host ''
 
 # -- Final verification -----------------------------------------------------

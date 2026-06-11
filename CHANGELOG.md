@@ -6,6 +6,31 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-11] — Windows launcher: Clayrune taskbar icon on Edge-only machines
+
+Fresh-install report (v2.1.0 VM validation): the launched app window showed
+the browser's icon, not Clayrune's. Root cause, verified by reading both
+browsers' window property stores: Chromium gives `--app=` windows a derived
+per-app AppUserModelID, but **Edge sets the group's RelaunchIconResource to
+msedge.exe** (relaunch name "Microsoft Edge"), while Chrome leaves it empty
+(taskbar falls back to the window icon = our favicon). Fresh Windows machines
+have only Edge → Edge logo. Dev machines with Chrome never showed it.
+
+- **New `installer/launch-app-window.ps1`** — replaces start.bat's inline
+  port-poll + `--app` launch one-liner. Same poll + launch, then finds the
+  new window (class `Chrome_WidgetWin_1`, bare "Clayrune" title) and stamps
+  `AppUserModelID=io.clayrune.app` (matches the macOS bundle id) +
+  `RelaunchIconResource=assets\clayrune.ico` + relaunch name via
+  `SHGetPropertyStoreForWindow`. Cross-process stamping verified working;
+  best-effort posture (any failure → browser-icon window, today's behaviour).
+- **installer/install.ps1 Step 5 no longer opens a duplicate tab** — start.bat
+  (Step 4) already opens the app window; the extra `Start-Process <url>` put a
+  second, browser-iconed plain tab on top of it.
+- Gotcha for future probing: reading `PKEY_AppUserModel_ID` from PowerShell 5.1
+  with a hand-rolled 16-byte PROPVARIANT silently returns empty — `GetValue`
+  needs the full 24-byte struct + propsys `PropVariantToStringAlloc`
+  (`_scratch`-grade C# probe). Writes with the small struct DO work.
+
 ## [2026-06-10] — Frontend modernization: store.js pass complete (index.html 11,761 → 2,939)
 
 The final phase of the frontend track. The remaining monolith core — conversation
