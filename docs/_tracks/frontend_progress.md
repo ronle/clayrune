@@ -3434,3 +3434,23 @@ checkpoint** for the remaining core.
 2. tileHTML/modalContentHTML emit MANY on*= handlers — expect a big
    promotion list; the whole-file on*= scan covers static HTML too.
 3. FRIENDLY_TO_VOICE (private), undoStack/showDoneMap (STORE).
+
+## Phase 4 — M30: extract render core → `static/js/render-core.js` (2026-06-10)
+
+- 3 segments [(1291,1594)+(1595,2057)+(2170,2214)]: status resolver family
+  (computeLiveStatus/friendlyStatus/friendlySummary + FRIENDLY_TO_VOICE),
+  tileHTML, the 460L modalContentHTML, renderListView/listRowHTML. 812
+  lines / 53,232 bytes. index.html 6,913 → 6,102. `render()` /
+  `refreshModal(ById)` / `sizeAgentChat` stay inline (render engine glue,
+  design §7).
+- The templates' huge on*= emission list is all NON-region callees (inline
+  or already-exposed module fns) — zero promotions needed; the one
+  name-position dynamic handler (`onclick="${onclick}"` in the provider
+  submenu) names showToast/setProjectProvider — both globally resolvable.
+- Boot-order note: render() fires after the /api/projects fetch resolves —
+  always after deferred-module eval (sync on main thread post-parse);
+  empirically 5/5 boot scenarios with instant route.fulfill.
+- Interop: 6 exposures, 2 privates. Gates: parse ×2; boot-smoke 5/5;
+  bg-framing baseline; 53,232B exact; exercise 7/7 (grid via module
+  tileHTML, modal via module modalContentHTML through M29's
+  openProjectModal — cross-module render chain).
