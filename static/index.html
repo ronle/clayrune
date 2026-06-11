@@ -3560,17 +3560,6 @@ function flashSaved(elId) {
   setTimeout(() => el.classList.remove('show'), 2000);
 }
 
-function timeAgoShort(ts) {
-  try {
-    const d = new Date(ts);
-    const secs = Math.floor((Date.now() - d.getTime()) / 1000);
-    if (secs < 60) return `${secs}s`;
-    if (secs < 3600) return `${Math.floor(secs/60)}m`;
-    if (secs < 86400) return `${Math.floor(secs/3600)}h`;
-    return `${Math.floor(secs/86400)}d`;
-  } catch { return ''; }
-}
-
 // ── Auto-size name input ─────────────────────────────────────────────────────
 
 function autoSizeNameInput(input) {
