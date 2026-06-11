@@ -2623,3 +2623,159 @@ what moved, commit SHA, gate results.
    - Process Manager is a small single-function region.
    - The genuinely-entangled agent-panel/projects-grid CORE + Command Palette's
      real ~98L (2 accessor bridges) still WAIT for js/store.js.
+
+## Phase 3 — module 18: extract Schedule Banner → `static/js/schedule-banner.js` (2026-06-10)
+
+- **Module-17 SHA backfill:** module 17 (js/provider-auth.js) = commit `4be9b19`.
+- **Candidate selection this run:** the Schedule Banner family became CONTIGUOUS
+  after module 17 lifted the provider-auth middle out from between its two halves
+  (`_sbState` const above, functions below). Chosen as the clean next module (one
+  standalone-line boot-trap — fix (a), like System status — vs. Hivemind's larger
+  multi-segment carve).
+- **Region re-derived:** old lines **9975–10216** (the `// ── Schedule Banner`
+  header through `_sbOpenAgentLog`'s close at 10198 + the two top-level
+  `document.addEventListener` (click L10201 + Escape-keydown L10210) + 1 trailing
+  blank 10216). Next section `// ── New Project Creation` (L10218) stays inline.
+  Brace-depth top-level scan: depth ends 0, `_sbState` const + 9 function decls +
+  exactly **2 OTHER** (the click + keydown listeners — safe, listener order not
+  observable; same posture as System status / walkthrough).
+- **BOOT-TRAP relocation (fix (a), standalone line — like module 15):** the
+  inline boot tail had, at old lines 11568–11569, a `// Refresh schedule banner
+  every 60s` comment + `setInterval(refreshScheduleBanner, 60000)`. Since
+  `refreshScheduleBanner` is now in a deferred module, this RELOCATES byte-verbatim
+  into the module body (a clean standalone excision, NOT buried in a function like
+  module 17's `startRefresh` case). Equivalent: the 60s poll starts a few hundred
+  ms post-parse; the banner is non-critical and renders from
+  `refreshScheduleBanner`'s async `/api/schedules` fetch. The initial paint is
+  preserved by the INLINE `fetchProjects().then(…)` callback's
+  `refreshScheduleBanner()` (L11550, runtime — now resolves `window.refreshScheduleBanner`).
+- **Inbound refs re-verified (formal whole-FILE refscan + WHOLE-REPO sweep):**
+  - In index.html: `refreshScheduleBanner` ×2 — the fetchProjects `.then`
+    initial-paint callback (L11550, runtime) + the boot `setInterval` (L11569,
+    relocated). All other region names (`_sbRender`/`_sbLoadRecent`/`_sbFormatAbs`/
+    `_sbState` + the handler targets) have ZERO non-region, non-handler refs.
+  - **WHOLE-REPO sweep:** `scheduler.js` (module 13) calls `refreshScheduleBanner()`
+    **×3** (in `saveSchedule`/`toggleScheduleEnabled`/`deleteSchedule`, runtime,
+    after schedule mutations) — cross-module callers that resolve
+    `window.refreshScheduleBanner` at click time. scheduler.js loads BEFORE this
+    module (tag order), but the calls are runtime (button clicks), so ordering is
+    moot. Otherwise CHANGELOG + this log (prose).
+- **What moved:** old lines 9975–10216 (region) + 11568–11569 (boot-trap) →
+  `static/js/schedule-banner.js`, **byte-verbatim** (DUAL two-sided binary
+  reassembly assertion: (1) `seg_pre + region + seg_mid + boot + seg_post ==
+  original`; (2) new index.html with the inserted `<script>` tag removed AND both
+  the region and the boot block re-inserted at their original cut points,
+  `== original` byte-for-byte; relocation note + interop tail append-only). Loaded
+  via `<script type="module" src="/static/js/schedule-banner.js"></script>`
+  inserted after the provider-auth.js module tag, before `</body>`. Diff shape:
+  1 insertion, 244 deletions across two hunks (242 region + 2 boot).
+- **Numbers:** `schedule-banner.js` = 10,235 bytes / 266 lines (242 region + 2
+  boot moved + 22-line notes/interop tail; CRLF, no BOM, 122 non-ASCII UTF-8
+  bytes). `index.html` 610,233 → 601,313 bytes; 12,517 → 12,274 lines (BOM
+  preserved).
+- **Interop surface: 6 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Inbound/cross-module callers (1): `refreshScheduleBanner` (inline
+    fetchProjects initial paint + scheduler.js ×3 mutations — all runtime).
+  - Region-generated `on*=` handler targets (5): `toggleSchedulePanel`,
+    `_sbSetTab`, `_sbSetWindow`, `_sbOpenTranscript`, `_sbOpenAgentLog` (the last
+    two via the `${handler}` template-variable indirection in `_sbRender`'s recent
+    rows — caught by scanning template-literal `'_sb…('`/`` `_sb…( `` forms, not
+    just literal `on*=`).
+  - Module-private (3 fns + 1 const): `_sbRender`, `_sbLoadRecent`, `_sbFormatAbs`,
+    `_sbState` (`const`, property-mutated only by region code; zero outside refs,
+    zero generated-handler assignment → no bridge).
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan for `_sbState`
+    EMPTY; zero `this` in region code.
+- **Pre-existing quirk discovered + BYTE-PRESERVED (NOT repaired):** with 0
+  upcoming schedules, `_sbRender` early-returns (`if (!_sbState.upcoming.length &&
+  !_sbState.open) { banner.classList.add('hidden'); return; }`) and does NOT
+  regenerate `banner.innerHTML` — so on close the stale inner `#sb-panel` keeps
+  its `.open` class while the PARENT `#schedule-banner` goes `hidden`
+  (display:none). The real "closed" signal with 0 schedules is
+  `#schedule-banner.hidden`, not `#sb-panel.open`. This is unchanged behavior;
+  the gate asserts the parent re-hide (see below). (A move must not "fix" this.)
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `esc`, `formatScheduleTime` (scheduler.js window export — called by
+  `_sbRender`), `openScheduler` (scheduler.js window export — banner-row onclick),
+  `openTranscriptViewer`, `openProjectModal`, `modalActiveTab`,
+  `_providerBadge`/`_sbFormatAbs` + browser builtins. Strict-mode promotion
+  audited: zero module-code `this`; every assignment targets a declared binding or
+  an explicit `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v18` → `mc-push-v19` (no cache list by design;
+  version bump only). Added a v19 changelog line documenting the boot relocation.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/schedule-banner.js`
+  in BOTH `boot-smoke.mjs` and `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses schedule-banner.js in
+    module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered
+    (boot-trap regression: the standalone `setInterval(refreshScheduleBanner,…)`
+    is gone from inline; the SPA boots clean).
+  - Real-server check (throwaway `MC_PORT=5392 python server.py`, then KILLED;
+    live :5199 never touched): `/static/js/schedule-banner.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 10235 (exact match),
+    `Cache-Control: no-cache`; `GET /api/schedules` → `[]`, `GET /api/recent-runs`
+    → `{runs:[]}` (the empty state).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — no agent dispatch, zero model cost) — **22/22 PASS, 0 console
+    errors, 0 page errors**: 6 window.* interop callable; 4 module-privates
+    (incl. `_sbState`) NOT leaked; `refreshScheduleBanner()` ran against the real
+    `/api/schedules` (banner correctly STAYS hidden with 0 schedules — the
+    byte-preserved quirk); `toggleSchedulePanel` opened the dropdown (un-hides +
+    renders `#sb-trigger` + the Recent/Upcoming tabs, kicks `_sbLoadRecent` →
+    `/api/recent-runs`); `_sbSetTab(upcoming)`/`_sbSetTab(recent)` switch without
+    throwing; `_sbSetWindow(24)` re-fetches the 24h window without throwing; the
+    **outside-click document listener (moved with the module) re-hides
+    `#schedule-banner`** (the correct close signal with 0 schedules). Screenshot
+    eyeballed: dashboard fully styled, banner correctly hidden, no FOUC.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L102, same evaluate step); page boots with
+    schedule-banner.js fulfilled, dies at the same later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–17).
+
+### Landmines for module 19 (remaining-core map, post-Schedule-Banner)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap; bg-
+   framing-check broken at base; CRLF+BOM binary surgery; build-macos.spec
+   bundles static/ wholesale; npm install in fresh worktrees; deferred-module
+   timing; module-scoped-globals rule; re-derive boundaries + brace-depth scan;
+   accessor-bridge handler-assigned vars; object-identity bridge for handler-
+   property-written objects; multi-segment / boot-trap carve (in-region setTimeout/
+   setInterval moves WITH the region = fix (a); a standalone inline-tail boot line
+   relocates into the module = fix (a); a buried-in-an-inline-function registration
+   needs a 1-line deferral shim = fix (b)); WHOLE-REPO grep mandatory; a
+   cross-region `const` READ needs window exposure; **scan template-variable
+   `${handler}` onclicks (`'_fn('`/`` `_fn( ``), not just literal `on*=`, for the
+   full handler set**; don't "repair" pre-existing quirks (e.g. `_sbRender`'s
+   0-schedule early-return that leaves a stale inner `#sb-panel.open`); cross-
+   module window props normal; `(0,eval)('openModals')` in Playwright probes;
+   destructive-feature route-guard recipe; `node --input-type=module --check
+   <file>` ERRORS on Node 24 — pipe via stdin).
+2. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED —
+   re-derive; the inline section is now shifted −243 more from any quoted
+   pre-module-18 line ≥10217):**
+   - **Hivemind family (~1,294L)** — the LARGEST remaining non-core family: tab
+     (was 8318) + dashboard modal (was 8520) + cross-project (was 11192, now
+     shifted). Shares the inline run-history renderers (`renderRunRows`/
+     `renderRunsPagination` — multi-consumer with scheduler.js, STAY INLINE per
+     the brief); carve hivemind AROUND them. The "Hivemind worker popover" (was
+     4981) sits in the agent-panel/conversation zone (between Agent Panel L4854
+     and Conversation model L5061) — likely SSE/store.js-coupled; AUDIT whether
+     it's separable before including (it may belong to the store.js core, not the
+     Hivemind feature module). Expect a multi-segment carve + a careful
+     run-history-stays-inline boundary. This is the last big non-core win.
+   - **Provider Settings section** (`_renderProviderSettings`) — a settings-family
+     leaf; its deps on `PROVIDER_AUTH_KEYS`/`settingsProvider*` are now all window
+     props (bridged by module 17), so it could move cleanly as a small module or
+     join a settings-helpers grouping.
+   - Process Manager (small single-function region).
+   - The agent-panel/projects-grid CORE (conversation model, modal/tile HTML, SSE
+     slot management, dispatch, status resolver, the Hivemind-worker-popover if
+     SSE-coupled) + Command Palette's real ~98L (2 accessor bridges:
+     `cmdPaletteOpen` + `cmdSelectedIndex`) still WAIT for the orchestrator's
+     js/store.js design checkpoint. Once the non-core queue (Hivemind + Provider
+     Settings + Process Manager) is exhausted, the remainder IS the store.js pass.

@@ -76,6 +76,8 @@ const SYSTEM_STATUS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'system
 const UPDATE_POWER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'update-power.js'), 'utf8');
 // Provider-auth ES module (Phase 3 module 17) — same rule as claydo.js above.
 const PROVIDER_AUTH_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'provider-auth.js'), 'utf8');
+// Schedule-banner ES module (Phase 3 module 18) — same rule as claydo.js above.
+const SCHEDULE_BANNER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'schedule-banner.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 
 const ORIGIN = 'http://mc.smoke.test';   // arbitrary; every request is intercepted
@@ -143,6 +145,8 @@ async function runScenario(browser, sc) {
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: UPDATE_POWER_JS });
     if (path === '/static/js/provider-auth.js')
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROVIDER_AUTH_JS });
+    if (path === '/static/js/schedule-banner.js')
+      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SCHEDULE_BANNER_JS });
     if (path === '/api/projects')
       return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config')

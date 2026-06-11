@@ -69,7 +69,13 @@
 // `setInterval(()=>window.refreshAuthStatus(),90000)` so the parse-time
 // startRefresh() defers the lookup to each 90s tick (boot-trap fix b,
 // behavior-equivalent). Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v18';
+// v19 (2026-06-10): /static/js/schedule-banner.js extracted from index.html's
+// inline <script> (the Schedule Banner trigger + Upcoming/Recent dropdown). The
+// standalone parse-time `setInterval(refreshScheduleBanner,60000)` boot line
+// relocated INTO the deferred module body (boot-trap fix a; the inline
+// fetchProjects().then still paints once via window.refreshScheduleBanner).
+// Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v19';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
