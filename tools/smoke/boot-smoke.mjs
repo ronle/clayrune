@@ -68,6 +68,8 @@ const BACKLOG_ACTIONS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'back
 const CROSS_BACKLOG_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'cross-backlog.js'), 'utf8');
 // Scheduler ES module (Phase 3 module 13) — same rule as claydo.js above.
 const SCHEDULER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'scheduler.js'), 'utf8');
+// MCP servers ES module (Phase 3 module 14) — same rule as claydo.js above.
+const MCP_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'mcp.js'), 'utf8');
 const PROJECTS_JSON = readFileSync(resolve(__dirname, 'fixtures', 'projects.json'), 'utf8');
 
 const ORIGIN = 'http://mc.smoke.test';   // arbitrary; every request is intercepted
@@ -127,6 +129,8 @@ async function runScenario(browser, sc) {
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CROSS_BACKLOG_JS });
     if (path === '/static/js/scheduler.js')
       return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SCHEDULER_JS });
+    if (path === '/static/js/mcp.js')
+      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MCP_JS });
     if (path === '/api/projects')
       return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
     if (path === '/api/config')

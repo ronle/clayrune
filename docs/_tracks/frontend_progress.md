@@ -1805,3 +1805,231 @@ what moved, commit SHA, gate results.
    true` for delete paths. Zero model cost as long as no agent is dispatched
    (a created-but-never-fired schedule is free). Always clean up
    (schedule + project) in the `finally`.
+
+## Phase 3 — module 14: extract MCP family → `static/js/mcp.js` (2026-06-10)
+
+- **Module-13 SHA backfill:** module 13 (js/scheduler.js) = commit `7bed9d6`.
+- **Candidate selection this run (cleaner-first):** of the post-scheduler queue
+  the MCP family was the cleanest single win. The sizing table said
+  "~1,128L (manager ~476L + From-URL state machine ~652L); may split into 2
+  modules" — RE-DERIVED below: the family is **one coupled unit**, the
+  header-to-header upper bound was wrong (foreign boot code was inside it), and
+  it does NOT split cleanly (so it ships as ONE module).
+- **Region re-derived — ONE contiguous family, NOT two modules, and the
+  header-to-header span was wrong (6th miss):** the MCP family is old lines
+  **12430–13474** (`// ── MCP servers` header through `deleteMCPAction`'s
+  closing brace at 13473 + one trailing blank 13474). The "From URL" header at
+  12906 is a SUB-section of the same family, not a separate module — the
+  manager's `openMCPEditor` renders the Manual/From-URL toggle and calls
+  `_mcpEditorSetMode`, and the From-URL flow stores ALL its state on the modal
+  `entry._mcpUrlState` object (NOT a module-level bare `let`), so there is
+  **zero shared mutable module global** between the two halves to bridge —
+  splitting would only manufacture cross-module window deps for no benefit.
+  **The header-to-header "1,128L" span (12430→13558 Native FCM push) is WRONG:**
+  old lines **13476–13556 are FOREIGN BOOT CODE** — the same inline boot tail
+  module 4 left behind: `startRefresh()` (**called at parse time**, the module-4
+  trap), the filter-dropdown binding, `fetchDomains()`, the grid-layout fetch,
+  density/feed/view-mode restores, `applyAdvancedFlags()`, and the eager
+  service-worker registration. Those 81 lines STAY INLINE (blank 13475 +
+  13476+). The MCP family proper ends at `deleteMCPAction` (13473).
+- **Parse-time audit (brace-depth scan):** the manager half (12430–12905) scans
+  clean — depth ends 0, 13 function decls + 2 `let` state vars (`_allMCPCache`,
+  `_allMCPFilter`), **0 IIFEs / 0 top-level calls / 0 listeners**. (The combined
+  scan derails to depth 5 inside the From-URL `_mcpUrlRenderPreview`'s deeply
+  nested `${\`…\`}` templates — the same known scanner limitation as modules 6/7;
+  the 25 region function declarations are all plain `function`/`async function`
+  at col 0, verified by a separate col-0 declaration listing, and
+  `node --check --input-type=module` parses the final file in module goal.)
+  **No parse-time caller of any region function exists in the inline boot tail.**
+- **Inbound refs re-verified (formal whole-file scan of all 25 region function
+  names + 2 state vars): exactly 2 cross-module functional refs, both
+  runtime-only:** `openAllMCP` (L2653, `sidebarNav('mcp')`) and
+  `openAllMCPForProject` (L1851, project-modal three-dot menu generated
+  `onclick`). Every OTHER region function with an external touch is a
+  region-generated `on*=` handler target (resolves against window at event
+  time). Whole-repo sweep (`*.py`, `*.js`, `*.html`, `*.md`, smoke fixtures):
+  only `CHANGELOG.md` (prose) — no other file references any of the 27 names.
+- **What moved:** old lines 12430–13474 → `static/js/mcp.js`, **byte-verbatim**
+  (two-sided binary reassembly assertion: (1) `before + region + after ==
+  original` proving the region is a clean contiguous byte span; (2) the new
+  index.html, with the inserted `<script>` tag line removed AND the region bytes
+  re-inserted at the cut point, `== original` byte-for-byte; interop tail
+  append-only on the js side). Loaded via
+  `<script type="module" src="/static/js/mcp.js"></script>` inserted immediately
+  after the scheduler.js module tag, before `</body>`. Anti-FOUC bootstrap
+  untouched (landmine 1). Diff shape: 1 insertion, 1,045 deletions.
+- **Numbers:** `mcp.js` = 55,559 bytes / 1,074 lines (1,045 moved + 29-line
+  interop tail: 1 blank + 11 comment + 17 assignment; CRLF, no BOM, 159
+  non-ASCII UTF-8 bytes). `index.html` 717,420 → 663,402 bytes;
+  14,674 → 13,630 lines (BOM preserved). Largest extraction since module 5.
+- **Interop surface: 16 window function re-exposures + 1 object-identity bridge,
+  0 accessor bridges:**
+  - Cross-module/inline callers (2): `openAllMCP` (sidebarNav),
+    `openAllMCPForProject` (project three-dot menu onclick).
+  - Region-generated `on*=` handler targets (14): `loadAllMCP`, `renderAllMCP`,
+    `openMCPEditor`, `_mcpToggleActive`, `_mcpResetLoadout`,
+    `_mcpEditorRenderTransport`, `_mcpEditorSetMode`, `_mcpUrlPreview`,
+    `_mcpUrlBack`, `_mcpUrlFieldChange`, `_mcpUrlSecretChange`, `_mcpUrlInstall`,
+    `saveMCPServer`, `deleteMCPAction` (enumerated from the region's generated
+    HTML `on*="fn(...)"` strings — resolve against window at event time).
+  - **Object-identity bridge (1):** `_allMCPFilter` (a `{scope,project,search}`
+    object). Generated handlers property-write it (`oninput="_allMCPFilter.
+    search=this.value;…"`, two `onchange` for scope/project — L12480/12482/12488);
+    formal wholesale-write scan (`(?<![\w$.])_allMCPFilter\s*=`) → exactly ONE
+    hit (the declaration; the two in-region property-writes at 12441/12442 are
+    `.`-prefixed). So a plain `window._allMCPFilter = _allMCPFilter` identity
+    bridge routes every handler property-write into the module's live object —
+    one source of truth, same pattern as cross-backlog's `_allBacklogFilter`
+    and mobile-pairing's `_mobilePairState` (NOT an accessor — never wholesale-
+    reassigned, so no getter needed).
+  - **From-URL state needs NO bridge:** the entire From-URL sub-state-machine
+    (`input → preview → installing → done`) lives on `entry._mcpUrlState`
+    (the modal-entry object in the shared `openModals` map), not a module
+    global — verified end-to-end in gating. The cleanest possible shared-state
+    design; survives the move untouched.
+  - Module-private (10, no outside/handler refs): `_allMCPCache` (state —
+    wholesale-reassigned only INSIDE the module, zero outside reads),
+    `_renderMCPRow`, `_mcpEditorStatus`, `_parseKVLines` (generic name, but the
+    ref scan proved zero outside collision), `_mcpUrlRender`, `_mcpUrlRenderInput`,
+    `_mcpUrlRenderPreview`, `_mcpUrlRenderInstalling`, `_mcpUrlRenderDone`,
+    `_mcpUrlAppendLog`.
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY (handlers only CALL functions / property-write `_allMCPFilter` — no
+    accessor bridge); per-identifier writer scan outside region → zero
+    wholesale writes; zero `typeof`/`window.`-qualified probes; zero `this` in
+    region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `openModals` (classic-script top-level `const` — reached via bare identifier,
+  NOT a window prop), `nextModalZ++` (module→inline-let write, the proven
+  module-2/4 direction), `restoreModal`, `focusModal`, `centerModalElement`,
+  `_clampModalSize`, `minimizeModal`/`closeModalById` (handlers), `API_BASE`,
+  `esc`, `allProjects`, `isIncognitoProject`, `showToast`, `confirm`, `alert` +
+  browser builtins (`fetch`, `TextDecoder`, `URLSearchParams`, streaming
+  `res.body.getReader()`). Strict-mode promotion audited: zero module-code
+  `this` (all hits are HTML handler strings/comments), every assignment targets
+  a declared binding or an explicit `window.` property.
+- **Deferred-module timing safe:** region top level = declarations + 2 `let`
+  state inits only; no IIFEs, no parse-time calls, no listener registrations.
+  Both inbound refs are user-driven (sidebar nav / project menu) — never fire
+  at the parse-time boot.
+- **sw.js:** `SW_VERSION` `mc-push-v14` → `mc-push-v15` (no cache list by
+  design; version bump only, same as modules 1–13). Added a v15 changelog line.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/mcp.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses mcp.js in module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+  - Real-server check (throwaway `MC_PORT=5392 python server.py` from the
+    worktree, then KILLED; live :5199 never touched): `/static/js/mcp.js` → 200,
+    `text/javascript; charset=utf-8`, Content-Length 55559 (exact match),
+    `Cache-Control: no-cache` + ETag; `GET /api/mcp` → this machine's real
+    global MCP servers (sequential-thinking, tradingview, …).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **strictly read-only** — no MCP server created/saved/installed) —
+    **43/43 PASS, 0 console errors, 0 page errors**: all 16 window.* interop
+    functions callable; `window._allMCPFilter` object-identity bridge present
+    with the default `{project,scope,search}` shape; all 10 module-privates NOT
+    leaked to window; MCP modal opens via the REAL `sidebarNav('mcp')` path
+    (`#am-list`/`#am-search`/`#am-scope` rendered); list populated from the real
+    `GET /api/mcp`; **identity bridge asserted end-to-end** — a bare
+    `window._allMCPFilter.search='zzzz_nomatch…'` + `renderAllMCP()` produced
+    the "No MCP servers match" empty state (proves the module's `renderAllMCP`
+    reads the filter through the SHARED object), then clearing it restored the
+    list; New MCP editor opens (`#me-name`/`#me-transport`/`#me-mode-url`);
+    **From-URL state machine** toggled via `_mcpEditorSetMode(modalId,'url')`
+    rendered the `#me-url-input` (input stage) with `entry._mcpUrlState.stage
+    === 'input'` stored on the modal entry; toggle back to manual restored
+    `#me-manual-mode`. Screenshot eyeballed: fully styled MCP list modal (real
+    servers + Delete buttons) behind the styled New-MCP-server editor (Manual/
+    From URL toggle, all fields), no FOUC, mascot + sidebar styled.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined` at the same L90
+    evaluate, landmine 4 of module 1); page boots with mcp.js fulfilled (gets
+    past the grid/card stage), dies at the same later evaluate. No new breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–13).
+
+### Landmines for module 15 (remaining-core map, post-MCP)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh worktrees;
+   deferred-module timing; module-scoped-globals rule; re-derive boundaries +
+   brace-depth scan; accessor-bridge handler-assigned vars; object-identity
+   bridge for handler-property-written objects; 2-/3-segment carve for
+   parse-time/duplicate-def entanglements; don't "repair" quirks; settle CSS
+   animations before screenshots; cross-module window props are normal; surgery
+   scripts in `_scratch/*.py`; don't race region setTimeouts;
+   `node --input-type=module --check <file>` ERRORS on Node 24 — pipe via stdin).
+2. **State-on-the-modal-entry is a bridge-free win — look for it.** MCP's
+   From-URL machine stored ALL sub-state on `entry._mcpUrlState` (the
+   `openModals` map's value object), so the manager↔From-URL coupling needed
+   ZERO bridges despite being a 1,045-line two-feature region. When auditing a
+   modal-centric family, check whether its mutable state lives on the entry
+   object vs. a module `let` — the former survives the move untouched.
+3. **`openModals` is a classic-script `const` (NOT a window prop).** Module
+   code reaches it via bare identifier (lexical global). In a `page.evaluate`
+   gate you must read it via `(0,eval)('openModals')`, not `window.openModals`
+   (which is `undefined`). Same for any inline top-level `const`/`let` you want
+   to inspect from a Playwright probe.
+4. **The header-to-header span has now been WRONG 6× (modules 4, 9, 10, 13×2,
+   14).** Modules 5/6/7/11/12 matched exactly. The MCP span hid 81 lines of the
+   module-4 inline boot tail (`startRefresh` + SW registration). **Always read
+   where the family actually ends; check the lines after the last family
+   function for the `startRefresh()`/`document.getElementById(...).addEventListener`
+   boot block before trusting any header-to-header count.**
+5. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED
+   — re-derive; the inline section is now shifted −1,044 more from any quoted
+   pre-module-14 line ≥13475):**
+   - **provider auth/settings (~630L) — ENTANGLED / mis-headered.** The
+     "Provider Auth helpers" header (was 10604) covers ONLY ~88L of real
+     provider-auth code (`PROVIDER_AUTH_KEYS`, `settingsProviderSetEnv`,
+     `settingsProviderTerminalLogin`, `settingsProviderRefresh`,
+     `_renderClaudeAuthStatusLine`); the lines BELOW it (was 10694–10913) are
+     the **Schedule Banner** family (`refreshScheduleBanner`/`_sbRender`/
+     `toggleSchedulePanel`/`_sbLoadRecent`/`_sbOpenTranscript`/etc. + two
+     document-level click/keydown listeners) placed under the wrong header.
+     The "Auth banner — multi-provider" header (was 10450) is a THIRD provider
+     chunk. A provider module needs a careful multi-segment carve that
+     SEPARATES the Schedule Banner family (which is referenced by scheduler.js's
+     `refreshScheduleBanner` outbound dep + the schedule-banner inline section)
+     — derive all three headers before promising a single module. The Schedule
+     Banner could alternatively be its own module (it has 2 top-level
+     `document.addEventListener` listeners — safe, listener-order not
+     observable, same as walkthrough).
+   - **Update section (~360L) — ENTANGLED (3-segment).** The "Update Clayrune"
+     header (was 11309) span also holds the Power/restart/shutdown dialog
+     (`openPowerDialog`/`performRestart`/`showRestartingOverlay`/
+     `performShutdown`/`showPoweredOffOverlay`, header was 11302) AND the
+     server-restart-detection block (header was 11252) with a **parse-time
+     `setTimeout(()=>_checkServerRestart(),1500)`** boot registration, and
+     `_handleServerRestart`→`showRestartingOverlay` couples detection to the
+     power block. Needs a careful 2-/3-segment carve + a boot-trap decision for
+     the setTimeout (move the registration into the module body, OR a thin
+     `addEventListener('load', …)` shim — argue equivalence per case).
+   - **System status (~456L) — BLOCKED on a parse-time setInterval boot-trap.**
+     `fetchSystemStatus()` + `setInterval(fetchSystemStatus, 60000)` run at the
+     inline-script top level (the boot tail). The brief's boot-trap technique
+     (move the `setInterval` registration into the module body alongside
+     `fetchSystemStatus`, OR a `load`-event shim) makes this MOVABLE and
+     behavior-equivalent (a 60s poll starting a few hundred ms later is
+     immaterial; there's no missed first-tick that matters — the inline boot
+     ALSO calls `fetchSystemStatus()` once at parse time for the immediate
+     paint, so that one-shot must be preserved too). Re-derive the exact span
+     and the boot-tail call sites before attempting.
+   - **Hivemind family (~1,294L)** — tab (was 8318) + dashboard modal (was 8520)
+     + cross-project (was 12064); shares the inline run-history renderers
+     (`renderRunRows`/`renderRunsPagination`, now a MULTI-consumer inline dep —
+     scheduler.js also calls them via window) which **STAY INLINE** per the
+     brief; carve hivemind AROUND them.
+   - Provider Settings section (`_renderProviderSettings`, was 11669) is a
+     settings-family leaf that could join a settings-helpers module. Process
+     Manager (was 11834) is a small single-function region.
+   - The genuinely-entangled agent-panel/projects-grid CORE (conversation
+     model, modal/tile HTML, SSE slot management, dispatch, status resolver)
+     and Command Palette's real ~98L (needs 2 accessor bridges:
+     `cmdPaletteOpen` bare-assigned by walkthrough.js + `cmdSelectedIndex`
+     `++`/`=`-mutated by the shared inline keydown handler) still WAIT for the
+     orchestrator's js/store.js design checkpoint.

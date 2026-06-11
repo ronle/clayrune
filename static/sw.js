@@ -47,7 +47,11 @@
 // <script> (scheduled-tasks modal + form + run-list paging). 2-segment move:
 // the duplicate `timeAgoShort` stays inline. Same no-cache-list rationale —
 // version bump only.
-const SW_VERSION = 'mc-push-v14';
+// v15 (2026-06-10): /static/js/mcp.js extracted from index.html's inline
+// <script> (MCP server manager + the "From URL" install state machine, one
+// coupled family; From-URL state lives on the modal entry, no shared bare-let).
+// Same no-cache-list rationale — version bump only.
+const SW_VERSION = 'mc-push-v15';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
