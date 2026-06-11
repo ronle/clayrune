@@ -51,7 +51,13 @@
 // <script> (MCP server manager + the "From URL" install state machine, one
 // coupled family; From-URL state lives on the modal entry, no shared bare-let).
 // Same no-cache-list rationale — version bump only.
-const SW_VERSION = 'mc-push-v15';
+// v16 (2026-06-10): /static/js/system-status.js extracted from index.html's
+// inline <script> (the /status-equivalent header pill + popover). Boot-trap
+// relocation: the parse-time `fetchSystemStatus()` + `setInterval(…,60000)`
+// moved INTO the deferred module body (starts a few hundred ms later — a status
+// pill renders idle until the async fetch resolves anyway). Same no-cache-list
+// rationale — version bump only.
+const SW_VERSION = 'mc-push-v16';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

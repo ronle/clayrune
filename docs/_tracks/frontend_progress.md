@@ -2033,3 +2033,200 @@ what moved, commit SHA, gate results.
      `cmdPaletteOpen` bare-assigned by walkthrough.js + `cmdSelectedIndex`
      `++`/`=`-mutated by the shared inline keydown handler) still WAIT for the
      orchestrator's js/store.js design checkpoint.
+
+## Phase 3 — module 15: extract System status → `static/js/system-status.js` (2026-06-10)
+
+- **Module-14 SHA backfill:** module 14 (js/mcp.js) = commit `aece9aa`.
+- **Candidate selection this run:** System status was BLOCKED in the module-14
+  landmines on a parse-time `setInterval(fetchSystemStatus, 60000)` boot-trap.
+  The orchestrator brief explicitly green-lights the boot-trap technique
+  (move the registration into the deferred module body, OR a thin `load`-event
+  shim — pick + justify equivalence per case). It's now MOVABLE; chosen as the
+  cleanest next candidate (self-contained feature, all 6 state vars private,
+  only 4 window exposures, the only entanglement was the boot-trap).
+- **Region re-derived:** old lines **9994–10448** (`// ── System status (CC
+  /status equivalent)` header through the document-level outside-click
+  listener's closing `});` at 10447 + one trailing blank 10448). Next header
+  `// ── Auth banner — multi-provider` at 10450 stays inline. Brace-depth
+  top-level scan: depth ends 0, 6 `let` state vars + 20 function decls + exactly
+  **2 top-level `addEventListener` registrations** (`window` resize L10435 +
+  `document` click L10440) — no IIFEs, **no parse-time function calls inside the
+  region**. The two listeners are safe top-level side effects (listener-order
+  not observable — same precedent as walkthrough/schedule-banner). (NOTE: the
+  Schedule Banner family is pre-existingly split — its `_sbState` decl sits at
+  L9984 just ABOVE this header, its functions live ~700 lines below under a
+  mis-placed "Provider Auth helpers" header; NOT this module's concern, left
+  exactly as-is.)
+- **BOOT-TRAP relocation (fix (a), behavior-equivalent) — the one entanglement:**
+  the inline boot tail had, at old lines 12681–12685, a 3-line comment + a
+  parse-time one-shot `fetchSystemStatus();` + `setInterval(fetchSystemStatus,
+  60000);`. `fetchSystemStatus` is module-private now, so leaving those inline
+  would ReferenceError-abort the boot. **Both lines were RELOCATED byte-verbatim
+  into the module body** (after the feature region, before the interop tail).
+  **Equivalence argument:** a `type="module"` script is deferred, so instead of
+  firing mid-parse the one-shot fetch + the 60s poll now start a few hundred ms
+  later, right after document parse when the module evaluates. This is
+  immaterial for a status pill: `fetchSystemStatus` is itself `async` and the
+  pill renders idle ("—") until the fetch resolves — which already happened
+  after parse in the original. There is **no missed first-tick that matters**;
+  the one-shot is preserved (the pill still gets its initial paint), just
+  slightly later. Live-validated: the relocated boot one-shot DID run from the
+  module and the pill rendered content (gate below). The other inline boot lines
+  (`startRefresh()` L12678, `setInterval(refreshScheduleBanner, …)` L12680) are
+  untouched and unaffected — the removal is a clean 5-line excision.
+- **Inbound refs re-verified (formal whole-file scan of all 20 region functions
+  + 6 state vars):** outside references are exactly — `fetchSystemStatus` ×2
+  (the boot-trap, RELOCATED into the module, not window-exposed),
+  `toggleSysStatusPopover` ×1 (pill static `onclick` L475 → window),
+  `_rerenderSysStatusSurfaces` ×1 (the token-usage refresher's
+  `if (typeof _rerenderSysStatusSurfaces === 'function')` runtime guard L4343 →
+  window), `_positionSysStatusPopover` ×1 (an HTML COMMENT at L571, not a code
+  ref → no exposure). All 6 state vars: **ZERO outside refs → fully
+  module-private**, no bridge. Region-generated `on*=` handler targets:
+  `_sysStatusSwitchTab` + `refreshSystemStatus` (→ window). Whole-repo sweep
+  (`*.py`/`*.js`/`*.html`/smoke fixtures): only CHANGELOG.md + this progress log
+  (prose) — no other file references any region identifier.
+- **What moved:** old lines 9994–10448 (feature region) + 12681–12685
+  (boot-trap) → `static/js/system-status.js`, **byte-verbatim** (DUAL two-sided
+  binary reassembly assertion for the two disjoint removals: (1)
+  `seg_pre + region + seg_mid + boot + seg_post == original` proving both spans
+  are clean disjoint byte ranges; (2) the new index.html, with the inserted
+  `<script>` tag line removed AND both the region and the boot block re-inserted
+  at their original cut points, `== original` byte-for-byte; the relocation
+  note + interop tail are append-only on the js side, and the moved boot lines
+  are byte-verbatim — the only non-verbatim aspect is the *join points*). Loaded
+  via `<script type="module" src="/static/js/system-status.js"></script>`
+  inserted immediately after the mcp.js module tag, before `</body>`. Anti-FOUC
+  bootstrap untouched. Diff shape: 1 insertion, 460 deletions across two hunks
+  (455 region + 5 boot).
+- **Numbers:** `system-status.js` = 23,889 bytes / 479 lines (455 region + 5
+  boot moved + 19-line notes/interop tail; CRLF, no BOM, 281 non-ASCII UTF-8
+  bytes). `index.html` 663,402 → 640,717 bytes; 13,630 → 13,171 lines (BOM
+  preserved).
+- **Interop surface: 4 window function re-exposures, 0 accessor bridges,
+  0 identity bridges:**
+  - Inbound/static-handler callers (2): `toggleSysStatusPopover` (pill onclick),
+    `_rerenderSysStatusSurfaces` (typeof-guarded token-usage caller — the bare
+    `typeof` resolves the window prop via the global scope chain; asserted).
+  - Region-generated `on*=` handler targets (2): `_sysStatusSwitchTab` (tab
+    buttons), `refreshSystemStatus` (Refresh button).
+  - Module-private (16 functions + 6 state vars): `fetchSystemStatus`,
+    `fetchSystemUsage`, `renderSysStatusPill`, `renderSysStatusPopover`,
+    `renderSysStatusPanel`, `_positionSysStatusPopover`, `_ssRateLimitHealth`,
+    `_ssRelTime`, `_ssFormatTokens`, `_ssShortenModel`, `_renderProviderHealthRows`,
+    `_renderStatusTab`, `_renderConfigTab`, `_renderMcpTab`,
+    `_renderMcActivitySection`, `_renderUsageTab`; `systemStatusCache`,
+    `systemUsageCache`, `_sysStatusPopoverOpen`, `_sysStatusRefreshing`,
+    `_sysStatusActiveTab`, `_sysUsageFetching`.
+  - Formal scans: generated-handler whole-var ASSIGNMENT scan (`="<ident>=`)
+    EMPTY for all 6 state vars (handlers only CALL functions — no accessor
+    bridge); per-identifier writer scan outside region → zero; zero `this` in
+    region code.
+- **Outbound deps** (resolve at call time through the shared global scope):
+  `API_BASE`, `esc`, `setTokenMode` (token-mode helper, handler), `mcUsageCache`
+  / token-usage globals, `_isMobileDevice` + appearance/format helpers + browser
+  builtins (`fetch`, `Date`, `Number`, `Math`, `document.*`). The two top-level
+  listeners (`window`-resize + `document`-click) moved WITH the module and fire
+  on the same events. Strict-mode promotion audited: zero module-code `this`
+  (all hits are HTML handler strings/comments), every assignment targets a
+  declared binding or an explicit `window.` property.
+- **sw.js:** `SW_VERSION` `mc-push-v15` → `mc-push-v16` (no cache list by
+  design; version bump only, same as modules 1–14). Added a v16 changelog line
+  documenting the boot-trap relocation.
+- **Smoke harnesses:** added `route.fulfill` for `/static/js/system-status.js`
+  (contentType `text/javascript; charset=utf-8`) in BOTH `boot-smoke.mjs` and
+  `bg-framing-check.mjs`.
+- **Gates:**
+  - `node --check --input-type=module` (stdin) parses system-status.js in
+    module goal.
+  - `node tools/smoke/boot-smoke.mjs` — **PASS**, 5/5 scenarios, grid rendered.
+    **This is the boot-trap regression gate** — the inline boot tail no longer
+    references `fetchSystemStatus`, and the SPA boots clean (a `fetchSystemStatus
+    is not defined` ReferenceError would have aborted boot and failed all 5).
+  - Real-server check (throwaway `MC_PORT=5392 python server.py` from the
+    worktree, then KILLED; live :5199 never touched): `/static/js/system-status.js`
+    → 200, `text/javascript; charset=utf-8`, Content-Length 23889 (exact match),
+    `Cache-Control: no-cache` + ETag; `GET /api/system/status` →
+    `{"cache_age_seconds":null}` (no agent has run on the throwaway → empty
+    cache, the realistic state).
+  - Headless Chromium against that server (seeded `walkthrough_done=1`;
+    **read-only** — Refresh deliberately NOT clicked, it POSTs
+    `/api/system/status/refresh` which spawns a one-shot `claude` for `/status`;
+    zero model cost) — **40/40 PASS, 0 console errors, 0 page errors**: all 4
+    window.* interop callable; all 16 privates + 6 state vars NOT leaked to
+    window; **boot-trap relocation asserted** — `#sys-status-pill` rendered
+    content after the relocated `fetchSystemStatus()` ran post-parse from the
+    module; popover opens via the REAL `toggleSysStatusPopover(event)` pill
+    path; all 4 tabs (`status`/`config`/`mcp`/`usage`) switch via
+    `_sysStatusSwitchTab` without throwing; `refreshSystemStatus` wired (not
+    invoked); the bare `typeof _rerenderSysStatusSurfaces === 'function'` guard
+    resolves true (global-scope reaches the window prop) and the function repaints
+    without throwing; the document outside-click listener (moved with the module)
+    closes the popover. Screenshot eyeballed: fully styled dashboard, status pill
+    in the header, no FOUC, mascot + sidebar styled.
+  - `node tools/smoke/bg-framing-check.mjs` — fails with the **identical
+    pre-existing base error** (`setBgZoom is not defined`, landmine 4 of module
+    1; line shifted to L93 by the added const, same evaluate step); page boots
+    with system-status.js fulfilled, dies at the same later evaluate. No new
+    breakage.
+- **Commit:** SHA in the orchestrator report; backfill on next entry (same
+  convention as modules 1–14).
+
+### Landmines for module 16 (remaining-core map, post-System-status)
+
+1. All prior landmines still apply verbatim (anti-FOUC inline bootstrap;
+   route.fulfill in BOTH harnesses per new js file; CI path-filter gap for
+   `static/js/**`; bg-framing-check broken at base; CRLF+BOM binary surgery;
+   build-macos.spec bundles static/ wholesale; npm install in fresh worktrees;
+   deferred-module timing; module-scoped-globals rule; re-derive boundaries +
+   brace-depth scan; accessor-bridge handler-assigned vars; object-identity
+   bridge for handler-property-written objects; multi-segment / boot-trap carve
+   for parse-time entanglements; don't "repair" quirks; settle CSS animations
+   before screenshots; cross-module window props are normal; surgery scripts in
+   `_scratch/*.py`; don't race region setTimeouts; state-on-modal-entry is a
+   bridge-free win; `openModals` is a `const` NOT a window prop — read it via
+   `(0,eval)('openModals')` in a Playwright probe;
+   `node --input-type=module --check <file>` ERRORS on Node 24 — pipe via stdin).
+2. **The boot-trap relocation (fix (a)) is PROVEN behavior-equivalent for a
+   periodic poll + idle-until-async one-shot** (System status). The recipe:
+   excise the inline `fn();`/`setInterval(fn,…)` boot lines, relocate them
+   byte-verbatim into the deferred module body after the region, and argue the
+   few-hundred-ms-later start is immaterial (no observable first-tick). Use the
+   DUAL two-sided assertion (`seg_pre + region + seg_mid + boot + seg_post ==
+   original`) when a module move also relocates a disjoint boot block. The
+   boot-smoke 5/5 IS the regression gate (a leftover ReferenceError aborts boot).
+   **Caution:** this is safe ONLY when the relocated call has no parse-time-order
+   dependency with surviving inline boot code. System status's two lines were
+   isolated (between `setInterval(refreshScheduleBanner,…)` and the Fallback
+   poll); audit that the boot lines you relocate are self-contained.
+3. **Remaining candidate queue (header-to-header upper bounds, refs UNVERIFIED —
+   re-derive; the inline section is now shifted −459 more from any quoted
+   pre-module-15 line ≥10449, and −1,044 from pre-module-14 lines ≥13475):**
+   - **Update section (~360L) — ENTANGLED (3-segment + boot-trap).** The
+     "Update Clayrune" header span also holds the Power/restart/shutdown dialog
+     (`openPowerDialog`/`performRestart`/`showRestartingOverlay`/
+     `performShutdown`/`showPoweredOffOverlay`) AND the server-restart-detection
+     block with a **parse-time `setTimeout(()=>_checkServerRestart(),1500)`**
+     boot registration; `_handleServerRestart`→`showRestartingOverlay` couples
+     detection↔power. ALSO note `_checkServerRestart()` is called from the
+     15s-fallback `setInterval` (old L12692, now shifted) — so it's a
+     MULTI-consumer inline dep, not just the parse-time setTimeout. A careful
+     2-/3-segment carve + a boot-trap decision for the setTimeout (the proven
+     fix-(a) relocation applies) — but check the `_checkServerRestart` fallback
+     consumer stays satisfied (window-expose it). The biggest-care candidate.
+   - **provider auth/settings (~630L) — ENTANGLED / mis-headered** (unchanged
+     from module-14 landmines): the "Provider Auth helpers" header covers only
+     ~88L; the lines below are the Schedule Banner family under the wrong header;
+     "Auth banner — multi-provider" is a third chunk. The Schedule Banner could
+     be its OWN clean module (2 top-level `document.addEventListener` listeners,
+     safe — same posture as System status's listeners) — but its
+     `refreshScheduleBanner` is an outbound dep of scheduler.js + the inline
+     schedule-banner section, so window-expose it. Derive all three headers.
+   - **Hivemind family (~1,294L)** — tab + dashboard modal + cross-project;
+     shares the inline run-history renderers (`renderRunRows`/
+     `renderRunsPagination`, multi-consumer with scheduler.js — STAY INLINE per
+     the brief); carve hivemind AROUND them.
+   - Provider Settings section (`_renderProviderSettings`) is a settings-family
+     leaf; Process Manager is a small single-function region.
+   - The genuinely-entangled agent-panel/projects-grid CORE + Command Palette's
+     real ~98L (2 accessor bridges) still WAIT for js/store.js.
