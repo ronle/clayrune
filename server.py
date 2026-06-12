@@ -584,6 +584,15 @@ _bp_guide.wire(
 app.register_blueprint(_bp_guide.bp)
 
 
+# ── Agent characters (Prompt Builder Phase 1) ── /api/characters CRUD over
+# standard Claude Code subagent files (.claude/agents/, global + project
+# scope). Logic in mc/characters.py; design docs/PROMPT_BUILDER_DESIGN.md.
+from mc.blueprints import character_routes as _bp_characters  # noqa: E402
+
+_bp_characters.wire(load_project_fn=_bp_projects.load_project)
+app.register_blueprint(_bp_characters.bp)
+
+
 # ── Project endpoints ── moved to mc/blueprints/project_routes.py (1.11).
 
 

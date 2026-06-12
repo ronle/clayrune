@@ -154,11 +154,14 @@ def client(tmp_path, monkeypatch):
             raise out
         return out
 
+    popen_procs = []
+
     def _popen(cmd, **kw):
         popen_calls.append((cmd, kw))
         out = holder['popen'](cmd, kw)
         if isinstance(out, BaseException):
             raise out
+        popen_procs.append(out)
         return out
 
     monkeypatch.setattr(gr, 'subprocess', types.SimpleNamespace(
@@ -173,6 +176,7 @@ def client(tmp_path, monkeypatch):
     c.holder = holder              # type: ignore[attr-defined]
     c.run_calls = run_calls        # type: ignore[attr-defined]
     c.popen_calls = popen_calls    # type: ignore[attr-defined]
+    c.popen_procs = popen_procs    # type: ignore[attr-defined]
     c.mem_calls = mem_calls        # type: ignore[attr-defined]
     c.saved = saved                # type: ignore[attr-defined]
     return c
@@ -401,3 +405,83 @@ class TestWalkthrough:
         r = client.post('/api/walkthrough/sample-project', environ_base=LAN)
         assert r.status_code == 401
         assert client.saved == []
+
+
+# ── Builder modes (Prompt Builder Phase 1) ───────────────────────────────────
+
+def _seed_briefs(tmp):
+    d = tmp / 'docs' / 'claydo'
+    d.mkdir(parents=True, exist_ok=True)
+    (d / 'PROMPT_BUILDER_BRIEF.md').write_text(
+        '# Prompt workshop brief\n', encoding='utf-8')
+    (d / 'CHARACTER_BUILDER_BRIEF.md').write_text(
+        '# Character workshop brief\n', encoding='utf-8')
+
+
+class TestGuideStreamModes:
+    def test_prompt_mode_uses_builder_sandbox_and_brief(self, client):
+        _seed_briefs(client.tmp)
+        r = client.post('/api/guide/stream',
+                        json={'question': 'I need a prompt', 'mode': 'prompt'})
+        assert r.status_code == 200
+        events = _sse_events(r.data)
+        assert events[-1] == {'type': 'done', 'answer': 'Hello from Claydo'}
+
+        (cmd, kw) = client.popen_calls[0]
+        builder = client.tmp / 'data' / 'claydo' / 'builder-prompt'
+        assert kw['cwd'] == str(builder)
+        assert (builder / 'CLAUDE.md').read_text(encoding='utf-8') == \
+            '# Prompt workshop brief\n'
+        # The ask-mode guide context is NOT what builders see.
+        assert '--strict-mcp-config' in cmd  # no-tools posture carries over
+
+    def test_character_mode_injects_project_context(self, client, monkeypatch):
+        _seed_briefs(client.tmp)
+        # The fixture's project_path IS client.tmp — give it rules + skills.
+        (client.tmp / 'AGENT_RULES.md').write_text(
+            '# my rules head\n', encoding='utf-8')
+        monkeypatch.setattr(
+            client.gr, '_skills',
+            types.SimpleNamespace(list_skills=lambda **kw: [
+                {'name': 'mc-distill'}, {'name': 'code-review'}]))
+
+        r = client.post('/api/guide/stream', json={
+            'question': 'make me a reviewer character',
+            'mode': 'character', 'project_id': 'tguide',
+        })
+        assert r.status_code == 200
+        # The prompt travels via the recorded stdin pipe.
+        sent = json.loads(client.popen_procs[0].stdin.data)
+        prompt = sent['message']['content']
+        assert prompt.startswith("Context about the user's current project:")
+        assert '- Project: Guide Test' in prompt
+        assert '# my rules head' in prompt
+        assert 'mc-distill, code-review' in prompt
+        assert prompt.rstrip().endswith(
+            'Current question: make me a reviewer character')
+        # Character mode runs in its own sandbox, not prompt mode's.
+        assert client.popen_calls[0][1]['cwd'] == str(
+            client.tmp / 'data' / 'claydo' / 'builder-character')
+
+    def test_ask_mode_ignores_project_id(self, client):
+        r = client.post('/api/guide/stream', json={
+            'question': 'how do I tile modals?', 'project_id': 'tguide'})
+        assert r.status_code == 200
+        sent = json.loads(client.popen_procs[0].stdin.data)
+        assert sent['message']['content'] == 'how do I tile modals?'
+        assert client.popen_calls[0][1]['cwd'] == str(
+            client.tmp / 'data' / 'claydo')
+
+    def test_unknown_mode_400(self, client):
+        r = client.post('/api/guide/stream',
+                        json={'question': 'x', 'mode': 'bogus'})
+        assert r.status_code == 400
+        assert 'mode must be' in r.get_json()['error']
+        assert client.popen_calls == []
+
+    def test_missing_brief_500(self, client):
+        r = client.post('/api/guide/stream',
+                        json={'question': 'x', 'mode': 'character'})
+        assert r.status_code == 500
+        assert 'builder brief missing' in r.get_json()['error']
+        assert client.popen_calls == []

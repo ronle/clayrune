@@ -47,6 +47,16 @@ import os
 if os.path.exists('data/SHARED_RULES.md'):
     datas.append(('data/SHARED_RULES.md', 'data'))
 
+# Claydo reads these from _SERVER_DIR at runtime: USER_GUIDE + CHANGELOG feed
+# ask-mode context; docs/claydo/ holds the builder-mode briefs
+# (PROMPT_BUILDER_DESIGN.md §5). Without them the frozen app's Claydo 500s.
+if os.path.exists('docs/USER_GUIDE.md'):
+    datas.append(('docs/USER_GUIDE.md', 'docs'))
+if os.path.exists('CHANGELOG.md'):
+    datas.append(('CHANGELOG.md', '.'))
+if os.path.isdir('docs/claydo'):
+    datas.append(('docs/claydo', 'docs/claydo'))
+
 # Include any extra Python modules the app loads from the repo root.
 # server.py is implicitly bundled because app.py imports it.
 datas += collect_data_files('webview')

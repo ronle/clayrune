@@ -4470,6 +4470,83 @@
   .claydo-send:hover { opacity: 0.85; }
   .claydo-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
+  /* ── Claydo workshop modes (Prompt Builder Phase 1) ─────────────────── */
+  .claydo-chips {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    align-self: flex-start; max-width: 92%;
+  }
+  .claydo-chip {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 7px 14px; border-radius: 16px;
+    cursor: pointer; font-size: 12px; font-family: inherit;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .claydo-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .claydo-chip-back { color: var(--text-faint); }
+
+  /* Fenced artifact block inside a Claydo reply (the builder draft). */
+  .claydo-msg.bot .claydo-code {
+    font-family: var(--mono, monospace); font-size: 12px; line-height: 1.5;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; margin: 8px 0;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 260px; overflow-y: auto;
+  }
+
+  /* Handoff card appended under a draft (prompt-ready / character-ready). */
+  .claydo-ready-card {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
+    padding-top: 10px; border-top: 1px dashed var(--border);
+  }
+  .claydo-ready-btn {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 14px; border-radius: 5px;
+    cursor: pointer; font-size: 12px; font-weight: 600; font-family: inherit;
+    transition: border-color 0.15s, opacity 0.15s;
+  }
+  .claydo-ready-btn:hover { border-color: var(--accent); }
+  .claydo-ready-btn.accent {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  .claydo-ready-btn.accent:hover { opacity: 0.85; }
+  .claydo-ready-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Save-character overlay panel inside the Claydo modal. */
+  .claydo-save-panel {
+    position: absolute; inset: 0; z-index: 5;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex; align-items: center; justify-content: center;
+    border-radius: inherit;
+  }
+  .claydo-save-inner {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px 20px; width: min(380px, 90%);
+    display: flex; flex-direction: column; gap: 6px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  }
+  .claydo-save-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+  .claydo-save-inner label {
+    font-size: 11px; color: var(--text-faint); font-weight: 600;
+    margin-top: 6px;
+  }
+  .claydo-save-hint { font-weight: 400; }
+  .claydo-save-inner input, .claydo-save-inner select {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: inherit; font-size: 13px;
+    padding: 7px 10px; border-radius: 5px; outline: none;
+  }
+  .claydo-save-inner input:focus, .claydo-save-inner select:focus {
+    border-color: var(--accent);
+  }
+  .claydo-save-err {
+    font-size: 12px; color: #fca5a5; background: #ef444420;
+    border: 1px solid #ef444460; border-radius: 5px; padding: 6px 10px;
+    margin-top: 6px;
+  }
+  .claydo-save-actions {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px;
+  }
+
   /* The orange pulse Claydo emits via [clayrune:highlight] markers. */
   .clayrune-highlight {
     position: relative;

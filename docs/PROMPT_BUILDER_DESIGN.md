@@ -1,6 +1,8 @@
 # Prompt Builder — design doc
 
-Status: DRAFT v1 (2026-06-12). Pre-implementation thought process.
+Status: v1 (2026-06-12) — **Phase 1 IMPLEMENTED** same day (CHANGELOG
+`[2026-06-12b]`): Claydo workshop modes, briefs, characters CRUD, handoff
+cards. Phases 2–3 remain design-only.
 Owner decisions locked via AskUserQuestion (2026-06-12):
 
 1. **Artifact scope (v1):** BOTH — a refined *task prompt* and a full *agent

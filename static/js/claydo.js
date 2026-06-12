@@ -1,11 +1,17 @@
 // ── Ask Claydo (in-app guide assistant) ───────────────────────────────────
-// Floating button → modal chat → POST /api/guide/ask → render answer +
+// Floating button → modal chat → POST /api/guide/stream → render answer +
 // strip + dispatch [clayrune:...] UI control markers emitted by Claydo.
+// Three modes (docs/PROMPT_BUILDER_DESIGN.md): 'ask' (help desk, default),
+// 'prompt' (prompt workshop) and 'character' (character workshop) — the
+// builder modes hand their artifact back via prompt-ready/character-ready
+// markers + the last fenced block of the reply.
 
 // Per-modal-session conversation history. Reset each time the modal is
-// opened fresh (i.e. after being closed). Minimize+restore preserves it.
+// opened fresh (i.e. after being closed) and on every mode switch (each
+// mode is a different conversation against a different brief).
 // Cap at 6 messages (3 exchanges) — anything older falls off the front.
 let _claydoHistory = [];
+let _claydoMode = 'ask';
 
 // One-time localStorage migration from the previous "Playdo" name. Read the
 // old key, write to the new key if not already set, then delete the old.
@@ -150,9 +156,11 @@ async function openClaydo() {
     setTimeout(() => document.getElementById('claydo-input')?.focus(), 50);
     return;
   }
-  // Fresh open → fresh conversation. (Minimize keeps history; close+reopen
-  // resets, since closeModalById removes the modal from the DOM.)
+  // Fresh open → fresh conversation in ask mode. (Minimize keeps history
+  // + mode; close+reopen resets, since closeModalById removes the modal
+  // from the DOM.)
   _claydoHistory = [];
+  _claydoMode = 'ask';
 
   const win = document.createElement('div');
   win.className = 'modal-window';
@@ -166,7 +174,7 @@ async function openClaydo() {
         <img id="claydo-avatar" src="/assets/claydo-idle.webp" alt="" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);object-fit:contain;background:var(--surface2)" draggable="false">
         <div style="min-width:0">
           <div style="font-size:14px;font-weight:700;color:var(--text)">Ask Claydo</div>
-          <div style="font-size:11px;color:var(--text-faint)">Your in-app guide to Clayrune</div>
+          <div id="claydo-subtitle" style="font-size:11px;color:var(--text-faint)">Your in-app guide to Clayrune</div>
         </div>
       </div>
       <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
@@ -174,9 +182,7 @@ async function openClaydo() {
         <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
       </div>
     </div>
-    <div class="claydo-history" id="claydo-history">
-      <div class="claydo-msg bot">Hi — I'm Claydo. Ask me anything about Clayrune. I can highlight UI elements while I explain. Try: <em>"how do I start a hivemind?"</em> or <em>"where do I see scheduled runs?"</em></div>
-    </div>
+    <div class="claydo-history" id="claydo-history"></div>
     <div class="claydo-input-row">
       <textarea id="claydo-input" class="claydo-input" rows="1" placeholder="Ask a question..."
         onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();submitClaydo();}"></textarea>
@@ -190,7 +196,75 @@ async function openClaydo() {
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
   centerModalElement(win);
   focusModal(modalId);
+  _claydoResetConversation('ask');
   setTimeout(() => document.getElementById('claydo-input')?.focus(), 50);
+}
+
+// ── Modes: ask (help desk) / prompt / character workshops ─────────────────
+
+const _CLAYDO_MODE_UI = {
+  ask: {
+    subtitle: 'Your in-app guide to Clayrune',
+    placeholder: 'Ask a question...',
+    greeting: 'Hi — I\'m Claydo. Ask me anything about Clayrune. I can highlight UI elements while I explain. Try: <em>"how do I start a hivemind?"</em> or <em>"where do I see scheduled runs?"</em>',
+  },
+  prompt: {
+    subtitle: 'Prompt workshop',
+    placeholder: 'Describe the task you need a prompt for...',
+    greeting: 'Prompt workshop. Tell me what you want your agent to do — rough is fine. I\'ll ask a question or two if I need to, then hand you a sharpened prompt ready to send.',
+  },
+  character: {
+    subtitle: 'Character workshop',
+    placeholder: 'Describe the character — role, attitude, boundaries...',
+    greeting: 'Character workshop. Describe the character you want your agent to play — a strict code reviewer, a patient teacher, a domain expert. I\'ll sculpt it into a reusable character you can save.',
+  },
+};
+
+// Rebuild the history pane for a mode: greeting bubble + the chips row
+// (workshop entries in ask mode, a back link in builder modes).
+function _claydoResetConversation(mode) {
+  const histDiv = document.getElementById('claydo-history');
+  if (!histDiv) return;
+  _claydoHistory = [];
+  _claydoMode = mode;
+  const ui = _CLAYDO_MODE_UI[mode] || _CLAYDO_MODE_UI.ask;
+
+  const sub = document.getElementById('claydo-subtitle');
+  if (sub) sub.textContent = ui.subtitle;
+  const input = document.getElementById('claydo-input');
+  if (input) { input.placeholder = ui.placeholder; input.value = ''; }
+
+  const chips = mode === 'ask'
+    ? `<div class="claydo-chips">
+         <button class="claydo-chip" onclick="setClaydoMode('prompt')">&#x270D;&#xFE0F; Help me write a prompt</button>
+         <button class="claydo-chip" onclick="setClaydoMode('character')">&#x1F3AD; Create an agent character</button>
+       </div>`
+    : `<div class="claydo-chips">
+         <button class="claydo-chip claydo-chip-back" onclick="setClaydoMode('ask')">&#8592; Back to questions</button>
+       </div>`;
+  histDiv.innerHTML = `<div class="claydo-msg bot">${ui.greeting}</div>${chips}`;
+  setTimeout(() => document.getElementById('claydo-input')?.focus(), 30);
+}
+
+function setClaydoMode(mode) {
+  if (!_CLAYDO_MODE_UI[mode] || mode === _claydoMode) return;
+  _claydoResetConversation(mode);
+}
+
+// The project the user is "in" right now = topmost open, non-minimized
+// project modal. Builder modes send it so Claydo grounds drafts in the
+// project's name/rules/skills.
+function _claydoFocusedProjectId() {
+  let best = null, bestZ = -1;
+  try {
+    for (const [, info] of openModals) {
+      if (info && info.projectId && !info.minimized && (info.zIndex || 0) > bestZ) {
+        best = info.projectId;
+        bestZ = info.zIndex || 0;
+      }
+    }
+  } catch (e) {}
+  return best;
 }
 
 // Swap the mascot's image between idle / thinking / (future: error,
@@ -254,8 +328,10 @@ async function submitClaydo() {
   input.disabled = true;
   send.disabled = true;
 
-  // Snapshot prior history (last 6 messages = ~3 exchanges).
-  const historyPayload = _claydoHistory.slice(-6);
+  // Snapshot prior history (ask: last 6 messages = ~3 exchanges; builder
+  // modes carry a longer tail so interview answers survive to the draft —
+  // the server caps at 12 either way).
+  const historyPayload = _claydoHistory.slice(_claydoMode === 'ask' ? -6 : -12);
   // Push the user's message into history NOW so the next turn sees it even
   // if streaming fails midway.
   _claydoHistory.push({role: 'user', text: question});
@@ -270,7 +346,12 @@ async function submitClaydo() {
     const res = await fetch(API_BASE + '/api/guide/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question, history: historyPayload}),
+      body: JSON.stringify({
+        question,
+        history: historyPayload,
+        mode: _claydoMode,
+        project_id: _claydoMode === 'ask' ? null : _claydoFocusedProjectId(),
+      }),
     });
     if (!res.ok || !res.body) {
       const data = await res.json().catch(() => ({}));
@@ -320,10 +401,12 @@ async function submitClaydo() {
           // Store the cleaned text (NO markers) so Claydo's next turn doesn't
           // re-emit the same highlights from seeing them in its own prior reply.
           _claydoHistory.push({role: 'assistant', text: cleanText});
-          if (_claydoHistory.length > 12) {
-            _claydoHistory = _claydoHistory.slice(-12);
+          const histCap = _claydoMode === 'ask' ? 12 : 24;
+          if (_claydoHistory.length > histCap) {
+            _claydoHistory = _claydoHistory.slice(-histCap);
           }
           _claydoDispatchActions(actions);
+          _claydoRenderReadyCard(botMsg, actions, cleanText);
         }
       }
     }
@@ -378,16 +461,19 @@ function _claydoRenderError(botMsg, message, originalQuestion) {
 
 // Parse [clayrune:goto view="..."], [clayrune:open-modal project="..."],
 // [clayrune:highlight selector="..." duration=N] markers out of Claydo's
-// reply. Returns the cleaned text + an array of action objects to dispatch.
+// reply, plus the builder handoffs [clayrune:prompt-ready] and
+// [clayrune:character-ready name="..."]. Returns the cleaned text + an
+// array of action objects to dispatch. The ready markers deliberately
+// carry no payload — the artifact is the reply's last fenced block.
 function _claydoParseMarkers(raw) {
   const actions = [];
-  const re = /\[clayrune:(goto|open-modal|highlight)\s+([^\]]+)\]/g;
+  const re = /\[clayrune:(goto|open-modal|highlight|prompt-ready|character-ready)(\s+[^\]]+)?\]/g;
   const cleanText = raw.replace(re, (_match, kind, attrs) => {
     const out = {kind};
     // Parse key="value" pairs (also accept key=value for unquoted nums).
     const attrRe = /(\w+)=(?:"([^"]*)"|(\d+))/g;
     let m;
-    while ((m = attrRe.exec(attrs)) !== null) {
+    while ((m = attrRe.exec(attrs || '')) !== null) {
       out[m[1]] = m[2] !== undefined ? m[2] : m[3];
     }
     actions.push(out);
@@ -425,14 +511,230 @@ function _claydoRunAction(a) {
   }
 }
 
-// Light markdown-ish formatting for Claydo's text. Bold, inline code, and
-// preserve newlines. Strip any HTML the agent might emit (defense in depth).
+// Light markdown-ish formatting for Claydo's text. Fenced blocks become
+// <pre> (the builder modes deliver their artifact in one); the prose gets
+// bold + inline code + preserved newlines. Strip any HTML the agent might
+// emit (defense in depth). While a fence is still streaming (odd count),
+// the open tail renders as <pre> too — settles correctly at `done`.
 function _claydoFormatText(s) {
-  return esc(s)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n/g, '<br>');
+  const segs = String(s).split(/```(?:[\w-]+)?\n?/);
+  let out = '';
+  for (let i = 0; i < segs.length; i++) {
+    if (i % 2 === 1) {
+      out += '<pre class="claydo-code">' + esc(segs[i].replace(/\n$/, '')) + '</pre>';
+    } else {
+      out += esc(segs[i])
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+    }
+  }
+  return out;
+}
+
+// ── Builder handoff: ready cards, insert/copy, save panel ─────────────────
+
+// The artifact = the LAST fenced block in the cleaned reply (the briefs'
+// output contract). Never sourced from marker attrs.
+function _claydoLastFenced(text) {
+  const re = /```(?:[\w-]+)?\n([\s\S]*?)```/g;
+  let m, last = null;
+  while ((m = re.exec(text)) !== null) last = m[1];
+  return last ? last.trim() : null;
+}
+
+function _claydoRenderReadyCard(botMsg, actions, cleanText) {
+  const ready = actions.find(a => a.kind === 'prompt-ready' || a.kind === 'character-ready');
+  if (!ready) return;
+  const artifact = _claydoLastFenced(cleanText);
+  if (!artifact) return;  // marker without a fenced draft — nothing to hand off
+
+  const card = document.createElement('div');
+  card.className = 'claydo-ready-card';
+
+  const mkBtn = (label, cls, onClick) => {
+    const b = document.createElement('button');
+    b.className = 'claydo-ready-btn' + (cls ? ' ' + cls : '');
+    b.innerHTML = label;
+    b.onclick = onClick;
+    card.appendChild(b);
+    return b;
+  };
+
+  if (ready.kind === 'prompt-ready') {
+    const pid = _claydoFocusedProjectId();
+    if (pid) {
+      mkBtn('&#8594; Insert into project chat', 'accent',
+            () => _claydoInsertIntoProject(pid, artifact));
+    }
+    mkBtn('Copy prompt', pid ? '' : 'accent', (e) => _claydoCopy(artifact, e.target));
+  } else {
+    mkBtn('&#x1F4BE; Save character&hellip;', 'accent',
+          () => _claydoOpenSavePanel(artifact, ready.name || ''));
+    mkBtn('Copy', '', (e) => _claydoCopy(artifact, e.target));
+  }
+  botMsg.appendChild(card);
+}
+
+// Drop the prompt into the focused project modal's chat box (the
+// agent-followup-<sessionId> textarea). Falls back to clipboard when the
+// modal/box isn't there.
+function _claydoInsertIntoProject(pid, text) {
+  let modalEl = null, modalId = null;
+  try {
+    for (const [id, info] of openModals) {
+      if (info && info.projectId === pid && !info.minimized && info.element) {
+        modalEl = info.element;
+        modalId = id;
+        break;
+      }
+    }
+  } catch (e) {}
+  const ta = modalEl ? modalEl.querySelector('textarea[id^="agent-followup-"]') : null;
+  if (!ta) {
+    _claydoCopy(text, null);
+    _claydoBotNote('Couldn\'t find the project chat box — the prompt is on your clipboard instead.');
+    return;
+  }
+  ta.value = text;
+  ta.dispatchEvent(new Event('input', {bubbles: true}));  // autosize + value-preserve hooks
+  if (modalId && typeof focusModal === 'function') focusModal(modalId);
+  ta.focus();
+}
+
+function _claydoCopy(text, btn) {
+  const done = () => {
+    if (btn && btn.textContent !== undefined) {
+      const t = btn.textContent;
+      btn.textContent = 'Copied ✓';
+      setTimeout(() => { btn.textContent = t; }, 1500);
+    }
+  };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+    done();
+  };
+  try {
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } catch (e) {
+    fallback();
+  }
+}
+
+// Append a small bot-side note bubble (save confirmations, fallbacks).
+function _claydoBotNote(html) {
+  const histDiv = document.getElementById('claydo-history');
+  if (!histDiv) return;
+  const d = document.createElement('div');
+  d.className = 'claydo-msg bot';
+  d.innerHTML = html;
+  histDiv.appendChild(d);
+  histDiv.scrollTop = histDiv.scrollHeight;
+}
+
+// ── Save-character panel — overlay inside the Claydo modal ────────────────
+// Inputs numbered top-down, single accent action button (the multi-input
+// modal convention).
+
+function _claydoOpenSavePanel(artifact, suggestedName) {
+  // Prefill from the artifact's frontmatter; the body is what's below it.
+  let name = suggestedName || '', description = '', body = artifact;
+  const fm = artifact.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (fm) {
+    body = artifact.slice(fm[0].length).trim();
+    const nm = fm[1].match(/^name:\s*(.+)$/m);
+    const dm = fm[1].match(/^description:\s*([\s\S]*?)(?=\r?\n[a-zA-Z_-]+\s*:|$)/);
+    if (nm) name = nm[1].trim().replace(/^["']|["']$/g, '');
+    if (dm) description = dm[1].replace(/\s*\r?\n\s+/g, ' ').trim().replace(/^["']|["']$/g, '');
+  }
+  if (!name) name = 'my-character';
+
+  const content = document.querySelector(`[data-modal-id="__claydo"] .modal-content`)
+    || document.getElementById('claydo-history')?.parentElement;
+  if (!content) return;
+  // Anchor the inset:0 overlay to the Claydo modal only (modal-content is
+  // position:static globally — don't change the shared class).
+  if (getComputedStyle(content).position === 'static') content.style.position = 'relative';
+  content.querySelector('.claydo-save-panel')?.remove();
+
+  const pid = _claydoFocusedProjectId();
+  const panel = document.createElement('div');
+  panel.className = 'claydo-save-panel';
+  panel.innerHTML = `
+    <div class="claydo-save-inner">
+      <div class="claydo-save-title">Save character</div>
+      <label>1. Name</label>
+      <input id="claydo-save-name" type="text" spellcheck="false" value="${esc(name)}">
+      <label>2. Description <span class="claydo-save-hint">(when should the agent use it?)</span></label>
+      <input id="claydo-save-desc" type="text" value="${esc(description)}">
+      <label>3. Where</label>
+      <select id="claydo-save-scope">
+        ${pid ? `<option value="project" selected>This project</option>` : ''}
+        <option value="global" ${pid ? '' : 'selected'}>All my projects</option>
+      </select>
+      <div class="claydo-save-err" id="claydo-save-err" style="display:none"></div>
+      <div class="claydo-save-actions">
+        <button class="claydo-ready-btn" id="claydo-save-cancel">Cancel</button>
+        <button class="claydo-ready-btn accent" id="claydo-save-go">Save character</button>
+      </div>
+    </div>`;
+  content.appendChild(panel);
+
+  const errEl = panel.querySelector('#claydo-save-err');
+  const showErr = (msg) => { errEl.textContent = msg; errEl.style.display = 'block'; };
+  panel.querySelector('#claydo-save-cancel').onclick = () => panel.remove();
+  panel.addEventListener('mousedown', (e) => { if (e.target === panel) panel.remove(); });
+
+  const goBtn = panel.querySelector('#claydo-save-go');
+  let overwrite = false;
+  goBtn.onclick = async () => {
+    const nameVal = panel.querySelector('#claydo-save-name').value.trim().toLowerCase();
+    const descVal = panel.querySelector('#claydo-save-desc').value.trim();
+    const scopeVal = panel.querySelector('#claydo-save-scope').value;
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(nameVal)) {
+      return showErr('Name must be kebab-case: letters, digits, hyphens.');
+    }
+    if (!descVal) return showErr('Description is required — it tells the agent when to use this character.');
+    goBtn.disabled = true;
+    try {
+      const res = await fetch(API_BASE + '/api/characters', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          name: nameVal, description: descVal, body,
+          scope: scopeVal,
+          project_id: scopeVal === 'project' ? pid : null,
+          overwrite,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && !overwrite) {
+        overwrite = true;
+        goBtn.disabled = false;
+        goBtn.textContent = 'Overwrite existing';
+        return showErr(`"${nameVal}" already exists in that scope — save again to overwrite.`);
+      }
+      if (!res.ok) {
+        goBtn.disabled = false;
+        return showErr(data.error || `Save failed (${res.status})`);
+      }
+      panel.remove();
+      _claydoBotNote(`Saved <strong>${esc(nameVal)}</strong> ✓ (${scopeVal === 'project' ? 'this project' : 'all projects'}). Your agent can use it now — mention <code>@${esc(nameVal)}</code> in chat.`);
+    } catch (e) {
+      goBtn.disabled = false;
+      showErr('Network error: ' + (e.message || e));
+    }
+  };
+  setTimeout(() => panel.querySelector('#claydo-save-name')?.focus(), 30);
 }
 
 // interop: called from inline script/onclick
 window.submitClaydo = submitClaydo;
+window.setClaydoMode = setClaydoMode;

@@ -6,6 +6,46 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-12b] — Prompt Builder Phase 1: Claydo workshops + agent characters
+
+Claydo grows from help desk into the prompt-builder surface
+(docs/PROMPT_BUILDER_DESIGN.md). Two chips under the greeting — **"✍️ Help
+me write a prompt"** and **"🎭 Create an agent character"** — switch the
+modal into workshop modes that interview briefly, then hand back the
+artifact.
+
+- **Backend:** `/api/guide/stream` gains `mode=ask|prompt|character` +
+  `project_id`. Builder modes run in their own sandboxes
+  (`data/claydo/builder-*/`) with briefs from `docs/claydo/` materialized
+  as CLAUDE.md (same no-tools engine as ask mode); a compact project
+  context block (name, summary, AGENT_RULES head, skill names) rides the
+  per-request prompt. Ask mode is byte-identical to before.
+- **Characters:** standard Claude Code subagent files (`.claude/agents/
+  <name>.md`, frontmatter name+description, body = system prompt) — saved
+  characters are natively `@`-mentionable by dispatched sessions, and
+  community subagents import unmodified. New `mc/characters.py` +
+  `mc/blueprints/character_routes.py`: GET/POST `/api/characters`,
+  GET/PUT/DELETE `/api/characters/<scope>/<name>`; dual scope
+  (project default / global), 6 KB body cap (Windows 32 KB CreateProcess
+  headroom), kebab-name validation, 409-then-overwrite flow. Never
+  touches DATA_DIR.
+- **Frontend (`claydo.js` + `app.css`):** mode chips + subtitle swap,
+  marker whitelist extended with `prompt-ready`/`character-ready` (artifact
+  = last fenced block, never marker attrs), fenced blocks render as code,
+  handoff cards (Copy / Insert into project chat / Save character…), and a
+  numbered save panel (name/description/where) inside the Claydo modal.
+- **Tests:** `tests/test_character_routes.py` (12 cases) +
+  `TestGuideStreamModes` in `tests/test_guide_routes.py`; pyright clean on
+  the new modules; boot smoke 5/5.
+- **Packaging:** `build-macos.spec` now bundles `docs/claydo/` and (fixing
+  a pre-existing frozen-app gap) `docs/USER_GUIDE.md` + `CHANGELOG.md`,
+  which Claydo reads at runtime.
+- **Not in this phase:** activating a character as the main agent's
+  persona (per-chat picker, Phase 2) and the library/import surface
+  (Phase 3).
+- **Rollback:** the chips are additive UI; ask mode untouched. Delete the
+  two new modules + revert guide_routes/claydo.js if needed.
+
 ## [2026-06-12] — Brief replies: per-turn delivery guarantee + default ON
 
 "Brief replies = Everywhere" was on, yet agents across all projects still

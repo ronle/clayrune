@@ -34,6 +34,7 @@ from typing import Any, Callable
 
 from flask import Blueprint, Response, jsonify, request
 
+import skills as _skills
 from mc import state
 from mc.core import now_iso
 
@@ -169,6 +170,87 @@ def _claydo_prepare_context():
     return cwd, None
 
 
+# ── Builder modes (Prompt Builder Phase 1, docs/PROMPT_BUILDER_DESIGN.md) ────
+# Claydo's two workshop modes reuse the ask-mode engine (no-tools claude
+# subprocess + materialized CLAUDE.md) with a different brief and their own
+# sandbox cwds, so each mode keeps its own transcripts and context cache.
+
+_CLAYDO_MODES = ('ask', 'prompt', 'character')
+
+_CLAYDO_BUILDER_BRIEFS = {
+    'prompt': 'PROMPT_BUILDER_BRIEF.md',
+    'character': 'CHARACTER_BUILDER_BRIEF.md',
+}
+
+
+def _claydo_builder_cwd(mode: str) -> str:
+    """Per-mode sandbox under data/claydo/ — same transcript-isolation
+    rationale as _claydo_cwd (the parent dir encodes to a path no project
+    owns)."""
+    d = Path(_claydo_cwd()) / f'builder-{mode}'
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
+
+
+def _claydo_prepare_builder_context(mode: str):
+    """Materialize docs/claydo/<brief> as the builder cwd's CLAUDE.md
+    (drift-checked, like _claydo_prepare_context). Same return contract."""
+    cwd = _claydo_builder_cwd(mode)
+    brief_path = _SERVER_DIR / 'docs' / 'claydo' / _CLAYDO_BUILDER_BRIEFS[mode]
+    if not brief_path.exists():
+        return cwd, (f'builder brief missing — docs/claydo/{_CLAYDO_BUILDER_BRIEFS[mode]}', 500)
+    try:
+        brief_text = brief_path.read_text(encoding='utf-8')
+    except Exception as e:
+        return cwd, (f'brief read failed: {e}', 500)
+    try:
+        brief_md = Path(cwd) / 'CLAUDE.md'
+        if not brief_md.exists() or brief_md.read_text(encoding='utf-8') != brief_text:
+            brief_md.write_text(brief_text, encoding='utf-8')
+    except Exception:
+        pass  # Non-fatal — Claydo just builds with less guidance.
+    return cwd, None
+
+
+def _claydo_project_context_block(project_id):
+    """Compact, best-effort project grounding for builder modes (design §4):
+    name, summary, AGENT_RULES head, installed skill names. Rides the
+    per-request prompt ONLY — never the materialized CLAUDE.md, which is
+    mode-global and cached across users of the modal."""
+    if not project_id:
+        return ''
+    try:
+        p = load_project(project_id)
+    except Exception:
+        return ''
+    if not p:
+        return ''
+    lines = ["Context about the user's current project:",
+             f"- Project: {p.get('name') or project_id}"]
+    summary = (p.get('summary') or '').strip()
+    if summary:
+        lines.append(f'- Summary: {summary[:300]}')
+    pp = p.get('project_path') or ''
+    if pp:
+        try:
+            rules_path = Path(pp) / 'AGENT_RULES.md'
+            if rules_path.is_file():
+                head = rules_path.read_text(encoding='utf-8')[:1000].strip()
+                if head:
+                    lines.append('- Agent rules (head):\n' + head)
+        except Exception:
+            pass
+        try:
+            names = [s.get('name', '') for s in _skills.list_skills(
+                project_path=pp, project_id=project_id, include_body=False)]
+            names = [n for n in names if n][:15]
+            if names:
+                lines.append('- Installed skills: ' + ', '.join(names))
+        except Exception:
+            pass
+    return '\n'.join(lines)[:2500]
+
+
 @bp.route('/api/guide/stream', methods=['POST'])
 def guide_stream():
     """Streaming variant of /api/guide/ask. Spawns claude with stream-json output
@@ -190,21 +272,39 @@ def guide_stream():
     if len(question) > 2000:
         return jsonify({'error': 'question too long (max 2000 chars)'}), 400
 
+    # Builder modes (Prompt Builder Phase 1): same engine, different brief
+    # + sandbox. 'ask' stays byte-identical to the original behavior.
+    mode = (str(data.get('mode') or 'ask')).strip().lower()
+    if mode not in _CLAYDO_MODES:
+        return jsonify({'error': 'mode must be ask|prompt|character'}), 400
+    project_id = (str(data.get('project_id') or '')).strip() or None
+
     history = data.get('history', [])
     if not isinstance(history, list):
         history = []
-    history = history[-6:]
+    # Builder interviews span more turns than help-desk Q&A — keep a
+    # longer tail so round-1 answers survive to the draft.
+    history = history[-12:] if mode != 'ask' else history[-6:]
 
-    # Materialize USER_GUIDE.md + recent CHANGELOG tail as CLAUDE.md in
-    # Claydo's working directory so the Claude CLI auto-loads it as project
-    # context. Avoids the Windows 32 KB CreateProcess command-line limit
-    # which the 24 KB guide hit when passed via `--append-system-prompt`.
-    cwd, err = _claydo_prepare_context()
+    # Materialize the mode's context as CLAUDE.md in its working directory
+    # so the Claude CLI auto-loads it. Avoids the Windows 32 KB
+    # CreateProcess command-line limit which the 24 KB guide hit when
+    # passed via `--append-system-prompt`.
+    if mode == 'ask':
+        cwd, err = _claydo_prepare_context()
+    else:
+        cwd, err = _claydo_prepare_builder_context(mode)
     if err is not None:
         return jsonify({'error': err[0]}), err[1]
 
+    ctx_block = _claydo_project_context_block(project_id) if mode != 'ask' else ''
+
+    lines = []
+    if ctx_block:
+        lines.append(ctx_block)
+        lines.append('')
     if history:
-        lines = ['Previous exchange in this conversation:']
+        lines.append('Previous exchange in this conversation:')
         for m in history:
             role = 'User' if (m.get('role') or '') == 'user' else 'You'
             text = (m.get('text') or '').strip()[:1000]
@@ -212,11 +312,14 @@ def guide_stream():
                 lines.append(f'{role}: {text}')
         lines.append('')
         lines.append(f'Current question: {question}')
-        full_question = '\n'.join(lines)
-    else:
-        full_question = question
-    if len(full_question) > 8000:
-        full_question = full_question[-8000:]
+    elif ctx_block:
+        lines.append(f'Current question: {question}')
+    full_question = '\n'.join(lines) if lines else question
+    # Tail-truncate (recency wins; the ctx block is the first casualty,
+    # which is the right sacrifice). stdin has no length limit either way.
+    cap = 14000 if mode != 'ask' else 8000
+    if len(full_question) > cap:
+        full_question = full_question[-cap:]
 
     # Send the question via stdin (JSONL stream-json input) instead of via
     # `-p <full_question>`. On Windows, claude.cmd is invoked through cmd.exe
@@ -253,7 +356,9 @@ def guide_stream():
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                cwd=_claydo_cwd(),
+                # The mode's sandbox dir — its CLAUDE.md is the brief the
+                # CLI auto-loads (ask = guide, builders = workshop briefs).
+                cwd=cwd,
                 text=True, encoding='utf-8', errors='replace',
                 creationflags=_POPEN_FLAGS, startupinfo=_STARTUPINFO,
             )
