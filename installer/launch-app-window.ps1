@@ -52,9 +52,8 @@ try {
     Start-Process -FilePath $Browser -ArgumentList "--app=$Url", '--no-first-run', '--no-default-browser-check'
 } catch { exit 0 }
 
-if (-not $IconPath -or -not (Test-Path $IconPath)) { exit 0 }
-
-# -- 3. Find the new window and stamp its taskbar identity --------------------
+# -- 3. Find the new window: stamp taskbar identity + maximize ----------------
+$haveIcon = $IconPath -and (Test-Path $IconPath)
 try {
     Add-Type @'
 using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
@@ -118,15 +117,24 @@ public class ClayruneAppWindow {
       return ps.Commit() == 0;
     } finally { Marshal.ReleaseComObject(ps); }
   }
+
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+  // Chromium app windows default to ~half the work area on first run, and
+  // "--start-maximized" is ignored for "--app=" windows — so maximize from
+  // outside. SW_MAXIMIZE (3) on an already-maximized window is a no-op.
+  public static void Maximize(long hwnd) { ShowWindow(new IntPtr(hwnd), 3); }
 }
 '@
 
-    $iconRes = (Resolve-Path $IconPath).Path + ',0'
     $deadline = (Get-Date).AddSeconds($WindowTimeoutSec)
     while ((Get-Date) -lt $deadline) {
         $hwnd = [ClayruneAppWindow]::Find($DisplayName)
         if ($hwnd -ne 0) {
-            [ClayruneAppWindow]::Stamp($hwnd, $AppId, $iconRes, $DisplayName) | Out-Null
+            if ($haveIcon) {
+                $iconRes = (Resolve-Path $IconPath).Path + ',0'
+                [ClayruneAppWindow]::Stamp($hwnd, $AppId, $iconRes, $DisplayName) | Out-Null
+            }
+            [ClayruneAppWindow]::Maximize($hwnd)
             break
         }
         Start-Sleep -Milliseconds 250

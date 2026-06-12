@@ -111,6 +111,12 @@ have only Edge → Edge logo. Dev machines with Chrome never showed it.
 - **installer/install.ps1 Step 5 no longer opens a duplicate tab** — start.bat
   (Step 4) already opens the app window; the extra `Start-Process <url>` put a
   second, browser-iconed plain tab on top of it.
+- **App window opens maximized** (same VM validation pass, follow-up report):
+  Chromium app windows default to ~half the work area on first run and
+  `--start-maximized` is ignored for `--app=` windows, so the launcher
+  maximizes via `ShowWindow(SW_MAXIMIZE)` in the same find-the-window loop
+  that stamps identity. Maximize runs even when the .ico is missing (the
+  identity stamp is icon-gated, the size fix isn't).
 - Gotcha for future probing: reading `PKEY_AppUserModel_ID` from PowerShell 5.1
   with a hand-rolled 16-byte PROPVARIANT silently returns empty — `GetValue`
   needs the full 24-byte struct + propsys `PropVariantToStringAlloc`
