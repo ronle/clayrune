@@ -91,6 +91,42 @@ every prior fix including the 2026-06-07 freshness reconciler:
   duplicated history after a replay — self-resolves on reload.
 - **Rollback:** revert the four-file commit; no config flag.
 
+## [2026-06-12] — Windows taskbar icon: right artwork at the right size
+
+Follow-up to [2026-06-11]: the VM re-test still showed the wrong/too-small
+icon. How a Chromium `--app` window's taskbar button actually gets its bitmap
+(all verified live on both browsers):
+
+- The button bitmap is the **window icon**, which Chrome derives from the
+  page **favicon** and composites with its profile-avatar badge. External
+  `WM_SETICON` is re-asserted over by Chrome; `RelaunchIconResource` feeds
+  the relaunch verb, not the button bitmap. So the favicon artwork IS the
+  taskbar artwork.
+- The button resolves **once, at creation** — property stamps after the fact
+  change nothing visible. `launch-app-window.ps1` now hides + re-shows the
+  window after stamping so the button is re-created against the stamped
+  identity (this is what flips Edge from the Edge logo to Claydo).
+- Chrome's favicon service **refetches lazily**: the first load after a
+  `?v=` bump still renders the cached old art; the next launch is correct.
+  Fresh installs have no cache and are correct from the first launch.
+
+Changes:
+- `static/icon-192/512.png` regenerated **full-bleed** (artwork coverage 69%
+  → 99%; the mascot was drowning in Play-Store-style padding) and bumped to
+  `?v=4`. The padded original is preserved as `static/icon-maskable-192.png`
+  and the manifest's `maskable` entry now points at it — Android round masks
+  NEED that margin, so don't "fix" it.
+- `assets/clayrune.ico` regenerated tight from `assets/clayrune.png`
+  (alpha>128 bbox crop — a faint glow stretches the naive bbox to the full
+  canvas, so threshold before cropping).
+- `launch-app-window.ps1`: patches the Desktop + Start Menu shortcuts with
+  `System.AppUserModel.ID=io.clayrune.app` (taskbar resolves a group's icon
+  against a matching shortcut; idempotent self-heal each launch), hide/
+  re-show button refresh, and a per-step `data\logs\launcher.log`.
+- Known cosmetic: Chrome overlays its profile-avatar badge on app-window
+  icons on signed-in/multi-profile machines; fresh single-profile installs
+  don't see it. A future PWA-install flow would remove it entirely.
+
 ## [2026-06-11] — Windows launcher: Clayrune taskbar icon on Edge-only machines
 
 Fresh-install report (v2.1.0 VM validation): the launched app window showed
