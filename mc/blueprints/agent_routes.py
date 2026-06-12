@@ -3208,6 +3208,29 @@ def _archive_full_reply(session, prose):
         _log(f"[reply-gate] archive write failed: {e}", flush=True)
 
 
+def _user_requested_detail(marker_line):
+    """True if the user's prompt for this turn explicitly asked for elaboration
+    or detail. The reply-gate must NOT re-shorten an answer the user asked to be
+    long — otherwise asking to "explain" just gets the long reply trimmed back to
+    the short one (reported 2026-06-12). Mirrors the brief directive's own
+    "more only if the user asked" escape hatch."""
+    if not marker_line:
+        return False
+    import re
+    msg = marker_line
+    c = msg.find(':')          # strip the "> User:" / "> [queued]:" prefix
+    if c != -1:
+        msg = msg[c + 1:]
+    return bool(re.search(
+        r'\b(explain|elaborat\w*|in[\s-]?depth|in detail|more detail|'
+        r'full(er)?\s+(detail|explanation|answer|response|version|breakdown)|'
+        r'walk me through|step[\s-]?by[\s-]?step|go deeper|deep[\s-]?dive|'
+        r'expand (on|upon)|tell me more|give me more|thorough\w*|comprehensiv\w*|'
+        r'verbose|break ?down|long(er)?\s+(answer|reply|version|explanation|response)|'
+        r"don'?t (summari|shorten)|do not (summari|shorten)|full(er)? detail)\b",
+        msg, re.IGNORECASE))
+
+
 def _maybe_summarize_turn(session):
     """Rewrite the just-finished turn's prose in log_lines to a short summary.
 
@@ -3222,12 +3245,17 @@ def _maybe_summarize_turn(session):
         # The final turn = everything after the last user-prompt marker
         # ('> User: …' / '> [queued] …'). No marker = single-turn session.
         start = 0
+        marker = ''
         for i in range(len(lines) - 1, -1, -1):
             if lines[i].startswith('> '):
                 start = i + 1
+                marker = lines[i]
                 break
         turn = lines[start:]
         if not turn:
+            return
+        # The user explicitly asked to elaborate — leave the full answer intact.
+        if _user_requested_detail(marker):
             return
         # Prose = everything except '['-prefixed marker lines (tool /
         # terminal / status trace). Fences + their content stay in prose so
