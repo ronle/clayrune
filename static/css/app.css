@@ -4513,6 +4513,13 @@
   }
   .claydo-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
   .claydo-chip-back { color: var(--text-faint); }
+  .claydo-home-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 3px 10px; border-radius: 5px;
+    cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 600;
+    margin-right: 4px; transition: border-color 0.15s;
+  }
+  .claydo-home-btn:hover { border-color: var(--accent); }
 
   /* Fenced artifact block inside a Claydo reply (the builder draft). */
   .claydo-msg.bot .claydo-code {

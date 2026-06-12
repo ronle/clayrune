@@ -177,7 +177,8 @@ async function openClaydo() {
           <div id="claydo-subtitle" style="font-size:11px;color:var(--text-faint)">Your in-app guide to Clayrune</div>
         </div>
       </div>
-      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px;align-items:center">
+        <button id="claydo-home-btn" class="claydo-home-btn" onclick="setClaydoMode('ask')" title="Back to Ask Claydo" style="display:none">&#8592; Home</button>
         <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
         <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
       </div>
@@ -234,14 +235,17 @@ function _claydoResetConversation(mode) {
   const input = document.getElementById('claydo-input');
   if (input) { input.placeholder = ui.placeholder; input.value = ''; }
 
+  // Persistent header "Home" button: visible in builder modes (the
+  // greeting chips scroll out of reach once a draft is generated).
+  const home = document.getElementById('claydo-home-btn');
+  if (home) home.style.display = mode === 'ask' ? 'none' : '';
+
   const chips = mode === 'ask'
     ? `<div class="claydo-chips">
          <button class="claydo-chip" onclick="setClaydoMode('prompt')">&#x270D;&#xFE0F; Help me write a prompt</button>
          <button class="claydo-chip" onclick="setClaydoMode('character')">&#x1F3AD; Create an agent character</button>
        </div>`
-    : `<div class="claydo-chips">
-         <button class="claydo-chip claydo-chip-back" onclick="setClaydoMode('ask')">&#8592; Back to questions</button>
-       </div>`;
+    : '';
   histDiv.innerHTML = `<div class="claydo-msg bot">${ui.greeting}</div>${chips}`;
   setTimeout(() => document.getElementById('claydo-input')?.focus(), 30);
 }
