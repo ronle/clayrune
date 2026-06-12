@@ -1,8 +1,10 @@
 # Prompt Builder — design doc
 
-Status: v1 (2026-06-12) — **Phase 1 IMPLEMENTED** same day (CHANGELOG
+Status: v1 (2026-06-12) — **Phases 1 & 2 IMPLEMENTED**. Phase 1 (CHANGELOG
 `[2026-06-12b]`): Claydo workshop modes, briefs, characters CRUD, handoff
-cards. Phases 2–3 remain design-only.
+cards. Phase 2 (CHANGELOG `[2026-06-12c]`): per-chat persona — picker in
+the new-chat composer, injected at spawn beside AGENT_RULES, header pill +
+conversation marker. Phase 3 (library/import) remains design-only.
 Owner decisions locked via AskUserQuestion (2026-06-12):
 
 1. **Artifact scope (v1):** BOTH — a refined *task prompt* and a full *agent

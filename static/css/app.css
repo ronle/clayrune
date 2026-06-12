@@ -2337,6 +2337,13 @@
   }
   .conv-tag.orch { background: var(--accent-dim); color: var(--accent); }
   .conv-tag.inc  { background: rgba(120,120,140,0.18); color: var(--text-dim); }
+  /* Persona marker on a conversation row (Prompt Builder Phase 2). Not
+     uppercased — it carries a human character name. */
+  .conv-tag.char {
+    background: rgba(139,92,246,0.16); color: #a78bfa;
+    text-transform: none; letter-spacing: 0.2px; font-weight: 600;
+    max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .conv-row-close {
     background: none; border: none; color: var(--text-faint);
     cursor: pointer; font-size: 13px; padding: 2px 4px; line-height: 1;
@@ -3722,6 +3729,16 @@
     padding: 1px 6px; border-radius: 8px;
     background: var(--surface3); color: var(--accent);
     text-transform: lowercase; white-space: nowrap; flex-shrink: 0;
+  }
+  /* Persona pill in the chat header (Prompt Builder Phase 2). Distinct
+     from provider/model so the active character reads at a glance. */
+  .character-badge {
+    display: inline-flex; align-items: center; gap: 2px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.2px;
+    padding: 1px 8px; border-radius: 8px;
+    background: rgba(139,92,246,0.16); color: #a78bfa;
+    white-space: nowrap; flex-shrink: 0; max-width: 160px;
+    overflow: hidden; text-overflow: ellipsis;
   }
   .provider-badge.prov-claude  { color: var(--accent); background: var(--accent-dim); }
   .provider-badge.prov-gemini  { color: #4285f4; background: rgba(66,133,244,.15); }

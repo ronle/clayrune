@@ -95,6 +95,38 @@ dialogs.
 - **Rollback:** revert render-core.js / modal-manager.js / walkthrough.js /
   index.html / app.css from this commit — no backend or data-shape changes.
 
+## [2026-06-12c] — Prompt Builder Phase 2: per-chat persona
+
+A character can now drive a whole conversation. When you start a NEW chat
+in a project, a **Persona** dropdown in the composer lists that project's
+characters + globals (default **None** = today's plain agent). The pick is
+injected into the agent's system prompt **at spawn** beside AGENT_RULES and
+is **immutable for the chat's lifetime** — switching personas = a new chat.
+This sidesteps the `claude -r` limitation (a resumed session can't change
+its system prompt) by construction.
+
+- **Backend (`mc/blueprints/agent_routes.py`):** `_build_agent_context`
+  gains `character_body`, injected as a `--- CHARACTER ---` block after the
+  rules. `_resolve_character()` maps a `"scope:name"` pick to (meta, body)
+  via `mc/characters.py` (best-effort: a stale pick never blocks dispatch).
+  Threaded through `_dispatch_agent_internal` + `_dispatch_via_runtime`;
+  stored on the session dict, both agent_log entries (pending + completion,
+  so the pill survives restart), and the `/agent/status` payload. The
+  dispatch endpoint accepts `character`; ignored on resume.
+- **Frontend:** Persona picker in the new-chat composer
+  (`conversation.js`, lazy-loaded per project, hidden on resume / when the
+  project has no characters); `dispatchAgent` sends it + optimistically
+  renders the pill. Header **🎭 persona pill** (purple, with a "fixed for
+  this chat" tooltip) beside provider·model, and a persona marker on the
+  conversation-list row. Both survive reload via the agent_log field.
+- **Visibility is intentional:** a persona chat is unmistakable (header
+  pill + row marker); no-persona chats show nothing (no "None" noise).
+- **Tests:** `tests/test_character_persona.py` (12 cases:
+  `_resolve_character` happy/invalid/scope-miss + context injection on/off).
+  Full suite green, pyright clean, boot smoke 5/5.
+- **Not yet:** project-level *default* character new chats inherit (out of
+  scope); Phase 3 library/import surface.
+
 ## [2026-06-12b] — Prompt Builder Phase 1: Claydo workshops + agent characters
 
 Claydo grows from help desk into the prompt-builder surface

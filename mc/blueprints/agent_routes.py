@@ -1430,8 +1430,14 @@ def _skills_catalog_block(project):
             "matches a skill's description, read its SKILL.md with your "
             "file tools and follow it.\n" + "\n".join(lines))
 
-def _build_agent_context(project, incognito=False, task=''):
+def _build_agent_context(project, incognito=False, task='', character_body=''):
     """Build system prompt context for the agent.
+
+    character_body, when set, is the markdown body of a per-chat "character"
+    (a Claude Code subagent persona the user picked at new-chat time). It is
+    injected ONCE here at spawn beside AGENT_RULES — never on resume (claude
+    -r restores the original system prompt), which is exactly why the
+    character is immutable for the chat's lifetime (Prompt Builder Phase 2).
 
     incognito=True keeps the full project context (rules, memory pointer,
     recent activity, recent conversations, current task) so the agent knows
@@ -1491,6 +1497,11 @@ def _build_agent_context(project, incognito=False, task=''):
             parts.append(f"--- AGENT_RULES.md ---\n{agent_rules_path.read_text(encoding='utf-8')}")
     if SHARED_RULES_PATH.exists():
         parts.append(f"--- SHARED_RULES.md ---\n{SHARED_RULES_PATH.read_text(encoding='utf-8')}")
+
+    # Per-chat character/persona (Prompt Builder Phase 2). After the rules so
+    # project/shared rules retain primacy over a chosen persona's voice.
+    if character_body:
+        parts.append(f"--- CHARACTER (active persona for this chat) ---\n{character_body.strip()}")
 
     # NOTE: Project memory (MEMORY.md) is NOT injected here — the Claude CLI
     # already reads ~/.claude/projects/<path>/memory/MEMORY.md natively.
@@ -2730,6 +2741,7 @@ def _log_agent_dispatch_pending(session):
         'hivemind_role': session.get('hivemind_role', ''),
         'trigger_type': session.get('trigger_type', 'manual'),
         'trigger_id': session.get('trigger_id', ''),
+        'character': session.get('character'),
     }
     try:
         log = _load_agent_log(project_id)
@@ -2815,6 +2827,9 @@ def _log_agent_completion(session):
         # Provider that ran this session ('claude', 'gemini', ...). Absent on
         # pre-multi-provider entries; treat missing as 'claude' when reading.
         'provider': session.get('provider', 'claude'),
+        # Per-chat persona {name,scope,display_name} or None — survives restart
+        # so the header pill + conversation marker render on reload.
+        'character': session.get('character'),
         # Fix B marker: whether this session's memory was captured. Presence of
         # this key on ANY entry means the log was written by Fix-B-aware code
         # (used by the reconciler to distinguish first-boot baseline).
@@ -3280,7 +3295,8 @@ def _maybe_summarize_turn(session):
 def _dispatch_via_runtime(p, task, *, provider_name,
                           incognito=False, trigger_type='manual',
                           trigger_id='', reuse_session_id='',
-                          display_task=None):
+                          display_task=None, character_meta=None,
+                          character_body=''):
     """Dispatch a session through the AgentRuntime abstraction (non-claude).
 
     The runtime owns: binary resolution, subprocess.Popen, reader thread,
@@ -3334,6 +3350,7 @@ def _dispatch_via_runtime(p, task, *, provider_name,
             'trigger_id': trigger_id,
             'provider': provider_name,
             'agent_model': p.get('agent_model', '') or state.CONFIG.get('agent_model', ''),
+            'character': character_meta,
         }
         agent_sessions[session_id] = session
         mgr.session_ids.add(session_id)
@@ -3342,7 +3359,8 @@ def _dispatch_via_runtime(p, task, *, provider_name,
     system_prompt = ''
     try:
         if not incognito:
-            system_prompt = _build_agent_context(p, incognito=False, task=task)
+            system_prompt = _build_agent_context(p, incognito=False, task=task,
+                                                 character_body=character_body)
     except Exception as e:
         _log(f"[runtime-dispatch] context build failed: {e}")
 
@@ -3377,10 +3395,41 @@ def _dispatch_via_runtime(p, task, *, provider_name,
     return session_id
 
 
+def _resolve_character(pp, character):
+    """Resolve a new-chat character selection to (meta, body).
+
+    `character` is a "scope:name" string from the new-chat picker
+    (e.g. "project:code-reviewer", "global:docs-writer"); empty/None = none.
+    Best-effort: an unknown/invalid value yields (None, '') so a stale pick
+    never blocks dispatch. meta = {'name','scope','display_name'} for the
+    session record + header pill.
+    """
+    if not character or not isinstance(character, str):
+        return None, ''
+    scope, _, name = character.partition(':')
+    scope = (scope or '').strip().lower()
+    name = (name or '').strip()
+    if scope not in ('project', 'global') or not name:
+        return None, ''
+    try:
+        from mc import characters as _characters
+        rec = _characters.read_character(
+            scope, name, project_path=(pp if scope == 'project' else None),
+            include_body=True)
+    except Exception as e:
+        _log(f"[dispatch] character resolve failed for {character!r}: {e}")
+        return None, ''
+    if not rec:
+        return None, ''
+    meta = {'name': rec.get('name') or name, 'scope': scope,
+            'display_name': rec.get('display_name') or rec.get('name') or name}
+    return meta, (rec.get('body') or '')
+
+
 def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                              trigger_type='manual', trigger_id='',
                              reuse_session_id='', provider_override='',
-                             display_task=None):
+                             display_task=None, character=''):
     """Core dispatch logic shared by HTTP endpoint and scheduler.
 
     Returns session_id on success, raises ValueError on error.
@@ -3416,6 +3465,11 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     if not pp or not Path(pp).is_dir():
         raise ValueError('project_path not set or invalid')
 
+    # Resolve the per-chat character (persona) now, at spawn — the only point
+    # a system prompt can be set (claude -r restores the original). Immutable
+    # for this chat's lifetime; switching personas = a new chat.
+    character_meta, character_body = _resolve_character(pp, character)
+
     # ── Multi-provider routing ──────────────────────────────────────────────
     # If the conversation selects a non-claude provider, dispatch through the
     # AgentRuntime abstraction instead of the legacy claude path. Provider is
@@ -3431,7 +3485,9 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                                          trigger_type=trigger_type,
                                          trigger_id=trigger_id,
                                          reuse_session_id=reuse_session_id,
-                                         display_task=display_task)
+                                         display_task=display_task,
+                                         character_meta=character_meta,
+                                         character_body=character_body)
         except Exception as e:
             _log(f"[dispatch] runtime '{provider_name}' failed, no fallback: {e}")
             raise
@@ -3500,7 +3556,8 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             _dispatch_with_routing_parallel(
                 p, task,
                 context_builder=lambda: _build_agent_context(
-                    p, incognito=incognito, task=task),
+                    p, incognito=incognito, task=task,
+                    character_body=character_body),
                 streaming=use_streaming))
         _sp_args, _sp_path = _sysprompt_file_args(context)
     # Per-dispatch telemetry — best-effort; never raises. requested = the
@@ -3591,6 +3648,9 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 # 'manual' / 'auto' / 'fallback'. Frontend pill reads these.
                 'model': routed_model,
                 'model_source': routed_source,
+                # Per-chat persona (Prompt Builder Phase 2): {name,scope,
+                # display_name} or None. Immutable; drives the header pill.
+                'character': character_meta,
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -3668,6 +3728,9 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'agent_model': p.get('agent_model', '') or state.CONFIG.get('agent_model', ''),
                 'model': routed_model,
                 'model_source': routed_source,
+                # Per-chat persona (Prompt Builder Phase 2): {name,scope,
+                # display_name} or None. Immutable; drives the header pill.
+                'character': character_meta,
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -3710,6 +3773,10 @@ def agent_dispatch(project_id):
     resume_id = data.get('resume_conversation_id', '').strip()
     incognito = bool(data.get('incognito'))
     provider_override = (data.get('provider') or '').strip().lower()
+    # Per-chat character/persona ("scope:name", e.g. "project:code-reviewer").
+    # Only meaningful on a FRESH chat — a resume keeps the original spawn's
+    # persona (claude -r can't change the system prompt), so ignore it there.
+    character = (data.get('character') or '').strip() if not resume_id else ''
     # Mobile brief replies: augmented version goes to the agent. The frontend's
     # local echo already shows the original task as the user's chat bubble.
     claude_task = _apply_mobile_brief(task, data)
@@ -3717,7 +3784,7 @@ def agent_dispatch(project_id):
         session_id = _dispatch_agent_internal(project_id, claude_task, resume_id,
                                               incognito=incognito,
                                               provider_override=provider_override,
-                                              display_task=task)
+                                              display_task=task, character=character)
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code
@@ -4983,6 +5050,8 @@ def agent_status(project_id):
                 # both to decide whether to render an auto-router badge.
                 'model': s.get('model') or s.get('agent_model') or _proj_default_model,
                 'model_source': s.get('model_source', 'manual'),
+                # Per-chat persona {name,scope,display_name} or None → header pill.
+                'character': s.get('character'),
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (

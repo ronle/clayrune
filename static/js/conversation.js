@@ -12,6 +12,52 @@ function _maybeTagMobileClient(body) {
 
 let exitPlanModeCount = {};    // session_id → number of consecutive ExitPlanMode calls
 let pendingDispatchProvider = {};  // project_id → provider chosen in the new-chat composer (per-conversation, not per-project)
+let pendingDispatchCharacter = {}; // project_id → "scope:name" persona chosen in the new-chat composer (Prompt Builder Phase 2)
+let characterCache = {};           // project_id → array of available characters (lazy-loaded for the composer picker)
+let characterCacheLoading = {};    // project_id → true while a fetch is in flight (dedupe)
+
+// Lazy-load a project's characters (project pool + globals) for the new-chat
+// composer picker. Re-renders once when the list arrives. Best-effort: a
+// failure just leaves the picker absent (no persona = today's behavior).
+function _ensureCharacters(projectId) {
+  if (characterCache[projectId] || characterCacheLoading[projectId]) return;
+  characterCacheLoading[projectId] = true;
+  fetch(API_BASE + '/api/characters?project_id=' + encodeURIComponent(projectId))
+    .then(r => r.json())
+    .then(list => {
+      characterCache[projectId] = Array.isArray(list) ? list : [];
+      characterCacheLoading[projectId] = false;
+      if (characterCache[projectId].length) refreshModalById(projectId);
+    })
+    .catch(() => { characterCache[projectId] = []; characterCacheLoading[projectId] = false; });
+}
+
+// Character/persona dropdown for the +New composer. Returns '' (no picker)
+// on resume (persona is fixed at spawn) or when the project has no
+// characters. Default selection = none = today's plain-agent behavior.
+function _composerCharacterPicker(p, resumeId) {
+  if (!p || resumeId) return '';
+  _ensureCharacters(p.id);
+  const list = characterCache[p.id] || [];
+  if (!list.length) return '';
+  const cur = pendingDispatchCharacter[p.id] || '';
+  const opts = list.map(c => {
+    const val = esc((c.scope || 'global') + ':' + c.name);
+    const label = esc(c.display_name || c.name) + (c.scope === 'global' ? ' (global)' : '');
+    return `<option value="${val}" ${val === cur ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+  return `<div class="composer-provider-row composer-character-row">
+    <span class="composer-provider-label">Persona</span>
+    <select class="composer-provider-select" onchange="setComposerCharacter('${esc(p.id)}',this.value)">
+      <option value="">None</option>${opts}
+    </select>
+  </div>`;
+}
+
+function setComposerCharacter(projectId, character) {
+  pendingDispatchCharacter[projectId] = character;
+  refreshModalById(projectId);
+}
 
 // Provider is bound per-conversation. The new-chat composer picks it; the
 // project's `provider` field (set via three-dot menu) is only the default seed.
@@ -310,7 +356,7 @@ function agentPanelHTML(p) {
     ${_dispatchMicBtn}
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
-  <div class="composer-controls-row">${_composerProviderPicker(p)}${incognitoChip}</div>
+  <div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>
   ${dispatchPreviews}<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>` : '';
 
   // Active tab content
@@ -514,6 +560,13 @@ function agentPanelHTML(p) {
       ? `Provider: ${_provLabel} • Model: ${_provModel}${_modelSource === 'auto' ? ' (auto-picked by router)' : (_modelSource === 'fallback' ? ' (classifier failed, fallback)' : '')}`
       : `Provider: ${_provLabel} (default model)`;
     const _provBadge = `<span class="provider-badge prov-${esc(_provName.replace(/[^a-z]/g,''))}" title="${esc(_provTitle)}">${esc(_provText)}${_routerSuffixHTML}</span>`;
+    // Persona pill (Prompt Builder Phase 2) — visible for the whole chat
+    // when a character was chosen at spawn; immutable for this chat's life.
+    const _char = activeSession && activeSession.character;
+    const _charName = _char && (_char.display_name || _char.name);
+    const _charBadge = _charName
+      ? `<span class="character-badge" title="Persona for this chat: ${esc(_charName)}${_char.scope === 'global' ? ' (global)' : ''} — fixed for the conversation; start a new chat to change it">&#x1F3AD; ${esc(_charName)}</span>`
+      : '';
     // APK version pill — visible only inside the Capacitor APK (the native
     // injection sets window.__clayruneAPK). Lets the user confirm which
     // version is loaded and whether the native POST bridge is active. On
@@ -537,6 +590,7 @@ function agentPanelHTML(p) {
         <span class="agent-status-dot ${st}"></span>
         <span class="agent-status-label ${st}">${esc(consoleStatusLabelText)}</span>
         ${_provBadge}
+        ${_charBadge}
         ${_apkBadge}
         ${isActiveOrch ? '<span class="hm-orch-label">&#x2B21; Hivemind</span>' : ''}
         ${stopBtn}
@@ -598,9 +652,12 @@ function conversationRowHTML(p, h) {
   const when = esc(timeAgoJS(h.startedAt) || '');
   const statusText = esc(consoleStatusLabel(sst, cache));
   const convProv = h.provider || cache.provider || p.provider || 'claude';
+  const _convChar = h.character || cache.character;
+  const _convCharName = _convChar && (_convChar.display_name || _convChar.name);
   const tags = [
     isOrch ? '<span class="conv-tag orch">Hivemind</span>' : '',
     isInc ? '<span class="conv-tag inc">Incognito</span>' : '',
+    _convCharName ? `<span class="conv-tag char" title="Persona: ${esc(_convCharName)}">&#x1F3AD; ${esc(_convCharName)}</span>` : '',
     _providerBadge(convProv),
   ].join('');
   return `
@@ -1382,7 +1439,7 @@ async function fetchAgentStatus(projectId) {
       // nag. The server still computes `s.long_session_advisory`; nothing
       // consumes it now. To bring the nudge back, render it somewhere
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual' };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual', character: s.character || null };
       // Question-form reconciliation (parity with _reconcileAgentBuffer). The
       // wholesale cache rebuild above drops pendingQuestions on every poll. If we
       // don't re-derive it here, a form that only ever lived in the cache — the
@@ -1435,7 +1492,7 @@ async function fetchAgentStatus(projectId) {
       }
       const existingHist = agentHistory.find(h => h.sessionId === sid);
       if (!existingHist) {
-        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual' });
+        agentHistory.unshift({ projectId, sessionId: sid, projectName: pName, task: s.task || '', status: s.status, startedAt: s.started_at || '', hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual', character: s.character || null });
       } else {
         if (s.incognito && !existingHist.incognito) existingHist.incognito = true;
         if (s.trigger_type && !existingHist.triggerType) existingHist.triggerType = s.trigger_type;

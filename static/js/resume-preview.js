@@ -254,6 +254,18 @@ async function dispatchAgent(projectId) {
   const _projForProv = allProjects.find(x => x.id === projectId);
   const _chosenProvider = _composerProvider(_projForProv);
   const incognitoFlag = !!getIncognitoFor(projectId);
+  // Per-chat persona — only on a FRESH chat (resume keeps the original
+  // spawn's persona; claude -r can't change the system prompt). The value
+  // is "scope:name"; resolve it to its meta for the optimistic pill so the
+  // badge shows instantly, before the first /agent/status round-trip.
+  const _chosenCharacter = resumeId ? '' : (pendingDispatchCharacter[projectId] || '');
+  let _chosenCharMeta = null;
+  if (_chosenCharacter) {
+    const _ci = _chosenCharacter.indexOf(':');
+    const _cScope = _chosenCharacter.slice(0, _ci), _cName = _chosenCharacter.slice(_ci + 1);
+    const _cRec = (characterCache[projectId] || []).find(c => c.name === _cName && (c.scope || 'global') === _cScope);
+    _chosenCharMeta = { name: _cName, scope: _cScope, display_name: (_cRec && (_cRec.display_name || _cRec.name)) || _cName };
+  }
   // Match the server's seeded log_lines format so the SSE/reconcile delivery
   // of the same line dedupes against this optimistic insert. The server
   // writes `> {user_label}: {task}` to log_lines on fresh dispatch (see
@@ -275,10 +287,11 @@ async function dispatchAgent(projectId) {
   // matching the format alone isn't enough — every replay would still push
   // a second copy.
   agentServerLines[tempSessionId] = 1;
-  agentStatusCache[tempSessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '', incognito: incognitoFlag, provider: _chosenProvider };
-  agentHistory.unshift({ projectId, sessionId: tempSessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag, provider: _chosenProvider });
+  agentStatusCache[tempSessionId] = { status: 'running', task: displayTask, projectId, startedAt: new Date().toISOString(), claudeSessionId: resumeId || '', incognito: incognitoFlag, provider: _chosenProvider, character: _chosenCharMeta };
+  agentHistory.unshift({ projectId, sessionId: tempSessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag, provider: _chosenProvider, character: _chosenCharMeta });
   activeAgentTab[projectId] = tempSessionId;
   delete agentConvNew[projectId];  // dispatched → drill into the new convo
+  delete pendingDispatchCharacter[projectId];  // next new chat defaults to None (opt-in per chat)
   refreshModal();
   renderAgentConsole();
 
@@ -293,6 +306,7 @@ async function dispatchAgent(projectId) {
   // Per-conversation provider — the composer dropdown is authoritative. The
   // project's `provider` field is only the default seed for this picker.
   body.provider = _chosenProvider;
+  if (_chosenCharacter) body.character = _chosenCharacter;
   _maybeTagMobileClient(body);
 
   try {
