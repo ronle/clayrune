@@ -565,19 +565,67 @@ function _claydoRenderReadyCard(botMsg, actions, cleanText) {
     return b;
   };
 
-  if (ready.kind === 'prompt-ready') {
+  const kind = ready.kind === 'prompt-ready' ? 'prompt' : 'character';
+  mkBtn('&#x270E; Open in editor', 'accent',
+        () => _claydoOpenEditor(kind, artifact, ready.name || ''));
+  if (kind === 'prompt') {
     const pid = _claydoFocusedProjectId();
     if (pid) {
-      mkBtn('&#8594; Insert into project chat', 'accent',
+      mkBtn('&#8594; Insert into project chat', '',
             () => _claydoInsertIntoProject(pid, artifact));
     }
-    mkBtn('Copy prompt', pid ? '' : 'accent', (e) => _claydoCopy(artifact, e.target));
+    mkBtn('Copy prompt', '', (e) => _claydoCopy(artifact, e.target));
   } else {
-    mkBtn('&#x1F4BE; Save character&hellip;', 'accent',
+    mkBtn('&#x1F4BE; Save character&hellip;', '',
           () => _claydoOpenSavePanel(artifact, ready.name || ''));
     mkBtn('Copy', '', (e) => _claydoCopy(artifact, e.target));
   }
   botMsg.appendChild(card);
+}
+
+// Roomy editable view of the artifact — the in-bubble <pre> is cramped.
+// A large textarea (live-editable) + the same handoff actions, which read
+// the EDITED text so tweaks carry through to insert/save/copy.
+function _claydoOpenEditor(kind, artifact, suggestedName) {
+  const content = document.querySelector(`[data-modal-id="__claydo"] .modal-content`)
+    || document.getElementById('claydo-history')?.parentElement;
+  if (!content) return;
+  if (getComputedStyle(content).position === 'static') content.style.position = 'relative';
+  content.querySelector('.claydo-editor-panel')?.remove();
+
+  const isPrompt = kind === 'prompt';
+  const panel = document.createElement('div');
+  panel.className = 'claydo-save-panel claydo-editor-panel';
+  panel.innerHTML = `
+    <div class="claydo-editor-inner">
+      <div class="claydo-save-title">${isPrompt ? 'Prompt' : 'Character'} — edit</div>
+      <textarea class="claydo-editor-text" spellcheck="false"></textarea>
+      <div class="claydo-save-actions">
+        <button class="claydo-ready-btn" data-act="close">Close</button>
+        <button class="claydo-ready-btn" data-act="copy">Copy</button>
+        ${isPrompt
+          ? `<button class="claydo-ready-btn accent" data-act="insert">&#8594; Insert into chat</button>`
+          : `<button class="claydo-ready-btn accent" data-act="save">&#x1F4BE; Save character&hellip;</button>`}
+      </div>
+    </div>`;
+  content.appendChild(panel);
+
+  const ta = panel.querySelector('.claydo-editor-text');
+  ta.value = artifact;  // .value (not innerHTML) — no escaping pitfalls
+  const close = () => panel.remove();
+  panel.addEventListener('mousedown', (e) => { if (e.target === panel) close(); });
+  panel.querySelector('[data-act="close"]').onclick = close;
+  panel.querySelector('[data-act="copy"]').onclick = (e) => _claydoCopy(ta.value, e.target);
+  const insertBtn = panel.querySelector('[data-act="insert"]');
+  if (insertBtn) insertBtn.onclick = () => {
+    const pid = _claydoFocusedProjectId();
+    if (!pid) { _claydoCopy(ta.value, null); _claydoBotNote('No project chat open — copied to clipboard instead.'); return; }
+    _claydoInsertIntoProject(pid, ta.value);
+    close();
+  };
+  const saveBtn = panel.querySelector('[data-act="save"]');
+  if (saveBtn) saveBtn.onclick = () => { const t = ta.value; close(); _claydoOpenSavePanel(t, suggestedName); };
+  setTimeout(() => ta.focus(), 30);
 }
 
 // Drop the prompt into the focused project modal's chat box (the

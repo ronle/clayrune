@@ -4582,7 +4582,25 @@
   }
   .claydo-save-actions {
     display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px;
+    flex-wrap: wrap;
   }
+
+  /* Roomy artifact editor overlay — fills most of the Claydo modal. */
+  .claydo-editor-inner {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 18px;
+    width: 92%; height: 88%;
+    display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  }
+  .claydo-editor-text {
+    flex: 1; min-height: 0; resize: none;
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 12px 14px;
+    font-family: var(--mono, monospace); font-size: 13px; line-height: 1.6;
+    outline: none; white-space: pre; overflow: auto;
+  }
+  .claydo-editor-text:focus { border-color: var(--accent); }
 
   /* The orange pulse Claydo emits via [clayrune:highlight] markers. */
   .clayrune-highlight {
