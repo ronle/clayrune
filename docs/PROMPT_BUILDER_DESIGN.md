@@ -211,14 +211,22 @@ two consumers. Not v1.
 - **Phase 2 — activation as the main agent's persona, per CHAT (owner
   decision 2026-06-12):** the character is picked when starting a new
   conversation — selector in the new-chat flow, listing project + global
-  characters, default None. Stored on the session record (not the
-  project); shown as a badge in the chat header beside provider·model.
-  `_build_agent_context()` prepends the character body at spawn beside
-  AGENT_RULES. Immutable per chat — switching = new chat — which makes
-  the `claude -r` limitation (§8) a non-issue by construction. Optional
-  later layer, NOT in scope: a project-level *default* character that new
-  chats inherit. Touches dispatch family — small, but review with the
-  session-lifecycle rules in mind.
+  characters. **Default = no character = exactly today's behavior** (the
+  plain project agent with AGENT_RULES/MEMORY context); a persona is
+  strictly opt-in per chat. Stored on the session record (not the
+  project). `_build_agent_context()` prepends the character body at spawn
+  beside AGENT_RULES. Once set, **immutable for the chat's lifetime** —
+  switching = new chat — which makes the `claude -r` limitation (§8) a
+  non-issue by construction.
+  **Visibility is a requirement, not a nicety** (owner, 2026-06-12): a
+  chat running a persona must show it unmistakably — a persistent persona
+  pill (name + accent) in the chat header beside provider·model for the
+  life of the conversation, plus a marker on the conversation's tab/list
+  entry so persona chats are tellable apart at a glance. No-persona chats
+  show nothing (no "None" noise).
+  Optional later layer, NOT in scope: a project-level *default* character
+  that new chats inherit. Touches dispatch family — small, but review
+  with the session-lifecycle rules in mind.
 - **Phase 3 — library surface:** characters list/edit/delete in the Skills
   panel (retitle "Skills & Characters") or its own sidebar entry; community
   import (paste a GitHub raw URL → preview → save); browse curated
