@@ -6,6 +6,29 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-11] — Voice input: dictation mode so the mic rides out thinking pauses
+
+The Android mic dialog finalized the recording after ~1s of silence — pausing
+to think mid-sentence ended the take.
+
+- **Root cause:** `popup: true` delegates end-of-speech entirely to Google's
+  system recognizer dialog; neither our code nor the
+  `@capacitor-community/speech-recognition` plugin passes a silence-patience
+  knob (and Google's recognizer ignores the documented
+  `EXTRA_SPEECH_INPUT_*SILENCE*` extras anyway).
+- **Fix:** pass `partialResults: true` in `_startAgentMic`
+  (`static/js/composer-extras.js`). In popup mode that delivers no partial
+  events — the plugin forwards it as the undocumented
+  `android.speech.extra.DICTATION_MODE` intent extra, switching the dialog to
+  long-form dictation, which tolerates much longer pauses. Result delivery
+  path unchanged (activity-result promise). JS-only — no APK rebuild; apps
+  pick it up on next cold open.
+- **Caveat:** actual patience depends on the device's Google app version. If
+  it still cuts off too early, the fallback plan is inline mode
+  (`popup: false`) with an accumulate-and-auto-restart loop that only
+  finalizes on mic-button tap — bigger change, kept in reserve.
+- **Rollback:** flip `partialResults` back to `false`.
+
 ## [2026-06-11] — Built-in dashboard backgrounds (Settings → Appearance gallery)
 
 Image mode previously required users to bring their own file. The Background

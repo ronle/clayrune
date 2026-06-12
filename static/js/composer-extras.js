@@ -87,7 +87,17 @@ async function _startAgentMic(textareaId) {
     // sessions, no silent hangs. The plugin returns the result via the
     // activity callback. Cons: fullscreen dialog instead of inline
     // streaming. Tradeoff worth it until the upstream plugin is patched.
-    SR.start({ language: 'en-US', maxResults: 2, partialResults: false, popup: true })
+    //
+    // partialResults: true is NOT for partial events (none are delivered in
+    // popup mode — results still arrive via the activity-result promise
+    // below). The plugin forwards the flag as the undocumented
+    // "android.speech.extra.DICTATION_MODE" intent extra, which switches the
+    // system dialog to long-form dictation: it rides out thinking pauses
+    // instead of finalizing at the first ~1s gap. The documented
+    // EXTRA_SPEECH_INPUT_*SILENCE* knobs are ignored by Google's recognizer,
+    // so this is the only silence-patience lever that works without forking
+    // the plugin. Exact patience varies with the device's Google app version.
+    SR.start({ language: 'en-US', maxResults: 2, partialResults: true, popup: true })
       .then((result) => {
         const cur = _micState[textareaId];
         const live = document.getElementById(textareaId);
