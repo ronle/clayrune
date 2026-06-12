@@ -451,49 +451,19 @@ async function setProjectProvider(projectId, provider) {
   } catch(e) { showToast('Error: ' + e); }
 }
 
-async function toggleProjectRemoteControl(projectId, enabled) {
-  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+async function setProjectStreamingMode(projectId, mode) {
+  // '' clears the override (inherit global); 'a'/'b' pin an explicit mode.
+  const value = mode === '' ? null : (mode === 'b');
   try {
     await fetch(API_BASE + `/api/project/${projectId}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ agent_remote_control: enabled })
+      body: JSON.stringify({ use_streaming_agent: value })
     });
-    showToast(enabled ? 'Remote control enabled' : 'Remote control disabled');
+    if (value === null) showToast('Process mode follows the global default');
+    else showToast(value ? 'Mode B (persistent process) for new sessions' : 'Mode A (spawn per turn) for new sessions');
     await refreshSilent();
   } catch(e) {}
-}
-
-async function toggleProjectStreaming(projectId, enabled) {
-  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
-  try {
-    await fetch(API_BASE + `/api/project/${projectId}`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ use_streaming_agent: enabled })
-    });
-    showToast(enabled ? 'Mode B (streaming) enabled — new sessions will use persistent process' : 'Mode B disabled — new sessions will use Mode A (spawn per turn)');
-    await refreshSilent();
-  } catch(e) {}
-}
-
-function editProjectDescription(projectId) {
-  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
-  const p = allProjects.find(x => x.id === projectId);
-  if (!p) return;
-  const current = p.description || '';
-  const val = prompt('Project description:', current);
-  if (val === null) return; // cancelled
-  (async () => {
-    try {
-      await fetch(API_BASE + `/api/project/${projectId}`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ description: val })
-      });
-      await refreshSilent();
-    } catch(e) {}
-  })();
 }
 
 const EMOJI_CHOICES = [
@@ -535,6 +505,8 @@ async function pickEmoji(emoji) {
       body: JSON.stringify({ emoji })
     });
     await refreshSilent();
+    // The picker may have been opened from the profile dialog — sync its emoji button.
+    if (_profileDialogProjectId === projectId) _renderProfileDialog();
   } catch(e) {}
 }
 
@@ -560,6 +532,165 @@ async function generateProjectProfile(projectId, opts) {
   } catch(e) {
     showToast('Profile generation failed: ' + e.message, 6000);
   }
+}
+
+// ── Edit Profile dialog (emoji + description + auto-generate in one place) ──
+let _profileDialogProjectId = null;
+
+function openProjectProfileDialog(projectId) {
+  const p = allProjects.find(x => x.id === projectId);
+  if (!p) return;
+  _profileDialogProjectId = projectId;
+  _renderProfileDialog();
+  document.getElementById('profile-dialog-overlay').classList.add('visible');
+}
+
+function closeProfileDialog() {
+  document.getElementById('profile-dialog-overlay').classList.remove('visible');
+  _profileDialogProjectId = null;
+}
+
+function _renderProfileDialog() {
+  const p = allProjects.find(x => x.id === _profileDialogProjectId);
+  const box = document.getElementById('profile-dialog-box');
+  if (!p || !box) return;
+  box.innerHTML = `
+    <div class="mc-dialog-header">
+      <span>Project profile</span>
+      <button class="mc-dialog-close" onclick="closeProfileDialog()" title="Close">&#10005;</button>
+    </div>
+    <div class="settings-row">
+      <div><div class="settings-label">Emoji</div><div class="settings-hint">Shown on the tile and modal</div></div>
+      <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text);font-size:16px;min-width:48px" onclick="editProjectEmoji('${esc(p.id)}')">${p.emoji ? esc(p.emoji) : 'Pick…'}</button>
+    </div>
+    <div class="settings-row" style="align-items:flex-start;flex-direction:column;gap:6px">
+      <div><div class="settings-label">Description</div><div class="settings-hint">What this project is — agents see this as context</div></div>
+      <textarea id="pfd-desc" rows="4" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:12px;font-family:inherit;resize:vertical">${esc(p.description || '')}</textarea>
+    </div>
+    <div class="settings-row">
+      <div><div class="settings-label">Auto-generate</div><div class="settings-hint">Agent writes the summary + emoji from the project files</div></div>
+      <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="closeProfileDialog();generateProjectProfile('${esc(p.id)}')">&#x2728; ${p.summary ? 'Regenerate' : 'Generate'}</button>
+    </div>
+    <div class="mc-dialog-footer">
+      <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="closeProfileDialog()">Cancel</button>
+      <button class="btn-add" onclick="saveProfileDialog()">Save</button>
+    </div>`;
+}
+
+async function saveProfileDialog() {
+  const projectId = _profileDialogProjectId;
+  const ta = document.getElementById('pfd-desc');
+  const description = ta ? ta.value : null;
+  closeProfileDialog();
+  if (!projectId || description === null) return;
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ description })
+    });
+    await refreshSilent();
+  } catch(e) {}
+}
+
+// ── Agent Settings dialog (per-project overrides of the global agent config) ──
+const MC_MODEL_CHOICES = [
+  ['', 'Default (global)'],
+  ['claude-fable-5', 'Fable 5'],
+  ['claude-sonnet-4-6', 'Sonnet 4.6'],
+  ['claude-opus-4-8', 'Opus 4.8'],
+  ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
+];
+const MC_EFFORT_CHOICES = [
+  ['', 'Default (global)'], ['low', 'Low'], ['medium', 'Medium'],
+  ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max'],
+];
+
+function _modelShortLabel(id) {
+  const m = MC_MODEL_CHOICES.find(c => c[0] === id);
+  return m ? m[1] : id;
+}
+
+let _agentSettingsProjectId = null;
+
+async function openAgentSettingsDialog(projectId) {
+  _agentSettingsProjectId = projectId;
+  // Provider row needs the runtime list; cached after the first fetch, and
+  // awaiting here closes the old menu's lost-race-on-mobile gap for good.
+  await _ensureAgentProviders();
+  _renderAgentSettingsDialog();
+  document.getElementById('agent-settings-overlay').classList.add('visible');
+}
+
+function closeAgentSettingsDialog() {
+  document.getElementById('agent-settings-overlay').classList.remove('visible');
+  _agentSettingsProjectId = null;
+}
+
+function _renderAgentSettingsDialog() {
+  const p = allProjects.find(x => x.id === _agentSettingsProjectId);
+  const box = document.getElementById('agent-settings-box');
+  if (!p || !box) return;
+  const modelSel = MC_MODEL_CHOICES.map(([v, l]) =>
+    `<option value="${v}"${(p.agent_model || '') === v ? ' selected' : ''}>${l}</option>`).join('');
+  const effortSel = MC_EFFORT_CHOICES.map(([v, l]) =>
+    `<option value="${v}"${(p.agent_effort || '') === v ? ' selected' : ''}>${l}</option>`).join('');
+
+  // Provider row only when more than one runtime is registered — with just
+  // claude available it'd be noise (same rule as the composer picker).
+  const provs = _agentProviders || [];
+  let providerRow = '';
+  if (provs.length > 1) {
+    const current = (p.provider || 'claude').toLowerCase();
+    const opts = provs.map(rt =>
+      `<option value="${esc(rt.name)}"${current === rt.name ? ' selected' : ''}${(!rt.installed && rt.name !== 'claude') ? ' disabled' : ''}>${esc(rt.display_name)}${rt.installed ? '' : ' (not installed)'}</option>`).join('');
+    providerRow = `
+    <div class="settings-row">
+      <div><div class="settings-label">Default provider</div><div class="settings-hint">Seeds new chats — each chat keeps its provider; switch per-chat in the composer</div></div>
+      <select class="settings-select" onchange="_agentSettingsSet('provider', this.value)">${opts}</select>
+    </div>`;
+  }
+
+  const globalMode = _globalConfig.use_streaming_agent ? 'Mode B' : 'Mode A';
+  const modeVal = (p.use_streaming_agent === true) ? 'b' : (p.use_streaming_agent === false) ? 'a' : '';
+  box.innerHTML = `
+    <div class="mc-dialog-header">
+      <span>Agent settings — ${esc(p.name || p.id)}</span>
+      <button class="mc-dialog-close" onclick="closeAgentSettingsDialog()" title="Close">&#10005;</button>
+    </div>
+    <div class="settings-hint" style="margin-bottom:10px">Overrides for this project. Global defaults live in Settings &rarr; Agent.</div>
+    <div class="settings-row">
+      <div><div class="settings-label">Model</div><div class="settings-hint">Default for new chats in this project</div></div>
+      <select class="settings-select" onchange="_agentSettingsSet('agent_model', this.value)">${modelSel}</select>
+    </div>
+    <div class="settings-row">
+      <div><div class="settings-label">Effort</div><div class="settings-hint">How hard the model thinks per request</div></div>
+      <select class="settings-select" onchange="_agentSettingsSet('agent_effort', this.value)">${effortSel}</select>
+    </div>
+    ${providerRow}
+    <div class="settings-row">
+      <div><div class="settings-label">Process mode</div><div class="settings-hint">Mode B keeps one persistent process per chat; Mode A spawns per turn</div></div>
+      <select class="settings-select" onchange="_agentSettingsSet('use_streaming_agent', this.value)">
+        <option value=""${modeVal === '' ? ' selected' : ''}>Default (global — ${globalMode})</option>
+        <option value="b"${modeVal === 'b' ? ' selected' : ''}>Mode B — persistent</option>
+        <option value="a"${modeVal === 'a' ? ' selected' : ''}>Mode A — spawn per turn</option>
+      </select>
+    </div>
+    <div class="mc-dialog-footer">
+      <button class="btn-add" onclick="closeAgentSettingsDialog()">Done</button>
+    </div>`;
+}
+
+// Selects apply immediately (same as the old menu pickers did); the re-render
+// keeps the dialog in sync with the refreshed project record.
+async function _agentSettingsSet(field, value) {
+  const projectId = _agentSettingsProjectId;
+  if (!projectId) return;
+  if (field === 'agent_model') await setProjectModel(projectId, value);
+  else if (field === 'agent_effort') await setProjectEffort(projectId, value);
+  else if (field === 'provider') await setProjectProvider(projectId, value);
+  else if (field === 'use_streaming_agent') await setProjectStreamingMode(projectId, value);
+  _renderAgentSettingsDialog();
 }
 
 async function deleteProject(projectId) {
@@ -739,12 +870,17 @@ window.setProjectColor = setProjectColor;
 window.setProjectModel = setProjectModel;
 window.setProjectEffort = setProjectEffort;
 window.setProjectProvider = setProjectProvider;
-window.toggleProjectRemoteControl = toggleProjectRemoteControl;
-window.toggleProjectStreaming = toggleProjectStreaming;
-window.editProjectDescription = editProjectDescription;
+window.setProjectStreamingMode = setProjectStreamingMode;
 window.editProjectEmoji = editProjectEmoji;
 window.closeEmojiPicker = closeEmojiPicker;
 window.generateProjectProfile = generateProjectProfile;
+window.openProjectProfileDialog = openProjectProfileDialog;
+window.closeProfileDialog = closeProfileDialog;
+window.saveProfileDialog = saveProfileDialog;
+window.openAgentSettingsDialog = openAgentSettingsDialog;
+window.closeAgentSettingsDialog = closeAgentSettingsDialog;
+window._agentSettingsSet = _agentSettingsSet;
+window._modelShortLabel = _modelShortLabel;
 window.deleteProject = deleteProject;
 window.minimizeModal = minimizeModal;
 window.showDesktop = showDesktop;

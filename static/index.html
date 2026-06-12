@@ -583,6 +583,14 @@
 </button>
 
 <!-- Command Palette -->
+<!-- Project profile dialog (emoji + description + auto-generate) -->
+<div class="mc-dialog-overlay" id="profile-dialog-overlay" onclick="if(event.target===this)closeProfileDialog()">
+  <div class="mc-dialog" id="profile-dialog-box"></div>
+</div>
+<!-- Per-project agent settings dialog (model / effort / provider / mode) -->
+<div class="mc-dialog-overlay" id="agent-settings-overlay" onclick="if(event.target===this)closeAgentSettingsDialog()">
+  <div class="mc-dialog" id="agent-settings-box"></div>
+</div>
 <!-- Emoji picker overlay -->
 <div class="emoji-picker-overlay" id="emoji-picker-overlay" onclick="if(event.target===this)closeEmojiPicker()">
   <div class="emoji-picker">

@@ -6,6 +6,46 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-12c] — Three-dot project menu revamp: declutter + consolidate
+
+The per-project three-dot menu had grown to ~21 desktop items with duplicates
+inside the menu (two color pickers, two hivemind entries) and settings that
+shadowed the main Settings modal (Enter Key). Revamped to ~12 items: the menu
+is now navigation + quick actions, with configuration consolidated into two
+dialogs.
+
+- **Appearance ▸ (merged):** Change Color + Change Domain (which carried its
+  own second color picker) became one submenu — accent color, domain list,
+  domain color, new-domain input.
+- **Agent Settings… dialog (new):** Model, Effort, Default Provider, and
+  Process mode (A/B) move out of the menu into one dialog
+  (`openAgentSettingsDialog`, settings-row styling). Selects apply
+  immediately, as the menu pickers did. Process mode is now a 3-way select
+  whose **Default (global)** posts `use_streaming_agent: null` — clearing the
+  per-project override was previously impossible once toggled.
+- **Edit Profile… dialog (new):** Description / Emoji / Auto-Generate Profile
+  merged (`openProjectProfileDialog`). Description editing graduates from
+  `window.prompt()` to a real textarea; emoji button opens the existing
+  picker, which re-syncs the dialog on pick.
+- **Removed:** Enter Key (exact duplicate of Settings → Appearance →
+  Interface — global localStorage setting, never per-project), Start Hivemind
+  (the Hiveminds panel has "+ New Hivemind"), Remote Control (global toggle
+  remains in Settings → Agent; the per-project field stays honored
+  server-side, just has no menu UI).
+- **Plumbing:** new shared `.mc-dialog-overlay`/`.mc-dialog` CSS (z 9900,
+  below the emoji picker's 10000 so it stacks on top of the profile dialog);
+  static overlay shells in index.html; dead `toggleProjectStreaming` /
+  `toggleProjectRemoteControl` / prompt-based `editProjectDescription`
+  removed in favor of `setProjectStreamingMode` + the dialogs. The
+  providers-not-yet-fetched refresh kick (which the composer's provider
+  picker silently relied on) survives as a UI-less IIFE in the menu template.
+  Walkthrough "Three-Dot Menu" step + demo mock updated to match.
+- **Verified:** node --check on all touched JS, boot smoke 5/5, plus a
+  37-assertion Playwright interaction check (menu contents, both dialogs,
+  POST payloads incl. the null-override).
+- **Rollback:** revert render-core.js / modal-manager.js / walkthrough.js /
+  index.html / app.css from this commit — no backend or data-shape changes.
+
 ## [2026-06-12b] — Prompt Builder Phase 1: Claydo workshops + agent characters
 
 Claydo grows from help desk into the prompt-builder surface

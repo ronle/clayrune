@@ -458,9 +458,6 @@ function modalContentHTML(p) {
           <button class="modal-menu-item" onclick="_mcMenuClose();openAllHivemindsForProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F41D;</span> Hiveminds
           </button>
-          <button class="modal-menu-item" onclick="_mcMenuClose();startHivemindChat('${esc(p.id)}')">
-            <span class="menu-icon">&#x2728;</span> Start Hivemind
-          </button>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'status-sub-${esc(p.id)}')">
             <span class="menu-icon">&#x25CF;</span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
@@ -475,30 +472,31 @@ function modalContentHTML(p) {
             <button class="modal-menu-sub-item${(p.status||'')==='parked'?' active':''}" onclick="setProjectStatus('${esc(p.id)}','parked')">
               <span class="modal-menu-sub-dot" style="background:var(--text-faint)"></span> Parked</button>
           </div>
-          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'color-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x25CF;</span> Change Color <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'appearance-sub-${esc(p.id)}')">
+            <span class="menu-icon">&#x1F3A8;</span> Appearance <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
-          <div class="modal-menu-sub" id="color-sub-${esc(p.id)}">
-            <div style="display:flex;gap:6px;flex-wrap:wrap;padding:4px">
-              ${COLOR_PRESETS.map(c => {
-                const isCurrent = p.modal_color ? (p.modal_color.color === c.color) : (c.label === 'Blue');
-                return `<button style="width:24px;height:24px;border-radius:4px;border:${isCurrent ? '2px solid var(--text)' : '1px solid var(--border)'};background:${c.bg};cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center"
-                  title="${c.label}"
-                  onclick="setProjectColor('${esc(p.id)}','${c.color}','${c.bg}')"><span style="width:10px;height:10px;border-radius:2px;background:${c.color}"></span></button>`;
+          <div class="modal-menu-sub" id="appearance-sub-${esc(p.id)}" style="min-width:230px">
+            <div style="padding:4px 8px 6px">
+              <div style="font-size:9px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Accent color</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                ${COLOR_PRESETS.map(c => {
+                  const isCurrent = p.modal_color ? (p.modal_color.color === c.color) : (c.label === 'Blue');
+                  return `<button style="width:24px;height:24px;border-radius:4px;border:${isCurrent ? '2px solid var(--text)' : '1px solid var(--border)'};background:${c.bg};cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center"
+                    title="${c.label}"
+                    onclick="setProjectColor('${esc(p.id)}','${c.color}','${c.bg}')"><span style="width:10px;height:10px;border-radius:2px;background:${c.color}"></span></button>`;
+                }).join('')}
+              </div>
+            </div>
+            <div style="border-top:1px solid var(--border);padding-top:4px">
+              <div style="font-size:9px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.5px;padding:2px 8px">Domain</div>
+              ${domainsList.map(d => {
+                const cfg = getDomainConfig(d.id);
+                return `<button class="modal-menu-sub-item${(p.domain||'general')===d.id?' active':''}" onclick="saveDomainFromMenu(event,'${esc(p.id)}','${d.id}')">
+                <span class="modal-menu-sub-dot" style="background:${cfg.color}"></span> ${esc(d.label||d.id)}</button>`;
               }).join('')}
             </div>
-          </div>
-          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'domain-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x25CF;</span> Change Domain <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
-          </button>
-          <div class="modal-menu-sub" id="domain-sub-${esc(p.id)}">
-            ${domainsList.map(d => {
-              const cfg = getDomainConfig(d.id);
-              return `<button class="modal-menu-sub-item${(p.domain||'general')===d.id?' active':''}" onclick="saveDomainFromMenu(event,'${esc(p.id)}','${d.id}')">
-              <span class="modal-menu-sub-dot" style="background:${cfg.color}"></span> ${esc(d.label||d.id)}</button>`;
-            }).join('')}
             <div style="border-top:1px solid var(--border);padding:6px 8px">
-              <div style="font-size:9px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Color</div>
+              <div style="font-size:9px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Domain color</div>
               <div style="display:flex;gap:4px;flex-wrap:wrap">
                 ${COLOR_PRESETS.map(c =>
                   `<button style="width:18px;height:18px;border-radius:4px;border:1px solid var(--border);background:${c.bg};cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center"
@@ -513,88 +511,24 @@ function modalContentHTML(p) {
                 onkeydown="if(event.key==='Enter'){event.stopPropagation();addDomainFromMenu(event,'${esc(p.id)}',this.value)}">
             </div>
           </div>
-          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'model-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x2699;</span> Agent Model ${p.agent_model ? `<span style="margin-left:4px;color:var(--accent);font-size:11px">${esc(p.agent_model)}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+          <button class="modal-menu-item" onclick="_mcMenuClose();openProjectProfileDialog('${esc(p.id)}')">
+            <span class="menu-icon">${p.emoji ? esc(p.emoji) : '&#x270E;'}</span> Edit Profile&#8230;
           </button>
-          <div class="modal-menu-sub" id="model-sub-${esc(p.id)}">
-            <button class="modal-menu-sub-item${!p.agent_model?' active':''}" onclick="setProjectModel('${esc(p.id)}','')">
-              <span class="modal-menu-sub-dot" style="background:var(--text-faint)"></span> Default (global)</button>
-            <button class="modal-menu-sub-item${p.agent_model==='claude-fable-5'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-fable-5')">
-              <span class="modal-menu-sub-dot" style="background:var(--purple)"></span> Fable 5</button>
-            <button class="modal-menu-sub-item${p.agent_model==='claude-sonnet-4-6'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-sonnet-4-6')">
-              <span class="modal-menu-sub-dot" style="background:var(--green)"></span> Sonnet 4.6</button>
-            <button class="modal-menu-sub-item${p.agent_model==='claude-opus-4-8'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-opus-4-8')">
-              <span class="modal-menu-sub-dot" style="background:var(--amber)"></span> Opus 4.8</button>
-            <button class="modal-menu-sub-item${p.agent_model==='claude-haiku-4-5-20251001'?' active':''}" onclick="setProjectModel('${esc(p.id)}','claude-haiku-4-5-20251001')">
-              <span class="modal-menu-sub-dot" style="background:var(--blue)"></span> Haiku 4.5</button>
-          </div>
-          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'effort-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x26A1;</span> Effort ${p.agent_effort ? `<span style="margin-left:4px;color:var(--accent);font-size:11px">${esc(p.agent_effort)}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+          <button class="modal-menu-item" onclick="_mcMenuClose();openAgentSettingsDialog('${esc(p.id)}')">
+            <span class="menu-icon">&#x2699;</span> Agent Settings ${p.agent_model ? `<span style="margin-left:4px;color:var(--accent);font-size:11px">${esc(_modelShortLabel(p.agent_model))}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>'}
           </button>
-          <div class="modal-menu-sub" id="effort-sub-${esc(p.id)}">
-            ${[['','Default (global)','var(--text-faint)'],['low','Low','var(--blue)'],['medium','Medium','var(--green)'],['high','High','var(--amber)'],['xhigh','Extra high','var(--amber)'],['max','Max','var(--accent)']].map(([v,l,c]) =>
-              `<button class="modal-menu-sub-item${(p.agent_effort||'')===v?' active':''}" onclick="setProjectEffort('${esc(p.id)}','${v}')">
-              <span class="modal-menu-sub-dot" style="background:${c}"></span> ${l}</button>`
-            ).join('')}
-          </div>
           ${(() => {
             // Providers not fetched yet — kick a load and refresh this modal
-            // when it lands, so the picker isn't permanently hidden just for
-            // losing the race with the first modal open (common on mobile).
+            // when it lands. The composer's provider picker renders in this
+            // same pass and has no race handling of its own, so without this
+            // it stays hidden after losing the first-open race (common on
+            // mobile). The Agent Settings dialog awaits providers itself.
             if (_agentProviders === null) {
               _ensureAgentProviders().then(pl => { if ((pl || []).length > 1) refreshModal(); });
-              return '';
             }
-            const provs = _agentProviders;
-            // Only show the provider chooser when more than one runtime is
-            // registered. With just claude available it'd be noise.
-            if (provs.length <= 1) return '';
-            const current = (p.provider || 'claude').toLowerCase();
-            const cur = provs.find(x => x.name === current) || provs.find(x => x.name === 'claude') || provs[0];
-            const label = cur ? esc(cur.display_name) : 'Claude Code';
-            const items = provs.map(rt => {
-              const installed = !!rt.installed;
-              const disabled = !installed && rt.name !== 'claude';
-              const onclick = disabled
-                ? `showToast('${esc(rt.display_name)} not installed — ${esc(rt.install_hint || 'see docs')}')`
-                : `setProjectProvider('${esc(p.id)}','${esc(rt.name)}')`;
-              const dotColor = !installed ? 'var(--text-faint)' : (rt.name === 'claude' ? 'var(--green)' : 'var(--accent)');
-              const note = installed ? '' : ' <span style="color:var(--text-faint);font-size:10px">(not installed)</span>';
-              return `<button class="modal-menu-sub-item${current === rt.name ? ' active' : ''}" onclick="${onclick}">
-                <span class="modal-menu-sub-dot" style="background:${dotColor}"></span> ${esc(rt.display_name)}${note}</button>`;
-            }).join('');
-            return `<button class="modal-menu-item" onclick="toggleModalMenuSub(event,'prov-sub-${esc(p.id)}')">
-              <span class="menu-icon">&#x1F50C;</span> Default Provider <span style="margin-left:4px;color:var(--accent);font-size:11px">${label}</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
-            </button>
-            <div class="modal-menu-sub" id="prov-sub-${esc(p.id)}">
-              <div style="padding:4px 12px 6px;color:var(--text-faint);font-size:10px;line-height:1.4">Seeds the picker for new conversations. Each chat keeps the provider it started with — switch per-chat in the composer.</div>
-              ${items}
-            </div>`;
+            return '';
           })()}
-          <button class="modal-menu-item" onclick="toggleProjectRemoteControl('${esc(p.id)}',${!p.agent_remote_control})">
-            <span class="menu-icon">&#x1F4F1;</span> Remote Control ${p.agent_remote_control ? '<span style="margin-left:auto;color:var(--green);font-size:11px">ON</span>' : '<span style="margin-left:auto;color:var(--text-faint);font-size:11px">OFF</span>'}
-          </button>
-          <button class="modal-menu-item" onclick="toggleProjectStreaming('${esc(p.id)}',${!((p.use_streaming_agent !== undefined && p.use_streaming_agent !== null) ? p.use_streaming_agent : !!_globalConfig.use_streaming_agent)})">
-            <span class="menu-icon">&#x26A1;</span> Agent: <strong style="margin-left:4px">${((p.use_streaming_agent !== undefined && p.use_streaming_agent !== null) ? p.use_streaming_agent : !!_globalConfig.use_streaming_agent) ? 'Mode B' : 'Mode A'}</strong>${(p.use_streaming_agent === undefined || p.use_streaming_agent === null) ? '<span style="margin-left:6px;color:var(--text-faint);font-size:10px">(global)</span>' : ''}<span style="margin-left:auto;color:var(--text-faint);font-size:11px">switch &rarr; ${((p.use_streaming_agent !== undefined && p.use_streaming_agent !== null) ? p.use_streaming_agent : !!_globalConfig.use_streaming_agent) ? 'A' : 'B'}</span>
-          </button>
-          <button class="modal-menu-item" onclick="editProjectDescription('${esc(p.id)}')">
-            <span class="menu-icon">&#x270E;</span> ${p.description ? 'Edit' : 'Add'} Description
-          </button>
-          <button class="modal-menu-item" onclick="editProjectEmoji('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F642;</span> ${p.emoji ? `${p.emoji} Change Emoji` : 'Set Emoji'}
-          </button>
-          <button class="modal-menu-item" onclick="generateProjectProfile('${esc(p.id)}')">
-            <span class="menu-icon">&#x2728;</span> ${p.summary ? 'Regenerate' : 'Auto-Generate'} Profile
-          </button>
-          <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'enter-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x21B5;</span> Enter Key ${enterKeyMode === 'enter' ? '<span style="margin-left:4px;color:var(--accent);font-size:11px">sends</span>' : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">new line</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
-          </button>
-          <div class="modal-menu-sub" id="enter-sub-${esc(p.id)}">
-            <button class="modal-menu-sub-item${enterKeyMode==='ctrl-enter'?' active':''}" onclick="setEnterMode('ctrl-enter')">
-              Ctrl+Enter sends</button>
-            <button class="modal-menu-sub-item${enterKeyMode==='enter'?' active':''}" onclick="setEnterMode('enter')">
-              Enter sends</button>
-          </div>
+          <div class="modal-menu-sep"></div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'gh-sub-${esc(p.id)}')">
             <span class="menu-icon">&#x1F517;</span> GitHub Sync ${p.github_sync_enabled ? `<span style="margin-left:4px;color:var(--green);font-size:11px">&#x2713; ${esc(p.github_repo)}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
@@ -648,6 +582,7 @@ function modalContentHTML(p) {
                 &#x2713; Enable</button>
             `}
           </div>
+          <div class="modal-menu-sep"></div>
           <button class="modal-menu-item mc-adv-memory" onclick="openMemoryModal('${esc(p.id)}')">
             <span class="menu-icon">&#x1F4DD;</span> Memory
           </button>

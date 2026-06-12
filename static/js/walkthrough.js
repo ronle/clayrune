@@ -81,10 +81,10 @@ const WT_STEPS = [
     body: 'The three-dot button in any project modal opens a menu with:' +
       '<ul style="margin:8px 0 0 18px;padding:0">' +
       '<li><strong>\ud83d\udc1d Hiveminds</strong> for this project</li>' +
-      '<li><strong>\u2728 Start Hivemind</strong></li>' +
-      '<li><strong>Memory &amp; Rules</strong> editor</li>' +
-      '<li><strong>Status</strong> / <strong>Color</strong> / <strong>Domain</strong> / <strong>Model</strong> per project</li>' +
-      '<li><strong>GitHub Sync</strong></li>' +
+      '<li><strong>Status</strong> / <strong>Appearance</strong> / <strong>Edit Profile</strong></li>' +
+      '<li><strong>Agent Settings</strong> \u2014 per-project model, effort &amp; mode</li>' +
+      '<li><strong>GitHub</strong> &amp; <strong>Code Sync</strong></li>' +
+      '<li><strong>Memory</strong>, <strong>Rules</strong>, <strong>Skills</strong> &amp; <strong>MCP servers</strong></li>' +
       '</ul>' +
       '<div style="margin-top:8px">On mobile, the project tabs (Agent / Backlog / etc.) move to the top of this menu.</div>',
     target: null, pos: 'bottom', demo: 'modal', demoTarget: '.modal-menu-btn',
@@ -322,21 +322,16 @@ function wtDemoMenuHTML() {
             <button class="modal-menu-item wt-menu-status" style="pointer-events:none">
               <span class="menu-icon">&#x25CF;</span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
             </button>
-            <button class="modal-menu-item wt-menu-color" style="pointer-events:none">
-              <span class="menu-icon">&#x25CF;</span> Change Color <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            <button class="modal-menu-item" style="pointer-events:none">
+              <span class="menu-icon">&#x1F3A8;</span> Appearance <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
             </button>
             <button class="modal-menu-item" style="pointer-events:none">
-              <span class="menu-icon">&#x25CF;</span> Change Domain <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+              <span class="menu-icon">&#x270E;</span> Edit Profile&#8230;
             </button>
             <button class="modal-menu-item wt-menu-model" style="pointer-events:none">
-              <span class="menu-icon">&#x2699;</span> Agent Model <span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+              <span class="menu-icon">&#x2699;</span> Agent Settings <span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>
             </button>
-            <button class="modal-menu-item" style="pointer-events:none">
-              <span class="menu-icon">&#x270E;</span> Add Description
-            </button>
-            <button class="modal-menu-item" style="pointer-events:none">
-              <span class="menu-icon">&#x21B5;</span> Enter Key <span style="margin-left:4px;color:var(--text-faint);font-size:11px">new line</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
-            </button>
+            <div class="modal-menu-sep"></div>
             <button class="modal-menu-item wt-menu-github" style="pointer-events:none">
               <span class="menu-icon">&#x1F517;</span> GitHub Sync <span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
             </button>

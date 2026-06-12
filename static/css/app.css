@@ -4017,6 +4017,36 @@
     transition: opacity 0.15s;
   }
   .cmd-overlay.visible { opacity: 1; pointer-events: auto; }
+  /* Generic centered dialog — Edit Profile / Agent Settings (opened from the
+     project three-dot menu). z-index sits BELOW the emoji picker's 10000 so
+     the picker stacks on top when opened from inside the profile dialog. */
+  .mc-dialog-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+    z-index: 9900;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.15s;
+  }
+  .mc-dialog-overlay.visible { opacity: 1; pointer-events: auto; }
+  .mc-dialog {
+    width: 440px; max-width: 92vw;
+    max-height: 86vh; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 12px; padding: 16px 18px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .mc-dialog-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px; color: var(--text); font-weight: 600; font-size: 14px;
+  }
+  .mc-dialog-close {
+    background: transparent; border: none; color: var(--text-dim);
+    font-size: 14px; cursor: pointer; padding: 2px 6px; border-radius: 6px;
+  }
+  .mc-dialog-close:hover { color: var(--text); background: var(--surface2); }
+  .mc-dialog-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
   .emoji-picker-overlay {
     position: fixed; inset: 0;
     background: rgba(0,0,0,0.5);
