@@ -91,6 +91,28 @@ every prior fix including the 2026-06-07 freshness reconciler:
   duplicated history after a replay — self-resolves on reload.
 - **Rollback:** revert the four-file commit; no config flag.
 
+## [2026-06-12b] — First-run tour: real tile spotlight, naming, seed-on-boot
+
+Three VM-validation reports on the first-run walkthrough:
+
+- **Tour step 6 now spotlights the REAL project tile** (`.card[data-id=
+  "clayrune"]`) instead of injecting a fake demo tile at a hardcoded offset
+  next to it. The demo tile remains as the fallback when the grid isn't in
+  the DOM (mobile list view). Elevation guard generalized: real targets
+  elevate above the backdrop; injected demos (inside `.wt-demo`) already are.
+- **Naming unified on "Clayrune"** — the demo tile/modal/menu mockups and the
+  closing step said "Sample Project" while the actual created project is
+  named "Clayrune" (the in-app help-desk project). Step copy now introduces
+  it by name.
+- **Onboarding project seeds on first boot** (`seed_onboarding_on_startup`,
+  called from server startup), not just from tour step 6's onEnter — so
+  skipping or never starting the tour no longer leaves a fresh install with
+  zero projects. Marker-gated via `data/onboarding_seeded.flag` (outside
+  DATA_DIR — load_projects() must never see it; gitignored): deleting the
+  project sticks, and established installs just get the marker stamped so
+  upgrades never resurrect it. The walkthrough endpoint stays as an
+  idempotent backup (shared `_seed_onboarding_project()`).
+
 ## [2026-06-12] — Windows taskbar icon: right artwork at the right size
 
 Follow-up to [2026-06-11]: the VM re-test still showed the wrong/too-small

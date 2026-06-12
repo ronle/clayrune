@@ -529,13 +529,44 @@ def _clayrune_readme() -> str:
 
 @bp.route('/api/walkthrough/sample-project', methods=['POST'])
 def create_sample_project():
-    """Create the Clayrune onboarding project on first-run walkthrough.
-    Idempotent. The URL keeps the legacy `sample-project` slug so older
-    walkthrough JS keeps working; the actual project ID is `clayrune`."""
+    """Create the Clayrune onboarding project. Idempotent. The URL keeps the
+    legacy `sample-project` slug so older walkthrough JS keeps working; the
+    actual project ID is `clayrune`. Normally a no-op backup these days:
+    seed_onboarding_on_startup() already created the project on first boot
+    (skipping the tour used to mean a fresh install had no project at all)."""
+    created = _seed_onboarding_project()
+    return jsonify({'ok': True, 'id': 'clayrune', 'existed': not created})
+
+
+def seed_onboarding_on_startup():
+    """First-boot seeding, called from server startup: create the Clayrune
+    onboarding project once, independent of the walkthrough — it used to be
+    created only by tour step 6's onEnter, so skipping (or never starting)
+    the tour left a fresh install with zero projects.
+
+    Marker-gated (data/onboarding_seeded.flag — deliberately OUTSIDE
+    DATA_DIR so load_projects() never sees it): a user who deletes the
+    project stays deleted; an established install (any project json already
+    in DATA_DIR) just gets the marker stamped so upgrades never resurrect
+    a deleted onboarding project."""
+    try:
+        marker = DATA_DIR.parent / 'onboarding_seeded.flag'
+        if marker.exists():
+            return
+        if not any(DATA_DIR.glob('*.json')):
+            _seed_onboarding_project()
+        marker.write_text(now_iso(), encoding='utf-8')
+    except Exception as e:
+        print(f"[onboarding] startup seed failed: {e}", flush=True)
+
+
+def _seed_onboarding_project() -> bool:
+    """Create the onboarding project if absent. Returns True if created,
+    False if it already existed."""
     pid = 'clayrune'
     filepath = DATA_DIR / f'{pid}.json'
     if filepath.exists():
-        return jsonify({'ok': True, 'id': pid, 'existed': True})
+        return False
 
     # Auto-assign a workspace folder so the agent can dispatch immediately.
     base = Path(state.CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
@@ -609,4 +640,4 @@ def create_sample_project():
         ],
     }
     save_project(pid, project)
-    return jsonify({'ok': True, 'id': pid, 'existed': False})
+    return True

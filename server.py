@@ -2019,6 +2019,10 @@ if __name__ == '__main__':
         _ensure_incognito_project()
     except Exception as e:
         _log(f"[incognito] bootstrap failed: {e}")
+    # First-boot onboarding project (marker-gated): skipping the tour used to
+    # mean a fresh install had zero projects. Swallows internally; never blocks
+    # startup.
+    _bp_guide.seed_onboarding_on_startup()
     # Reconcile pending agent_log rows: any 'in_progress' entry leftover from a
     # session that was killed by the previous shutdown is by definition orphaned
     # (no live sessions exist yet at startup). Flip those to 'interrupted' so

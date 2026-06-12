@@ -46,8 +46,12 @@ const WT_STEPS = [
   {
     id: 'sample-tile',
     title: 'Project Tiles',
-    body: 'Each tile shows a project\u2019s status and last activity. Click one to open it as a modal window. We\u2019ve created a sample project for you to explore.',
-    target: null, pos: 'right', demo: 'tile',
+    body: 'Each tile shows a project\u2019s status and last activity. Click one to open it as a modal window. We\u2019ve created a starter project for you \u2014 <strong>Clayrune</strong> \u2014 its agent is your in-app help desk.',
+    // Spotlight the REAL tile (created on first boot / by onEnter below) so
+    // the highlight sits exactly on it \u2014 the injected demo tile floated at a
+    // hardcoded offset next to the real one. `demo` stays as the fallback
+    // for DOMs without grid tiles (mobile list view).
+    target: '.card[data-id="clayrune"]', pos: 'right', demo: 'tile',
     onEnter: async () => {
       await fetch(API_BASE + '/api/walkthrough/sample-project', { method: 'POST' });
       await refreshSilent();
@@ -202,7 +206,7 @@ const WT_STEPS = [
   {
     id: 'done',
     title: 'You\u2019re all set',
-    body: 'Start by exploring the sample project or create your own with <strong>+ New Project</strong>. Re-run this tour any time from Settings, the Command Palette (Ctrl+K \u2192 "Take Tour"), or the <strong>?</strong> button in the header.',
+    body: 'Start by exploring the <strong>Clayrune</strong> starter project or create your own with <strong>+ New Project</strong>. Re-run this tour any time from Settings, the Command Palette (Ctrl+K \u2192 "Take Tour"), or the <strong>?</strong> button in the header.',
     target: null, pos: 'center',
   },
 ];
@@ -212,7 +216,7 @@ function wtDemoTileHTML() {
   return `<div class="card status-active" style="width:260px;aspect-ratio:1;pointer-events:none">
     <div class="card-header">
       <div class="card-title-row">
-        <span class="project-name">Sample Project</span>
+        <span class="project-name">Clayrune</span>
         <span class="domain-tag" style="background:var(--surface3);color:var(--text-dim)">General</span>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
@@ -285,7 +289,7 @@ function wtDemoModalHTML(activeTab) {
           <button class="modal-close" style="pointer-events:none">&#10005;</button>
         </div>
         <div class="card-title-row">
-          <input class="name-edit" value="Sample Project" disabled style="pointer-events:none">
+          <input class="name-edit" value="Clayrune" disabled style="pointer-events:none">
           <span class="domain-tag" style="background:var(--surface3);color:var(--text-dim)">General</span>
         </div>
       </div>
@@ -349,7 +353,7 @@ function wtDemoMenuHTML() {
             </button>
           </div>
         <div class="card-title-row">
-          <input class="name-edit" value="Sample Project" disabled style="pointer-events:none">
+          <input class="name-edit" value="Clayrune" disabled style="pointer-events:none">
           <span class="domain-tag" style="background:var(--surface3);color:var(--text-dim)">General</span>
         </div>
       </div>
@@ -408,8 +412,9 @@ async function wtShow(idx) {
 
   let targetEl = step.target ? document.querySelector(step.target) : null;
 
-  // Inject virtual demo element if step uses one
-  if (step.demo) {
+  // Inject virtual demo element if step uses one — but only when the real
+  // target (if any) isn't in the DOM; a found real target always wins.
+  if (step.demo && !targetEl) {
     const demo = document.createElement('div');
     demo.className = 'wt-demo';
     demo.style.cssText = 'position:fixed;z-index:2001;pointer-events:none;';
@@ -469,8 +474,10 @@ async function wtShow(idx) {
     }
   }
 
-  // Elevate the target (or its modal-window ancestor) above the backdrop
-  if (targetEl && !step.demo) {
+  // Elevate the target (or its modal-window ancestor) above the backdrop.
+  // Applies to real DOM targets only — injected demos live inside the
+  // overlay (.wt-demo) and are already above the backdrop.
+  if (targetEl && !targetEl.closest('.wt-demo')) {
     const modal = targetEl.closest('.modal-window');
     (modal || targetEl).classList.add('wt-elevated');
   }
