@@ -481,12 +481,15 @@ Major sections:
     height and tightens grid spacing for showing more projects at
     once on small screens.
   - **Background** — keep the theme default, or set a solid color or
-    your own image behind the dashboard (saved per device). With an
-    image you also get a **Dim** slider (tints it toward your theme so
-    text stays legible) and a **crop box**: drag the box to move, drag
-    the corner — or scroll — to zoom. The box marks what stays in view
-    and adapts to any screen size, so the same framing works on desktop
-    and phone.
+    an image behind the dashboard (saved per device). Image mode opens
+    with a **Gallery** of built-in patterns — chat-wallpaper-style
+    doodles of terminals, git branches, robots, and rockets in a Dark,
+    Aurora (gradient), or Warm flavor — tap one to apply it, or pick
+    your own file instead. With an image you also get a **Dim** slider
+    (tints it toward your theme so text stays legible) and a **crop
+    box**: drag the box to move, drag the corner — or scroll — to zoom.
+    The box marks what stays in view and adapts to any screen size, so
+    the same framing works on desktop and phone.
   - **Writing style** — Casual or Professional. Tunes the voice of
     in-app copy (greetings, empty-state hints, toasts).
 - **Advanced features** — show/hide the token counter, `[tool: …]` lines,

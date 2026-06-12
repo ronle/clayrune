@@ -529,10 +529,19 @@ async function _renderSettings() {
         <input type="color" value="${esc(bgColor)}" oninput="setBgColor(this.value)" style="width:48px;height:32px;border:1px solid var(--border);border-radius:8px;background:var(--surface);cursor:pointer;padding:2px">
       </div>` : ''}
       ${bgMode==='image' ? `
+      <div class="settings-row" style="align-items:flex-start">
+        <div><div class="settings-label">Gallery</div><div class="settings-hint">Built-in patterns tuned to the themes</div></div>
+        <div class="mc-bg-gallery">
+          ${BUILTIN_BGS.map(b => `
+          <button class="mc-bg-thumb ${localStorage.getItem('mc_bg_image')===_builtinBgUrl(b.id)?'active':''}" onclick="setBuiltinBg('${b.id}')" title="${esc(b.label)}">
+            <img src="${_builtinBgUrl(b.id, true)}" alt="${esc(b.label)}">
+          </button>`).join('')}
+        </div>
+      </div>
       <div class="settings-row">
-        <div><div class="settings-label">Your image</div><div class="settings-hint">${localStorage.getItem('mc_bg_image') ? 'An image is set for this device.' : 'No image chosen yet — pick one to apply it.'}</div></div>
+        <div><div class="settings-label">Your image</div><div class="settings-hint">${_bgIsBuiltin() ? 'Using a built-in background — choose a file to use your own.' : localStorage.getItem('mc_bg_image') ? 'An image is set for this device.' : 'No image chosen yet — pick one or use the gallery.'}</div></div>
         <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn-dispatch" onclick="pickBgImage()">${localStorage.getItem('mc_bg_image') ? 'Replace…' : 'Choose…'}</button>
+          <button class="btn-dispatch" onclick="pickBgImage()">${localStorage.getItem('mc_bg_image') && !_bgIsBuiltin() ? 'Replace…' : 'Choose…'}</button>
           ${localStorage.getItem('mc_bg_image') ? `<button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="clearBgImage()">Remove</button>` : ''}
         </div>
       </div>
