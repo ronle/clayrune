@@ -584,48 +584,61 @@ function _claydoRenderReadyCard(botMsg, actions, cleanText) {
 }
 
 // Roomy editable view of the artifact — the in-bubble <pre> is cramped.
-// A large textarea (live-editable) + the same handoff actions, which read
-// the EDITED text so tweaks carry through to insert/save/copy.
+// Opens as its OWN top-level modal window (draggable/snappable via the
+// app's modal system), not an overlay inside the Claydo modal, so it
+// starts large and can be moved/resized independently. The handoff
+// actions read the EDITED text so tweaks carry through to insert/save/copy.
 function _claydoOpenEditor(kind, artifact, suggestedName) {
-  const content = document.querySelector(`[data-modal-id="__claydo"] .modal-content`)
-    || document.getElementById('claydo-history')?.parentElement;
-  if (!content) return;
-  if (getComputedStyle(content).position === 'static') content.style.position = 'relative';
-  content.querySelector('.claydo-editor-panel')?.remove();
-
   const isPrompt = kind === 'prompt';
-  const panel = document.createElement('div');
-  panel.className = 'claydo-save-panel claydo-editor-panel';
-  panel.innerHTML = `
-    <div class="claydo-editor-inner">
-      <div class="claydo-save-title">${isPrompt ? 'Prompt' : 'Character'} — edit</div>
-      <textarea class="claydo-editor-text" spellcheck="false"></textarea>
-      <div class="claydo-save-actions">
-        <button class="claydo-ready-btn" data-act="close">Close</button>
-        <button class="claydo-ready-btn" data-act="copy">Copy</button>
-        ${isPrompt
-          ? `<button class="claydo-ready-btn accent" data-act="insert">&#8594; Insert into chat</button>`
-          : `<button class="claydo-ready-btn accent" data-act="save">&#x1F4BE; Save character&hellip;</button>`}
-      </div>
-    </div>`;
-  content.appendChild(panel);
+  const modalId = '__claydo_editor';
+  if (openModals.has(modalId)) closeModalById(modalId);  // replace any open one
 
-  const ta = panel.querySelector('.claydo-editor-text');
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content claydo-editor-content';
+  _clampModalSize(content, 760, 720);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 22px 12px 24px">
+      <div style="font-size:14px;font-weight:700;color:var(--text)">${isPrompt ? 'Prompt' : 'Character'} &mdash; editor</div>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-close" data-act="close" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div class="claydo-editor-body">
+      <textarea class="claydo-editor-text" spellcheck="false"></textarea>
+    </div>
+    <div class="claydo-editor-footer">
+      <button class="claydo-ready-btn" data-act="copy">Copy</button>
+      ${isPrompt
+        ? `<button class="claydo-ready-btn accent" data-act="insert">&#8594; Insert into project chat</button>`
+        : `<button class="claydo-ready-btn accent" data-act="save">&#x1F4BE; Save character&hellip;</button>`}
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
+  const ta = content.querySelector('.claydo-editor-text');
   ta.value = artifact;  // .value (not innerHTML) — no escaping pitfalls
-  const close = () => panel.remove();
-  panel.addEventListener('mousedown', (e) => { if (e.target === panel) close(); });
-  panel.querySelector('[data-act="close"]').onclick = close;
-  panel.querySelector('[data-act="copy"]').onclick = (e) => _claydoCopy(ta.value, e.target);
-  const insertBtn = panel.querySelector('[data-act="insert"]');
+  const close = () => closeModalById(modalId);
+  content.querySelector('[data-act="close"]').onclick = close;
+  content.querySelector('[data-act="copy"]').onclick = (e) => _claydoCopy(ta.value, e.target);
+  const insertBtn = content.querySelector('[data-act="insert"]');
   if (insertBtn) insertBtn.onclick = () => {
     const pid = _claydoFocusedProjectId();
     if (!pid) { _claydoCopy(ta.value, null); _claydoBotNote('No project chat open — copied to clipboard instead.'); return; }
     _claydoInsertIntoProject(pid, ta.value);
     close();
   };
-  const saveBtn = panel.querySelector('[data-act="save"]');
+  const saveBtn = content.querySelector('[data-act="save"]');
   if (saveBtn) saveBtn.onclick = () => { const t = ta.value; close(); _claydoOpenSavePanel(t, suggestedName); };
-  setTimeout(() => ta.focus(), 30);
+  setTimeout(() => ta.focus(), 40);
 }
 
 // Drop the prompt into the focused project modal's chat box (the
