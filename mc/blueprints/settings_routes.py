@@ -112,6 +112,7 @@ _CONFIG_EDITABLE_KEYS = {
     'idle_eviction_enabled', 'idle_eviction_minutes',
     'projects_base', 'shared_rules_path', 'port', 'log_level',
     'mobile_brief_replies_enabled', 'brief_replies_always_enabled',
+    'reply_summarize_enabled', 'reply_summarize_threshold_chars',
     'auto_model_enabled', 'auto_model_classifier_model',
     'auto_model_classifier_timeout_secs',
     'sticky_agent_settings',

@@ -6,6 +6,44 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-12d] — Reply-summarization gate: enforced brevity backstop
+
+The brief-reply directive asks the model to be short; Ron wants short
+guaranteed ("not optional, enforcing") with real summaries, not UI folds that
+hide content positionally. New server-side gate at the turn boundary.
+
+- **Mechanism:** `_maybe_summarize_turn()` (agent_routes.py) runs at the turn
+  boundary BEFORE the status flip, in both stream readers (Mode B result
+  event; Mode A rc==0 completion). If the turn's prose in `log_lines`
+  (non-`[`-marker lines) exceeds `reply_summarize_threshold_chars` (default
+  1500), a Haiku one-shot (`ClaudeRuntime.oneshot`, 25s outer ceiling on a
+  daemon thread) rewrites it: answer-first, all hard data preserved (paths,
+  commands, hashes, errors, decisions), 3-6 sentences. The turn's lines are
+  replaced with tool/status trace + summary + a
+  `[reply summarized — ask for full detail if needed]` marker.
+- **Free SSE delivery:** the rewrite shrinks `log_lines`, which trips the SSE
+  generator's existing `sent > len(lines)` reset guard — connected clients get
+  `reset` + full replay and the streamed long text visibly snaps to the
+  summary before `turn_complete`. Zero new frontend machinery
+  (resume-preview.js:594 already handles `reset`).
+- **Detail on demand:** the model's own context is untouched (the rewrite is
+  display/persistence-side), so "give me the full detail" just works. The
+  original prose is also archived permanently to
+  `data/reply_archive/<project>/<session>.md` — deliberately OUTSIDE
+  `data/projects/` per the DATA_DIR pollution rule.
+- **Exemptions + posture:** code-heavy turns (>2KB inside fences) pass
+  through — the never-shorten-code carve-out outranks brevity. Fail-open
+  everywhere (timeout/error/longer-output/array-not-shorter → original kept),
+  same best-effort posture as Scribe/Distiller. Non-Claude providers deferred
+  (their readers flip status inside agent_runtime.py).
+- **Config/UI:** `reply_summarize_enabled` (default ON) +
+  `reply_summarize_threshold_chars`; toggle in Settings → Agent ("Summarize
+  long replies") next to Brief replies; threshold is config/API-only to keep
+  the pane lean.
+- **Rollback:** Settings → Agent → Summarize long replies → off
+  (`reply_summarize_enabled=false`); no restart needed beyond the one that
+  ships it.
+
 ## [2026-06-12c] — Three-dot project menu revamp: declutter + consolidate
 
 The per-project three-dot menu had grown to ~21 desktop items with duplicates
