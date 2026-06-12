@@ -1585,9 +1585,11 @@ function refreshModalById(modalId) {
     const el = document.getElementById(id);
     if (el) el.value = val;
   }
-  // Also restore from global textarea cache (survives tab switches)
+  // Also restore from global textarea cache (survives tab switches).
+  // claydo-* inputs are excluded from caching (see modal-layer input
+  // handler) — guard here too so a pre-existing cached value can't leak back.
   for (const [id, val] of Object.entries(textareaValues)) {
-    if (id === _preservedInputId) continue;
+    if (id === _preservedInputId || id.indexOf('claydo-') === 0) continue;
     const el = document.getElementById(id);
     if (el && !saved[id] && val) el.value = val;
   }
@@ -2761,7 +2763,12 @@ setInterval(() => {
 
 // ── Preserve textarea values across DOM rebuilds ─────────────────────────────
 document.getElementById('modal-layer').addEventListener('input', e => {
-  if (e.target.tagName === 'TEXTAREA' && e.target.id) {
+  // Claydo manages its own textarea lifecycle (clears on submit/mode-switch).
+  // Caching it here let an unrelated project-modal refreshModal() restore the
+  // stale value back into claydo-input after a turn — text reappeared in the
+  // box. Exclude the claydo-* ids from the cross-rebuild preservation.
+  if (e.target.tagName === 'TEXTAREA' && e.target.id
+      && e.target.id.indexOf('claydo-') !== 0) {
     textareaValues[e.target.id] = e.target.value;
   }
 });

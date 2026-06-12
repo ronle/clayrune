@@ -676,8 +676,7 @@ function _claydoOpenSavePanel(artifact, suggestedName) {
       <input id="claydo-save-desc" type="text" value="${esc(description)}">
       <label>3. Where</label>
       <select id="claydo-save-scope">
-        ${pid ? `<option value="project" selected>This project</option>` : ''}
-        <option value="global" ${pid ? '' : 'selected'}>All my projects</option>
+        <option value="global">All my projects (global)</option>
       </select>
       <div class="claydo-save-err" id="claydo-save-err" style="display:none"></div>
       <div class="claydo-save-actions">
@@ -692,12 +691,35 @@ function _claydoOpenSavePanel(artifact, suggestedName) {
   panel.querySelector('#claydo-save-cancel').onclick = () => panel.remove();
   panel.addEventListener('mousedown', (e) => { if (e.target === panel) panel.remove(); });
 
+  // Populate the "Where" dropdown with every project (value = project id),
+  // not just the focused one. Default to the focused project if there is
+  // one, else global. Project scope writes to <that project>/.claude/agents/.
+  const scopeSel = panel.querySelector('#claydo-save-scope');
+  (async () => {
+    try {
+      const res = await fetch(API_BASE + '/api/projects');
+      const list = await res.json();
+      if (Array.isArray(list)) {
+        for (const p of list) {
+          if (!p || !p.id) continue;
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.name || p.id;
+          scopeSel.appendChild(opt);
+        }
+        if (pid) scopeSel.value = pid;
+      }
+    } catch (e) {}
+  })();
+
   const goBtn = panel.querySelector('#claydo-save-go');
   let overwrite = false;
   goBtn.onclick = async () => {
     const nameVal = panel.querySelector('#claydo-save-name').value.trim().toLowerCase();
     const descVal = panel.querySelector('#claydo-save-desc').value.trim();
-    const scopeVal = panel.querySelector('#claydo-save-scope').value;
+    // 'global' → global scope; any other value is a project id.
+    const whereVal = panel.querySelector('#claydo-save-scope').value;
+    const isGlobal = whereVal === 'global';
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(nameVal)) {
       return showErr('Name must be kebab-case: letters, digits, hyphens.');
     }
@@ -709,8 +731,8 @@ function _claydoOpenSavePanel(artifact, suggestedName) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           name: nameVal, description: descVal, body,
-          scope: scopeVal,
-          project_id: scopeVal === 'project' ? pid : null,
+          scope: isGlobal ? 'global' : 'project',
+          project_id: isGlobal ? null : whereVal,
           overwrite,
         }),
       });
@@ -726,7 +748,9 @@ function _claydoOpenSavePanel(artifact, suggestedName) {
         return showErr(data.error || `Save failed (${res.status})`);
       }
       panel.remove();
-      _claydoBotNote(`Saved <strong>${esc(nameVal)}</strong> ✓ (${scopeVal === 'project' ? 'this project' : 'all projects'}). Your agent can use it now — mention <code>@${esc(nameVal)}</code> in chat.`);
+      const whereLabel = isGlobal ? 'all projects'
+        : (scopeSel.options[scopeSel.selectedIndex]?.textContent || 'project');
+      _claydoBotNote(`Saved <strong>${esc(nameVal)}</strong> ✓ (${esc(whereLabel)}). Your agent can use it now — mention <code>@${esc(nameVal)}</code> in chat.`);
     } catch (e) {
       goBtn.disabled = false;
       showErr('Network error: ' + (e.message || e));
