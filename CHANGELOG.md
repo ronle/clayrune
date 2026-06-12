@@ -40,9 +40,20 @@ dialogs.
   providers-not-yet-fetched refresh kick (which the composer's provider
   picker silently relied on) survives as a UI-less IIFE in the menu template.
   Walkthrough "Three-Dot Menu" step + demo mock updated to match.
+- **Fix (follow-up, same day):** an open menu no longer closes itself ~2s
+  after opening. Root cause was pre-existing, not the revamp:
+  `refreshModalById` rebuilds the modal's innerHTML with no preservation of
+  menu state, and any live agent activity (SSE turn events, freshness
+  reconciler, completion polls) lands a rebuild within seconds — wiping the
+  `.open` class, expanded submenus, half-typed inputs, and the
+  outside-click closer's captured node. Now `refreshModalById` defers the
+  rebuild while that modal's three-dot menu is open (next tick after close
+  catches up). Streaming output is unaffected — the SSE append path writes
+  into `#agent-output-<sid>` directly.
 - **Verified:** node --check on all touched JS, boot smoke 5/5, plus a
-  37-assertion Playwright interaction check (menu contents, both dialogs,
-  POST payloads incl. the null-override).
+  41-assertion Playwright interaction check (menu contents, both dialogs,
+  POST payloads incl. the null-override, and menu survival across
+  refreshSilent/refreshModal ticks with rebuild-resume after close).
 - **Rollback:** revert render-core.js / modal-manager.js / walkthrough.js /
   index.html / app.css from this commit — no backend or data-shape changes.
 

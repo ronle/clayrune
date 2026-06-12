@@ -1457,6 +1457,17 @@ function refreshModalById(modalId) {
   const p = allProjects.find(x => x.id === entry.projectId);
   if (!p) { closeModalById(modalId); return; }
 
+  // An open three-dot menu is transient interaction state this innerHTML
+  // rebuild cannot preserve: the .open class, expanded submenus, half-typed
+  // "New domain..." / "owner/repo" text, and the outside-click closer's
+  // captured node are all wiped. Live agent activity (SSE turn events,
+  // freshness reconciler, completion polls) lands a rebuild every few
+  // seconds, which closed the menu out from under the user. Defer this
+  // modal's rebuild until the menu closes — the next tick picks up whatever
+  // changed. Streaming output is unaffected: the SSE append path writes into
+  // #agent-output-<sid> directly and doesn't come through here.
+  if (entry.element.querySelector('.modal-menu-dropdown.open')) return;
+
   const content = entry.element.querySelector('.modal-content');
   const scrollBody = content.querySelector('.modal-scroll-body');
   const savedScroll = scrollBody ? scrollBody.scrollTop : 0;
