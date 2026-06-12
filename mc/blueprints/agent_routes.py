@@ -3753,6 +3753,18 @@ def agent_stream(project_id):
         while True:
             session['_last_sse_poll_time'] = _time.time()
             lines = session['log_lines']
+            # Cursor-overshoot guard: `sent` can exceed len(lines) whenever
+            # log_lines was REBUILT shorter under the same session_id —
+            # revive-from-agent-log reseeds from the transcript (40 msgs, no
+            # tool lines) after a restart/purge, and the 2000→1500 cap slams
+            # the array. Without this, `sent < len` never fires again: the
+            # stream serves heartbeats forever while the chat looks frozen
+            # even in focus (a healthy-looking stream disarms every client
+            # recovery path, and the reconcile poll no-ops on the same
+            # comparison). Tell the client to drop its buffer, then replay.
+            if sent > len(lines):
+                yield f"data: {json.dumps({'type': 'reset'})}\n\n"
+                sent = 0
             if sent < len(lines):
                 for line in lines[sent:]:
                     yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"

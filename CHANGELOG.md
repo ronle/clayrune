@@ -6,6 +6,42 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-11] — Mobile/desktop chat freeze: SSE cursor overshoot starved the stream after revive or restart
+
+The chronic "agent replied but the chat never updates" bug — patched ~16× at
+the transport layer — had a second, non-transport root cause that survived
+every prior fix including the 2026-06-07 freshness reconciler:
+
+- **Root cause:** server `log_lines` can be rebuilt SHORTER under the same
+  session id — `_revive_from_agent_log` (after a server restart or stale-purge)
+  reseeds from the transcript (last 40 messages, **no tool lines**), and the
+  2000→1500 memory cap slams the array. The client's line cursor then exceeds
+  the server array forever, and BOTH delivery paths die on the same one-way
+  comparison: the SSE generator's `sent < len(lines)` never fires again (it
+  serves heartbeats only — which keeps the zombie reaper and freshness
+  reconciler disarmed, so the freeze happens **in focus** too), and
+  `_reconcileAgentBuffer`'s `length <= have → return` no-ops. Only an app
+  cold-start (cursor reset) healed it — until the next revive re-broke it.
+  Reproduced live: `GET /agent/stream?since=9999` on a running session yields
+  zero content events.
+- **Fix (invariant-based, heals all shrink causes):** the stream generator
+  detects `sent > len(lines)`, emits a new `{type:'reset'}` SSE event, and
+  replays from zero (`mc/blueprints/agent_routes.py`); the client handles
+  `reset` by dropping buffer + cursor + DOM and letting the replay repaint
+  (`static/js/resume-preview.js`); `_reconcileAgentBuffer` treats
+  `serverLines.length < have` as shrink → wholesale reseed + repaint instead
+  of returning (same file); `sendFollowup` clears `_readOnlyRevived` on a
+  successful send so the freshness reconciler resumes guarding push-tap
+  reconstructed sessions (`static/js/conversation.js` — the flag was set by
+  the deep-link reconstruct path and never cleared).
+- **Tests:** 3 new request-level SSE tests in `tests/test_agent_routes.py`
+  pin reset-and-replay, normal-cursor, and exact-cursor behavior (11/11 pass).
+- **Deploy note:** server half needs an MC restart; open phone/desktop SPAs
+  pick up the client half on next cold open (no APK rebuild — SPA is served).
+  Old cached clients ignore the unknown `reset` type and may briefly render
+  duplicated history after a replay — self-resolves on reload.
+- **Rollback:** revert the four-file commit; no config flag.
+
 ## [2026-06-11] — Windows launcher: Clayrune taskbar icon on Edge-only machines
 
 Fresh-install report (v2.1.0 VM validation): the launched app window showed

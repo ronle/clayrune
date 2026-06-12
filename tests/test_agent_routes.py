@@ -25,6 +25,7 @@ router-stats / recent-runs globs see a clean slate. agent_sessions (a mc.state
 object shared with the blueprint by import) is snapshot/cleared/restored in
 place — the 1.8 cross-test-pollution lesson.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -170,3 +171,73 @@ def test_moved_route_behind_lan_gate(client):
     same contract the routes had while they lived in server.py."""
     resp = client.get('/api/usage', environ_overrides=LAN)
     assert resp.status_code == 401
+
+
+# ── SSE cursor-overshoot guard (2026-06-11) ───────────────────────────────────
+# log_lines can be rebuilt SHORTER under the same session_id (revive after a
+# restart/purge reseeds from the transcript; the 2000→1500 cap slams the
+# array). A client cursor beyond the array used to starve the stream forever —
+# heartbeats only, chat frozen even in focus. The guard must emit a `reset`
+# and replay from zero. These pull only the events yielded before the
+# generator's first sleep, so they're fast and deterministic.
+
+def _sse_events(resp, n):
+    gen = resp.response
+    out = []
+    for _ in range(n):
+        chunk = next(gen)
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode('utf-8')
+        out.append(json.loads(chunk[len('data: '):].strip()))
+    return out
+
+
+def _seed_stream_session(sid, lines):
+    from mc import state as mc_state
+    mc_state.agent_sessions[sid] = {
+        'project_id': 'sse-test-proj', 'mode': 'B', 'status': 'running',
+        'log_lines': list(lines),
+    }
+
+
+def test_stream_cursor_overshoot_resets_and_replays(client):
+    """since > len(log_lines) → first event is `reset`, then the full replay."""
+    _seed_stream_session('sse-overshoot', ['a', 'b', 'c'])
+    resp = client.get(
+        '/api/project/sse-test-proj/agent/stream?session=sse-overshoot&since=9999',
+        buffered=False)
+    try:
+        evs = _sse_events(resp, 5)
+    finally:
+        resp.close()
+    assert evs[0] == {'type': 'reset'}
+    assert [e.get('text') for e in evs[1:4]] == ['a', 'b', 'c']
+    assert all(e.get('type') == 'output' for e in evs[1:4])
+    assert evs[4].get('type') == 'turn_start'
+
+
+def test_stream_normal_cursor_no_reset(client):
+    """since within bounds → no reset, delivery starts at the cursor."""
+    _seed_stream_session('sse-normal', ['a', 'b', 'c'])
+    resp = client.get(
+        '/api/project/sse-test-proj/agent/stream?session=sse-normal&since=1',
+        buffered=False)
+    try:
+        evs = _sse_events(resp, 3)
+    finally:
+        resp.close()
+    assert [e.get('text') for e in evs[:2]] == ['b', 'c']
+    assert evs[2].get('type') == 'turn_start'
+
+
+def test_stream_exact_cursor_no_reset(client):
+    """since == len(log_lines) (in sync) → no reset, no replay."""
+    _seed_stream_session('sse-exact', ['a', 'b', 'c'])
+    resp = client.get(
+        '/api/project/sse-test-proj/agent/stream?session=sse-exact&since=3',
+        buffered=False)
+    try:
+        evs = _sse_events(resp, 1)
+    finally:
+        resp.close()
+    assert evs[0].get('type') == 'turn_start'

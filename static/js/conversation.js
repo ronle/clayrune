@@ -1192,6 +1192,13 @@ async function sendFollowup(projectId, sessionId) {
     if (!data.ok && !data.queued) {
       console.error('Send failed:', data.error);
     }
+    // A successful send makes this session server-live again (followup /
+    // revive / dispatch alike) — drop the read-only marker so the freshness
+    // reconciler resumes healing this sid (it skips _readOnlyRevived, which
+    // is set by the push-tap reconstruct path and was never cleared).
+    if (data.ok && agentStatusCache[sessionId]) {
+      delete agentStatusCache[sessionId]._readOnlyRevived;
+    }
     // If queued (Mode A follow-up while previous turn still running),
     // mark the echo so the user knows it isn't going out yet.
     if (data.queued) {

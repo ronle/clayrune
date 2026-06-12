@@ -421,7 +421,17 @@ async function _reconcileAgentBuffer(projectId, sessionId) {
     }
     const serverLines = sess.log_lines || [];
     const have = agentServerLines[sessionId] || 0;
-    if (serverLines.length <= have) return;  // buffer in sync — nothing more to recover
+    if (serverLines.length < have) {
+      // Server buffer shrank under our cursor (log_lines rebuilt by a
+      // revive after restart/purge, or capped server-side). The slice
+      // recovery below could never fire again from here — adopt server
+      // truth wholesale and repaint, same as a cold reopen does.
+      agentOutputBuffers[sessionId] = serverLines.slice();
+      agentServerLines[sessionId] = serverLines.length;
+      _repaintAgentOutput(sessionId);
+      return;
+    }
+    if (serverLines.length === have) return;  // buffer in sync — nothing more to recover
     const missing = serverLines.slice(have);
     for (const text of missing) {
       // Race guard: SSE may have delivered the same line between fetch start
@@ -581,6 +591,15 @@ function connectAgentStream(projectId, sessionId) {
         renderAgentQuestion(sessionId, projectId, msg.questions, msg.question_id || '');
         _cachePendingQuestion(sessionId, msg.questions, msg.question_id || '');
         refreshModal();
+      } else if (msg.type === 'reset') {
+        // Server log_lines was rebuilt SHORTER than our cursor (session
+        // revived after a restart/purge, or the server-side line cap
+        // slammed) — the server reset its cursor to 0 and is about to
+        // replay. Drop the local buffer + DOM so the replay repaints from
+        // scratch instead of starving under a cursor that never advances.
+        agentOutputBuffers[sessionId] = [];
+        agentServerLines[sessionId] = 0;
+        _repaintAgentOutput(sessionId);
       } else if (msg.type === 'turn_start') {
         // Phase 2 (2026-04-27): server tells us a new turn started so we can
         // flip the status UI without optimistic cache writes in sendFollowup.
