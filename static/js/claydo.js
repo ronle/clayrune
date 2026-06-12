@@ -598,12 +598,17 @@ function _claydoOpenEditor(kind, artifact, suggestedName) {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content claydo-editor-content';
-  _clampModalSize(content, 760, 720);
+  // Clamp to the actual viewport (desktop too) — _clampModalSize only
+  // shrinks on mobile, leaving a fixed 760x720 that overflows small laptops.
+  content.style.width = Math.min(760, Math.floor(window.innerWidth * 0.94)) + 'px';
+  content.style.height = Math.min(720, Math.floor(window.innerHeight * 0.86)) + 'px';
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 22px 12px 24px">
       <div style="font-size:14px;font-weight:700;color:var(--text)">${isPrompt ? 'Prompt' : 'Character'} &mdash; editor</div>
-      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
-        <button class="modal-close" data-act="close" title="Close">&#10005;</button>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px;align-items:center">
+        <button class="claydo-zoom-btn" data-act="zoom-out" title="Smaller text">A&minus;</button>
+        <button class="claydo-zoom-btn" data-act="zoom-in" title="Larger text">A+</button>
+        <button class="modal-close" data-act="close" title="Close" style="margin-left:4px">&#10005;</button>
       </div>
     </div>
     <div class="claydo-editor-body">
@@ -626,6 +631,18 @@ function _claydoOpenEditor(kind, artifact, suggestedName) {
 
   const ta = content.querySelector('.claydo-editor-text');
   ta.value = artifact;  // .value (not innerHTML) — no escaping pitfalls
+
+  // Text-size controls. Ctrl+scroll already zooms any modal, but it's
+  // undiscoverable — give explicit buttons that drive the same path.
+  let zoom = 14;
+  const applyZoom = () => {
+    if (typeof window.applyModalZoom === 'function') window.applyModalZoom(win, zoom);
+    else ta.style.fontSize = zoom + 'px';
+  };
+  applyZoom();
+  content.querySelector('[data-act="zoom-out"]').onclick = () => { zoom = Math.max(9, zoom - 1); applyZoom(); ta.focus(); };
+  content.querySelector('[data-act="zoom-in"]').onclick = () => { zoom = Math.min(28, zoom + 1); applyZoom(); ta.focus(); };
+
   const close = () => closeModalById(modalId);
   content.querySelector('[data-act="close"]').onclick = close;
   content.querySelector('[data-act="copy"]').onclick = (e) => _claydoCopy(ta.value, e.target);

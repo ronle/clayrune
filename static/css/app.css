@@ -4603,6 +4603,18 @@
     gap: 8px; flex-wrap: wrap; padding: 12px 18px 16px 18px;
     border-top: 1px solid var(--border);
   }
+  .claydo-zoom-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); width: 30px; height: 26px; border-radius: 5px;
+    cursor: pointer; font-size: 12px; font-weight: 700; font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  .claydo-zoom-btn:hover { border-color: var(--accent); }
+  /* Mobile: editor fills the screen (inherits .modal-content full-screen
+     media rule); keep the textarea comfortable. */
+  @media (max-width: 960px) {
+    .claydo-editor-content { width: 100vw !important; }
+  }
 
   /* The orange pulse Claydo emits via [clayrune:highlight] markers. */
   .clayrune-highlight {
