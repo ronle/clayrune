@@ -122,94 +122,73 @@ const SCENARIOS = [
   { name: 'warm tone', ls: { mc_tone: 'warm' } },
 ];
 
+// Static asset map (path → [contentType, body]) shared by the boot scenarios
+// and the dispatch guard. Adding a new extracted /static/js/*.js module means
+// adding ONE entry here — both code paths pick it up, and the boot scenarios
+// self-validate the map (a missing/typo'd entry empties the grid and fails).
+const STATIC_MAP = {
+  '/static/css/app.css': ['text/css; charset=utf-8', APP_CSS],
+  '/static/js/claydo.js': ['text/javascript; charset=utf-8', CLAYDO_JS],
+  '/static/js/mobile-pairing.js': ['text/javascript; charset=utf-8', MOBILE_PAIRING_JS],
+  '/static/js/walkthrough.js': ['text/javascript; charset=utf-8', WALKTHROUGH_JS],
+  '/static/js/skills-panel.js': ['text/javascript; charset=utf-8', SKILLS_PANEL_JS],
+  '/static/js/settings-drill.js': ['text/javascript; charset=utf-8', SETTINGS_DRILL_JS],
+  '/static/js/settings-sections.js': ['text/javascript; charset=utf-8', SETTINGS_SECTIONS_JS],
+  '/static/js/terminal.js': ['text/javascript; charset=utf-8', TERMINAL_JS],
+  '/static/js/mermaid.js': ['text/javascript; charset=utf-8', MERMAID_JS],
+  '/static/js/search-chats.js': ['text/javascript; charset=utf-8', SEARCH_CHATS_JS],
+  '/static/js/backlog-actions.js': ['text/javascript; charset=utf-8', BACKLOG_ACTIONS_JS],
+  '/static/js/cross-backlog.js': ['text/javascript; charset=utf-8', CROSS_BACKLOG_JS],
+  '/static/js/scheduler.js': ['text/javascript; charset=utf-8', SCHEDULER_JS],
+  '/static/js/mcp.js': ['text/javascript; charset=utf-8', MCP_JS],
+  '/static/js/system-status.js': ['text/javascript; charset=utf-8', SYSTEM_STATUS_JS],
+  '/static/js/update-power.js': ['text/javascript; charset=utf-8', UPDATE_POWER_JS],
+  '/static/js/provider-auth.js': ['text/javascript; charset=utf-8', PROVIDER_AUTH_JS],
+  '/static/js/schedule-banner.js': ['text/javascript; charset=utf-8', SCHEDULE_BANNER_JS],
+  '/static/js/provider-settings.js': ['text/javascript; charset=utf-8', PROVIDER_SETTINGS_JS],
+  '/static/js/process-manager.js': ['text/javascript; charset=utf-8', PROCESS_MANAGER_JS],
+  '/static/js/cross-hivemind.js': ['text/javascript; charset=utf-8', CROSS_HIVEMIND_JS],
+  '/static/js/feed.js': ['text/javascript; charset=utf-8', FEED_JS],
+  '/static/js/mobile.js': ['text/javascript; charset=utf-8', MOBILE_JS],
+  '/static/js/project-actions.js': ['text/javascript; charset=utf-8', PROJECT_ACTIONS_JS],
+  '/static/js/composer-extras.js': ['text/javascript; charset=utf-8', COMPOSER_EXTRAS_JS],
+  '/static/js/appearance.js': ['text/javascript; charset=utf-8', APPEARANCE_JS],
+  '/static/js/project-forms.js': ['text/javascript; charset=utf-8', PROJECT_FORMS_JS],
+  '/static/js/interactions.js': ['text/javascript; charset=utf-8', INTERACTIONS_JS],
+  '/static/js/render-core.js': ['text/javascript; charset=utf-8', RENDER_CORE_JS],
+  '/static/js/modal-manager.js': ['text/javascript; charset=utf-8', MODAL_MANAGER_JS],
+  '/static/js/agent-console.js': ['text/javascript; charset=utf-8', AGENT_CONSOLE_JS],
+  '/static/js/hivemind.js': ['text/javascript; charset=utf-8', HIVEMIND_JS],
+  '/static/js/agent-log.js': ['text/javascript; charset=utf-8', AGENT_LOG_JS],
+  '/static/js/resume-preview.js': ['text/javascript; charset=utf-8', RESUME_PREVIEW_JS],
+  '/static/js/conversation.js': ['text/javascript; charset=utf-8', CONVERSATION_JS],
+  '/static/js/rich-text.js': ['text/javascript; charset=utf-8', RICH_TEXT_JS],
+};
+
+// Hermetic router: serve the page + every extracted module + canned
+// /api/projects & /api/config; abort everything else so the SPA exercises its
+// real fetch-failure fallbacks. Shared by all boot scenarios.
+function fulfillStaticOrAbort(route) {
+  const path = new URL(route.request().url()).pathname;
+  if (path === '/' || path === '/index.html')
+    return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: INDEX_HTML });
+  const hit = STATIC_MAP[path];
+  if (hit)
+    return route.fulfill({ status: 200, contentType: hit[0], body: hit[1] });
+  if (path === '/api/projects')
+    return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
+  if (path === '/api/config')
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  return route.abort();  // CDNs + non-essential API → SPA fallbacks handle it
+}
+
 async function runScenario(browser, sc) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   await page.addInitScript((ls) => {
     try { for (const k of Object.keys(ls)) localStorage.setItem(k, ls[k]); } catch (e) {}
   }, sc.ls);
-  await page.route('**/*', (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === '/' || path === '/index.html')
-      return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: INDEX_HTML });
-    if (path === '/static/css/app.css')
-      return route.fulfill({ status: 200, contentType: 'text/css; charset=utf-8', body: APP_CSS });
-    if (path === '/static/js/claydo.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CLAYDO_JS });
-    if (path === '/static/js/mobile-pairing.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MOBILE_PAIRING_JS });
-    if (path === '/static/js/walkthrough.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: WALKTHROUGH_JS });
-    if (path === '/static/js/skills-panel.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SKILLS_PANEL_JS });
-    if (path === '/static/js/settings-drill.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SETTINGS_DRILL_JS });
-    if (path === '/static/js/settings-sections.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SETTINGS_SECTIONS_JS });
-    if (path === '/static/js/terminal.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: TERMINAL_JS });
-    if (path === '/static/js/mermaid.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MERMAID_JS });
-    if (path === '/static/js/search-chats.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SEARCH_CHATS_JS });
-    if (path === '/static/js/backlog-actions.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: BACKLOG_ACTIONS_JS });
-    if (path === '/static/js/cross-backlog.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CROSS_BACKLOG_JS });
-    if (path === '/static/js/scheduler.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SCHEDULER_JS });
-    if (path === '/static/js/mcp.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MCP_JS });
-    if (path === '/static/js/system-status.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SYSTEM_STATUS_JS });
-    if (path === '/static/js/update-power.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: UPDATE_POWER_JS });
-    if (path === '/static/js/provider-auth.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROVIDER_AUTH_JS });
-    if (path === '/static/js/schedule-banner.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: SCHEDULE_BANNER_JS });
-    if (path === '/static/js/provider-settings.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROVIDER_SETTINGS_JS });
-    if (path === '/static/js/process-manager.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROCESS_MANAGER_JS });
-    if (path === '/static/js/cross-hivemind.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CROSS_HIVEMIND_JS });
-    if (path === '/static/js/feed.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: FEED_JS });
-    if (path === '/static/js/mobile.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MOBILE_JS });
-    if (path === '/static/js/project-actions.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROJECT_ACTIONS_JS });
-    if (path === '/static/js/composer-extras.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: COMPOSER_EXTRAS_JS });
-    if (path === '/static/js/appearance.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: APPEARANCE_JS });
-    if (path === '/static/js/project-forms.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: PROJECT_FORMS_JS });
-    if (path === '/static/js/interactions.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: INTERACTIONS_JS });
-    if (path === '/static/js/render-core.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: RENDER_CORE_JS });
-    if (path === '/static/js/modal-manager.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: MODAL_MANAGER_JS });
-    if (path === '/static/js/agent-console.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: AGENT_CONSOLE_JS });
-    if (path === '/static/js/hivemind.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: HIVEMIND_JS });
-    if (path === '/static/js/agent-log.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: AGENT_LOG_JS });
-    if (path === '/static/js/resume-preview.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: RESUME_PREVIEW_JS });
-    if (path === '/static/js/conversation.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: CONVERSATION_JS });
-    if (path === '/static/js/rich-text.js')
-      return route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: RICH_TEXT_JS });
-    if (path === '/api/projects')
-      return route.fulfill({ status: 200, contentType: 'application/json', body: PROJECTS_JSON });
-    if (path === '/api/config')
-      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-    return route.abort();  // CDNs + non-essential API → SPA fallbacks handle it
-  });
+  await page.route('**/*', fulfillStaticOrAbort);
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
   await page.goto(ORIGIN + '/', { waitUntil: 'domcontentloaded' });
@@ -239,15 +218,127 @@ async function runScenario(browser, sc) {
   return ok;
 }
 
+// Dispatch guard — boots the page, opens the +New composer, picks a persona, and
+// drives dispatchAgent(). This is the cross-module path that broke on 2026-06-12:
+// resume-preview.js (the dispatch code) referenced `pendingDispatchCharacter`, a
+// module-scoped `let` in conversation.js — a ReferenceError across the ES-module
+// boundary that aborted EVERY dispatch (new + resumed chats flipped to STOPPED
+// with no agent spawned). The boot test never caught it because it never opened
+// the composer. A clean dispatch must (a) raise no uncaught exception and (b)
+// promote the optimistic tab to the server session id — proving the whole
+// read + clear cross-module persona path executed.
+async function runDispatchGuard(browser) {
+  const PID = 'smoke_alpha';
+  const SESS = 'smoke_sess_1';
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  // The POST firing is the key signal: the regression threw inside dispatchAgent
+  // (clearPendingCharacter, line ~294) BEFORE the fetch, so the dispatch endpoint
+  // was never hit. If this goes true, the whole cross-module persona path ran.
+  let dispatchHit = false;
+  await page.route('**/*', (route) => {
+    const path = new URL(route.request().url()).pathname;
+    // Canned persona so the picker + cross-module character resolution run.
+    if (path === '/api/characters')
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify([{ name: 'analyst', scope: 'global', display_name: 'Analyst', description: 'x', file: 'analyst.md', size: 10 }]) });
+    // Canned dispatch success so the post-POST promotion path (incl.
+    // clearPendingCharacter) executes end-to-end.
+    if (/\/agent\/dispatch$/.test(path)) {
+      dispatchHit = true;
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ ok: true, session_id: SESS }) });
+    }
+    // The shared fixture has project_path="" (agentPanelHTML then shows the
+    // "set project_path" notice, not the composer). Patch a non-empty path for
+    // the guard only — the boot scenarios keep the byte-identical fixture.
+    if (path === '/api/projects') {
+      const patched = JSON.parse(PROJECTS_JSON);
+      if (patched[0]) patched[0].project_path = '/smoke/alpha';
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(patched) });
+    }
+    return fulfillStaticOrAbort(route);
+  });
+  const pageErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
+  await page.goto(ORIGIN + '/', { waitUntil: 'domcontentloaded' });
+  try {
+    await page.waitForSelector('#projects-col .card', { timeout: BOOT_TIMEOUT_MS });
+  } catch {
+    console.error('❌ dispatch guard: grid never rendered (boot failed before the guard could run).');
+    await ctx.close();
+    return false;
+  }
+
+  const result = await page.evaluate(async ({ pid }) => {
+    const out = { err: null, finalTab: null };
+    try {
+      if (typeof openProjectModal !== 'function') throw new Error('openProjectModal not defined');
+      if (typeof dispatchAgent !== 'function') throw new Error('dispatchAgent not defined');
+      openProjectModal(pid);
+      window.agentConvNew = window.agentConvNew || {};
+      agentConvNew[pid] = true;                       // force the +New composer
+      if (typeof refreshModal === 'function') refreshModal();
+      await new Promise((r) => setTimeout(r, 600));   // let _ensureCharacters resolve
+      // Pick the persona — exercises setComposerCharacter plus the cross-module
+      // getPendingCharacter/resolveCharacterMeta reads inside dispatchAgent.
+      if (typeof setComposerCharacter === 'function') setComposerCharacter(pid, 'global:analyst');
+      let ta = document.getElementById('agent-task-' + pid);
+      if (!ta && typeof newAgentTab === 'function') {
+        newAgentTab(pid);                              // the real "+ New" action
+        await new Promise((r) => setTimeout(r, 400));
+        ta = document.getElementById('agent-task-' + pid);
+      }
+      if (!ta) {
+        out.diag = {
+          modalWindows: document.querySelectorAll('.modal-window').length,
+          textareas: Array.from(document.querySelectorAll('textarea')).map((e) => e.id || e.className),
+        };
+        throw new Error('composer textarea (#agent-task-' + pid + ') not rendered');
+      }
+      ta.value = 'smoke dispatch ping';
+      await dispatchAgent(pid);
+      await new Promise((r) => setTimeout(r, 300));
+      out.finalTab = (window.activeAgentTab || {})[pid] || null;
+    } catch (e) {
+      out.err = e.message + ' | ' + ((e.stack || '').split('\n')[1] || '').trim();
+    }
+    return out;
+  }, { pid: PID });
+
+  await ctx.close();
+
+  // EventSource/aborted-fetch noise (SSE + non-essential API are aborted) is
+  // expected and not a real failure; only genuine uncaught exceptions count.
+  const uncaught = pageErrors.filter((e) => !/aborted|net::ERR|Failed to fetch|EventSource/i.test(e));
+  let ok = true;
+  if (result.err) { ok = false; console.error(`❌ dispatch guard: dispatchAgent threw — ${result.err}`); if (result.diag) console.error('     diag: ' + JSON.stringify(result.diag)); }
+  if (uncaught.length) {
+    ok = false;
+    console.error('❌ dispatch guard: uncaught exception(s) during dispatch:');
+    uncaught.forEach((e) => console.error(`       • ${e}`));
+  }
+  if (ok && !dispatchHit) {
+    ok = false;
+    console.error('❌ dispatch guard: dispatchAgent never reached the POST — it aborted mid-path ' +
+      '(the cross-module persona code throws before the fetch in the regression this guards).');
+  }
+  if (ok) console.log('✅ dispatch guard: +New composer dispatched cleanly to the server (persona path, no cross-module throw).');
+  return ok;
+}
+
 let browser, allOk = false;
 try {
   browser = await chromium.launch();
   const results = [];
   for (const sc of SCENARIOS) results.push(await runScenario(browser, sc));
+  // Cross-module dispatch guard — runs after the boot scenarios so a boot
+  // regression is reported on its own first.
+  results.push(await runDispatchGuard(browser));
   allOk = results.every(Boolean);
   console.log(allOk
-    ? `\n✅ PASS — all ${results.length} boot scenarios rendered the grid.`
-    : `\n❌ FAIL — ${results.filter((r) => !r).length}/${results.length} boot scenario(s) failed.`);
+    ? `\n✅ PASS — ${SCENARIOS.length} boot scenarios + dispatch guard all green.`
+    : `\n❌ FAIL — ${results.filter((r) => !r).length}/${results.length} check(s) failed.`);
 } catch (err) {
   console.error('❌ FAIL — smoke harness error:', err && err.stack ? err.stack : err);
 } finally {
