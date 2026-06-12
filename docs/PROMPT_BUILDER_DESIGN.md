@@ -189,10 +189,11 @@ two consumers. Not v1.
   already lives on `_clayrune_agent_rules`; `--append-system-prompt-file`
   is the existing escape hatch.)
 - **`claude -r` ignores `--append-system-prompt`** (verified 2026-06-04).
-  A character activated mid-conversation will NOT take effect on a resumed
-  session. Phase-2 activation must ride the sticky-settings respawn
-  machinery (`_RESPAWN_TRIGGER_KEYS`-style: switch character → fresh
-  session on next turn, with the existing "fresh start" UX).
+  A system prompt can only be set at session spawn — never changed on a
+  resumed session. This is exactly why Phase-2 activation is **per chat,
+  chosen at chat creation** (owner decision 2026-06-12): the character is
+  injected once at spawn and is immutable for the life of that chat.
+  Switching personas = start a new chat. No respawn machinery needed.
 - **Claydo stays no-tools.** The builder is pure conversation; never grant
   tools/MCP to builder modes. Project context arrives pre-digested from the
   server, not via agent reads.
@@ -207,11 +208,17 @@ two consumers. Not v1.
   characters CRUD + handoff cards. A saved project character is *already
   live* as a native Claude Code subagent (@-mention / auto-delegate) — real
   value with zero dispatch-code risk.
-- **Phase 2 — activation as the main agent's persona:** per-project
-  `active_character` setting; `_build_agent_context()` prepends the
-  character body beside AGENT_RULES; respawn-on-switch (see §8); picker in
-  the project modal (near the model picker). This touches dispatch family —
-  small, but review with the session-lifecycle rules in mind.
+- **Phase 2 — activation as the main agent's persona, per CHAT (owner
+  decision 2026-06-12):** the character is picked when starting a new
+  conversation — selector in the new-chat flow, listing project + global
+  characters, default None. Stored on the session record (not the
+  project); shown as a badge in the chat header beside provider·model.
+  `_build_agent_context()` prepends the character body at spawn beside
+  AGENT_RULES. Immutable per chat — switching = new chat — which makes
+  the `claude -r` limitation (§8) a non-issue by construction. Optional
+  later layer, NOT in scope: a project-level *default* character that new
+  chats inherit. Touches dispatch family — small, but review with the
+  session-lifecycle rules in mind.
 - **Phase 3 — library surface:** characters list/edit/delete in the Skills
   panel (retitle "Skills & Characters") or its own sidebar entry; community
   import (paste a GitHub raw URL → preview → save); browse curated
