@@ -6,6 +6,33 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-12e] — Voice input: record-on/record-off (inline auto-restart)
+
+The 2026-06-11 dictation-mode tweak wasn't enough — Google's recognizer still
+finalized too eagerly mid-conversation. Activating the fallback that the prior
+entry kept in reserve: a true record-on / record-off toggle the user controls.
+
+- **Root cause (confirmed against plugin Java):** in `popup: true` mode Google's
+  fullscreen RecognizerIntent owns the whole lifecycle and ends the take on its
+  own silence detection — our "tap to stop" can't override it, and the
+  `EXTRA_SPEECH_INPUT_*SILENCE*` knobs are ignored.
+- **Fix:** `popup: false` (inline streaming) + a silence-driven **auto-restart
+  loop** in `static/js/composer-extras.js`. Android's stock `SpeechRecognizer`
+  always finalizes on a silence gap (no true continuous mode), so each finalize
+  is treated as the end of a *cycle*, not the recording — text is committed to a
+  growing base and a fresh pass starts. Dictation continues until the user taps
+  the mic off. Verified against `SpeechRecognition.java`: in `partialResults`
+  mode `start()` resolves immediately, the final transcript arrives as the last
+  `partialResults` event, and `listeningState:'stopped'` marks each utterance
+  end; `ERROR_NO_MATCH`/`SPEECH_TIMEOUT` are swallowed (no event), so a 6 s
+  no-activity watchdog catches silent-death cycles and a 6-empty-cycle streak
+  auto-stops. Tap-off sets `active=false`, fires native `stop()`, lets the
+  in-flight cycle finalize (1.5 s backstop).
+- **Scope:** JS-only — no APK rebuild; the shell loads the web UI from the
+  server, so a cold app reopen picks it up.
+- **Rollback:** revert `static/js/composer-extras.js` (the prior popup+dictation
+  build) — `git revert` of this commit.
+
 ## [2026-06-12d] — Reply-summarization gate: enforced brevity backstop
 
 The brief-reply directive asks the model to be short; Ron wants short

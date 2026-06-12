@@ -12,7 +12,7 @@ function micAvailable() {
 function micBtnHTML(textareaId) {
   if (!micAvailable()) return '';
   return `<button class="btn-mic" type="button" id="btn-mic-${textareaId}"
-    title="Voice input (tap to start, tap again to stop)"
+    title="Voice dictation — tap to record, tap again to stop"
     onclick="toggleAgentMic('${textareaId}')">&#127908;</button>`;
 }
 // Per-textarea recording state. `gen` is a monotonic counter that lets stale
@@ -45,7 +45,14 @@ async function _startAgentMic(textareaId) {
   if (!SR) { _micToast('plugin missing'); return; }
   if (!ta) { _micToast('textarea not found: ' + textareaId); return; }
   const gen = ++_micGen;
-  _micState[textareaId] = { active: true, gen, base: '', sep: '', partial: null, state: null };
+  const base0 = ta.value || '';
+  _micState[textareaId] = {
+    active: true, gen, base: base0,
+    sep: base0 && !/\s$/.test(base0) ? ' ' : '',
+    listening: false, partial: null, state: null,
+    endTimer: null, beginTimer: null, watchdog: null, forceReset: null,
+    sawPartial: false, cycleStartBase: base0, emptyStreak: 0,
+  };
   const btn = document.getElementById(`btn-mic-${textareaId}`);
   if (btn) btn.classList.add('recording');
   try {
@@ -58,81 +65,159 @@ async function _startAgentMic(textareaId) {
     }
     // State may have been reset by another tap while permissions resolved.
     if (!_micState[textareaId] || _micState[textareaId].gen !== gen) return;
-    _micState[textareaId].base = ta.value || '';
-    _micState[textareaId].sep = _micState[textareaId].base && !/\s$/.test(_micState[textareaId].base) ? ' ' : '';
+    // Re-base on the textarea's current value (it may have changed while the
+    // permission prompt was up).
+    {
+      const cur = _micState[textareaId];
+      cur.base = ta.value || '';
+      cur.sep = cur.base && !/\s$/.test(cur.base) ? ' ' : '';
+      cur.cycleStartBase = cur.base;
+    }
+    // Attach the streaming listeners ONCE; they live for the whole recording
+    // session and are reused across the silence-driven restart cycles below.
     try {
       _micState[textareaId].partial = await SR.addListener('partialResults', (data) => {
         const cur = _micState[textareaId];
-        if (!cur || cur.gen !== gen) return;
+        if (!cur || cur.gen !== gen || !cur.listening) return;
         const live = document.getElementById(textareaId);
         if (!live) return;
         const matches = (data && (data.matches || data.value)) || [];
         if (!matches.length) return;
+        // Speech detected — keep the cycle alive and remember we got text.
+        cur.sawPartial = true;
+        _micResetWatchdog(textareaId, gen);
         live.value = cur.base + cur.sep + String(matches[0] || '');
         try { live.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
       });
       _micState[textareaId].state = await SR.addListener('listeningState', (data) => {
         const cur = _micState[textareaId];
         if (!cur || cur.gen !== gen) return;
-        if (data && data.status === 'stopped') _hardResetMic(textareaId);
+        if (data && data.status === 'started') { _micResetWatchdog(textareaId, gen); return; }
+        // 'stopped' = end of one utterance (a silence gap). Defer the cycle
+        // end a beat so the trailing final transcript (delivered as one last
+        // partialResults event right after onEndOfSpeech) lands before we
+        // promote the text and restart.
+        if (data && data.status === 'stopped') _micScheduleEnd(textareaId, gen, 600);
       });
     } catch (e) { console.warn('mic listener attach failed', e); }
-    // Hard-coded en-US: device-locale (he-IL, en-IL etc.) often isn't an
-    // installed recognizer language pack, throws ERROR_LANGUAGE_NOT_SUPPORTED
-    // immediately. en-US is universally available on Google's recognizer.
-    _micToast('opening mic…');
-    // popup: true uses Android's system RecognizerIntent fullscreen dialog.
-    // Pros: bulletproof — Google handles the entire lifecycle (mic prompt,
-    // partials, silence detection, retry), no state stickiness between
-    // sessions, no silent hangs. The plugin returns the result via the
-    // activity callback. Cons: fullscreen dialog instead of inline
-    // streaming. Tradeoff worth it until the upstream plugin is patched.
-    //
-    // partialResults: true is NOT for partial events (none are delivered in
-    // popup mode — results still arrive via the activity-result promise
-    // below). The plugin forwards the flag as the undocumented
-    // "android.speech.extra.DICTATION_MODE" intent extra, which switches the
-    // system dialog to long-form dictation: it rides out thinking pauses
-    // instead of finalizing at the first ~1s gap. The documented
-    // EXTRA_SPEECH_INPUT_*SILENCE* knobs are ignored by Google's recognizer,
-    // so this is the only silence-patience lever that works without forking
-    // the plugin. Exact patience varies with the device's Google app version.
-    SR.start({ language: 'en-US', maxResults: 2, partialResults: true, popup: true })
-      .then((result) => {
-        const cur = _micState[textareaId];
-        const live = document.getElementById(textareaId);
-        if (cur && cur.gen === gen && live) {
-          const matches = (result && (result.matches || result.value)) || [];
-          if (matches.length) {
-            live.value = cur.base + cur.sep + String(matches[0] || '');
-            try { live.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-            _micToast('got: ' + String(matches[0] || '').slice(0, 40));
-          } else {
-            _micToast('no transcription');
-          }
-        }
-        _hardResetMic(textareaId);
-      })
-      .catch((e) => { _micToast('error: ' + (e && e.message || e)); _hardResetMic(textareaId); });
+    _micToast('listening…');
+    _beginMicCycle(textareaId, gen);
   } catch (e) {
     _micToast('mic outer fail: ' + (e && e.message || e));
     _hardResetMic(textareaId);
   }
 }
-function _stopAgentMic(textareaId) {
-  // Tear down JS state + UI SYNCHRONOUSLY so the button is unstuck even if
-  // the native stop() hangs or throws. Then fire the native stop in the
-  // background; we don't await it.
+// One listen pass. Android's stock SpeechRecognizer ALWAYS finalizes on a
+// silence gap — there is no true continuous mode — so we treat each finalize
+// as the end of a *cycle*, not the end of recording, and transparently
+// restart. Dictation then continues until the user taps the button off. This
+// is the record-on / record-off model: Google's eager stop no longer ends the
+// session, it just rolls into the next pass.
+//
+// Options rationale:
+//   language 'en-US'  — device locales (he-IL / en-IL …) frequently lack an
+//                       installed recognizer pack → ERROR_LANGUAGE_NOT_SUPPORTED.
+//   popup: false      — inline/streaming via SpeechRecognizer; NO fullscreen
+//                       Google dialog that owns (and prematurely ends) its own
+//                       lifecycle. This is the core of the fix.
+//   partialResults    — enables live partial events AND, via the plugin's
+//                       DICTATION_MODE intent extra, makes each pass ride out
+//                       short thinking pauses before finalizing.
+// In partialResults mode the plugin resolves start() immediately (text arrives
+// via the listeners, and the final transcript as the last partialResults
+// event), so we never read the promise for text — only to catch a hard reject.
+function _beginMicCycle(textareaId, gen) {
   const SR = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
-  _hardResetMic(textareaId);
+  const cur = _micState[textareaId];
+  if (!SR || !cur || cur.gen !== gen || !cur.active) return;
+  cur.listening = true;
+  cur.sawPartial = false;
+  cur.cycleStartBase = cur.base;
+  _micResetWatchdog(textareaId, gen);
+  try {
+    Promise.resolve(SR.start({ language: 'en-US', maxResults: 2, partialResults: true, popup: false }))
+      .catch((e) => {
+        const c = _micState[textareaId];
+        if (!c || c.gen !== gen) return;
+        // Some devices reject (e.g. RECOGNIZER_BUSY) instead of emitting a
+        // 'stopped' event — funnel it through the same cycle-end path.
+        _micScheduleEnd(textareaId, gen, 250);
+      });
+  } catch (e) {
+    _micScheduleEnd(textareaId, gen, 250);
+  }
+}
+function _micResetWatchdog(textareaId, gen) {
+  const cur = _micState[textareaId];
+  if (!cur || cur.gen !== gen) return;
+  try { cur.watchdog && clearTimeout(cur.watchdog); } catch (_) {}
+  // Fires only when a cycle goes fully silent with no end event at all —
+  // covers the case where the recognizer dies on ERROR_NO_MATCH /
+  // SPEECH_TIMEOUT, which the plugin swallows (start() already resolved) and
+  // reports via neither a rejection nor a 'stopped' event. Any partial or
+  // 'started' event pushes this out, so it never preempts live speech.
+  cur.watchdog = setTimeout(() => _endMicCycle(textareaId, gen), 6000);
+}
+function _micScheduleEnd(textareaId, gen, delay) {
+  const cur = _micState[textareaId];
+  if (!cur || cur.gen !== gen || !cur.listening) return;
+  try { cur.endTimer && clearTimeout(cur.endTimer); } catch (_) {}
+  cur.endTimer = setTimeout(() => _endMicCycle(textareaId, gen), delay);
+}
+function _endMicCycle(textareaId, gen) {
+  const cur = _micState[textareaId];
+  if (!cur || cur.gen !== gen || !cur.listening) return;   // once per cycle
+  cur.listening = false;
+  try { cur.watchdog && clearTimeout(cur.watchdog); } catch (_) {}
+  try { cur.endTimer && clearTimeout(cur.endTimer); } catch (_) {}
+  // Promote whatever the listeners rendered into the committed base so the
+  // next cycle appends after it (guard against an external shrink of the box).
+  const live = document.getElementById(textareaId);
+  if (live && typeof live.value === 'string' && live.value.length >= cur.base.length) {
+    cur.base = live.value;
+    cur.sep = cur.base && !/\s$/.test(cur.base) ? ' ' : '';
+  }
+  // Detect a recognizer producing nothing (silent-death loop) and stop after a
+  // run of empty cycles rather than spinning forever.
+  if (!cur.sawPartial && cur.base === cur.cycleStartBase) {
+    cur.emptyStreak = (cur.emptyStreak || 0) + 1;
+  } else {
+    cur.emptyStreak = 0;
+  }
+  if (cur.active && cur.emptyStreak >= 6) { _micToast('stopped — no speech'); _hardResetMic(textareaId); return; }
+  if (cur.active) {
+    // Brief settle before restart; an immediate start() often hits
+    // ERROR_RECOGNIZER_BUSY before the old recognizer fully releases.
+    cur.beginTimer = setTimeout(() => _beginMicCycle(textareaId, gen), 300);
+  } else {
+    _hardResetMic(textareaId);
+  }
+}
+function _stopAgentMic(textareaId) {
+  // User tapped off. Signal "do not restart" and drop the button highlight
+  // SYNCHRONOUSLY so it's responsive even if native stop() hangs. Then let the
+  // in-flight cycle finalize (capturing the last transcript) with a hard
+  // backstop if it never does.
+  const SR = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition;
+  const st = _micState[textareaId];
+  if (!st) { _micUiOff(textareaId); return; }
+  st.active = false;
+  _micUiOff(textareaId);
+  try { st.beginTimer && clearTimeout(st.beginTimer); } catch (_) {}
   if (SR) { try { Promise.resolve(SR.stop()).catch(() => {}); } catch (_) {} }
+  // Between cycles (not currently listening) → nothing will finalize; reset now.
+  if (!st.listening) { _hardResetMic(textareaId); return; }
+  try { st.forceReset && clearTimeout(st.forceReset); } catch (_) {}
+  st.forceReset = setTimeout(() => _hardResetMic(textareaId), 1500);
 }
 function _hardResetMic(textareaId) {
   const st = _micState[textareaId];
   if (st) {
     try { st.partial && st.partial.remove && st.partial.remove(); } catch (_) {}
     try { st.state && st.state.remove && st.state.remove(); } catch (_) {}
-    try { st.softStop && clearTimeout(st.softStop); } catch (_) {}
+    try { st.endTimer && clearTimeout(st.endTimer); } catch (_) {}
+    try { st.beginTimer && clearTimeout(st.beginTimer); } catch (_) {}
+    try { st.watchdog && clearTimeout(st.watchdog); } catch (_) {}
     try { st.forceReset && clearTimeout(st.forceReset); } catch (_) {}
   }
   delete _micState[textareaId];
