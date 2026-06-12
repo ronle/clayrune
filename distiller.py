@@ -1898,12 +1898,17 @@ def loop_health() -> dict:
         snap['alerts'].append(
             f"readback hit-rate low: {int(rb['hit_rate'] * 100)}% over "
             f"{rb['queries']} queries - explorations rarely match live tasks.")
-    # Promotion backlog: artifacts accumulate with no promotion surface yet.
-    if snap['queue']['total'] >= 10:
+    # Promotion backlog: only PROMOTABLE artifacts (skill/preference/update) need
+    # a human decision. Explorations are excluded — they have no promote action
+    # (the readback surfaces them silently) and only need occasional pruning, so
+    # counting them fired a perpetual false "nothing leaves the queue" alarm even
+    # while promotion was actively draining the real backlog.
+    by_kind = snap['queue'].get('by_kind', {}) or {}
+    promotable_backlog = snap['queue']['total'] - int(by_kind.get('exploration', 0))
+    if promotable_backlog >= 10:
         snap['alerts'].append(
-            f"promotion backlog: {snap['queue']['total']} artifacts queued in "
-            f"_proposed/ (oldest {snap['queue']['oldest_created_at']}); no "
-            "promotion UI exists yet, so nothing leaves the queue.")
+            f"promotion backlog: {promotable_backlog} promotable artifacts "
+            f"(skill/preference) queued in _proposed/ awaiting human review.")
     return snap
 
 

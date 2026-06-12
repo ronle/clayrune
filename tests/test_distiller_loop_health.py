@@ -30,6 +30,15 @@ def _expl(skills_root: Path, scope_dir: str, slug: str):
         encoding='utf-8')
 
 
+def _pref(skills_root: Path, scope_dir: str, slug: str):
+    d = skills_root / '_proposed' / scope_dir / f"2026-06-05T00-00-00-bbbb-{slug}"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / 'PREFERENCE.md').write_text(
+        "---\nkind: preference\nname: " + slug + "\n"
+        "created_at: 2026-06-05T00:00:00Z\n---\n\n# t\n\nbody\n",
+        encoding='utf-8')
+
+
 def _setup(tmp_path):
     distiller._data_root = tmp_path / 'projects'
     distiller._skills_root = tmp_path / 'skills'
@@ -82,7 +91,11 @@ def test_readback_hit_rate(tmp_path):
     assert any('readback hit-rate low' in a for a in snap['alerts'])
 
 
-def test_promotion_backlog_alert(tmp_path):
+def test_promotion_backlog_alert_excludes_explorations(tmp_path):
+    """Explorations have no promote action (readback uses them silently), so a
+    queue of pure explorations must NOT fire the promotion-backlog alert — the
+    old behavior fired perpetually while promotion was actively draining the
+    real backlog."""
     _setup(tmp_path)
     _stats(tmp_path / 'projects', 'p1', {})
     for i in range(10):
@@ -90,6 +103,16 @@ def test_promotion_backlog_alert(tmp_path):
     snap = distiller.loop_health()
     assert snap['queue']['total'] == 10
     assert snap['queue']['by_kind']['exploration'] == 10
+    assert not any('promotion backlog' in a for a in snap['alerts'])
+
+
+def test_promotion_backlog_alert_fires_on_promotables(tmp_path):
+    """Promotable artifacts (preference/skill) awaiting review DO fire it."""
+    _setup(tmp_path)
+    _stats(tmp_path / 'projects', 'p1', {})
+    for i in range(10):
+        _pref(tmp_path / 'skills', 'p1', f'pref-{i}')
+    snap = distiller.loop_health()
     assert any('promotion backlog' in a for a in snap['alerts'])
 
 
