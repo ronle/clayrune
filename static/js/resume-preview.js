@@ -258,14 +258,8 @@ async function dispatchAgent(projectId) {
   // spawn's persona; claude -r can't change the system prompt). The value
   // is "scope:name"; resolve it to its meta for the optimistic pill so the
   // badge shows instantly, before the first /agent/status round-trip.
-  const _chosenCharacter = resumeId ? '' : (pendingDispatchCharacter[projectId] || '');
-  let _chosenCharMeta = null;
-  if (_chosenCharacter) {
-    const _ci = _chosenCharacter.indexOf(':');
-    const _cScope = _chosenCharacter.slice(0, _ci), _cName = _chosenCharacter.slice(_ci + 1);
-    const _cRec = (characterCache[projectId] || []).find(c => c.name === _cName && (c.scope || 'global') === _cScope);
-    _chosenCharMeta = { name: _cName, scope: _cScope, display_name: (_cRec && (_cRec.display_name || _cRec.name)) || _cName };
-  }
+  const _chosenCharacter = resumeId ? '' : getPendingCharacter(projectId);
+  const _chosenCharMeta = _chosenCharacter ? resolveCharacterMeta(projectId, _chosenCharacter) : null;
   // Match the server's seeded log_lines format so the SSE/reconcile delivery
   // of the same line dedupes against this optimistic insert. The server
   // writes `> {user_label}: {task}` to log_lines on fresh dispatch (see
@@ -291,7 +285,7 @@ async function dispatchAgent(projectId) {
   agentHistory.unshift({ projectId, sessionId: tempSessionId, projectName: pName, task: displayTask, status: 'running', startedAt: new Date().toISOString(), resumedFrom: resumeId || null, incognito: incognitoFlag, provider: _chosenProvider, character: _chosenCharMeta });
   activeAgentTab[projectId] = tempSessionId;
   delete agentConvNew[projectId];  // dispatched → drill into the new convo
-  delete pendingDispatchCharacter[projectId];  // next new chat defaults to None (opt-in per chat)
+  clearPendingCharacter(projectId);  // next new chat defaults to None (opt-in per chat)
   refreshModal();
   renderAgentConsole();
 

@@ -59,6 +59,31 @@ function setComposerCharacter(projectId, character) {
   refreshModalById(projectId);
 }
 
+// Cross-module accessors for the per-chat persona state. These vars are
+// module-scoped to conversation.js; resume-preview.js (the dispatch path) must
+// reach them through these window-exposed helpers — NOT by touching the vars
+// directly, which throws a ReferenceError across the ES-module boundary and
+// aborts every dispatch (the "new/old chats immediately STOPPED" regression).
+// Mirrors how provider state is shared via _composerProvider().
+function getPendingCharacter(projectId) {
+  return pendingDispatchCharacter[projectId] || '';
+}
+function clearPendingCharacter(projectId) {
+  delete pendingDispatchCharacter[projectId];
+}
+function resolveCharacterMeta(projectId, character) {
+  if (!character) return null;
+  const i = character.indexOf(':');
+  const scope = character.slice(0, i), name = character.slice(i + 1);
+  const rec = (characterCache[projectId] || [])
+    .find(c => c.name === name && (c.scope || 'global') === scope);
+  return { name, scope, display_name: (rec && (rec.display_name || rec.name)) || name };
+}
+window.setComposerCharacter = setComposerCharacter;
+window.getPendingCharacter = getPendingCharacter;
+window.clearPendingCharacter = clearPendingCharacter;
+window.resolveCharacterMeta = resolveCharacterMeta;
+
 // Provider is bound per-conversation. The new-chat composer picks it; the
 // project's `provider` field (set via three-dot menu) is only the default seed.
 function _composerProvider(p) {
