@@ -6,6 +6,28 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-12] — Brief replies: per-turn delivery guarantee + default ON
+
+"Brief replies = Everywhere" was on, yet agents across all projects still
+answered long. The setting (Settings → Agent → Brief replies) was never lost —
+its delivery was leaky.
+
+- **Root cause:** with `sticky_agent_settings` on, the brevity directive was
+  baked ONLY into the spawn-time system prompt, and `_apply_mobile_brief`
+  deliberately skipped the per-turn prepend to avoid doubling. But `claude -r`
+  restores a session's ORIGINAL system prompt (canary-proven 2026-06-04), so
+  every chat spawned before the flag flipped — or revived across an MC
+  restart — ran with no brevity directive at all.
+- **Fix:** `_apply_mobile_brief` now prepends `_BRIEF_REPLY_DIRECTIVE_ALWAYS`
+  on EVERY turn when `brief_replies_always_enabled` is on, regardless of
+  sticky. The ~110-token overlap on fresh sessions (system bake + per-turn) is
+  the same instruction twice — harmless, reinforcing. All 8 dispatch paths flow
+  through this one chokepoint.
+- **Default flip:** `brief_replies_always_enabled` now defaults ON
+  (`server.py`) — short replies are the guiding line for all agents; detail
+  only on explicit request. Existing config.json values are untouched.
+- **Rollback:** Settings → Agent → Brief replies → Off (or Phone).
+
 ## [2026-06-11] — Voice input: dictation mode so the mic rides out thinking pauses
 
 The Android mic dialog finalized the recording after ~1s of silence — pausing

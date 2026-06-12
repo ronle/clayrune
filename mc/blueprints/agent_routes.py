@@ -1459,9 +1459,10 @@ def _build_agent_context(project, incognito=False, task=''):
     if user_name:
         parts.append(f"The user's name is {user_name}. Address them accordingly.")
     # Sticky brevity: when sticky_agent_settings is on, the device-neutral brief
-    # directive lives HERE (cached, once per spawn) instead of being prepended to
-    # every user turn by _apply_mobile_brief. Flipping the toggle mid-session is
-    # handled by the respawn-on-flip path (see update_config / agent_followup).
+    # directive is ALSO baked here (cached, once per spawn) for system-level
+    # authority on fresh sessions. _apply_mobile_brief still prepends the
+    # per-turn variant unconditionally — that's the only path that reaches
+    # resumed sessions, since `claude -r` restores the original system prompt.
     if (state.CONFIG.get('sticky_agent_settings', False)
             and state.CONFIG.get('brief_replies_always_enabled', False)):
         parts.append(_BRIEF_REPLY_DIRECTIVE_SYSTEM)
@@ -3070,10 +3071,12 @@ _BRIEF_REPLY_DIRECTIVE = (
 )
 
 # Device-neutral variant for `brief_replies_always_enabled` (applies on desktop
-# too, so it can't say "from a phone" / "switch to PC"). Per-turn prepend used
-# when sticky_agent_settings is OFF; mirrors the hard framing of the
-# system-baked variant. Brevity targets PROSE only — necessary code, file
-# edits, and tool work are never truncated.
+# too, so it can't say "from a phone" / "switch to PC"). Prepended on EVERY
+# turn regardless of sticky_agent_settings — the system-baked variant only
+# reaches fresh spawns (`claude -r` drops resume-time appends), so this is the
+# delivery guarantee for resumed/pre-existing chats. Mirrors the hard framing
+# of the system-baked variant. Brevity targets PROSE only — necessary code,
+# file edits, and tool work are never truncated.
 _BRIEF_REPLY_DIRECTIVE_ALWAYS = (
     "[BINDING for this reply — brevity is a hard rule, not a preference. Lead "
     "with the answer; hard ceiling ~4 sentences of prose (more only if the user "
@@ -3121,11 +3124,13 @@ def _apply_mobile_brief(message: str, request_data: dict) -> str:
     the ORIGINAL `message` for anything user-visible (log_lines, telemetry).
     """
     if state.CONFIG.get('brief_replies_always_enabled'):
-        # When sticky_agent_settings is on, this directive is baked into the
-        # spawn-time system prompt (_build_agent_context) — don't also prepend
-        # it per turn, or it doubles up.
-        if state.CONFIG.get('sticky_agent_settings', False):
-            return message
+        # Always prepend per turn, even when sticky_agent_settings has baked
+        # the system-prompt variant at spawn. The bake only reaches FRESH
+        # spawns: `claude -r` restores the session's original system prompt
+        # (canary-proven 2026-06-04), so any chat spawned before the flag was
+        # on — or resumed across an MC restart — silently loses it. The
+        # per-turn prepend is the delivery guarantee; the ~110-token overlap
+        # on fresh sessions is the same instruction twice and is harmless.
         return f"{_BRIEF_REPLY_DIRECTIVE_ALWAYS}\n\n{message}"
     if not state.CONFIG.get('mobile_brief_replies_enabled'):
         return message
