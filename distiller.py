@@ -375,6 +375,7 @@ def _empty_stats() -> dict:
         'suppressions': {},
         'outbox': {},
         'counters': {},
+        'vocab_misses': [],
         'cost': {},
         'cap_hits': 0,
         'cap': 0,
@@ -401,6 +402,59 @@ def _increment_counter(project_id: str, key: str, n: int = 1) -> None:
             _write_skill_stats(project_id, stats)
     except Exception:
         pass
+
+
+_VOCAB_MISS_CAP = 100  # per-project ring buffer of dropped-phrase samples
+
+
+def _vocab_oov(phrase: str) -> tuple[str, str]:
+    """Why did `phrase` fail fingerprinting? Mirrors fingerprint()'s parser to
+    name the offending token, so loop-health can show WHICH vocab to add.
+
+    Returns (reason, token): reason ∈ {'empty', 'oov_verb', 'oov_noun'}.
+    Only meaningful when fingerprint(phrase) is None (the caller's guard)."""
+    parts = [p for p in (phrase or '').strip().lower().split('-') if p][:4]
+    if not parts:
+        return ('empty', '')
+    verb = parts[0]
+    if verb not in VERBS:
+        return ('oov_verb', verb)
+    remaining = parts[1:]
+    if len(remaining) >= 2 and f"{remaining[0]}-{remaining[1]}" in NOUNS:
+        return ('ok', '')          # unreachable when fp is None — defensive
+    if remaining and remaining[0] in NOUNS:
+        return ('ok', '')
+    return ('oov_noun', remaining[0] if remaining else '')
+
+
+def _record_vocab_miss(project_id: str, phrase: str) -> None:
+    """Counter bump + a capped sample of the dropped phrase and its OOV reason.
+
+    The lifetime `vocabulary_miss` counter only said HOW MANY phrases the closed
+    vocab dropped; this records WHICH ones (and which token failed) so the vocab
+    can be grown from real misses instead of guesswork. Best-effort, never raises.
+    """
+    reason, token = _vocab_oov(phrase)
+    try:
+        with _get_skill_stats_lock(project_id):
+            stats = _read_skill_stats(project_id)
+            counters = stats.setdefault('counters', {})
+            counters[TELEM_VOCABULARY_MISS] = \
+                int(counters.get(TELEM_VOCABULARY_MISS, 0)) + 1
+            misses = stats.setdefault('vocab_misses', [])
+            misses.append({
+                'ts': _now_iso() if _now_iso else '',
+                'phrase': (phrase or '')[:80],
+                'reason': reason, 'token': (token or '')[:40],
+            })
+            if len(misses) > _VOCAB_MISS_CAP:
+                del misses[:-_VOCAB_MISS_CAP]   # keep newest N
+            _write_skill_stats(project_id, stats)
+    except Exception:
+        pass
+    _structured_log(
+        f"vocab_miss:project_id={project_id}:reason={reason}:"
+        f"token={token}:phrase={phrase}")
 
 
 def _structured_log(line: str) -> None:
@@ -796,7 +850,7 @@ def _normalize_signals(project_id: str, sid: str, parsed: dict) -> list[dict]:
         phrase = _normalize_phrase(sig.get('phrase', ''))
         fp = fingerprint(phrase)
         if fp is None:
-            _increment_counter(project_id, TELEM_VOCABULARY_MISS)
+            _record_vocab_miss(project_id, phrase)
             continue
         exact, coarse = fp
         out.append({
@@ -815,7 +869,7 @@ def _normalize_signals(project_id: str, sid: str, parsed: dict) -> list[dict]:
         phrase = _normalize_phrase(sig.get('phrase', ''))
         fp = fingerprint(phrase)
         if fp is None:
-            _increment_counter(project_id, TELEM_VOCABULARY_MISS)
+            _record_vocab_miss(project_id, phrase)
             continue
         exact, coarse = fp
         out.append({
@@ -831,7 +885,7 @@ def _normalize_signals(project_id: str, sid: str, parsed: dict) -> list[dict]:
         phrase = _normalize_phrase(sig.get('phrase', ''))
         fp = fingerprint(phrase)
         if fp is None:
-            _increment_counter(project_id, TELEM_VOCABULARY_MISS)
+            _record_vocab_miss(project_id, phrase)
             continue
         exact, coarse = fp
         out.append({
@@ -1815,6 +1869,7 @@ def loop_health() -> dict:
     }
     # ── Sum counters across every project sidecar ────────────────────────────
     agg: Counter = Counter()
+    all_vocab_misses: list[dict] = []
     try:
         if _data_root is not None:
             for p in _data_root.glob('*_skill_stats.json'):
@@ -1828,6 +1883,7 @@ def loop_health() -> dict:
                         agg[k] += int(v)
                     except Exception:
                         pass
+                all_vocab_misses.extend(stats.get('vocab_misses', []) or [])
     except Exception as e:
         snap['alerts'].append(f"counter aggregation failed: {e!r}")
 
@@ -1848,6 +1904,22 @@ def loop_health() -> dict:
     snap['extraction']['errors'] = (
         agg.get('extraction_error', 0) + agg.get('extraction_parse_error', 0))
     snap['extraction']['vocabulary_miss'] = agg.get('vocabulary_miss', 0)
+    # Surface WHICH phrases/tokens the closed vocab dropped (sampled going
+    # forward via _record_vocab_miss) so the vocab can be grown from real data.
+    # Lifetime `vocabulary_miss` counts all-time; these samples are the most
+    # recent _VOCAB_MISS_CAP per project, so they lag the cumulative count.
+    snap['extraction']['vocab_miss_sampled'] = len(all_vocab_misses)
+    snap['extraction']['vocab_miss_top_phrases'] = Counter(
+        m.get('phrase', '') for m in all_vocab_misses if m.get('phrase')
+    ).most_common(15)
+    snap['extraction']['vocab_miss_oov_verbs'] = Counter(
+        m.get('token', '') for m in all_vocab_misses
+        if m.get('reason') == 'oov_verb' and m.get('token')
+    ).most_common(15)
+    snap['extraction']['vocab_miss_oov_nouns'] = Counter(
+        m.get('token', '') for m in all_vocab_misses
+        if m.get('reason') == 'oov_noun' and m.get('token')
+    ).most_common(15)
 
     # ── _proposed/ queue census ──────────────────────────────────────────────
     try:

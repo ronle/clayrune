@@ -42,6 +42,11 @@ def _pref(skills_root: Path, scope_dir: str, slug: str):
 def _setup(tmp_path):
     distiller._data_root = tmp_path / 'projects'
     distiller._skills_root = tmp_path / 'skills'
+    # Server-injected helpers — stub so the stats-write path (e.g. inside
+    # _record_vocab_miss) actually executes in standalone runs.
+    distiller._atomic_write_text = lambda p, t: Path(p).write_text(
+        t, encoding='utf-8')
+    distiller._now_iso = lambda: '2026-06-12T00:00:00Z'
 
 
 def test_refuse_rate_computed(tmp_path):
@@ -114,6 +119,38 @@ def test_promotion_backlog_alert_fires_on_promotables(tmp_path):
         _pref(tmp_path / 'skills', 'p1', f'pref-{i}')
     snap = distiller.loop_health()
     assert any('promotion backlog' in a for a in snap['alerts'])
+
+
+def test_vocab_miss_samples_surface(tmp_path):
+    """Dropped phrases are sampled with their OOV reason and surfaced in
+    loop-health so the closed vocab can be grown from real misses."""
+    _setup(tmp_path)
+    _stats(tmp_path / 'projects', 'p1', {})  # ensure projects dir + sidecar
+    # OOV verb (frobnicate∉VERBS), seen twice; OOV noun once.
+    distiller._record_vocab_miss('p1', 'frobnicate-condense')
+    distiller._record_vocab_miss('p1', 'frobnicate-scribe')
+    distiller._record_vocab_miss('p1', 'fix-quantumwidget')
+    snap = distiller.loop_health()
+    assert snap['extraction']['vocabulary_miss'] == 3
+    assert snap['extraction']['vocab_miss_sampled'] == 3
+    verbs = dict(snap['extraction']['vocab_miss_oov_verbs'])
+    nouns = dict(snap['extraction']['vocab_miss_oov_nouns'])
+    assert verbs.get('frobnicate') == 2
+    assert nouns.get('quantumwidget') == 1
+    phrases = dict(snap['extraction']['vocab_miss_top_phrases'])
+    assert phrases.get('frobnicate-condense') == 1
+
+
+def test_vocab_miss_ring_buffer_caps(tmp_path):
+    """The per-project sample buffer is bounded (newest kept), but the lifetime
+    counter keeps counting past the cap."""
+    _setup(tmp_path)
+    _stats(tmp_path / 'projects', 'p1', {})  # ensure projects dir + sidecar
+    for i in range(distiller._VOCAB_MISS_CAP + 25):
+        distiller._record_vocab_miss('p1', f'frobnicate-thing-{i}')
+    stats = distiller._read_skill_stats('p1')
+    assert len(stats['vocab_misses']) == distiller._VOCAB_MISS_CAP
+    assert stats['counters']['vocabulary_miss'] == distiller._VOCAB_MISS_CAP + 25
 
 
 def test_never_raises_on_empty(tmp_path):
