@@ -6,6 +6,24 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-13d] — Agent follow-up messages ignored the chat zoom
+
+On mobile, a follow-up agent message rendered at the CSS default size instead of
+the font size the user had pinch-zoomed to. `applyModalZoom` set the size inline
+on the lines *present at the time*, but streamed/appended lines never pass back
+through it — and the mobile rule `.agent-output .agent-line { font-size: 12.5px }`
+has an explicit size that blocks inheritance from `.agent-output`, so new bubbles
+snapped back to 12.5px.
+
+- `applyModalZoom` (`static/js/interactions.js`) now also sets a `--mc-zoom-font`
+  CSS var on `.modal-content`.
+- The agent-chat font-size rules (`static/css/app.css`: `.agent-output` base
+  desktop+mobile, `.agent-line`, `.agent-line-prompt`, the tool/status/error/
+  queued/followup chips) read `var(--mc-zoom-font, <default>)`. The var cascades
+  to every current AND future line, so appended messages match with no per-append
+  hook; unset (no zoom) falls back to the original defaults.
+- Frontend-only; cold app reopen to activate.
+
 ## [2026-06-13c] — Fail-fast on all recurring polls (Doze hardening)
 
 Follow-up to `[2026-06-13b]`: the same dead-socket hang existed on every other

@@ -2592,7 +2592,7 @@
   .agent-output {
     flex: 1; min-height: 0;
     overflow-y: auto; overflow-x: hidden; padding: 12px;
-    font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6;
+    font-family: 'JetBrains Mono', monospace; font-size: var(--mc-zoom-font, 12px); line-height: 1.6;
     color: var(--text); white-space: pre-wrap; word-break: break-word; min-width: 0;
   }
   .agent-output:empty { display: none; }
@@ -2697,7 +2697,7 @@
       gap: 6px;
       padding: 12px 10px 14px;
       font-family: 'Inter', -apple-system, system-ui, sans-serif;
-      font-size: 13px; line-height: 1.45;
+      font-size: var(--mc-zoom-font, 13px); line-height: 1.45;
       white-space: normal;
       background: var(--bg);
     }
@@ -2716,7 +2716,7 @@
       word-break: break-word;
       white-space: pre-wrap;
       font-family: 'JetBrains Mono', ui-monospace, monospace;
-      font-size: 12.5px;
+      font-size: var(--mc-zoom-font, 12.5px);
     }
     .agent-output .agent-line:empty { display: none; }
     /* User input / followup — right-aligned accent bubble */
@@ -2729,7 +2729,7 @@
       margin: 0;
       padding: 9px 13px;
       font-family: 'Inter', -apple-system, system-ui, sans-serif;
-      font-size: 13px;
+      font-size: var(--mc-zoom-font, 13px);
       font-weight: 500;
       max-width: 84%;
     }
@@ -2745,7 +2745,7 @@
     .agent-output .agent-line-followup {
       align-self: center;
       background: transparent;
-      font-size: 11px;
+      font-size: var(--mc-zoom-font, 11px);
       padding: 2px 8px;
       text-align: center;
       max-width: 92%;

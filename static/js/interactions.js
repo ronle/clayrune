@@ -803,7 +803,16 @@ document.addEventListener('touchend', (e) => {
 function applyModalZoom(modal, size) {
   // Set on modal-content for elements that inherit
   const content = modal.querySelector('.modal-content');
-  if (content) content.style.fontSize = size + 'px';
+  if (content) {
+    content.style.fontSize = size + 'px';
+    // Drive the zoomable agent-chat text via a CSS var too. Streamed/appended
+    // agent lines never pass back through this function, and on mobile the
+    // explicit `.agent-line { font-size: 12.5px }` rule blocks inheritance — so
+    // a follow-up message kept its CSS default size instead of the user's zoom.
+    // The var cascades from .modal-content to every current AND future line, so
+    // new bubbles match without a per-append hook. See app.css var(--mc-zoom-font).
+    content.style.setProperty('--mc-zoom-font', size + 'px');
+  }
   // Also set directly on elements with explicit font-size in CSS (overrides inheritance)
   modal.querySelectorAll(
     '.agent-output, .ac-session-output, .plan-viewer-body, ' +
