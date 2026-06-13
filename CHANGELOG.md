@@ -6,6 +6,30 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-13] — `/api/projects` payload trim (2.5MB → 0.8MB)
+
+Mobile dashboard load took ~50s and flashed "Failed to load — is server
+running?". Root cause: `/api/projects` shipped every project's **full backlog
+inline**, including note bodies — 2.5MB total (note bodies alone ~1.4MB on
+`mission_control`, where 842/870 items are done), 3.3s server-side. Over a
+Cloudflare tunnel to a phone that stacked to ~50s.
+
+- **Server (`mc/blueprints/project_routes.py`):** each backlog item now carries
+  `notes_count`/`attachments_count`; the `notes`/`attachments` arrays are popped.
+  Removed the dead per-item `ts_relative` loop (~1,400 `time_ago` calls/request
+  that nothing rendered). `load_projects()` returns fresh per-request dicts, so
+  in-place mutation is safe.
+- **Lazy-load:** note/attachment **bodies** render only in an open project
+  modal, so the modal lazy-loads the full backlog on open (`refreshProjectBacklog`,
+  sets `p._backlogFull`). `_preserveOpenBacklogs()` keeps that loaded backlog
+  across the 30s poll + `refreshSilent` so panels don't collapse back to counts.
+- **Badges** use `count ?? (arr||[]).length` — correct under both the trimmed
+  list payload and the full `/api/project/<id>/backlog` payload.
+- **Measured:** 2.49MB → 0.79MB (3.1×). Boot smoke green. Frontend is
+  backward-compatible with the un-restarted server (count fields absent →
+  array-length fallback); **server half needs a restart to activate.**
+- **Rollback:** `git revert b32c1ee`.
+
 ## [2026-06-12e] — Voice input: record-on/record-off (inline auto-restart)
 
 The 2026-06-11 dictation-mode tweak wasn't enough — Google's recognizer still
