@@ -923,14 +923,45 @@ function _preserveOpenBacklogs(fresh) {
   return fresh;
 }
 
+// Fail-fast + retry. On mobile, Android Doze parks the WebView's sockets while
+// backgrounded; on resume an existing socket reports "alive" but is dead, so a
+// plain fetch HANGS for the OS TCP timeout (tens of seconds) before throwing —
+// the "Failed to load — is server running?" flash, then a ~50s wait for data.
+// An AbortController abandons a parked socket fast and retries on a FRESH one,
+// which is what actually recovers. (Server-side this endpoint is ~0.3s warm.)
+let _fetchProjectsInFlight = false;
 async function fetchProjects() {
+  if (_fetchProjectsInFlight) return;   // don't stack a 2nd attempt over a retrying poll
+  _fetchProjectsInFlight = true;
+  const ATTEMPTS = 3, TIMEOUT_MS = 8000;
   try {
-    const res = await fetch(API_BASE + '/api/projects');
-    allProjects = _preserveOpenBacklogs(await res.json());
-    applyOrder();
-    render();
-  } catch(e) {
-    document.getElementById('projects-col').innerHTML = '<div class="loading">Failed to load — is server running?</div>';
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+      const ac = new AbortController();
+      const tid = setTimeout(() => ac.abort(), TIMEOUT_MS);
+      try {
+        const res = await fetch(API_BASE + '/api/projects', { signal: ac.signal, cache: 'no-store' });
+        clearTimeout(tid);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        allProjects = _preserveOpenBacklogs(await res.json());
+        applyOrder();
+        render();
+        return;
+      } catch(e) {
+        clearTimeout(tid);
+        if (attempt < ATTEMPTS) {
+          await new Promise(r => setTimeout(r, 600 * attempt));  // brief backoff → fresh socket
+          continue;
+        }
+        // Final failure: only show the error on a cold/empty grid. Never clobber
+        // an already-rendered grid for a transient poll blip — it'll retry next tick.
+        if (!allProjects.length) {
+          document.getElementById('projects-col').innerHTML =
+            '<div class="loading">Reconnecting — couldn’t reach the server.</div>';
+        }
+      }
+    }
+  } finally {
+    _fetchProjectsInFlight = false;
   }
 }
 
@@ -2873,6 +2904,12 @@ async function _resyncOpenModalsFromServer() {
     }
   }
   for (const pid of pids) fetchAgentStatus(pid);
+  // Refresh the DASHBOARD list on resume too. Without this the project grid
+  // (live status, last-updated, unread) waited up to 30s for the next poll tick
+  // after foreground — and if that tick's fetch hit the just-reaped dead socket
+  // it hung and flashed "Failed to load". fetchProjects() now fails fast + retries
+  // on a fresh socket, so the grid self-heals within a second or two of resume.
+  fetchProjects();
 }
 document.addEventListener('visibilitychange', _resyncOpenModalsFromServer);
 window.addEventListener('focus', _resyncOpenModalsFromServer);
