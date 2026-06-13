@@ -6,6 +6,17 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-13c] — Fail-fast on all recurring polls (Doze hardening)
+
+Follow-up to `[2026-06-13b]`: the same dead-socket hang existed on every other
+recurring poll. New shared `window.fetchFailFast(url, opts, timeoutMs=8000)`
+(AbortController, no-store default); routed `fetchProjects` (refactored),
+`fetchSystemStatus`/`fetchSystemUsage`, `refreshScheduleBanner`,
+`refreshAuthStatus`, `fetchAgentStatus`, and `_reconcileAgentBuffer` through it.
+No retry on the polls — the interval is the retry. Skipped `_pingPresence`
+(fire-and-forget POST) and on-demand modal loads (user-triggered). Commit
+`7080f33`. Frontend-only; cold app reopen to activate.
+
 ## [2026-06-13b] — Mobile dashboard 50s "Failed to load" — real fix
 
 The payload trim below was a real perf win but **did NOT fix the ~50s mobile
