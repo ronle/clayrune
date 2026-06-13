@@ -100,7 +100,7 @@ function renderAllBacklog() {
       isAgent ? 'agent-source' : '',
       isInProgress ? 'agent-in-progress' : '',
     ].filter(Boolean).join(' ');
-    const notesCount = (item.notes || []).length;
+    const notesCount = item.notes_count ?? (item.notes || []).length;
     return `
       <div class="backlog-item ${cls}" style="cursor:pointer" onclick="_jumpToBacklogItem('${esc(p.id)}','${esc(item.id)}')">
         <button class="backlog-check" onclick="event.stopPropagation();toggleDone(event,'${esc(p.id)}','${esc(item.id)}','${item.status}')" title="${item.status==='done'?'Reopen':'Mark done'}">

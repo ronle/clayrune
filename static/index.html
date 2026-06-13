@@ -905,10 +905,28 @@ function getDomainConfig(domainId) {
   return domainsList.find(d => d.id === domainId) || {id: domainId, label: domainId, color: 'var(--text-dim)', bg: 'var(--surface3)'};
 }
 
+// /api/projects trims backlog note/attachment BODIES to counts (keeps the list
+// payload small). A project modal lazy-loads the FULL backlog on open. Preserve
+// that loaded full backlog across a list re-fetch so the 30s poll / silent
+// refresh doesn't collapse an open modal's note/attachment panels back to empty.
+// Mutates `fresh` in place; returns it.
+function _preserveOpenBacklogs(fresh) {
+  const openIds = new Set([...openModals.keys()].filter(id => !id.startsWith('__')));
+  if (!openIds.size) return fresh;
+  const prevFull = {};
+  for (const p of allProjects) {
+    if (openIds.has(p.id) && p._backlogFull) prevFull[p.id] = p.backlog;
+  }
+  for (const p of fresh) {
+    if (prevFull[p.id]) { p.backlog = prevFull[p.id]; p._backlogFull = true; }
+  }
+  return fresh;
+}
+
 async function fetchProjects() {
   try {
     const res = await fetch(API_BASE + '/api/projects');
-    allProjects = await res.json();
+    allProjects = _preserveOpenBacklogs(await res.json());
     applyOrder();
     render();
   } catch(e) {
@@ -1749,7 +1767,7 @@ function showActionToast(message, actions, opts = {}) {
 
 async function refreshSilent() {
   const res = await fetch(API_BASE + '/api/projects');
-  allProjects = await res.json();
+  allProjects = _preserveOpenBacklogs(await res.json());
   // Refresh global config cache so per-project menu labels reflect the effective mode
   try {
     const cfgRes = await fetch(API_BASE + '/api/config');

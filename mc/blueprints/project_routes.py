@@ -272,8 +272,18 @@ def api_projects():
         p['live_agent'] = _project_live_agent(p.get('id'))
         for entry in p.get('activity_log', []):
             entry['ts_relative'] = time_ago(entry.get('ts'))
+        # Backlog note/attachment BODIES dominate this payload (notes alone were
+        # ~1.4 MB on a single heavy project) yet the dashboard list needs only
+        # their COUNTS — bodies render solely in an open project modal, which
+        # lazy-loads the full backlog via /api/project/<id>/backlog on open.
+        # Trim bodies to counts so this regularly-polled list stays small.
+        # (load_projects() returns fresh per-request dicts, so mutating is safe.
+        # The old per-item ts_relative was also dead compute — nothing rendered it.)
         for item in p.get('backlog', []):
-            item['ts_relative'] = time_ago(item.get('created_at'))
+            item['notes_count'] = len(item.get('notes') or [])
+            item['attachments_count'] = len(item.get('attachments') or [])
+            item.pop('notes', None)
+            item.pop('attachments', None)
     return jsonify(projects)
 
 

@@ -348,6 +348,10 @@ function modalContentHTML(p) {
   const backlogItemsHTML = visibleItems.map(item => {
     const isAgent = (item.source || '').startsWith('agent:');
     const isInProgress = item.agent_status === 'in_progress';
+    // Counts come from the trimmed list payload (notes_count/attachments_count);
+    // fall back to array length once the full backlog is lazy-loaded on modal open.
+    const notesN = item.notes_count ?? (item.notes || []).length;
+    const attsN = item.attachments_count ?? (item.attachments || []).length;
     const extraClasses = [
       item.status==='done' ? 'done' : '',
       `priority-${item.priority||'normal'}`,
@@ -380,12 +384,12 @@ function modalContentHTML(p) {
         ${item.github_issue_number ? `<a class="gh-issue-link" href="https://github.com/${esc(p.github_repo||'')}/issues/${item.github_issue_number}" target="_blank" rel="noopener" title="View on GitHub">#${item.github_issue_number}</a>` : ''}
         ${item.source && item.source !== 'dashboard' && !isAgent ? `<span class="backlog-source">${esc(item.source)}</span>` : ''}
         ${p.project_path && item.status !== 'done' ? `<button class="backlog-dispatch" onclick="dispatchBacklogItem(event,'${esc(p.id)}','${esc(item.id)}')" title="Send to agent">▶</button>` : ''}
-        <button class="att-btn ${(item.attachments||[]).length > 0 ? 'has-atts' : ''}"
+        <button class="att-btn ${attsN > 0 ? 'has-atts' : ''}"
           onclick="toggleAttPanel(event,'${esc(p.id)}','${esc(item.id)}')"
-          title="Attachments">📎${(item.attachments||[]).length > 0 ? ' '+item.attachments.length : ''}</button>
-        <button class="notes-btn ${(item.notes||[]).length > 0 ? 'has-notes' : ''}"
+          title="Attachments">📎${attsN > 0 ? ' '+attsN : ''}</button>
+        <button class="notes-btn ${notesN > 0 ? 'has-notes' : ''}"
           onclick="toggleNotesPanel(event,'${esc(p.id)}','${esc(item.id)}')"
-          title="Notes">📝${(item.notes||[]).length > 0 ? ' '+item.notes.length : ''}</button>
+          title="Notes">📝${notesN > 0 ? ' '+notesN : ''}</button>
         <button class="backlog-del" onclick="deleteBacklogItem(event,'${esc(p.id)}','${esc(item.id)}')" title="Delete">✕</button>
       </div>
       <div class="att-panel${openAttPanels.has(item.id) ? ' open' : ''}" id="att-${esc(item.id)}">

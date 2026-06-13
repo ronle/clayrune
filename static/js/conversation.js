@@ -1434,6 +1434,7 @@ async function refreshProjectBacklog(projectId) {
     const p = allProjects.find(x => x.id === projectId);
     if (p) {
       p.backlog = backlog;
+      p._backlogFull = true;  // full bodies loaded — preserve across list re-fetches
       refreshModalById(projectId);
     }
   } catch(e) {}
