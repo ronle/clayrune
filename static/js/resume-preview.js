@@ -388,7 +388,7 @@ async function _reconcileAgentBuffer(projectId, sessionId) {
   if (_reconcileBusy[sessionId]) return;
   _reconcileBusy[sessionId] = true;
   try {
-    const r = await fetch(API_BASE + `/api/project/${projectId}/agent/status`);
+    const r = await fetchFailFast(API_BASE + `/api/project/${projectId}/agent/status`);
     if (!r.ok) return;
     const data = await r.json();
     const sess = (data.sessions || []).find(s => s.session_id === sessionId);

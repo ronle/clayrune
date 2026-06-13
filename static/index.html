@@ -905,6 +905,20 @@ function getDomainConfig(domainId) {
   return domainsList.find(d => d.id === domainId) || {id: domainId, label: domainId, color: 'var(--text-dim)', bg: 'var(--surface3)'};
 }
 
+// Plain fetch() hangs for the OS TCP timeout (tens of seconds) on a socket the
+// OS parked under Android Doze while backgrounded — the dead-socket class behind
+// the ~50s mobile hang. Wrap recurring/hot-path fetches so they abort fast; the
+// caller's existing try/catch + next interval tick recover on a fresh socket.
+// Returns the Response; throws (AbortError) on timeout. Defaults to no-store so a
+// poll never reads a stale WebView cache; callers can override via opts.
+function fetchFailFast(url, opts = {}, timeoutMs = 8000) {
+  const ac = new AbortController();
+  const tid = setTimeout(() => ac.abort(), timeoutMs);
+  return fetch(url, { cache: 'no-store', ...opts, signal: ac.signal })
+    .finally(() => clearTimeout(tid));
+}
+window.fetchFailFast = fetchFailFast;   // shared by the polling modules (system-status, schedule-banner, provider-auth, conversation, resume-preview)
+
 // /api/projects trims backlog note/attachment BODIES to counts (keeps the list
 // payload small). A project modal lazy-loads the FULL backlog on open. Preserve
 // that loaded full backlog across a list re-fetch so the 30s poll / silent
@@ -936,18 +950,14 @@ async function fetchProjects() {
   const ATTEMPTS = 3, TIMEOUT_MS = 8000;
   try {
     for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-      const ac = new AbortController();
-      const tid = setTimeout(() => ac.abort(), TIMEOUT_MS);
       try {
-        const res = await fetch(API_BASE + '/api/projects', { signal: ac.signal, cache: 'no-store' });
-        clearTimeout(tid);
+        const res = await fetchFailFast(API_BASE + '/api/projects', {}, TIMEOUT_MS);
         if (!res.ok) throw new Error('HTTP ' + res.status);
         allProjects = _preserveOpenBacklogs(await res.json());
         applyOrder();
         render();
         return;
       } catch(e) {
-        clearTimeout(tid);
         if (attempt < ATTEMPTS) {
           await new Promise(r => setTimeout(r, 600 * attempt));  // brief backoff → fresh socket
           continue;

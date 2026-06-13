@@ -21,7 +21,7 @@ const _sbState = {
 
 async function refreshScheduleBanner() {
   try {
-    const res = await fetch(API_BASE + '/api/schedules');
+    const res = await fetchFailFast(API_BASE + '/api/schedules');
     const schedules = await res.json();
     _sbState.upcoming = schedules
       .filter(s => s.enabled && s.next_run)

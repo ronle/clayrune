@@ -23,7 +23,7 @@ let _sysUsageFetching = false;
 
 async function fetchSystemStatus() {
   try {
-    const res = await fetch(API_BASE + '/api/system/status');
+    const res = await fetchFailFast(API_BASE + '/api/system/status');
     if (!res.ok) return;
     systemStatusCache = await res.json();
     renderSysStatusPill();
@@ -354,7 +354,7 @@ async function fetchSystemUsage() {
   if (_sysUsageFetching) return;
   _sysUsageFetching = true;
   try {
-    const res = await fetch(API_BASE + '/api/system/usage');
+    const res = await fetchFailFast(API_BASE + '/api/system/usage');
     if (res.ok) systemUsageCache = await res.json();
   } catch { /* leave cache as-is */ }
   _sysUsageFetching = false;

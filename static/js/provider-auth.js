@@ -8,7 +8,7 @@ let _authBannerLastReason = null;
 async function refreshAuthStatus() {
   try {
     // Always check claude (the original + most common provider).
-    const res = await fetch(API_BASE + '/api/claude/auth-status');
+    const res = await fetchFailFast(API_BASE + '/api/claude/auth-status');
     if (!res.ok) return;
     const state = await res.json();
     // Attach provider name so _renderAuthBanner can label it correctly.

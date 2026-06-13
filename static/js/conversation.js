@@ -1443,7 +1443,7 @@ async function refreshProjectBacklog(projectId) {
 // Fetch all agent sessions for a project on modal open / page boot
 async function fetchAgentStatus(projectId) {
   try {
-    const res = await fetch(API_BASE + `/api/project/${projectId}/agent/status`);
+    const res = await fetchFailFast(API_BASE + `/api/project/${projectId}/agent/status`);
     const data = await res.json();
     const sessions = data.sessions || [];
     const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
