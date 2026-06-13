@@ -6,13 +6,38 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-13b] — Mobile dashboard 50s "Failed to load" — real fix
+
+The payload trim below was a real perf win but **did NOT fix the ~50s mobile
+load** (Ron felt no difference after deploying it). Measurement settled it:
+`/api/projects` is **~0.3s warm** (2.6s only on the very first cold hit;
+read+parse of all project JSON is 31ms). The 50s lives in the **connection
+path**, not the payload or server compute.
+
+Root cause: Android Doze parks the WebView's sockets while backgrounded; on
+resume an existing socket reports "alive" but is dead, so the plain
+`fetchProjects()` fetch HANGS for the OS TCP timeout (tens of seconds) before
+throwing — the "Failed to load — is server running?" flash — and the grid then
+waits up to 30s for the next poll tick. POSTs already dodge this via the native
+`HttpURLConnection` bridge (APK v1.5); the project-list **GET was the
+unprotected path**.
+
+- `fetchProjects()` (`static/index.html`): `AbortController` fail-fast (8s) + 3
+  retries on a FRESH socket; in-flight guard so the 30s poll doesn't stack;
+  don't clobber an already-rendered grid on a transient blip (error shown only
+  on a cold/empty grid).
+- `_resyncOpenModalsFromServer` (visibility/focus): also refetch the dashboard
+  list on resume — it previously healed open-modal SSE but left the grid
+  waiting for the next 30s tick.
+- Frontend-only; activates on a **cold app reopen** (no server restart).
+- Commit `fc6e28b`. Rollback: `git revert fc6e28b`.
+
 ## [2026-06-13] — `/api/projects` payload trim (2.5MB → 0.8MB)
 
-Mobile dashboard load took ~50s and flashed "Failed to load — is server
-running?". Root cause: `/api/projects` shipped every project's **full backlog
-inline**, including note bodies — 2.5MB total (note bodies alone ~1.4MB on
-`mission_control`, where 842/870 items are done), 3.3s server-side. Over a
-Cloudflare tunnel to a phone that stacked to ~50s.
+A real perf win (smaller payload, less cold-start serialization) but **not** the
+mobile-load fix — see `[2026-06-13b]` for that. `/api/projects` shipped every
+project's **full backlog inline**, including note bodies — 2.5MB total (note
+bodies alone ~1.4MB on `mission_control`, where 842/870 items are done).
 
 - **Server (`mc/blueprints/project_routes.py`):** each backlog item now carries
   `notes_count`/`attachments_count`; the `notes`/`attachments` arrays are popped.
