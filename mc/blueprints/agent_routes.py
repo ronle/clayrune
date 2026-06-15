@@ -2044,10 +2044,6 @@ def _read_agent_stream(proc, session):
                         session['status'] = 'idle'
                         session['last_status_change_time'] = _time.time()
                     else:
-                        # Reply-summarization gate — BEFORE the completed flip
-                        # (same ordering contract as the Mode B turn boundary).
-                        if rc == 0:
-                            _maybe_summarize_turn(session)
                         session['status'] = 'completed' if rc == 0 else 'error'
                         session['last_status_change_time'] = _time.time()
                         if rc != 0:
@@ -2181,10 +2177,6 @@ def _read_agent_stream_b(proc, session):
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
                     _auto_snapshot_notes_on_turn(session)
-                    # Reply-summarization gate — BEFORE the idle flip so the
-                    # SSE loop replays the rewritten lines (reset guard) ahead
-                    # of turn_complete; after the flip the FE closes the stream.
-                    _maybe_summarize_turn(session)
                     # Turn boundary — process stays alive
                     session['status'] = 'idle'
                     session['last_status_change_time'] = _time.time()
@@ -3162,130 +3154,6 @@ def _apply_mobile_brief(message: str, request_data: dict) -> str:
     if request_data.get('client') != 'mobile':
         return message
     return f"{_BRIEF_REPLY_DIRECTIVE}\n\n{message}"
-
-
-# ── Reply-summarization gate (enforced brevity backstop) ─────────────────────
-# The brief-reply directive ASKS the model to be short; this gate MAKES long
-# replies short after the fact. Called at each turn boundary BEFORE the status
-# flip to idle/completed, so the SSE loop's existing reset guard (log_lines
-# rebuilt shorter → `reset` event → client replays) repaints the rewrite ahead
-# of turn_complete closing the stream. A turn whose prose exceeds
-# reply_summarize_threshold_chars is rewritten in log_lines to a one-shot
-# Haiku summary; the original prose is archived to
-# data/reply_archive/<project>/<session>.md (cold storage, OUTSIDE the
-# DATA_DIR project-records dir per the load-bearing pollution rule). The
-# model's own context is untouched — asking for "full detail" still works.
-# Best-effort and fail-open: any error/timeout/odd output leaves the original
-# lines untouched. Code-heavy turns (>2KB inside fences) are exempt — the
-# never-shorten-code carve-out outranks brevity, and a rewrite that mangles a
-# diff is worse than length.
-
-_REPLY_SUMMARIZE_INSTRUCTION = (
-    "You are a reply condenser. The text after ---TRANSCRIPT--- is one "
-    "assistant reply in a developer chat that ran too long. Rewrite it as the "
-    "SHORT reply that should have been sent: lead with the direct "
-    "answer/outcome in the first sentence, then only load-bearing facts. "
-    "HARD RULES: preserve every concrete datum that appears — numbers, file "
-    "paths, commands, URLs, commit hashes, error messages, names, decisions — "
-    "in compressed form; do not invent, soften, or editorialize; keep short "
-    "code/command snippets verbatim; target 3-6 sentences of prose; plain "
-    "text only — no headers, no preamble, no meta-commentary about "
-    "summarizing. Output ONLY the rewritten reply."
-)
-
-
-def _archive_full_reply(session, prose):
-    """Append the pre-summary reply to permanent per-session cold storage."""
-    try:
-        pid = session.get('project_id') or '_unknown'
-        sid = (session.get('claude_session_id') or session.get('session_id')
-               or session.get('id') or 'session')
-        d = DATA_DIR.parent / 'reply_archive' / str(pid)
-        d.mkdir(parents=True, exist_ok=True)
-        with open(d / f'{sid}.md', 'a', encoding='utf-8') as f:
-            f.write(f'\n## {now_iso()}\n\n{prose}\n')
-    except Exception as e:
-        _log(f"[reply-gate] archive write failed: {e}", flush=True)
-
-
-def _maybe_summarize_turn(session):
-    """Rewrite the just-finished turn's prose in log_lines to a short summary.
-
-    MUST be called before the turn's status flip (see gate comment above).
-    Fail-open by design: returns silently on any failure, leaving the
-    original lines in place. Same posture as Scribe/Distiller.
-    """
-    try:
-        if not state.CONFIG.get('reply_summarize_enabled', True):
-            return
-        lines = session.get('log_lines') or []
-        # The final turn = everything after the last user-prompt marker
-        # ('> User: …' / '> [queued] …'). No marker = single-turn session.
-        start = 0
-        for i in range(len(lines) - 1, -1, -1):
-            if lines[i].startswith('> '):
-                start = i + 1
-                break
-        turn = lines[start:]
-        if not turn:
-            return
-        # Prose = everything except '['-prefixed marker lines (tool /
-        # terminal / status trace). Fences + their content stay in prose so
-        # short snippets survive the rewrite; fenced volume is tallied only
-        # for the code-heavy exemption.
-        prose_idx, fenced_chars, in_fence = [], 0, False
-        for i, ln in enumerate(turn):
-            if ln.strip().startswith('```'):
-                in_fence = not in_fence
-            elif in_fence:
-                fenced_chars += len(ln)
-            if ln and not ln.startswith('['):
-                prose_idx.append(i)
-        prose = '\n'.join(turn[i] for i in prose_idx)
-        threshold = int(state.CONFIG.get(
-            'reply_summarize_threshold_chars', 1500) or 1500)
-        if len(prose) <= threshold:
-            return
-        if fenced_chars > 2000:
-            return  # code-heavy exemption
-        result = {}
-
-        def _call():
-            try:
-                rt = _agent_runtime.get_runtime('claude')
-                r = rt.oneshot(prompt=_REPLY_SUMMARIZE_INSTRUCTION,
-                               stdin_text=prose, max_turns=1)
-                result['text'] = ((r.text or '') if r else '').strip()
-            except Exception as e:
-                result['err'] = str(e)
-
-        t = threading.Thread(target=_call, daemon=True, name='reply-gate')
-        t.start()
-        # Tight ceiling on the turn-boundary stall; an abandoned oneshot
-        # dies on its own 180s subprocess timeout.
-        t.join(25)
-        summary = (result.get('text') or '').strip()
-        if not summary or len(summary) >= len(prose):
-            _log("[reply-gate] skipped: "
-                 + ('timeout' if t.is_alive()
-                    else (result.get('err') or 'empty/longer output')),
-                 flush=True)
-            return
-        # Rebuild the turn: tool/status trace in original order, then the
-        # summary. Must end up SHORTER as an array — that's what trips the
-        # SSE reset guard so connected clients replay the rewrite.
-        prose_set = set(prose_idx)
-        kept = [turn[i] for i in range(len(turn)) if i not in prose_set]
-        new_turn = (kept + summary.split('\n')
-                    + ['[reply summarized — ask for full detail if needed]'])
-        if len(new_turn) >= len(turn):
-            return
-        _archive_full_reply(session, prose)
-        lines[start:] = new_turn
-        session['summarized_turns'] = int(
-            session.get('summarized_turns') or 0) + 1
-    except Exception as e:
-        _log(f"[reply-gate] gate failed open: {e}", flush=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Multi-provider dispatch (non-claude providers go through this)
