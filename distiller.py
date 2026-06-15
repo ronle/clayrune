@@ -111,6 +111,9 @@ VERBS = frozenset({
     'run', 'schedule', 'scope', 'search', 'seed', 'send', 'ship', 'sign',
     'simplify', 'skip', 'sort', 'split', 'swap', 'sync', 'test', 'trace',
     'unify', 'update', 'validate', 'wire', 'write',
+    # Added 2026-06-15 from vocab-miss telemetry (real recurring OOV verbs;
+    # noise like 'no'/'brevity' deliberately excluded).
+    'avoid', 'backtest', 'profile', 'recover', 'refresh', 'trim', 'verify',
 })
 
 # Nouns: things topics are ABOUT. Subsystem names (condense, scribe,
@@ -138,6 +141,9 @@ NOUNS = frozenset({
     'transcript', 'transport', 'trigger', 'ui', 'update', 'upload', 'user',
     'validation', 'view', 'watermark', 'web', 'window', 'worker', 'workflow',
     'write',
+    # Added 2026-06-15 from vocab-miss telemetry (real recurring OOV nouns;
+    # noise like 'monday'/'before' deliberately excluded).
+    'api', 'chat', 'css', 'fetch', 'filter', 'reducer',
 })
 
 # Modifiers: surface narrowing ONLY (not subsystem names). A modifier
