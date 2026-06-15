@@ -119,6 +119,12 @@ data/local_auth.json
 # "git status byte-identical" read-only invariant.
 data/maintenance_reports/
 
+# Night-shift maintenance reports — runtime output of the night-review
+# schedule (tools/night-review/). Reviewed by Ron + emailed; not committed.
+# Same posture as data/maintenance_reports/. (The skips log is a *.log and is
+# already covered above.)
+docs/night-review-*.md
+
 # Build artifacts served from /downloads (Android APK, etc.) — produced by
 # the mobile build pipeline, not source.
 static/downloads/*.apk
