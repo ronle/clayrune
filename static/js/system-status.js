@@ -9,11 +9,13 @@
 //   Status  — live health: rate limit, model, CLI version, auth
 //   Config  — permission mode, output style, fast mode, cwd, memory, counts
 //   MCP     — per-server connection list
-//   Usage   — local token aggregates (today / week / top models) from
-//             ~/.claude/stats-cache.json via /api/system/usage. The CLI's
-//             Usage tab shows server-side rate-limit percentages those are
-//             NOT exposed to local clients; we link out to claude.ai for
-//             the canonical numbers.
+//   Usage   — authoritative subscription usage % (5h / weekly / per-model)
+//             from the OAuth endpoint (/api/system/usage → usage_limits, the
+//             same numbers the CLI `/usage` shows), plus local token
+//             aggregates (today / week / top models) from
+//             ~/.claude/stats-cache.json. Falls back to the header-derived
+//             rate-limit window when the OAuth fetch is unavailable; still
+//             links out to claude.ai as a cross-check.
 let systemStatusCache = null;
 let systemUsageCache = null;
 let _sysStatusPopoverOpen = false;
@@ -226,15 +228,47 @@ function _renderMcActivitySection() {
   `;
 }
 
+function _ssUntil(iso) {
+  // Future-relative "resets in 3h12m" for an ISO timestamp.
+  if (!iso) return '';
+  try {
+    const ms = new Date(iso).getTime() - Date.now();
+    if (ms <= 0) return 'resetting';
+    const m = Math.floor(ms / 60000);
+    if (m < 60) return 'resets in ' + m + 'm';
+    const h = Math.floor(m / 60);
+    if (h < 24) return 'resets in ' + h + 'h' + (m % 60 ? (m % 60) + 'm' : '');
+    const d = Math.floor(h / 24);
+    return 'resets in ' + d + 'd' + (h % 24 ? (h % 24) + 'h' : '');
+  } catch { return ''; }
+}
+
+function _ssUsageLimitBar(label, win) {
+  // One progress bar for an OAuth usage window {utilization, resets_at}.
+  // Returns '' for null windows (e.g. per-model blocks when unused).
+  if (!win || win.utilization == null) return '';
+  const pct = Math.max(0, Math.min(100, Number(win.utilization) || 0));
+  const color = pct >= 90 ? 'var(--red)' : pct >= 70 ? 'var(--amber)' : 'var(--green)';
+  const until = _ssUntil(win.resets_at);
+  return `
+    <div style="margin:5px 0 9px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+        <span class="ssp-k">${esc(label)}</span>
+        <span class="ssp-v">${pct.toFixed(0)}%${until ? ' · ' + esc(until) : ''}</span>
+      </div>
+      <div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${color};border-radius:3px"></div>
+      </div>
+    </div>`;
+}
+
 function _renderUsageTab() {
   // Two layers stacked top-to-bottom:
   //   1. MC activity — tokens/cost/sessions launched THROUGH Mission Control,
   //      filterable by today/week/month/all. Source: /api/usage.
-  //   2. Claude Code activity — tokens by model from ~/.claude/stats-cache.json
+  //   2. Claude Code activity — authoritative subscription usage % (OAuth
+  //      endpoint) + tokens by model from ~/.claude/stats-cache.json
   //      (covers ALL claude usage on this machine, not just MC-launched).
-  // Anthropic-side rate-limit percentages (the CLI Usage bars) aren't
-  // exposed to local clients — we show window reset time + link out for
-  // canonical numbers.
   const mcSection = _renderMcActivitySection();
   const u = systemUsageCache;
   if (_sysUsageFetching && !u) return mcSection + '<div class="ssp-empty">Loading agent usage stats…</div>';
@@ -285,13 +319,34 @@ function _renderUsageTab() {
   const claudeMultiNote = (_agentProviders || []).length > 1
     ? '<div class="ssp-hint-line">Covers all Claude Code usage on this machine — not just Mission Control. Other providers don\'t publish a stats cache; see Clayrune activity above for cross-provider totals.</div>'
     : '';
-  return mcSection + `
-    <div class="ssp-section-head">Claude Code · machine-wide</div>
-    ${claudeMultiNote}
+
+  // Authoritative subscription usage %, straight from the OAuth endpoint
+  // (/api/system/usage → usage_limits) — the same numbers the CLI `/usage`
+  // shows. Falls back to the header-derived window (type/reset/status, no %)
+  // when the OAuth fetch was unavailable (missing/expired token, offline).
+  const lim = u.usage_limits || null;
+  let limitsHTML;
+  if (lim && (lim.five_hour || lim.seven_day || lim.seven_day_opus || lim.seven_day_sonnet)) {
+    const extra = lim.extra_usage || {};
+    limitsHTML = `
+    <div class="ssp-section-head" style="margin-top:6px">Usage limits</div>
+    ${_ssUsageLimitBar('Session · 5-hour', lim.five_hour)}
+    ${_ssUsageLimitBar('Weekly · all models', lim.seven_day)}
+    ${_ssUsageLimitBar('Weekly · Opus', lim.seven_day_opus)}
+    ${_ssUsageLimitBar('Weekly · Sonnet', lim.seven_day_sonnet)}
+    ${extra.is_enabled ? `<div class="ssp-row"><span class="ssp-k">Extra usage</span><span class="ssp-v">${(Number(extra.utilization) || 0).toFixed(0)}%${extra.monthly_limit != null ? ' of $' + extra.monthly_limit : ''}</span></div>` : ''}`;
+  } else {
+    limitsHTML = `
     <div class="ssp-section-head" style="margin-top:6px">Current rate-limit window</div>
     <div class="ssp-row"><span class="ssp-k">Type</span><span class="ssp-v">${esc((rl.rateLimitType || '').replace('_', '-') || '—')}</span></div>
     <div class="ssp-row"><span class="ssp-k">Resets</span><span class="ssp-v">${esc(resetWhen || '—')}</span></div>
-    <div class="ssp-row"><span class="ssp-k">Status</span><span class="ssp-v">${esc(rl.status || '—')}</span></div>
+    <div class="ssp-row"><span class="ssp-k">Status</span><span class="ssp-v">${esc(rl.status || '—')}</span></div>`;
+  }
+
+  return mcSection + `
+    <div class="ssp-section-head">Claude Code · machine-wide</div>
+    ${claudeMultiNote}
+    ${limitsHTML}
 
     <div class="ssp-section-head">${esc(periodLabel)} · tokens by model</div>
     ${periodHTML}

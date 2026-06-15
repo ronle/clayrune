@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time as _time
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -534,6 +535,60 @@ def system_usage_backfill():
     return jsonify({'ok': True, 'msg': 'backfill started in background'})
 
 
+# Authoritative subscription usage windows (5h / 7d / per-model %) come from
+# Claude Code's own OAuth token hitting Anthropic's undocumented usage endpoint
+# — the same call the CLI `/usage` command makes. No client-readable file or
+# `--print` flag exposes these percentages, so this is the only programmatic
+# source. Best-effort: any failure (missing/expired token, network, 401)
+# returns None and the UI falls back to the header-derived rate-limit window.
+# Cached briefly to avoid hammering the endpoint; the User-Agent MUST start with
+# `claude-code/` or Anthropic routes the request to an aggressively throttled
+# bucket (persistent 429s).
+_OAUTH_USAGE_TTL = 60.0  # seconds
+_oauth_usage_cache: dict = {'ts': 0.0, 'data': None}
+
+
+def _fetch_oauth_usage_limits():
+    """Return the parsed OAuth usage windows dict, or None on any failure.
+
+    Shape: {five_hour, seven_day, seven_day_opus, seven_day_sonnet, extra_usage}
+    where each window is {utilization: 0-100, resets_at: ISO8601} (per-model
+    blocks are null when unused).
+    """
+    now = _time.time()
+    cached = _oauth_usage_cache.get('data')
+    if cached is not None and (now - _oauth_usage_cache.get('ts', 0.0)) < _OAUTH_USAGE_TTL:
+        return cached
+    try:
+        cred_path = Path.home() / '.claude' / '.credentials.json'
+        creds = json.loads(cred_path.read_text(encoding='utf-8'))
+        oauth = creds.get('claudeAiOauth') or {}
+        token = oauth.get('accessToken')
+        if not token:
+            return None
+        ver = state._LAST_SYSTEM_STATUS.get('claude_code_version') or '2.0.0'
+        req = urllib.request.Request(
+            'https://api.anthropic.com/api/oauth/usage',
+            headers={
+                'Authorization': f'Bearer {token}',
+                'anthropic-beta': 'oauth-2025-04-20',
+                'User-Agent': f'claude-code/{ver}',
+                'Content-Type': 'application/json',
+            },
+            method='GET',
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        if isinstance(data, dict):
+            _oauth_usage_cache['ts'] = now
+            _oauth_usage_cache['data'] = data
+            return data
+        return None
+    except Exception as e:
+        _log(f"[system_usage] oauth usage fetch failed: {e}", flush=True)
+        return None
+
+
 @bp.route('/api/system/usage', methods=['GET'])
 def system_usage_get():
     """Return local token-usage aggregates derived from ~/.claude/stats-cache.json.
@@ -603,6 +658,9 @@ def system_usage_get():
         'last_computed_date': cc_data.get('lastComputedDate') or '',
         'last_data_date': last_data_date,
         'rate_limit_info': state._LAST_SYSTEM_STATUS.get('rate_limit_info') or {},
+        # Authoritative subscription usage windows (% + resets) from the OAuth
+        # endpoint; None when unavailable (UI falls back to rate_limit_info).
+        'usage_limits': _fetch_oauth_usage_limits(),
     })
 
 
