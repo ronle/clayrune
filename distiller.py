@@ -298,6 +298,12 @@ def _get_skill_stats_lock(project_id: str) -> threading.Lock:
     Reads AND writes go through this lock per the §4.7 RMW contract
     (Seat 3 v1.1 Cond 8 closure carried into v2.1). Held for the full
     read-decide-write span; never around model calls.
+
+    NON-REENTRANT (plain Lock): do NOT call any helper that re-acquires this
+    lock — e.g. _increment_counter / _write_skill_stats-via-_increment — while
+    already inside a `with _get_skill_stats_lock(...)` block; the same thread
+    will self-deadlock and wedge every other consumer of this project's lock
+    (dispatch's exploration_read_floor, the scheduler loop). See 2026-06-15.
     """
     with _skill_stats_locks_guard:
         lk = _skill_stats_locks.get(project_id)
@@ -1317,9 +1323,16 @@ def _generate_and_write_artifact(project_id: str, project: dict,
             stats = _read_skill_stats(project_id)
             supp_key = f"{candidate['exact']}:{kind}"
             supp = stats.get('suppressions', {}).get(supp_key)
-            if supp and supp.get('decision') == 'no':
-                _increment_counter(project_id, TELEM_SUPPRESSED_AFTER_GENERATE)
-                return
+            suppressed = bool(supp and supp.get('decision') == 'no')
+        # Bump the counter OUTSIDE the lock: _increment_counter re-acquires this
+        # same per-project lock, which is a plain (non-reentrant) threading.Lock,
+        # so calling it while still holding the lock self-deadlocks the thread.
+        # That wedged the project's skill-stats lock permanently → every
+        # dispatch's exploration_read_floor() and the whole scheduler loop block
+        # on it (diagnosed via py-spy 2026-06-15: hung all new-chat dispatches).
+        if suppressed:
+            _increment_counter(project_id, TELEM_SUPPRESSED_AFTER_GENERATE)
+            return
         # Atomic write via .tmp + rename
         target_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(target_path, body)
