@@ -167,9 +167,8 @@ def _load_config():
         # gated on client="mobile". When on, every Claude dispatch (desktop
         # included) gets a device-neutral brevity nudge so the agent answers
         # short and elaborates only when asked. Supersedes the phone-only gate
-        # above. ON by default (2026-06-12): short replies are the guiding
-        # line for all agents; detail only on explicit request.
-        'brief_replies_always_enabled': True,
+        # above. Off by default.
+        'brief_replies_always_enabled': False,
         # Auto model router (experimental, default OFF). When on, every dispatch
         # runs a cheap Haiku classifier on the prompt and picks Haiku/Sonnet/Opus
         # based on task complexity. When off, the user-selected model is used
