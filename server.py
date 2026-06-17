@@ -615,6 +615,23 @@ _bp_distiller.wire(load_project_fn=_bp_projects.load_project, data_dir=DATA_DIR)
 app.register_blueprint(_bp_distiller.bp)
 
 
+# ── Beacon: cross-project situational digest ── framework-agnostic beacon/
+# package + this thin blueprint. Heartbeats persist OUTSIDE DATA_DIR at
+# data/beacon/<id>.json (the DATA_DIR-pollution rule). Live state is overlaid at
+# read time from agent_sessions via _project_live_agent. Brief docs/uploads
+# agent_0fd9f3689b.md.
+from mc.blueprints import beacon_routes as _bp_beacon  # noqa: E402
+
+_bp_beacon.wire(
+    data_root=_DATA_ROOT,
+    load_projects_fn=_bp_projects.load_projects,
+    load_project_fn=_bp_projects.load_project,
+    live_agent_fn=_bp_projects._project_live_agent,
+    get_memory_path_fn=memory._get_memory_path,
+)
+app.register_blueprint(_bp_beacon.bp)
+
+
 # /api/router/stats ── moved to mc/blueprints/agent_routes.py (1.12).
 
 

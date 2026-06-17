@@ -663,6 +663,16 @@ def _write_session_memory(p, session, status, summary_fallback, ts_date):
         # so we can see if dispatch fails.
         _log(f"[distiller] dispatch EXCEPTION project_id={project_id}: "
              f"{type(_dist_disp_err).__name__}: {_dist_disp_err!r}")
+    # Beacon — regenerate this project's cross-project heartbeat brief on
+    # session-close (the brief is the expensive field, so it regenerates here,
+    # not on dashboard load). Threaded + best-effort, exactly like the Distiller
+    # dispatch above: failure NEVER blocks Scribe / MEMORY.md / completion.
+    try:
+        from beacon.hooks import regenerate_brief_async as _beacon_regen
+        _beacon_regen(project_id, status)
+    except Exception as _beacon_err:
+        _log(f"[beacon] dispatch EXCEPTION project_id={project_id}: "
+             f"{type(_beacon_err).__name__}: {_beacon_err!r}")
     return True
 
 

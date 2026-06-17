@@ -184,6 +184,11 @@ def load_projects():
             p.setdefault('distiller_max_explorations_per_session', 3)
             p.setdefault('distiller_min_turns', 5)
             p.setdefault('distiller_skip_errors', True)
+            # Beacon staleness cadence (hours). 0 = no cadence expectation →
+            # never flagged `stale` (avoids flooding the digest with
+            # legitimately-dormant projects). Set >0 on projects you expect
+            # regular activity from (e.g. scheduled scanners).
+            p.setdefault('beacon_cadence_hours', 0)
             _decorate_attachments(p)
             projects.append(p)
         except Exception as e:
