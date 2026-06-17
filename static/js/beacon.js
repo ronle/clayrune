@@ -224,9 +224,15 @@ function _rowHTML(p) {
   return main + (open ? _detailHTML(p) : '');
 }
 
+// Keep the displayed line a true one-liner. Real one-liners come from Haiku
+// (nested {line} field); for an older string-format brief we hard-clamp here so
+// it stays short, and the full text drops into `detail` (revealed on click) —
+// so even pre-nested cached briefs render as short + expandable, not a long
+// ellipsized wall.
+const BRIEF_LINE_MAX = 70;
+
 // Normalize one briefing field to {line, detail}, tolerating both the new
-// nested shape and an older plain-string brief (until that heartbeat is
-// refreshed). Returns null when the field is empty/unavailable.
+// nested shape and an older plain-string brief. Returns null if empty.
 function _field(p, key) {
   const f = (p.brief || {})[key];
   if (f == null) return null;
@@ -234,7 +240,12 @@ function _field(p, key) {
   if (typeof f === 'string') { line = detail = f.trim(); }
   else { line = (f.line || '').trim(); detail = (f.detail || f.full || f.line || '').trim(); }
   if (!line || line === 'unavailable') return null;
-  return { line, detail };
+  let display = line;
+  if (display.length > BRIEF_LINE_MAX) {
+    display = display.slice(0, BRIEF_LINE_MAX - 1).trim() + '…';
+    if (!detail || detail.length <= line.length) detail = line;  // full text lives in detail
+  }
+  return { line: display, detail: detail || line };
 }
 
 function _fieldRowHTML(p, key, label) {
