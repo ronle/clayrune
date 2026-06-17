@@ -209,6 +209,7 @@
   });
 </script>
 <link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/beacon.css">
 </head>
 <body>
 <script>
@@ -512,6 +513,7 @@
           <div class="mc-eyebrow" id="mc-eyebrow">Clayrune</div>
           <h1 id="mc-greeting">Hi <span aria-hidden="true">&#x1F44B;</span></h1>
         </div>
+        <button class="beacon-badge-btn" id="beacon-badge-btn" onclick="toggleBeaconPanel()" title="Blocked projects — tap for Beacon" style="display:none">&#x26A0; <span id="beacon-badge">0</span></button>
         <div class="mc-avatar-btn" id="mc-avatar-btn" onclick="sidebarNav('settings')" title="Settings">C</div>
       </div>
       <!-- Mobile filter pill row -->
@@ -535,6 +537,9 @@
           <button class="btn-new" onclick="openNewProjectForm()">+ New Project</button>
         </div>
       </div>
+      <!-- Beacon: cross-project situational digest (Phase 2 view, hybrid bar) -->
+      <div class="beacon-bar" id="beacon-bar" style="display:none"></div>
+      <div class="beacon-panel" id="beacon-panel" style="display:none"></div>
       <!-- Grid View -->
       <div class="projects-col" id="projects-col"><div class="loading">Loading...</div></div>
       <!-- List View -->
@@ -1006,7 +1011,7 @@ function buildSlotArray(filteredIds) {
   return slots;
 }
 
-function render() { renderStats(); renderProjects(); renderListView(); renderFeed(); renderSidebarProjects(); applyViewMode(); renderMobileAppBar(); renderMobileFilterPills(); if (openModals.has('__all_backlog')) renderAllBacklog(); if (openModals.has('__all_hivemind')) renderAllHiveminds(); }
+function render() { renderStats(); renderProjects(); renderListView(); renderFeed(); if (typeof renderBeacon === 'function') renderBeacon(); renderSidebarProjects(); applyViewMode(); renderMobileAppBar(); renderMobileFilterPills(); if (openModals.has('__all_backlog')) renderAllBacklog(); if (openModals.has('__all_hivemind')) renderAllHiveminds(); }
 
 window.addEventListener('resize', () => { renderMobileAppBar(); renderMobileFilterPills(); renderProjects(); });
 
@@ -3025,5 +3030,6 @@ window.addEventListener('beforeunload', () => {
 <script type="module" src="/static/js/project-actions.js"></script>
 <script type="module" src="/static/js/mobile.js"></script>
 <script type="module" src="/static/js/feed.js"></script>
+<script type="module" src="/static/js/beacon.js"></script>
 </body>
 </html>

@@ -42,6 +42,8 @@ const INDEX_HTML = readFileSync(resolve(REPO_ROOT, 'static', 'index.html'), 'utf
 // (modernization Phase 3 module 1) — serve the real one or the shell under
 // test renders unstyled (and any future CSS-dependent assertion lies).
 const APP_CSS = readFileSync(resolve(REPO_ROOT, 'static', 'css', 'app.css'), 'utf8');
+// Beacon stylesheet (Phase 2 view) — same serve-or-the-shell-renders-unstyled rule.
+const BEACON_CSS = readFileSync(resolve(REPO_ROOT, 'static', 'css', 'beacon.css'), 'utf8');
 // Ask Claydo ES module, extracted from the inline <script> (Phase 3 module 2).
 // Every extracted /static/js/*.js must be fulfilled here or the hermetic
 // harness aborts its request and the SPA boots without that feature.
@@ -85,6 +87,8 @@ const PROCESS_MANAGER_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'proc
 // Cross-project Hivemind ES module (Phase 3 module 21) — same rule as claydo.js above.
 const CROSS_HIVEMIND_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'cross-hivemind.js'), 'utf8');
 const FEED_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'feed.js'), 'utf8');
+// Beacon ES module (Phase 2 view) — same rule as claydo.js above.
+const BEACON_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'beacon.js'), 'utf8');
 const MOBILE_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'mobile.js'), 'utf8');
 const PROJECT_ACTIONS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'project-actions.js'), 'utf8');
 const COMPOSER_EXTRAS_JS = readFileSync(resolve(REPO_ROOT, 'static', 'js', 'composer-extras.js'), 'utf8');
@@ -128,6 +132,7 @@ const SCENARIOS = [
 // self-validate the map (a missing/typo'd entry empties the grid and fails).
 const STATIC_MAP = {
   '/static/css/app.css': ['text/css; charset=utf-8', APP_CSS],
+  '/static/css/beacon.css': ['text/css; charset=utf-8', BEACON_CSS],
   '/static/js/claydo.js': ['text/javascript; charset=utf-8', CLAYDO_JS],
   '/static/js/mobile-pairing.js': ['text/javascript; charset=utf-8', MOBILE_PAIRING_JS],
   '/static/js/walkthrough.js': ['text/javascript; charset=utf-8', WALKTHROUGH_JS],
@@ -149,6 +154,7 @@ const STATIC_MAP = {
   '/static/js/process-manager.js': ['text/javascript; charset=utf-8', PROCESS_MANAGER_JS],
   '/static/js/cross-hivemind.js': ['text/javascript; charset=utf-8', CROSS_HIVEMIND_JS],
   '/static/js/feed.js': ['text/javascript; charset=utf-8', FEED_JS],
+  '/static/js/beacon.js': ['text/javascript; charset=utf-8', BEACON_JS],
   '/static/js/mobile.js': ['text/javascript; charset=utf-8', MOBILE_JS],
   '/static/js/project-actions.js': ['text/javascript; charset=utf-8', PROJECT_ACTIONS_JS],
   '/static/js/composer-extras.js': ['text/javascript; charset=utf-8', COMPOSER_EXTRAS_JS],

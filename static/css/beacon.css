@@ -1,0 +1,177 @@
+/* Beacon — cross-project situational digest (Phase 2 view).
+   Hybrid: an always-visible summary bar that expands into a triaged list.
+   Design discipline (from the brief): color is reserved for EXCEPTIONS — a
+   blocked project is the only saturated thing on screen; running/resting are
+   muted. Ink is proportional to attention-need. Mirrors app.css tokens. */
+
+.beacon-bar {
+  margin: 0 0 12px 0;
+}
+.beacon-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+  font-size: 12px;
+}
+.beacon-bar-inner:hover { background: var(--surface2); border-color: var(--border2); }
+
+.beacon-chevron {
+  color: var(--text-faint);
+  font-size: 11px;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+.beacon-chevron.open { transform: rotate(90deg); }
+
+.beacon-title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+
+.beacon-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+}
+/* Blocked = the ONLY saturated colour on screen. */
+.beacon-count.blocked { color: var(--red-text); background: var(--red-dim); }
+.beacon-count.clear   { color: var(--green-text); background: var(--green-dim); }
+.beacon-count.running { color: var(--text-dim); background: var(--surface3); }
+.beacon-count.resting { color: var(--text-faint); background: transparent; }
+
+.beacon-updated {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+/* ── expandable panel ──────────────────────────────────────────────────── */
+.beacon-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: -4px 0 12px 0;
+  overflow: hidden;
+}
+.beacon-empty, .beacon-nobrief {
+  padding: 14px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.beacon-nobrief a { color: var(--accent); cursor: pointer; }
+
+/* Row: fixed grammar — chevron · glyph · name · headline · age. Same shape
+   every row so the eye reads by position. */
+.beacon-row {
+  display: grid;
+  grid-template-columns: 16px 18px minmax(120px, 200px) 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 12px;
+}
+.beacon-row:first-child { border-top: none; }
+.beacon-row:hover { background: var(--surface2); }
+.br-chevron { color: var(--text-faint); font-size: 10px; transition: transform 0.15s; }
+.br-chevron.open { transform: rotate(90deg); }
+.br-glyph { text-align: center; }
+.br-name { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.br-headline { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.br-age { color: var(--text-faint); font-size: 10px; white-space: nowrap; }
+
+/* Blocked rows: the glyph + name carry the saturated accent. */
+.beacon-row.blocked .br-glyph { filter: none; }
+.beacon-row.blocked .br-name { color: var(--red-text); }
+.beacon-row.running .br-glyph { color: var(--green); }
+.beacon-row.resting .br-glyph { color: var(--text-faint); }
+
+/* Accordion body — the three-field briefing. */
+.beacon-body {
+  padding: 4px 14px 14px 44px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  cursor: default;
+}
+.beacon-blocker {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 10px 0 12px 0; padding: 5px 10px; border-radius: 5px;
+  font-size: 11px; font-weight: 600;
+  color: var(--red-text); background: var(--red-dim);
+}
+.beacon-blocker.stale { color: var(--amber-text); background: var(--amber-dim); }
+
+.beacon-field {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 8px;
+  margin: 9px 0;
+}
+.bf-ico { color: var(--text-faint); text-align: center; }
+.bf-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); margin-bottom: 2px; }
+.bf-text { font-size: 12px; color: var(--text); line-height: 1.45; }
+
+.beacon-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.beacon-actions button {
+  padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: 600;
+  background: var(--surface3); color: var(--text); border: 1px solid var(--border2);
+  cursor: pointer; transition: background 0.15s;
+}
+.beacon-actions button:hover:not(:disabled) { background: var(--surface2); }
+.beacon-actions button:disabled { opacity: 0.55; cursor: default; }
+
+/* Resting roll-up — one line, expands into a dense name+age grid (no headlines:
+   resting projects don't earn a sentence). */
+.beacon-resting-head {
+  display: grid;
+  grid-template-columns: 16px 18px auto 1fr;
+  align-items: center; gap: 10px;
+  padding: 9px 14px; border-top: 1px solid var(--border);
+  cursor: pointer; font-size: 12px; color: var(--text-dim);
+}
+.beacon-resting-head:hover { background: var(--surface2); }
+.beacon-resting-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 2px 14px;
+  padding: 8px 14px 12px 44px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.brg-item {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 4px 0; font-size: 11px; cursor: pointer; color: var(--text-dim);
+}
+.brg-item:hover .brg-item-name { color: var(--text); }
+.brg-age { color: var(--text-faint); white-space: nowrap; }
+
+/* Mobile blocked badge in the app bar (only shows when blocked > 0). */
+.beacon-badge-btn {
+  display: none; align-items: center; gap: 4px;
+  margin-left: auto; margin-right: 8px;
+  padding: 4px 9px; border-radius: 12px;
+  background: var(--red-dim); color: var(--red-text);
+  border: none; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+
+@media (max-width: 960px) {
+  .beacon-bar-inner { flex-wrap: wrap; gap: 8px; }
+  .beacon-updated { margin-left: 0; width: 100%; }
+  .beacon-row { grid-template-columns: 14px 16px 1fr auto; }
+  .beacon-row .br-headline { display: none; }   /* name + age only on narrow */
+  .beacon-body { padding-left: 28px; }
+}
