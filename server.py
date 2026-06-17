@@ -616,14 +616,17 @@ app.register_blueprint(_bp_distiller.bp)
 
 
 # ── Beacon: cross-project situational digest ── framework-agnostic beacon/
-# package + this thin blueprint. Heartbeats persist OUTSIDE DATA_DIR at
-# data/beacon/<id>.json (the DATA_DIR-pollution rule). Live state is overlaid at
-# read time from agent_sessions via _project_live_agent. Brief docs/uploads
-# agent_0fd9f3689b.md.
+# package + this thin blueprint. Heartbeats persist at data/beacon/<id>.json —
+# beside data/projects/ but OUTSIDE DATA_DIR itself (the DATA_DIR-pollution
+# rule). NOTE: _DATA_ROOT is the app/repo root (parent of data/); the actual
+# data dir is DATA_DIR.parent (= _DATA_ROOT/'data'). Passing _DATA_ROOT here
+# would write into the beacon/ *package* dir — wire the data dir, not the root.
+# Live state is overlaid at read time from agent_sessions via _project_live_agent.
+# Brief: data/uploads/agent_0fd9f3689b.md.
 from mc.blueprints import beacon_routes as _bp_beacon  # noqa: E402
 
 _bp_beacon.wire(
-    data_root=_DATA_ROOT,
+    data_root=DATA_DIR.parent,
     load_projects_fn=_bp_projects.load_projects,
     load_project_fn=_bp_projects.load_project,
     live_agent_fn=_bp_projects._project_live_agent,

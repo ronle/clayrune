@@ -30,6 +30,7 @@ data/schedules.json
 data/restart_log.json
 data/memory/
 data/beacon/
+/beacon/*.json
 data/logs/
 # Claydo helper sandbox: server materializes USER_GUIDE.md as CLAUDE.md
 # under this dir on every /api/guide/* call so Claude auto-loads it as
