@@ -1,26 +1,30 @@
-// Beacon — cross-project situational digest (Phase 2 view layer).
+// Beacon — cross-project situational digest (Phase 2 view, v2: report modal).
 //
-// Hybrid placement (confirmed with Ron): a thin, always-visible summary bar
-// (3 counts + a blocked badge) on the main dashboard that expands into the full
-// triaged Beacon list. Data: GET /api/beacon/digest; live updates via the SSE
-// stream while the panel is expanded, with a poll baseline otherwise.
+// Shape (per Ron): a thin always-visible summary BAR with a button that opens a
+// FULL-SCREEN MODAL report. The report is a TABLE — one row per project, sorted
+// by most-recent activity, with dormant ("Paused") projects bundled at the
+// bottom. Each row shows a Haiku "where we stand" summary (NOT the last log
+// line) and expands in place for the full briefing. Summaries are CACHED;
+// refresh is manual (per-row + "Refresh stale").
 //
-// ES-module note: top-level names are NOT global. Functions called from inline
-// onclick handlers / the inline render() loop are re-exposed via window.* at the
-// bottom (the codebase convention — see appearance.js / feed.js). Degrades
-// silently when /api/beacon/* isn't live yet (server not yet restarted): the
-// bar simply stays hidden, no error spam.
+// ES-module note: functions used by inline onclick / the render() loop are
+// re-exposed on window.* at the bottom. Degrades silently (bar hidden) when
+// /api/beacon/* isn't live yet.
 
 const BEACON_POLL_MS = 15000;
+const DORMANT_DAYS = 14;        // resting + untouched longer than this → "Paused"
+const REFRESH_STALE_HOURS = 6;  // "Refresh stale" targets briefs older than this
 
-let beaconDigest = null;          // last digest payload
-let beaconExpanded = false;       // panel open?
-let beaconRestingOpen = false;    // resting sub-grid open?
-const beaconRows = {};            // projectId -> accordion open bool
-const beaconRefreshing = {};      // projectId -> in-flight refresh bool
-let beaconAvailable = true;       // false once the API 404s (routes not live)
+let beaconDigest = null;
+let beaconModalOpen = false;
+let beaconPausedOpen = false;
+const beaconRows = {};          // projectId -> row expanded?
+const beaconRefreshing = {};    // projectId -> refresh in-flight?
+let beaconRefreshingAll = false;
+let beaconAvailable = true;
 let beaconPollTimer = null;
-let beaconES = null;              // EventSource, only while expanded
+let beaconES = null;
+let _beaconEscHandler = null;
 
 const _api = () => (window.API_BASE || '');
 
@@ -35,20 +39,15 @@ function _ago(iso) {
     return Math.floor(s / 86400) + 'd ago';
   } catch (e) { return ''; }
 }
-
+function _ageHours(iso) { if (!iso) return Infinity; try { return (Date.now() - new Date(iso)) / 3600000; } catch (e) { return Infinity; } }
 function _esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-const BLOCKER_ICON = {
-  plan_pending: '\u{1F4CB}',     // 📋
-  question_pending: '❓',    // ❓
-  failed_resume: '⚠',       // ⚠
-  stale: '\u{1F551}',            // 🕐
-};
+const BLOCKER_ICON = { plan_pending: '\u{1F4CB}', question_pending: '❓', failed_resume: '⚠', stale: '\u{1F551}' };
 
-// ── data ────────────────────────────────────────────────────────────────────
+// ── data ──────────────────────────────────────────────────────────────────────
 
 function fetchBeacon() {
   if (!beaconAvailable) return;
@@ -56,13 +55,7 @@ function fetchBeacon() {
     .then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
     .then(d => { beaconDigest = d; renderBeacon(); })
     .catch(e => {
-      // 404 = routes not registered yet (server hasn't been restarted). Stop
-      // trying and hide quietly. Other (network) errors are transient — keep
-      // polling so it self-heals.
-      if (String(e && e.message || '').indexOf('404') !== -1) {
-        beaconAvailable = false;
-        renderBeacon();
-      }
+      if (String(e && e.message || '').indexOf('404') !== -1) { beaconAvailable = false; renderBeacon(); }
     });
 }
 
@@ -71,133 +64,199 @@ function _openStream() {
   try {
     beaconES = new EventSource(_api() + '/api/beacon/stream');
     beaconES.onmessage = (e) => {
-      try {
-        const d = JSON.parse(e.data);
-        if (d && d.counts) { beaconDigest = d; renderBeacon(); }
-      } catch (_) { /* ignore keepalive / partial */ }
+      try { const d = JSON.parse(e.data); if (d && d.counts) { beaconDigest = d; renderBeacon(); } } catch (_) {}
     };
-    beaconES.onerror = () => { _closeStream(); };  // poll baseline covers it
+    beaconES.onerror = () => { _closeStream(); };
   } catch (e) { beaconES = null; }
 }
+function _closeStream() { if (beaconES) { try { beaconES.close(); } catch (_) {} beaconES = null; } }
 
-function _closeStream() {
-  if (beaconES) { try { beaconES.close(); } catch (_) {} beaconES = null; }
+// ── grouping ──────────────────────────────────────────────────────────────────
+
+function _isPaused(p) {
+  return p.status === 'resting' && (_ageHours(p.last_touched) / 24) > DORMANT_DAYS;
+}
+function _split(rows) {
+  const active = [], paused = [];
+  for (const p of rows) (_isPaused(p) ? paused : active).push(p);
+  return { active, paused };
 }
 
-// ── render ────────────────────────────────────────────────────────────────────
+// ── render: bar ───────────────────────────────────────────────────────────────
 
 function renderBeacon() {
   const bar = document.getElementById('beacon-bar');
-  const panel = document.getElementById('beacon-panel');
-  if (!bar) return;
-
-  if (!beaconAvailable || !beaconDigest || !beaconDigest.configured) {
-    bar.style.display = 'none';
-    if (panel) panel.style.display = 'none';
-    _updateBadge(0);
-    return;
+  if (bar) {
+    if (!beaconAvailable || !beaconDigest || !beaconDigest.configured) {
+      bar.style.display = 'none';
+      _updateBadge(0);
+    } else {
+      bar.style.display = '';
+      bar.innerHTML = _barHTML();
+      _updateBadge((beaconDigest.counts || {}).blocked || 0);
+    }
   }
-
-  const c = beaconDigest.counts || { blocked: 0, running: 0, resting: 0 };
-  bar.style.display = '';
-  bar.innerHTML = _barHTML(c);
-  _updateBadge(c.blocked || 0);
-
-  if (panel) {
-    panel.style.display = beaconExpanded ? '' : 'none';
-    panel.innerHTML = beaconExpanded ? _panelHTML() : '';
-  }
+  if (beaconModalOpen) _renderModal();
 }
 
-function _barHTML(c) {
-  const blocked = c.blocked || 0, running = c.running || 0, resting = c.resting || 0;
-  const blockedChip = blocked > 0
-    ? `<span class="beacon-count blocked">⚠ ${blocked} blocked</span>`
+function _barHTML() {
+  const rows = beaconDigest.projects || [];
+  const { paused } = _split(rows);
+  const blocked = (beaconDigest.counts || {}).blocked || 0;
+  const pausedN = paused.length;
+  const activeN = rows.length - pausedN;
+  const needChip = blocked > 0
+    ? `<span class="beacon-count blocked">⚠ ${blocked} need you</span>`
     : `<span class="beacon-count clear">✓ All clear</span>`;
-  return `<div class="beacon-bar-inner" onclick="toggleBeaconPanel()">
-    <span class="beacon-chevron ${beaconExpanded ? 'open' : ''}">❯</span>
+  return `<div class="beacon-bar-inner" onclick="openBeaconReport()">
     <span class="beacon-title">Beacon</span>
-    ${blockedChip}
-    <span class="beacon-count running">▶ ${running} running</span>
-    <span class="beacon-count resting">· ${resting} resting</span>
-    <span class="beacon-updated">updated ${_esc(_ago(beaconDigest.generated_at))}</span>
+    ${needChip}
+    <span class="beacon-count active">${activeN} active</span>
+    <span class="beacon-count resting">${pausedN} paused</span>
+    <span class="beacon-open">Open report →</span>
   </div>`;
 }
 
-function _panelHTML() {
-  const ps = beaconDigest.projects || [];
-  if (!ps.length) return `<div class="beacon-empty">No projects.</div>`;
-  const blocked = ps.filter(p => p.status === 'blocked');
-  const running = ps.filter(p => p.status === 'running');
-  const resting = ps.filter(p => p.status === 'resting');
-  let html = '';
-  blocked.forEach(p => { html += _rowHTML(p); });
-  running.forEach(p => { html += _rowHTML(p); });
-  if (resting.length) html += _restingHTML(resting);
-  return html || `<div class="beacon-empty">No projects.</div>`;
+// ── render: full-screen modal report ───────────────────────────────────────────
+
+function openBeaconReport() {
+  if (beaconModalOpen) return;
+  beaconModalOpen = true;
+  let root = document.getElementById('beacon-modal');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'beacon-modal';
+    root.className = 'beacon-modal-overlay';
+    root.addEventListener('click', (e) => { if (e.target === root) closeBeaconReport(); });
+    document.body.appendChild(root);
+  }
+  _beaconEscHandler = (e) => { if (e.key === 'Escape') closeBeaconReport(); };
+  document.addEventListener('keydown', _beaconEscHandler);
+  document.body.style.overflow = 'hidden';
+  _openStream();
+  fetchBeacon();
+  _renderModal();
+}
+
+function closeBeaconReport() {
+  beaconModalOpen = false;
+  _closeStream();
+  if (_beaconEscHandler) { document.removeEventListener('keydown', _beaconEscHandler); _beaconEscHandler = null; }
+  document.body.style.overflow = '';
+  const root = document.getElementById('beacon-modal');
+  if (root) root.remove();
+}
+
+function _renderModal() {
+  const root = document.getElementById('beacon-modal');
+  if (!root) return;
+  // Preserve scroll across re-renders (background poll / SSE shouldn't jump it).
+  const scroller = root.querySelector('.beacon-modal-scroll');
+  const prevScroll = scroller ? scroller.scrollTop : 0;
+
+  const d = beaconDigest || {};
+  const rows = d.projects || [];
+  const { active, paused } = _split(rows);
+  const c = d.counts || { blocked: 0, running: 0, resting: 0 };
+  const staleN = rows.filter(r => !r.has_brief || _ageHours(r.updated_at) > REFRESH_STALE_HOURS).length;
+
+  const refreshLabel = beaconRefreshingAll ? 'Refreshing…' : (staleN ? `↻ Refresh stale (${staleN})` : '↻ Refresh stale');
+
+  root.innerHTML = `<div class="beacon-modal-window" onclick="event.stopPropagation()">
+    <div class="beacon-modal-head">
+      <div class="beacon-modal-title">Where we stand
+        <span class="bmt-sub">${rows.length} projects${c.blocked ? ` · <span class="bmt-need">${c.blocked} need you</span>` : ''} · updated ${_esc(_ago(d.generated_at))}</span>
+      </div>
+      <div class="beacon-modal-actions">
+        <button class="bm-btn" onclick="beaconRefreshAll()" ${beaconRefreshingAll || !staleN ? 'disabled' : ''}>${refreshLabel}</button>
+        <button class="bm-close" onclick="closeBeaconReport()" title="Close (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="beacon-modal-scroll">
+      ${(!d.configured)
+        ? `<div class="beacon-empty">Beacon isn't live yet.</div>`
+        : (!rows.length ? `<div class="beacon-empty">No projects.</div>` : `
+        <table class="beacon-table">
+          <thead><tr>
+            <th class="bt-status">Status</th><th class="bt-proj">Project</th>
+            <th class="bt-stand">Where we stand</th><th class="bt-age">Last active</th><th class="bt-act"></th>
+          </tr></thead>
+          <tbody>
+            ${active.map(_rowHTML).join('')}
+            ${paused.length ? _pausedGroupHTML(paused) : ''}
+          </tbody>
+        </table>`)}
+    </div>
+  </div>`;
+
+  const ns = root.querySelector('.beacon-modal-scroll');
+  if (ns) ns.scrollTop = prevScroll;
+}
+
+function _statusPill(p) {
+  if (p.status === 'blocked') {
+    const t = (p.blocker || {}).type;
+    const lbl = t === 'plan_pending' ? 'Needs approval' : t === 'question_pending' ? 'Needs answer' : t === 'stale' ? 'Stale' : 'Needs attention';
+    return `<span class="bt-pill need">${BLOCKER_ICON[t] || '⚠'} ${lbl}</span>`;
+  }
+  if (p.status === 'running') return `<span class="bt-pill working">● Working</span>`;
+  return `<span class="bt-pill idle">Idle</span>`;
 }
 
 function _rowHTML(p) {
   const open = !!beaconRows[p.id];
-  const glyph = p.status === 'blocked'
-    ? (BLOCKER_ICON[p.blocker && p.blocker.type] || '⚠')
-    : (p.status === 'running' ? '⟳' : '·');
-  const age = _ago(p.last_touched);
-  return `<div class="beacon-row ${p.status} ${open ? 'open' : ''}" onclick="beaconToggleRow('${_esc(p.id)}')">
-    <span class="br-chevron ${open ? 'open' : ''}">❯</span>
-    <span class="br-glyph">${glyph}</span>
-    <span class="br-name">${_esc(p.name)}</span>
-    <span class="br-headline">${_esc(p.headline || '')}</span>
-    <span class="br-age">${_esc(age)}</span>
-  </div>${open ? _bodyHTML(p) : ''}`;
+  const stand = (p.headline || '').trim();
+  const standCell = stand
+    ? `<span class="bt-standtext">${_esc(stand)}</span>`
+    : `<span class="bt-nostand">No summary yet</span>`;
+  const refreshing = !!beaconRefreshing[p.id];
+  const main = `<tr class="bt-row ${p.status} ${open ? 'open' : ''}" onclick="beaconToggleRow('${_esc(p.id)}')">
+    <td class="bt-status">${_statusPill(p)}</td>
+    <td class="bt-proj"><span class="bt-chev ${open ? 'open' : ''}">❯</span>${_esc(p.name)}</td>
+    <td class="bt-stand">${standCell}</td>
+    <td class="bt-age">${_esc(_ago(p.last_touched))}</td>
+    <td class="bt-act" onclick="event.stopPropagation()">
+      <button class="bt-iconbtn" title="Open project" onclick="beaconOpen('${_esc(p.id)}')">↗</button>
+      <button class="bt-iconbtn" title="Refresh summary" onclick="beaconRefreshRow('${_esc(p.id)}')" ${refreshing ? 'disabled' : ''}>${refreshing ? '…' : '↻'}</button>
+    </td>
+  </tr>`;
+  return main + (open ? _detailHTML(p) : '');
 }
 
-function _bodyHTML(p) {
+function _detailHTML(p) {
   const b = p.brief || {};
   const hasBrief = p.has_brief && (b.done || b.standing || b.next);
   const blk = p.blocker
-    ? `<div class="beacon-blocker ${_esc(p.blocker.type)}">${BLOCKER_ICON[p.blocker.type] || '⚠'} ${_esc(p.blocker.summary || 'Blocked')}</div>`
-    : '';
-  let fields;
+    ? `<div class="bt-blocker ${_esc(p.blocker.type)}">${BLOCKER_ICON[p.blocker.type] || '⚠'} ${_esc(p.blocker.summary || 'Blocked')}</div>` : '';
+  let body;
   if (hasBrief) {
-    fields = `
-      <div class="beacon-field"><span class="bf-ico">✓</span><div><div class="bf-label">Done this session</div><div class="bf-text">${_esc(b.done || '—')}</div></div></div>
-      <div class="beacon-field"><span class="bf-ico">\u{1F4CD}</span><div><div class="bf-label">Where it stands</div><div class="bf-text">${_esc(b.standing || '—')}</div></div></div>
-      <div class="beacon-field"><span class="bf-ico">→</span><div><div class="bf-label">Next step</div><div class="bf-text">${_esc(b.next || '—')}</div></div></div>`;
+    body = `<div class="bt-field"><span class="bt-flabel">Done this session</span><span class="bt-ftext">${_esc(b.done || '—')}</span></div>
+      <div class="bt-field"><span class="bt-flabel">Where it stands</span><span class="bt-ftext">${_esc(b.standing || '—')}</span></div>
+      <div class="bt-field"><span class="bt-flabel">Next step</span><span class="bt-ftext">${_esc(b.next || '—')}</span></div>`;
   } else {
-    fields = `<div class="beacon-nobrief">No briefing yet — it generates when this project's next session ends. <a onclick="beaconRefreshRow('${_esc(p.id)}')">Generate now</a></div>`;
+    body = `<div class="bt-nobrief">No cached summary yet — <a onclick="event.stopPropagation(); beaconRefreshRow('${_esc(p.id)}')">generate one</a> (Haiku reads this project's recent context).</div>`;
   }
   const reviewPlan = (p.blocker && p.blocker.type === 'plan_pending')
-    ? `<button onclick="beaconOpen('${_esc(p.id)}')">Review plan</button>` : '';
+    ? `<button class="bm-btn" onclick="beaconOpen('${_esc(p.id)}')">Review plan</button>` : '';
   const refreshing = !!beaconRefreshing[p.id];
-  return `<div class="beacon-body" onclick="event.stopPropagation()">
-    ${blk}
-    ${fields}
-    <div class="beacon-actions">
+  return `<tr class="bt-detailrow"><td colspan="5"><div class="bt-detail" onclick="event.stopPropagation()">
+    ${blk}${body}
+    <div class="bt-actions">
       ${reviewPlan}
-      <button onclick="beaconOpen('${_esc(p.id)}')">Open project</button>
-      <button class="beacon-refresh" onclick="beaconRefreshRow('${_esc(p.id)}')" ${refreshing ? 'disabled' : ''}>${refreshing ? 'Refreshing…' : '↻ Refresh'}</button>
+      <button class="bm-btn" onclick="beaconOpen('${_esc(p.id)}')">Open project</button>
+      <button class="bm-btn ghost" onclick="beaconRefreshRow('${_esc(p.id)}')" ${refreshing ? 'disabled' : ''}>${refreshing ? 'Refreshing…' : '↻ Refresh summary'}</button>
     </div>
-  </div>`;
+  </div></td></tr>`;
 }
 
-function _restingHTML(resting) {
-  const ages = resting.map(p => p.last_touched).filter(Boolean).sort();
-  const span = ages.length
-    ? `last touched ${_esc(_ago(ages[ages.length - 1]))} – ${_esc(_ago(ages[0]))}`
-    : '';
-  const grid = beaconRestingOpen
-    ? `<div class="beacon-resting-grid">${resting.map(p =>
-        `<div class="brg-item" onclick="beaconOpen('${_esc(p.id)}')"><span class="brg-item-name">${_esc(p.name)}</span><span class="brg-age">${_esc(_ago(p.last_touched))}</span></div>`
-      ).join('')}</div>`
-    : '';
-  return `<div class="beacon-resting-head" onclick="beaconToggleResting()">
-    <span class="br-chevron ${beaconRestingOpen ? 'open' : ''}">❯</span>
-    <span class="br-glyph">·</span>
-    <span class="br-name">${resting.length} resting</span>
-    <span class="br-headline">${span}</span>
-  </div>${grid}`;
+function _pausedGroupHTML(paused) {
+  const head = `<tr class="bt-paused-head" onclick="beaconTogglePaused()">
+    <td colspan="5"><span class="bt-chev ${beaconPausedOpen ? 'open' : ''}">❯</span> Paused — ${paused.length} dormant project${paused.length === 1 ? '' : 's'} (no activity in ${DORMANT_DAYS}+ days)</td>
+  </tr>`;
+  return head + (beaconPausedOpen ? paused.map(_rowHTML).join('') : '');
 }
+
+// ── badge (mobile) ──────────────────────────────────────────────────────────────
 
 function _updateBadge(n) {
   const btn = document.getElementById('beacon-badge-btn');
@@ -208,30 +267,18 @@ function _updateBadge(n) {
 
 // ── interactions ──────────────────────────────────────────────────────────────
 
-function toggleBeaconPanel() {
-  beaconExpanded = !beaconExpanded;
-  if (beaconExpanded) { _openStream(); fetchBeacon(); } else { _closeStream(); }
-  renderBeacon();
-}
-
-function beaconToggleRow(id) {
-  beaconRows[id] = !beaconRows[id];
-  renderBeacon();
-}
-
-function beaconToggleResting() {
-  beaconRestingOpen = !beaconRestingOpen;
-  renderBeacon();
-}
+function beaconToggleRow(id) { beaconRows[id] = !beaconRows[id]; _renderModal(); }
+function beaconTogglePaused() { beaconPausedOpen = !beaconPausedOpen; _renderModal(); }
 
 function beaconOpen(id) {
+  closeBeaconReport();
   if (window.openProjectModal) window.openProjectModal(id);
 }
 
 function beaconRefreshRow(id) {
   if (beaconRefreshing[id]) return;
   beaconRefreshing[id] = true;
-  beaconRows[id] = true;  // keep the row open so the user sees the result
+  beaconRows[id] = true;
   renderBeacon();
   fetch(_api() + '/api/beacon/refresh/' + encodeURIComponent(id), { method: 'POST' })
     .then(r => r.json())
@@ -239,11 +286,31 @@ function beaconRefreshRow(id) {
     .catch(() => { beaconRefreshing[id] = false; renderBeacon(); });
 }
 
+async function beaconRefreshAll() {
+  if (beaconRefreshingAll) return;
+  const rows = (beaconDigest && beaconDigest.projects) || [];
+  const stale = rows.filter(r => !r.has_brief || _ageHours(r.updated_at) > REFRESH_STALE_HOURS).map(r => r.id);
+  if (!stale.length) return;
+  beaconRefreshingAll = true;
+  stale.forEach(id => { beaconRefreshing[id] = true; });
+  renderBeacon();
+  let i = 0;
+  const worker = async () => {
+    while (i < stale.length) {
+      const id = stale[i++];
+      try { await fetch(_api() + '/api/beacon/refresh/' + encodeURIComponent(id), { method: 'POST' }); } catch (_) {}
+      beaconRefreshing[id] = false;
+      renderBeacon();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);  // concurrency 3
+  beaconRefreshingAll = false;
+  fetchBeacon();
+}
+
 function initBeacon() {
   fetchBeacon();
   if (!beaconPollTimer) {
-    // Poll only when the SSE stream isn't carrying updates (panel collapsed),
-    // so the summary counts stay fresh without holding a connection open.
     beaconPollTimer = setInterval(() => { if (!beaconES) fetchBeacon(); }, BEACON_POLL_MS);
   }
 }
@@ -251,11 +318,13 @@ function initBeacon() {
 // ── window interop ────────────────────────────────────────────────────────────
 window.renderBeacon = renderBeacon;
 window.initBeacon = initBeacon;
-window.toggleBeaconPanel = toggleBeaconPanel;
+window.openBeaconReport = openBeaconReport;
+window.closeBeaconReport = closeBeaconReport;
 window.beaconToggleRow = beaconToggleRow;
-window.beaconToggleResting = beaconToggleResting;
+window.beaconTogglePaused = beaconTogglePaused;
 window.beaconOpen = beaconOpen;
 window.beaconRefreshRow = beaconRefreshRow;
+window.beaconRefreshAll = beaconRefreshAll;
+window.toggleBeaconPanel = openBeaconReport;  // back-comat alias (mobile badge)
 
-// Module loads at end of <body>, so the DOM is ready. Kick off best-effort.
 try { initBeacon(); } catch (e) { /* never break boot */ }

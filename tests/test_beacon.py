@@ -179,37 +179,33 @@ def test_parked_project_never_stale(configured):
     assert d['projects'][0]['status'] == 'resting'
 
 
-# ── sort order: blocked (oldest blocker first) → running → resting (recent) ────
+# ── sort order: most recent activity first (report groups "paused" client-side) ─
 
-def test_attention_sort_order(configured):
+def test_recency_sort_most_recent_first(configured):
+    state, _ = configured
+    state['projects'] = [
+        {'id': 'mid', 'name': 'mid', 'last_updated': '2026-06-10T00:00:00Z'},
+        {'id': 'newest', 'name': 'newest', 'last_updated': '2026-06-17T00:00:00Z'},
+        {'id': 'oldest', 'name': 'oldest', 'last_updated': '2026-06-01T00:00:00Z'},
+    ]
+    d = beacon.build_digest()
+    assert [r['id'] for r in d['projects']] == ['newest', 'mid', 'oldest']
+
+
+def test_counts_stay_status_based(configured):
+    """The bar badge still needs blocked/running/resting counts even though the
+    list is recency-sorted."""
     state, root = configured
     state['projects'] = [
-        {'id': 'rest_old', 'name': 'rest_old', 'last_updated': OLD_TS},
-        {'id': 'rest_new', 'name': 'rest_new', 'last_updated': RECENT_TS},
-        {'id': 'run1', 'name': 'run1', 'last_updated': OLD_TS},
-        {'id': 'blk_recent', 'name': 'blk_recent', 'last_updated': RECENT_TS},
-        {'id': 'blk_old', 'name': 'blk_old', 'last_updated': RECENT_TS},
+        {'id': 'w', 'name': 'w', 'last_updated': RECENT_TS},
+        {'id': 'r', 'name': 'r', 'last_updated': OLD_TS},
+        {'id': 'b', 'name': 'b', 'last_updated': RECENT_TS},
     ]
-    state['live'] = {'run1': {'state': 'working', 'reason': None, 'task': 't'}}
-    # Two blocked via persisted failed_resume with different blocker ages.
-    _write_hb(root, 'blk_recent', {'project': 'blk_recent', 'updated_at': RECENT_TS,
-              'headline': 'h', 'brief': {},
-              'blocker': {'type': 'failed_resume', 'since': RECENT_TS, 'summary': 'x'}})
-    _write_hb(root, 'blk_old', {'project': 'blk_old', 'updated_at': RECENT_TS,
-              'headline': 'h', 'brief': {},
+    state['live'] = {'w': {'state': 'working', 'reason': None, 'task': 't'}}
+    _write_hb(root, 'b', {'project': 'b', 'updated_at': RECENT_TS, 'headline': 'h', 'brief': {},
               'blocker': {'type': 'failed_resume', 'since': OLD_TS, 'summary': 'x'}})
-
     d = beacon.build_digest()
-    order = [r['id'] for r in d['projects']]
-    # blocked group first, oldest blocker (most-neglected) at the very top
-    assert order[0] == 'blk_old'
-    assert order[1] == 'blk_recent'
-    # then running
-    assert order[2] == 'run1'
-    # then resting, most-recently-touched first
-    assert order[3] == 'rest_new'
-    assert order[4] == 'rest_old'
-    assert d['counts'] == {'blocked': 2, 'running': 1, 'resting': 2}
+    assert d['counts'] == {'blocked': 1, 'running': 1, 'resting': 1}
 
 
 def test_unconfigured_digest_is_well_formed(monkeypatch):

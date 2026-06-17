@@ -513,7 +513,7 @@
           <div class="mc-eyebrow" id="mc-eyebrow">Clayrune</div>
           <h1 id="mc-greeting">Hi <span aria-hidden="true">&#x1F44B;</span></h1>
         </div>
-        <button class="beacon-badge-btn" id="beacon-badge-btn" onclick="toggleBeaconPanel()" title="Blocked projects — tap for Beacon" style="display:none">&#x26A0; <span id="beacon-badge">0</span></button>
+        <button class="beacon-badge-btn" id="beacon-badge-btn" onclick="openBeaconReport()" title="Blocked projects — open Beacon report" style="display:none">&#x26A0; <span id="beacon-badge">0</span></button>
         <div class="mc-avatar-btn" id="mc-avatar-btn" onclick="sidebarNav('settings')" title="Settings">C</div>
       </div>
       <!-- Mobile filter pill row -->
@@ -537,9 +537,9 @@
           <button class="btn-new" onclick="openNewProjectForm()">+ New Project</button>
         </div>
       </div>
-      <!-- Beacon: cross-project situational digest (Phase 2 view, hybrid bar) -->
+      <!-- Beacon: cross-project situational digest (Phase 2). The bar opens a
+           full-screen report modal that beacon.js builds + appends to <body>. -->
       <div class="beacon-bar" id="beacon-bar" style="display:none"></div>
-      <div class="beacon-panel" id="beacon-panel" style="display:none"></div>
       <!-- Grid View -->
       <div class="projects-col" id="projects-col"><div class="loading">Loading...</div></div>
       <!-- List View -->

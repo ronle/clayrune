@@ -79,12 +79,14 @@ def _is_stale(project, hb, live) -> bool:
 
 
 def _fallback_headline(project, live):
+    # A real "where we stand" summary comes from the Haiku brief (hb.headline).
+    # Until that's cached, fall back to the live task (what it's working on right
+    # now) or the project's own profile summary — NEVER the raw last activity-log
+    # line, which is a story fragment, not a summary (the thing Ron explicitly
+    # did not want shown).
     if _is_working(live) and live.get('task'):
         return str(live['task']).strip()
-    al = project.get('activity_log') or []
-    if al:
-        return (al[0].get('msg') or '').strip()
-    return (project.get('summary') or '').strip() or '—'
+    return (project.get('summary') or '').strip()
 
 
 def _row(project, hb, live):
@@ -142,20 +144,18 @@ def build_digest() -> dict:
             live = None
         rows.append(_row(p, hbs.get(pid), live))
 
-    blocked = [r for r in rows if r['status'] == 'blocked']
-    running = [r for r in rows if r['status'] == 'running']
-    resting = [r for r in rows if r['status'] == 'resting']
-
-    # Blocked: oldest blocker first (most-neglected on top). stale sorts among them.
-    blocked.sort(key=lambda r: (r.get('blocker') or {}).get('since') or '')
-    # Running / resting: most-recently-touched first.
-    running.sort(key=lambda r: r.get('last_touched') or '', reverse=True)
-    resting.sort(key=lambda r: r.get('last_touched') or '', reverse=True)
-
-    ordered = blocked + running + resting
+    # Sort by recency of last activity — most active on top. The report view
+    # groups dormant ("paused") projects client-side. Counts stay status-based
+    # for the at-a-glance bar badge.
+    rows.sort(key=lambda r: r.get('last_touched') or '', reverse=True)
+    counts = {
+        'blocked': sum(1 for r in rows if r['status'] == 'blocked'),
+        'running': sum(1 for r in rows if r['status'] == 'running'),
+        'resting': sum(1 for r in rows if r['status'] == 'resting'),
+    }
     return {
         'generated_at': now_iso(),
-        'counts': {'blocked': len(blocked), 'running': len(running), 'resting': len(resting)},
-        'projects': ordered,
+        'counts': counts,
+        'projects': rows,
         'configured': True,
     }
