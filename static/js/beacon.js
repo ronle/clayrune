@@ -19,6 +19,7 @@ let beaconDigest = null;
 let beaconModalOpen = false;
 let beaconPausedOpen = false;
 const beaconRows = {};          // projectId -> row expanded?
+const beaconItemOpen = {};      // "projectId::field" -> briefing line expanded?
 const beaconRefreshing = {};    // projectId -> refresh in-flight?
 let beaconRefreshingAll = false;
 let beaconAvailable = true;
@@ -223,16 +224,46 @@ function _rowHTML(p) {
   return main + (open ? _detailHTML(p) : '');
 }
 
+// Normalize one briefing field to {line, detail}, tolerating both the new
+// nested shape and an older plain-string brief (until that heartbeat is
+// refreshed). Returns null when the field is empty/unavailable.
+function _field(p, key) {
+  const f = (p.brief || {})[key];
+  if (f == null) return null;
+  let line, detail;
+  if (typeof f === 'string') { line = detail = f.trim(); }
+  else { line = (f.line || '').trim(); detail = (f.detail || f.full || f.line || '').trim(); }
+  if (!line || line === 'unavailable') return null;
+  return { line, detail };
+}
+
+function _fieldRowHTML(p, key, label) {
+  const f = _field(p, key);
+  if (!f) return `<div class="bt-item"><div class="bt-itemhead"><span class="bt-ilabel">${label}</span><span class="bt-iline muted">—</span></div></div>`;
+  const k = p.id + '::' + key;
+  const open = !!beaconItemOpen[k];
+  const expandable = f.detail && f.detail !== f.line;
+  return `<div class="bt-item ${open ? 'open' : ''}">
+    <div class="bt-itemhead ${expandable ? 'clickable' : ''}" onclick="event.stopPropagation();${expandable ? ` beaconItemToggle('${_esc(p.id)}','${key}')` : ''}">
+      <span class="bt-ilabel">${label}</span>
+      <span class="bt-iline">${_esc(f.line)}</span>
+      ${expandable ? `<span class="bt-ichev ${open ? 'open' : ''}">❯</span>` : ''}
+    </div>
+    ${open && expandable ? `<div class="bt-idetail">${_esc(f.detail)}</div>` : ''}
+  </div>`;
+}
+
 function _detailHTML(p) {
-  const b = p.brief || {};
-  const hasBrief = p.has_brief && (b.done || b.standing || b.next);
+  const hasBrief = p.has_brief && (_field(p, 'done') || _field(p, 'standing') || _field(p, 'next'));
   const blk = p.blocker
     ? `<div class="bt-blocker ${_esc(p.blocker.type)}">${BLOCKER_ICON[p.blocker.type] || '⚠'} ${_esc(p.blocker.summary || 'Blocked')}</div>` : '';
   let body;
   if (hasBrief) {
-    body = `<div class="bt-field"><span class="bt-flabel">Done this session</span><span class="bt-ftext">${_esc(b.done || '—')}</span></div>
-      <div class="bt-field"><span class="bt-flabel">Where it stands</span><span class="bt-ftext">${_esc(b.standing || '—')}</span></div>
-      <div class="bt-field"><span class="bt-flabel">Next step</span><span class="bt-ftext">${_esc(b.next || '—')}</span></div>`;
+    body = `<div class="bt-items">
+      ${_fieldRowHTML(p, 'done', 'Done')}
+      ${_fieldRowHTML(p, 'standing', 'Stands')}
+      ${_fieldRowHTML(p, 'next', 'Next')}
+    </div>`;
   } else {
     body = `<div class="bt-nobrief">No cached summary yet — <a onclick="event.stopPropagation(); beaconRefreshRow('${_esc(p.id)}')">generate one</a> (Haiku reads this project's recent context).</div>`;
   }
@@ -269,6 +300,7 @@ function _updateBadge(n) {
 
 function beaconToggleRow(id) { beaconRows[id] = !beaconRows[id]; _renderModal(); }
 function beaconTogglePaused() { beaconPausedOpen = !beaconPausedOpen; _renderModal(); }
+function beaconItemToggle(id, key) { const k = id + '::' + key; beaconItemOpen[k] = !beaconItemOpen[k]; _renderModal(); }
 
 function beaconOpen(id) {
   closeBeaconReport();
@@ -322,6 +354,7 @@ window.openBeaconReport = openBeaconReport;
 window.closeBeaconReport = closeBeaconReport;
 window.beaconToggleRow = beaconToggleRow;
 window.beaconTogglePaused = beaconTogglePaused;
+window.beaconItemToggle = beaconItemToggle;
 window.beaconOpen = beaconOpen;
 window.beaconRefreshRow = beaconRefreshRow;
 window.beaconRefreshAll = beaconRefreshAll;

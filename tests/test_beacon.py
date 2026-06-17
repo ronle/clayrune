@@ -66,14 +66,35 @@ def test_clamp_collapses_whitespace_and_truncates():
 def test_normalize_brief_fills_missing_with_unavailable():
     b = schema.normalize_brief({'headline': 'Did the thing'})
     assert b['headline'] == 'Did the thing'
-    assert b['done'] == 'unavailable'
-    assert b['standing'] == 'unavailable'
-    assert b['next'] == 'unavailable'
+    for k in ('done', 'standing', 'next'):
+        assert b[k] == {'line': 'unavailable', 'detail': 'unavailable'}
 
 
 def test_normalize_brief_caps_headline():
     b = schema.normalize_brief({'headline': 'v ' * 100})
     assert len(b['headline']) <= schema.HEADLINE_MAX
+
+
+def test_normalize_brief_nested_fields_preserved_and_capped():
+    b = schema.normalize_brief({
+        'headline': 'h',
+        'done': {'line': 'Shipped the parser', 'detail': 'd' * 999},
+        'standing': {'line': 'x' * 999, 'detail': 'paused'},
+        'next': {'line': 'Approve plan', 'detail': 'Approve the migration plan.'},
+    })
+    assert b['done']['line'] == 'Shipped the parser'
+    assert len(b['done']['detail']) <= schema.FIELD_DETAIL_MAX
+    assert len(b['standing']['line']) <= schema.FIELD_LINE_MAX
+    assert b['next'] == {'line': 'Approve plan', 'detail': 'Approve the migration plan.'}
+
+
+def test_normalize_brief_back_compat_string_field():
+    """An older plain-string brief field becomes {line, detail} so the UI's
+    nested disclosure still works until the heartbeat is refreshed."""
+    b = schema.normalize_brief({'headline': 'h', 'done': 'Did a long thing ' * 10})
+    assert isinstance(b['done'], dict)
+    assert b['done']['line'] and b['done']['detail']
+    assert len(b['done']['line']) <= schema.FIELD_LINE_MAX
 
 
 # ── live-state overlay → status bucket ────────────────────────────────────────

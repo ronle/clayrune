@@ -45,9 +45,9 @@ def regenerate_brief(project: dict, status=None) -> bool:
         'headline': b.get('headline', ''),
         'live': 'resting',
         'brief': {
-            'done': b.get('done', 'unavailable'),
-            'standing': b.get('standing', 'unavailable'),
-            'next': b.get('next', 'unavailable'),
+            'done': b.get('done'),
+            'standing': b.get('standing'),
+            'next': b.get('next'),
         },
         'blocker': blocker,
     }

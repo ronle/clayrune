@@ -17,20 +17,22 @@ from . import schema
 
 _BRIEF_PROMPT = """You are generating a STATUS HEARTBEAT for ONE project in a multi-project dashboard. You receive recent context for a single project (its description, recent activity, memory log, changelog). Produce a tight status brief so an operator can see where this project stands at a glance — across many projects — without opening it.
 
-Return ONLY a JSON object. No prose, no markdown fences. EXACTLY these four string fields:
+Return ONLY a JSON object. No prose, no markdown fences. EXACTLY this shape — a headline plus three fields, each with a one-line summary AND a fuller detail:
 
 {
   "headline": "one verb-led line, MAX 70 chars — the 'where we left off'",
-  "done": "1-2 sentences: what was actually accomplished most recently",
-  "standing": "1-2 sentences: the current state. If something is blocked or paused, state WHY it is blocked, not just that it is",
-  "next": "1 sentence: the single concrete, resumable next action"
+  "done":     {"line": "<=12 words: a real one-line summary of what was just accomplished", "detail": "1-2 sentences with the specifics"},
+  "standing": {"line": "<=12 words: the current state in one line",                         "detail": "1-2 sentences; if blocked/paused, state WHY"},
+  "next":     {"line": "<=12 words: the single next action, named",                         "detail": "1 sentence, concrete and resumable"}
 }
 
 Rules:
+- Each "line" must be a GENUINE condensed summary that stands on its own — NOT the first words of "detail", NOT a truncated fragment. A reader should grasp the item from the line alone.
+- "detail" adds the specifics behind the line.
 - Be specific and concrete. Name the actual thing, never 'the task'.
 - Domain-neutral: this may be a coding, trading, ops, or research project. Do NOT assume code.
 - headline is verb-led and <=70 chars.
-- If the context is thin, say so honestly in 'standing' — do not invent detail.
+- If context is thin, say so honestly in standing.detail — do not invent detail.
 - Output the raw JSON object only."""
 
 _CTX_MAX = 8000

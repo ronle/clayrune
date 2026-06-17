@@ -14,9 +14,11 @@ BLOCKER_TYPES = ('plan_pending', 'question_pending', 'failed_resume', 'stale')
 LIVE_STATES = ('running', 'resting')
 
 HEADLINE_MAX = 70
-DONE_MAX = 300
-STANDING_MAX = 300
-NEXT_MAX = 220
+# Each briefing field is two-level: a one-line summary (`line`, shown in the
+# expanded row) + the full text (`detail`, revealed when that line is clicked).
+# The line is a real condensation, not a truncated peek (the model writes it).
+FIELD_LINE_MAX = 110
+FIELD_DETAIL_MAX = 320
 
 BRIEF_FIELDS = ('done', 'standing', 'next')
 
@@ -30,18 +32,31 @@ def clamp(s, n: int) -> str:
     return s
 
 
-def normalize_brief(raw: dict) -> dict:
-    """Coerce a model's (possibly sloppy) JSON into the strict 4-field brief,
-    applying caps. Missing/empty fields become 'unavailable' rather than
-    blocking — degrade gracefully, never raise."""
-    def g(k):
-        return str((raw or {}).get(k, '') or '').strip()
+def _norm_field(raw_field) -> dict:
+    """Coerce one briefing field into {line, detail}. Accepts the new nested
+    {line, detail} shape OR a plain string (older briefs / sloppy model output):
+    a string becomes the detail, with a clamped line as the collapsed summary."""
+    if isinstance(raw_field, dict):
+        line = str(raw_field.get('line', '') or '').strip()
+        detail = str(raw_field.get('detail', '') or raw_field.get('full', '') or '').strip()
+    else:
+        detail = str(raw_field or '').strip()
+        line = detail
+    line = clamp(line or 'unavailable', FIELD_LINE_MAX)
+    detail = clamp(detail or line, FIELD_DETAIL_MAX)
+    return {'line': line, 'detail': detail}
 
+
+def normalize_brief(raw: dict) -> dict:
+    """Coerce a model's (possibly sloppy) JSON into the strict brief: a one-line
+    headline + three {line, detail} fields. Missing/empty become 'unavailable'
+    rather than blocking — degrade gracefully, never raise."""
+    raw = raw or {}
     return {
-        'headline': clamp(g('headline') or 'unavailable', HEADLINE_MAX),
-        'done': clamp(g('done') or 'unavailable', DONE_MAX),
-        'standing': clamp(g('standing') or 'unavailable', STANDING_MAX),
-        'next': clamp(g('next') or 'unavailable', NEXT_MAX),
+        'headline': clamp(str(raw.get('headline', '') or '').strip() or 'unavailable', HEADLINE_MAX),
+        'done': _norm_field(raw.get('done')),
+        'standing': _norm_field(raw.get('standing')),
+        'next': _norm_field(raw.get('next')),
     }
 
 
@@ -52,6 +67,10 @@ def empty_heartbeat(project_id: str, name: str = '') -> dict:
         'updated_at': None,
         'headline': '',
         'live': 'resting',
-        'brief': {'done': 'unavailable', 'standing': 'unavailable', 'next': 'unavailable'},
+        'brief': {
+            'done': {'line': 'unavailable', 'detail': 'unavailable'},
+            'standing': {'line': 'unavailable', 'detail': 'unavailable'},
+            'next': {'line': 'unavailable', 'detail': 'unavailable'},
+        },
         'blocker': None,
     }

@@ -100,9 +100,17 @@
 .bt-detail { padding: 14px 20px 16px 34px; }
 .bt-blocker { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; color: var(--red-text); background: var(--red-dim); }
 .bt-blocker.stale { color: var(--amber-text); background: var(--amber-dim); }
-.bt-field { display: grid; grid-template-columns: 130px 1fr; gap: 10px; margin: 8px 0; }
-.bt-flabel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); padding-top: 1px; }
-.bt-ftext { font-size: 12.5px; color: var(--text); line-height: 1.5; }
+/* Briefing = one-liner items; click a line to reveal its full detail. */
+.bt-items { display: flex; flex-direction: column; gap: 1px; }
+.bt-itemhead { display: grid; grid-template-columns: 60px 1fr 14px; gap: 10px; align-items: baseline; padding: 6px 8px; border-radius: 6px; }
+.bt-itemhead.clickable { cursor: pointer; }
+.bt-itemhead.clickable:hover { background: var(--surface2); }
+.bt-ilabel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); }
+.bt-iline { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-iline.muted { color: var(--text-faint); }
+.bt-ichev { color: var(--text-faint); font-size: 10px; transition: transform 0.15s; justify-self: end; align-self: center; }
+.bt-ichev.open { transform: rotate(90deg); }
+.bt-idetail { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; padding: 2px 8px 8px 70px; }
 .bt-nobrief { color: var(--text-dim); font-size: 12px; }
 .bt-nobrief a { color: var(--accent); cursor: pointer; }
 .bt-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
