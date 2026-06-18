@@ -8,7 +8,7 @@ Clayrune gives you a centralized dashboard to:
 
 - **Manage multiple projects** with status tracking, descriptions, and domains
 - **Dispatch Claude Code agents** to work on tasks across any project
-- **Reuse previous chat sessions** under same project for reducing overall token usage
+- **Reuse previous chat sessions** within the same project to reduce overall token usage
 - **Monitor agent activity in real-time** via streaming output
 - **Maintain project backlogs** with priorities, drag-and-drop ordering, and file attachments
 - **Schedule automated tasks** with once, daily, or interval-based triggers
