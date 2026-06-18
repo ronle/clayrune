@@ -2752,14 +2752,23 @@
       border: none;
       font-family: 'Inter', -apple-system, system-ui, sans-serif;
     }
-    /* Wide blocks stretch full width so they remain readable */
+    /* Wide blocks stretch full width so they remain readable.
+       flex-shrink:0 is LOAD-BEARING: .agent-output is a flex column with a
+       constrained height (flex:1 inside .agent-chat) and overflow-y:auto. Any
+       child with overflow other than visible (.hl-table / .hl-table-pre carry
+       overflow-x:auto) gets an automatic min-height of 0 per the flexbox spec,
+       so the default flex-shrink:1 lets the column crush it to just its
+       padding+border — a ~6px "black line" with the real <table> (100px+)
+       clipped inside. Pinning flex-shrink:0 keeps each block at content height
+       and lets .agent-output scroll instead. (Text bubbles are overflow:visible,
+       so their min-height = content and they never hit this.) */
     .agent-output .hl-table,
     .agent-output .hl-table-pre,
     .agent-output .plan-show-btn,
     .agent-output .plan-hidden-block,
     .agent-output .agent-question,
     .agent-output .mermaid-placeholder {
-      align-self: stretch; max-width: 100%;
+      align-self: stretch; max-width: 100%; flex-shrink: 0;
     }
     /* Code blocks inside a bubble — keep monospace, allow horizontal scroll */
     .agent-output .agent-line .hl-codeblock {
