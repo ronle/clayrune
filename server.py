@@ -1872,16 +1872,29 @@ def _claude_health_check_hook():
     with _claude_auth_lock:
         state = dict(_claude_auth_state)
     installed = bool(_resolve_claude() != 'claude' or shutil.which('claude'))
-    status = state.get('state', 'unknown')
+    # Derive the pill status from the real keys. The old code read state['state']
+    # — a key that never exists in _claude_auth_state (ok/reason/last_error_text/
+    # detected_at/last_probe_at), so the pill was permanently "status unknown".
+    # Honest mapping: a failure shows the reason; "ok" only after a verified
+    # signal (a passing probe or a clean turn stamps last_probe_at) so a fresh,
+    # never-checked boot reads "unknown" instead of falsely claiming signed-in.
+    ok = state.get('ok')
+    reason = state.get('reason')
+    if ok is False:
+        status = reason or 'invalid_api_key'
+    elif ok is True and state.get('last_probe_at'):
+        status = 'ok'
+    else:
+        status = 'unknown'
     return HealthStatus(
         installed=installed,
         binary_path=None,
         version=None,
         auth_state=AuthState(
             status=status,
-            method=state.get('method'),
-            last_checked=str(state.get('last_probe_at', _t.time())),
-            error_text=state.get('reason'),
+            method=None,
+            last_checked=str(state.get('last_probe_at') or _t.time()),
+            error_text=state.get('last_error_text') or reason,
         ),
         install_hint='npm install -g @anthropic-ai/claude-code',
     )

@@ -306,3 +306,72 @@ class TestAuthRoutes:
             resp = c.post('/api/agent/gemini/auth-login')
         assert resp.status_code == 400
         assert 'error' in json.loads(resp.data)
+
+
+# ── Mode-B structured-error auth detection (2026-06-22 regression) ────────────
+# A Claude API 401 in Mode B arrives as a structured `result` event that parses
+# as JSON, so the non-JSON-only line scanner never saw it and the cached state
+# stayed at its optimistic ok:True default — "Settings says signed in, real run
+# is 401". These lock the structured scan + the honest pill mapping.
+
+class TestStructuredAuthDetection:
+    def _reset(self):
+        import mc.state as st
+        st._claude_auth_state.update(ok=True, reason=None, last_error_text=None,
+                                     detected_at=None, last_probe_at=None)
+        return st
+
+    def test_modeb_structured_401_flips_state(self):
+        """is_error result carrying a 401 must flip ok:False (the core gap)."""
+        st = self._reset()
+        from mc.blueprints import agent_routes as ar
+        ar._scan_result_event_for_auth({
+            'type': 'result', 'subtype': 'error_during_execution', 'is_error': True,
+            'result': 'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}',
+        })
+        assert st._claude_auth_state['ok'] is False
+        assert st._claude_auth_state['reason'] == 'invalid_api_key'
+
+    def test_clean_success_is_positive_confirmation(self):
+        """A clean success clears stale errors and stamps last_probe_at."""
+        st = self._reset()
+        st._claude_auth_state.update(ok=False, reason='invalid_api_key')
+        from mc.blueprints import agent_routes as ar
+        ar._scan_result_event_for_auth({'type': 'result', 'subtype': 'success',
+                                        'is_error': False, 'result': 'ok'})
+        assert st._claude_auth_state['ok'] is True
+        assert st._claude_auth_state['last_probe_at'] is not None
+
+    def test_assistant_prose_does_not_trip(self):
+        """Prose mentioning 401/login in a NON-error result must not flip auth."""
+        self._reset()
+        import mc.state as st
+        from mc.blueprints import agent_routes as ar
+        ar._scan_result_event_for_auth({
+            'type': 'result', 'subtype': 'success', 'is_error': False,
+            'result': 'the user might not be logged in; saw a 401 in unrelated code',
+        })
+        assert st._claude_auth_state['ok'] is True
+
+    def test_broadened_sentinels(self):
+        """OAuth-expired and bare-401 forms are now recognized."""
+        from mc.blueprints import agent_routes as ar
+        assert ar._scan_for_auth_error('OAuth token has expired') == 'not_logged_in'
+        assert ar._scan_for_auth_error('401 Unauthorized') == 'invalid_api_key'
+        assert ar._scan_for_auth_error('all good, nothing here') is None
+
+    def test_pill_status_derives_from_ok_not_dead_key(self):
+        """Health hook must not read the nonexistent state['state'] key.
+
+        Verified ok -> 'ok'; failure -> reason; never-probed default -> 'unknown'.
+        """
+        import server
+        st = self._reset()
+        # never probed -> unknown (not a false "signed in")
+        assert server._claude_health_check_hook().auth_state.status == 'unknown'
+        # verified ok
+        st._claude_auth_state.update(ok=True, last_probe_at=_time.time())
+        assert server._claude_health_check_hook().auth_state.status == 'ok'
+        # failure surfaces the reason
+        st._claude_auth_state.update(ok=False, reason='invalid_api_key')
+        assert server._claude_health_check_hook().auth_state.status == 'invalid_api_key'

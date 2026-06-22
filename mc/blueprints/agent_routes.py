@@ -857,7 +857,12 @@ _AUTH_ERROR_PATTERNS = [
     (_re_auth.compile(r'please\s+run\s*/login', _re_auth.I), 'not_logged_in'),
     (_re_auth.compile(r'not\s+logged\s+in', _re_auth.I), 'not_logged_in'),
     (_re_auth.compile(r'invalid\s+(?:api\s+)?key', _re_auth.I), 'invalid_api_key'),
-    (_re_auth.compile(r'authentication_error', _re_auth.I), 'unknown'),
+    (_re_auth.compile(r'(?:oauth\s+)?(?:access\s+)?token\s+(?:has\s+)?expired', _re_auth.I), 'not_logged_in'),
+    (_re_auth.compile(r'\bunauthorized\b', _re_auth.I), 'invalid_api_key'),
+    (_re_auth.compile(r'authentication_error', _re_auth.I), 'invalid_api_key'),
+    # 401 only in an error/auth context — bare "401" in agent prose must not trip it.
+    (_re_auth.compile(r'(?:error|status|http)[^0-9]{0,8}401\b', _re_auth.I), 'invalid_api_key'),
+    (_re_auth.compile(r'\b401\b[^0-9]{0,20}(?:unauthorized|authentication|oauth|api\s*key)', _re_auth.I), 'invalid_api_key'),
 ]
 # _claude_auth_state / _claude_auth_lock moved to mc/state.py (Phase 0).
 
@@ -886,6 +891,34 @@ def _mark_claude_auth_ok():
         _claude_auth_state['reason'] = None
         _claude_auth_state['last_error_text'] = None
         _claude_auth_state['last_probe_at'] = _time.time()
+
+
+def _scan_result_event_for_auth(msg):
+    """Detect auth failure from a Mode-A/B `result` stream-json event.
+
+    The line-level scanner (_scan_for_auth_error) runs ONLY on non-JSON stderr
+    lines — deliberately, because regex-scanning every stream-json line made an
+    agent's own assistant prose about auth ("the user might not be logged in")
+    trip the banner. But an API 401 / expired-OAuth / invalid-key in Mode B
+    arrives as a *structured* `result` event that parses as JSON, so it never
+    reached that scanner and `_claude_auth_state` stayed at its optimistic
+    `ok:True` default (root cause of "Settings says signed in, real run is 401").
+
+    Keying on the structured `is_error` flag (not raw text) is what lets us
+    scan safely: only genuine error envelopes are inspected, never prose. A
+    clean success is a positive auth confirmation, so it clears stale errors.
+    """
+    if not isinstance(msg, dict):
+        return
+    subtype = str(msg.get('subtype') or '')
+    if msg.get('is_error') or subtype.startswith('error'):
+        text = str(msg.get('result') or msg.get('error') or '')
+        reason = _scan_for_auth_error(text)
+        if reason:
+            _mark_claude_auth_error(reason, text)
+    elif subtype == 'success' and not msg.get('is_error'):
+        # Verified working auth — clears any stale error and stamps last_probe_at.
+        _mark_claude_auth_ok()
 
 
 # ── Multi-provider agent runtime — discovery endpoint ───────────────────────
@@ -1096,8 +1129,11 @@ def _run_claude_auth_probe() -> dict:
         elif result.returncode == 0:
             _mark_claude_auth_ok()
         else:
-            with _claude_auth_lock:
-                _claude_auth_state['last_probe_at'] = _time.time()
+            # Non-zero exit with no recognized sentinel — the CLI itself failed
+            # the probe. Fail closed: an explicit "Check" must not leave a stale
+            # ok:true reading "✓ Signed in". Record it as an unverified error.
+            _mark_claude_auth_error(
+                'unknown', combined or f'claude probe exited {result.returncode}')
     except subprocess.TimeoutExpired:
         with _claude_auth_lock:
             _claude_auth_state['last_probe_at'] = _time.time()
@@ -2004,6 +2040,7 @@ def _read_agent_stream(proc, session):
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
                     _auto_snapshot_notes_on_turn(session)
+                    _scan_result_event_for_auth(msg)
                 # Web push hook: intercept PushNotification tool_use + turn results.
                 _handle_push_signal(
                     session.get('project_id', ''),
@@ -2181,6 +2218,7 @@ def _read_agent_stream_b(proc, session):
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
                     _auto_snapshot_notes_on_turn(session)
+                    _scan_result_event_for_auth(msg)
                     # Reply-summarization gate — BEFORE the idle flip so the
                     # SSE loop replays the rewritten lines (reset guard) ahead
                     # of turn_complete; after the flip the FE closes the stream.
