@@ -3397,6 +3397,32 @@
   }
   .schedule-banner.hidden { display: none; }
 
+  /* Top strip — the Scheduler banner and the Beacon summary share one row.
+     The wrapper paints the full-width band so each child can be frameless;
+     .schedule-banner becomes position:static so its .sb-panel dropdown
+     (left/right:28px) anchors to this full-width row instead of the now
+     content-width banner. Either child can hide independently; when both
+     hide the row collapses to a thin empty band (rare: no schedules + beacon
+     unconfigured). */
+  .top-strip-row {
+    position: relative;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 6px 28px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .top-strip-row .schedule-banner,
+  .top-strip-row .beacon-bar {
+    position: static;
+    padding: 0; margin: 0;
+    background: transparent; border-bottom: none;
+  }
+  /* Match the Beacon chip to the Scheduler pill (.sb-trigger) so the row reads
+     as two sibling controls, not a pill next to a fat box. */
+  .top-strip-row .beacon-bar-inner {
+    padding: 4px 12px; border-radius: 4px; background: var(--surface3);
+  }
+
   /* Auth banner — sits in the same row family as schedule-banner but uses a
      warning palette since it blocks the user from talking to any agent. */
   .auth-banner {
@@ -3578,6 +3604,7 @@
   /* Mobile: panel goes full-width minus a small gutter and rows reflow
      so the task wraps below the project + time/status. */
   @media (max-width: 720px) {
+    .top-strip-row { padding: 6px 14px; gap: 8px; }
     .schedule-banner { padding: 6px 14px; }
     .sb-panel { left: 14px; right: 14px; }
     .sb-row { grid-template-columns: 1fr max-content; row-gap: 4px; }

@@ -492,7 +492,12 @@
     </div>
   </div>
 
-  <div class="schedule-banner hidden" id="schedule-banner"></div>
+  <!-- Top strip: Scheduler banner + Beacon summary share one row. -->
+  <div class="top-strip-row" id="top-strip-row">
+    <div class="schedule-banner hidden" id="schedule-banner"></div>
+    <!-- Beacon summary bar — opens the full-screen report modal (built by beacon.js). -->
+    <div class="beacon-bar" id="beacon-bar" style="display:none"></div>
+  </div>
   <div class="auth-banner hidden" id="auth-banner">
     <span class="ab-icon">&#x1F510;</span>
     <span class="ab-text" id="auth-banner-text">Claude isn't signed in.</span>
@@ -537,9 +542,6 @@
           <button class="btn-new" onclick="openNewProjectForm()">+ New Project</button>
         </div>
       </div>
-      <!-- Beacon: cross-project situational digest (Phase 2). The bar opens a
-           full-screen report modal that beacon.js builds + appends to <body>. -->
-      <div class="beacon-bar" id="beacon-bar" style="display:none"></div>
       <!-- Grid View -->
       <div class="projects-col" id="projects-col"><div class="loading">Loading...</div></div>
       <!-- List View -->
