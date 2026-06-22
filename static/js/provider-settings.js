@@ -21,10 +21,15 @@ function _renderProviderSettings(cfg) {
     const installed = !!p.installed;
     const authOk    = p.auth_status === 'ok';
     const authNone  = p.auth_status === 'not_logged_in';
-    const pillColor = !installed ? 'var(--text-faint)' : authOk ? 'var(--green)' : 'var(--amber)';
+    const authBad   = p.auth_status === 'invalid_api_key';
+    const pillColor = !installed ? 'var(--text-faint)'
+                    : authOk     ? 'var(--green)'
+                    : authBad    ? 'var(--red)'
+                    : 'var(--amber)';
     const pillText  = !installed ? 'not installed'
-                    : authOk    ? 'signed in'
-                    : authNone  ? 'not signed in'
+                    : authOk     ? 'signed in'
+                    : authNone   ? 'not signed in'
+                    : authBad    ? 'credentials invalid'
                     : 'status unknown';
     const version   = p.version ? ` · v${esc(p.version)}` : '';
 
