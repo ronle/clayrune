@@ -21,23 +21,15 @@
 .beacon-count.resting { color: var(--text-faint); background: transparent; }
 .beacon-open { margin-left: auto; color: var(--accent); font-weight: 600; font-size: 11px; }
 
-/* ── full-screen modal report ──────────────────────────────────────────────── */
-.beacon-modal-overlay {
-  position: fixed; inset: 0; z-index: 9000;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex; align-items: center; justify-content: center;
-  padding: 24px;
-}
-.beacon-modal-window {
-  width: min(1120px, 96vw); height: min(92vh, 920px);
-  display: flex; flex-direction: column;
-  background: var(--surface); border: 1px solid var(--border2);
-  border-radius: 14px; overflow: hidden;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
-}
+/* ── report modal — now a managed .modal-window (drag/resize/snap/minimize via
+   modal-manager.js). The frame, resize grip, shadow and default size come from
+   .modal-content in app.css + the inline _clampModalSize() width; only the
+   head/scroll layout lives here. .beacon-modal-head composes WITH .modal-header
+   (the manager's drag handle) — it keeps the base grab cursor + accent bar and
+   just overrides the layout to space the title against the action buttons. ── */
 .beacon-modal-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px; border-bottom: 1px solid var(--border); flex: 0 0 auto;
+  gap: 12px; padding: 14px 18px; flex: 0 0 auto;
 }
 .beacon-modal-title { font-size: 16px; font-weight: 700; color: var(--text); }
 .bmt-sub { display: block; margin-top: 3px; font-size: 11px; font-weight: 500; color: var(--text-faint); }

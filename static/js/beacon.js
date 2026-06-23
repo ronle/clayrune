@@ -97,7 +97,7 @@ function renderBeacon() {
       _updateBadge((beaconDigest.counts || {}).blocked || 0);
     }
   }
-  if (beaconModalOpen) _renderModal();
+  if (typeof openModals !== 'undefined' && openModals.has('__beacon')) _renderModal();
 }
 
 function _barHTML() {
@@ -120,39 +120,62 @@ function _barHTML() {
 
 // ── render: full-screen modal report ───────────────────────────────────────────
 
+// Opens as a managed .modal-window (modal-manager.js) so it inherits
+// drag / resize / snap / minimize for free — the same chrome as All Backlog,
+// instead of the old bespoke full-screen overlay. SSE teardown is hooked into
+// closeModalById('__beacon') via _beaconTeardown so Esc / Home / close-all all
+// stop the stream (no leaked EventSource).
 function openBeaconReport() {
-  if (beaconModalOpen) return;
-  beaconModalOpen = true;
-  let root = document.getElementById('beacon-modal');
-  if (!root) {
-    root = document.createElement('div');
-    root.id = 'beacon-modal';
-    root.className = 'beacon-modal-overlay';
-    root.addEventListener('click', (e) => { if (e.target === root) closeBeaconReport(); });
-    document.body.appendChild(root);
+  const modalId = '__beacon';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    _renderModal();
+    return;
   }
-  _beaconEscHandler = (e) => { if (e.key === 'Escape') closeBeaconReport(); };
-  document.addEventListener('keydown', _beaconEscHandler);
-  document.body.style.overflow = 'hidden';
+  beaconModalOpen = true;
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content beacon-modal-content';
+  if (typeof _clampModalSize === 'function') _clampModalSize(content, 1040);
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+
   _openStream();
   fetchBeacon();
   _renderModal();
 }
 
-function closeBeaconReport() {
+// Single teardown — invoked by closeModalById('__beacon') (the manager's one
+// close choke point: X button, Esc, Home, close-all) AND defensively below.
+function _beaconTeardown() {
   beaconModalOpen = false;
   _closeStream();
-  if (_beaconEscHandler) { document.removeEventListener('keydown', _beaconEscHandler); _beaconEscHandler = null; }
-  document.body.style.overflow = '';
-  const root = document.getElementById('beacon-modal');
-  if (root) root.remove();
+}
+
+function closeBeaconReport() {
+  // The manager removes the element + fires _beaconTeardown via the hook.
+  if (typeof closeModalById === 'function') closeModalById('__beacon');
+  else _beaconTeardown();
 }
 
 function _renderModal() {
-  const root = document.getElementById('beacon-modal');
-  if (!root) return;
+  const entry = (typeof openModals !== 'undefined') ? openModals.get('__beacon') : null;
+  if (!entry || !entry.element) return;
+  const content = entry.element.querySelector('.modal-content');
+  if (!content) return;
   // Preserve scroll across re-renders (background poll / SSE shouldn't jump it).
-  const scroller = root.querySelector('.beacon-modal-scroll');
+  const scroller = content.querySelector('.beacon-modal-scroll');
   const prevScroll = scroller ? scroller.scrollTop : 0;
 
   const d = beaconDigest || {};
@@ -163,14 +186,19 @@ function _renderModal() {
 
   const refreshLabel = beaconRefreshingAll ? 'Refreshing…' : (staleN ? `↻ Refresh stale (${staleN})` : '↻ Refresh stale');
 
-  root.innerHTML = `<div class="beacon-modal-window" onclick="event.stopPropagation()">
-    <div class="beacon-modal-head">
+  // .modal-header is the manager's drag handle; .modal-content gets resize:both
+  // from CSS. Buttons inside the header are excluded from drag (modalDragStart).
+  content.innerHTML = `
+    <div class="modal-header beacon-modal-head">
       <div class="beacon-modal-title">Where we stand
         <span class="bmt-sub">${rows.length} projects${c.blocked ? ` · <span class="bmt-need">${c.blocked} need you</span>` : ''} · updated ${_esc(_ago(d.generated_at))}</span>
       </div>
       <div class="beacon-modal-actions">
         <button class="bm-btn" onclick="beaconRefreshAll()" ${beaconRefreshingAll || !staleN ? 'disabled' : ''}>${refreshLabel}</button>
-        <button class="bm-close" onclick="closeBeaconReport()" title="Close (Esc)">✕</button>
+        <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+          <button class="modal-minimize" onclick="minimizeModal('__beacon')" title="Minimize">&#x2015;</button>
+          <button class="modal-close" onclick="closeBeaconReport()" title="Close (Esc)">&#10005;</button>
+        </div>
       </div>
     </div>
     <div class="beacon-modal-scroll">
@@ -187,10 +215,9 @@ function _renderModal() {
             ${paused.length ? _pausedGroupHTML(paused) : ''}
           </tbody>
         </table>`)}
-    </div>
-  </div>`;
+    </div>`;
 
-  const ns = root.querySelector('.beacon-modal-scroll');
+  const ns = content.querySelector('.beacon-modal-scroll');
   if (ns) ns.scrollTop = prevScroll;
 }
 
@@ -363,6 +390,7 @@ window.renderBeacon = renderBeacon;
 window.initBeacon = initBeacon;
 window.openBeaconReport = openBeaconReport;
 window.closeBeaconReport = closeBeaconReport;
+window._beaconTeardown = _beaconTeardown;   // called by closeModalById('__beacon')
 window.beaconToggleRow = beaconToggleRow;
 window.beaconTogglePaused = beaconTogglePaused;
 window.beaconItemToggle = beaconItemToggle;

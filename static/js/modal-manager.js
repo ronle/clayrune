@@ -314,6 +314,10 @@ function closeModalById(modalId) {
     delete _hmDashDebounce[hmId];
     delete _hmDashInFlight[hmId];
   }
+  // Beacon report: stop its digest SSE on any close path (X / Esc / Home).
+  if (modalId === '__beacon' && typeof window._beaconTeardown === 'function') {
+    window._beaconTeardown();
+  }
   // Clean up terminal pop-out resources
   cleanupTerminalModal(modalId);
   if (entry._statusBarObserver) { entry._statusBarObserver.disconnect(); delete entry._statusBarObserver; }
