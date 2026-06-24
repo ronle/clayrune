@@ -211,8 +211,13 @@ def _load_config():
             # Merge: saved values override defaults
             for k, v in saved.items():
                 defaults[k] = v
-        except Exception:
-            pass
+        except Exception as e:
+            # Don't silently run on defaults — a malformed config.json (e.g. a
+            # half-written file after a crash) would otherwise revert every
+            # operator-set flag with zero indication. `_log` isn't imported yet
+            # at module-load time, so write straight to stderr.
+            print(f"[config] failed to read {CONFIG_PATH}; running on defaults: {e}",
+                  file=sys.stderr, flush=True)
     else:
         # Create default config for the user to customize
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
