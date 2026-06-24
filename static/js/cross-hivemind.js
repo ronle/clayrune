@@ -296,5 +296,6 @@ window.openAllHiveminds = openAllHiveminds;                   // sidebarNav('hiv
 window.openAllHivemindsForProject = openAllHivemindsForProject; // project three-dot menu onclick
 window.renderAllHiveminds = renderAllHiveminds;              // guarded central render()
 window.newHivemindFromGlobal = newHivemindFromGlobal;        // region-generated card onclick
+window.loadAllHiveminds = loadAllHiveminds;                  // card-ctrl onclick: setTimeout(loadAllHiveminds,300) refresh after pause/stop/start
 // object-identity bridge (handler property-writes route into the live object):
 window._allHivemindFilter = _allHivemindFilter;

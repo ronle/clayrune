@@ -5,7 +5,8 @@
   "description": "Headless boot smoke test for the Mission Control dashboard SPA (static/index.html). Serves the real page against a stub API and asserts the project grid renders — catches runtime boot throws (e.g. TDZ ReferenceError) that node --check / syntax checks miss.",
   "type": "module",
   "scripts": {
-    "test": "node boot-smoke.mjs",
+    "test": "node inline-handler-scope-check.mjs && node boot-smoke.mjs",
+    "lint:handlers": "node inline-handler-scope-check.mjs",
     "postinstall-note": "After npm install, run: npx playwright install chromium"
   },
   "dependencies": {
