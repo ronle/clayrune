@@ -1372,6 +1372,14 @@ Object.defineProperty(window, '_distillerDiagOpen', {
   get() { return _distillerDiagOpen; },
   set(v) { _distillerDiagOpen = v; },
 });
+// Same bridge for the explorations "expand to prune noise" drawer toggle —
+// without it the inline onclick wrote a disconnected global, the render kept
+// reading the module-scoped `let` (always false), the drawer never opened, and
+// the per-row Reject buttons stayed hidden (reported 2026-06-24).
+Object.defineProperty(window, '_distillerExplorationsOpen', {
+  get() { return _distillerExplorationsOpen; },
+  set(v) { _distillerExplorationsOpen = v; },
+});
 // interop: the filter bar's generated oninput/onchange handlers property-write
 // through the binding (`_allSkillsFilter.search=this.value` etc.), so the
 // identifier must resolve on the global object. Accessor (not a copy) so the
