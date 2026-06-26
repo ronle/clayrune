@@ -2669,9 +2669,23 @@ fetchProjects().then(async () => {
       try { openProjectModal(s.projectId, s); } catch (e) { console.warn('restore modal failed', s.projectId, e); }
     }
   }
-  // Restore any running/completed agent sessions into the console
-  for (const p of allProjects) {
-    if (p.project_path) await fetchAgentStatus(p.id);
+  // Restore agent sessions into the console — LAZILY. The old code awaited
+  // fetchAgentStatus() for EVERY project, serially: a 30+-link sequential chain
+  // of HTTP round-trips (each with an 8s fail-fast ceiling) that rebuilt the
+  // conversation buffers for projects the user never opened — the "preview
+  // loading is slow after restart" symptom. We only NEED a boot-time fetch for
+  // (a) projects the server reports as having a LIVE agent — so the 15s fallback
+  // poll can track them and tiles reflect fresh per-session state — and (b) any
+  // modal being restored open (deep-link / refresh persistence). Everything else
+  // defers to openProjectModal → fetchAgentStatus on tile open. The survivors
+  // load in PARALLEL, not serially; one failure can't stall the rest.
+  {
+    const _openIds = new Set([...openModals.keys()].filter(id => !id.startsWith('__')));
+    await Promise.all(
+      allProjects
+        .filter(p => p.project_path && (p.live_agent || _openIds.has(p.id)))
+        .map(p => fetchAgentStatus(p.id).catch(() => {}))
+    );
   }
   // Deep-link from push notifications: ?project=X&session=Y opens the
   // project modal (or activates it on mobile) + focuses the session tab.
