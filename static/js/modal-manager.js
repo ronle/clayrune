@@ -414,6 +414,24 @@ async function setProjectColor(projectId, color, bg) {
   } catch(e) {}
 }
 
+// Durable "pin this conversation" toggle. Hits the dedicated /pin endpoint
+// (which never bumps last_updated) so the pin is a server-side, cross-interface,
+// restart-proof flag — not per-browser localStorage. refreshSilent() re-renders
+// the grid + open modal, flipping the menu label and re-sorting the chat list.
+async function togglePinConversation(projectId) {
+  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  const p = (typeof allProjects !== 'undefined') ? allProjects.find(x => x.id === projectId) : null;
+  const next = !(p && p.pinned_conversation);
+  try {
+    await fetch(API_BASE + `/api/project/${projectId}/pin`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ pinned: next })
+    });
+    await refreshSilent();
+  } catch(e) {}
+}
+
 async function setProjectModel(projectId, model) {
   document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
   try {
@@ -873,6 +891,7 @@ window.toggleModalMenu = toggleModalMenu;
 window.toggleModalMenuSub = toggleModalMenuSub;
 window.setProjectStatus = setProjectStatus;
 window.setProjectColor = setProjectColor;
+window.togglePinConversation = togglePinConversation;
 window.setProjectModel = setProjectModel;
 window.setProjectEffort = setProjectEffort;
 window.setProjectProvider = setProjectProvider;

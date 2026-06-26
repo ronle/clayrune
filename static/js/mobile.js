@@ -111,7 +111,7 @@ function projectRowHTML(p) {
     <div class="cr-avatar friendly-${fs}">${av}<span class="cr-ring"></span></div>
     <div class="cr-main">
       <div class="cr-top">
-        <span class="cr-name">${esc(p.name || p.id)}</span>
+        <span class="cr-name">${p.pinned_conversation ? '<span class="cr-pin" title="Pinned">&#x1F4CC;</span> ' : ''}${esc(p.name || p.id)}</span>
         <span class="cr-time">${esc(p.last_updated_relative || '')}</span>
       </div>
       <div class="cr-bot">
@@ -126,10 +126,11 @@ function renderMobileChatList(col) {
   const filtered = filterProjects();
   if (!filtered.length) { col.innerHTML = '<div class="loading">No projects match filter</div>'; return; }
   const rank = p => {
+    if (p.pinned_conversation) return 0;  // pinned → always top, survives restarts/interfaces
     const fs = friendlyStatus(p);
-    if (fs === 'asking') return 0;   // needs you → top
-    if (fs === 'stuck')  return 1;   // blocked → next
-    return 2;                        // everything else → recency below
+    if (fs === 'asking') return 1;   // needs you → next
+    if (fs === 'stuck')  return 2;   // blocked → next
+    return 3;                        // everything else → recency below
   };
   const sorted = filtered.slice().sort((a, b) => {
     const r = rank(a) - rank(b);

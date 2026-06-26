@@ -189,6 +189,13 @@ def load_projects():
             # legitimately-dormant projects). Set >0 on projects you expect
             # regular activity from (e.g. scheduled scanners).
             p.setdefault('beacon_cadence_hours', 0)
+            # Durable user "pin this conversation" flag. Server-side (not
+            # per-browser localStorage like mc_modal_prefs / mc_proj_seen) so a
+            # pin survives restarts and is shared across every interface. Floats
+            # the project to the top of the recency-sorted chat list. Distinct
+            # from the modal-collapse `unpinned` pref and the status-based
+            # asking/stuck sort tier — both unrelated uses of the word "pin".
+            p.setdefault('pinned_conversation', False)
             _decorate_attachments(p)
             projects.append(p)
         except Exception as e:
@@ -357,6 +364,31 @@ def update_project(project_id):
     save_project(project_id, existing)
 
     return jsonify({'ok': True, 'id': project_id})
+
+
+@bp.route('/api/project/<project_id>/pin', methods=['POST'])
+def set_project_pin(project_id):
+    """Set / toggle the durable 'pin this conversation' flag.
+
+    Deliberately does NOT touch `last_updated`: pinning is a view-ordering
+    preference, not activity, so bumping recency would fake a fresh update and
+    reshuffle the recency-sorted chat list. Persisted in the project JSON
+    (server-side) so the pin survives restarts and is identical on every
+    interface — unlike the per-browser localStorage UI state.
+
+    Body: {"pinned": true|false} sets it explicitly; omit to toggle.
+    """
+    filepath = DATA_DIR / f'{project_id}.json'
+    if not filepath.exists():
+        return jsonify({'error': 'project not found'}), 404
+    body = request.get_json(silent=True) or {}
+    existing = json.loads(filepath.read_text(encoding='utf-8'))
+    if 'pinned' in body:
+        existing['pinned_conversation'] = bool(body['pinned'])
+    else:
+        existing['pinned_conversation'] = not bool(existing.get('pinned_conversation'))
+    save_project(project_id, existing)
+    return jsonify({'ok': True, 'pinned_conversation': existing['pinned_conversation']})
 
 
 @bp.route('/api/project/<project_id>/generate_summary', methods=['POST'])

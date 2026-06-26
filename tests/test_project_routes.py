@@ -255,6 +255,33 @@ def test_update_project_log_msg_and_no_data(client):
     assert r.status_code == 400
 
 
+def test_projects_list_defaults_pinned_false(client):
+    _seed(client)                       # seeded record has no pin field
+    p = client.get('/api/projects').get_json()[0]
+    assert p['pinned_conversation'] is False   # load_projects() backfills it
+
+
+def test_pin_endpoint_sets_and_toggles_without_bumping_recency(client):
+    _seed(client, last_updated='2020-01-01T00:00:00Z')
+    # Explicit set true
+    r = client.post('/api/project/tproj/pin', json={'pinned': True})
+    assert r.status_code == 200 and r.get_json()['pinned_conversation'] is True
+    rec = json.loads((client.data_dir / 'tproj.json').read_text(encoding='utf-8'))
+    assert rec['pinned_conversation'] is True
+    # LOAD-BEARING: pinning must NOT fake activity — recency is untouched.
+    assert rec['last_updated'] == '2020-01-01T00:00:00Z'
+    # No body → toggle back off
+    r = client.post('/api/project/tproj/pin', json={})
+    assert r.get_json()['pinned_conversation'] is False
+    # Explicit set false stays false
+    r = client.post('/api/project/tproj/pin', json={'pinned': False})
+    assert r.get_json()['pinned_conversation'] is False
+
+
+def test_pin_endpoint_missing_project_404(client):
+    assert client.post('/api/project/nope/pin', json={'pinned': True}).status_code == 404
+
+
 def test_create_project_duplicate_path_409(client):
     ws = client.tmp / 'shared_ws'
     ws.mkdir()
