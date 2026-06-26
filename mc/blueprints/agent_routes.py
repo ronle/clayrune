@@ -5240,6 +5240,151 @@ def get_project_transcript(project_id, claude_session_id):
     })
 
 
+def _wf_agent_label(wf_dir, agent_id, maxlen=90):
+    """Best-effort one-line label for a workflow subagent, from the first user
+    message of its agent-<id>.jsonl. Prefers a distinguishing 'KEY: value' clause
+    over the shared mission preamble. Returns '' on any failure (label is
+    cosmetic — never let it break the scan)."""
+    f = wf_dir / f'agent-{agent_id}.jsonl'
+    try:
+        with open(f, encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                o = json.loads(line)
+                m = o.get('message', {})
+                if m.get('role') != 'user':
+                    continue
+                c = m.get('content')
+                if isinstance(c, list):
+                    c = ' '.join(x.get('text', '') for x in c if isinstance(x, dict))
+                c = ' '.join(str(c).split())
+                if not c:
+                    return ''
+                up = c.upper()
+                for kw in ('ANGLE', 'METHOD', 'FAMILY', 'YOUR TASK', 'MANDATE',
+                           'ASSIGNMENT', 'LENS'):
+                    idx = up.find(kw + ':')
+                    if idx != -1:
+                        return c[idx + len(kw) + 1:].strip()[:maxlen]
+                return c[:maxlen]
+    except Exception:
+        return ''
+    return ''
+
+
+def _wf_render_ascii(wf):
+    """Render a workflow's reconstructed state as a monospace ASCII tree
+    (Ron picked this over Mermaid — cheaper for a <pre> block, no graph lib)."""
+    n, nd = wf['started'], wf['done']
+    nr = n - nd
+    filled = round(20 * nd / n) if n else 0
+    bar = '#' * filled + '-' * (20 - filled)
+    status = f'{nd}/{n} done' + (f', {nr} running' if nr else ', complete')
+    lines = [
+        f'workflow  {wf["wf_id"]}',
+        f'status    [{bar}] {status}',
+        '│',
+        f'├─ fan-out: {n} parallel agents',
+    ]
+    agents = wf['agents']
+    for i, a in enumerate(agents):
+        last = (i == len(agents) - 1)
+        branch = '│  └─ ' if last else '│  ├─ '
+        mark = '[x]' if a['done'] else '[~]'
+        lines.append(f'{branch}{mark} {a["label"] or ("agent %02d" % (i + 1))}')
+    return '\n'.join(lines)
+
+
+def _scan_project_workflows(project_path, max_age_h=24):
+    """Reconstruct CC Workflow progress from on-disk journals (read-only).
+
+    Workflow per-agent progress never reaches MC's agent stream (only the launch
+    tool_use + the final <task-notification> do), so we tail the subagent
+    journals directly:
+        ~/.claude/projects/<enc>/<csid>/subagents/workflows/<wf_id>/journal.jsonl
+    an append-only log of {"type":"started"|"result","agentId":..} events.
+    Returns [] on any failure — cosmetic feature, never load-bearing."""
+    encoded = _encode_project_path(project_path or '')
+    if not encoded:
+        return []
+    dirs = [CLAUDE_HOME / encoded]
+    alt = encoded.replace('_', '-')
+    if alt != encoded:
+        dirs.append(CLAUDE_HOME / alt)
+    cutoff = _time.time() - max_age_h * 3600
+    out, seen = [], set()
+    for d in dirs:
+        try:
+            if not d.exists():
+                continue
+            journals = list(d.glob('*/subagents/workflows/*/journal.jsonl'))
+        except OSError:
+            continue
+        for j in journals:
+            try:
+                wf_id = j.parent.name
+                if wf_id in seen:
+                    continue
+                mtime = j.stat().st_mtime
+                if mtime < cutoff:
+                    continue
+                seen.add(wf_id)
+                started, done = [], set()
+                with open(j, encoding='utf-8') as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            o = json.loads(line)
+                        except Exception:
+                            continue
+                        t, aid = o.get('type'), o.get('agentId')
+                        if not aid:
+                            continue
+                        if t == 'started' and aid not in started:
+                            started.append(aid)
+                        elif t == 'result':
+                            done.add(aid)
+                agents = [{'id': aid, 'done': aid in done,
+                           'label': _wf_agent_label(j.parent, aid)}
+                          for aid in started]
+                wf = {
+                    'wf_id': wf_id,
+                    'csid': j.parents[3].name if len(j.parents) > 3 else '',
+                    'started': len(started),
+                    'done': len(done),
+                    'running': len(done) < len(started),
+                    'mtime': mtime,
+                    'agents': agents,
+                }
+                wf['ascii'] = _wf_render_ascii(wf)
+                out.append(wf)
+            except Exception as e:
+                _log(f"[workflows] scan failed for {j}: {e}")
+                continue
+    out.sort(key=lambda w: w['mtime'], reverse=True)
+    return out
+
+
+@bp.route('/api/project/<project_id>/workflows')
+def get_project_workflows(project_id):
+    """Live CC Workflow progress trees, reconstructed from on-disk subagent
+    journals (MC's agent stream never carries per-agent workflow progress).
+    Read-only, best-effort — returns {workflows: []} on any miss."""
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    try:
+        wfs = _scan_project_workflows(p.get('project_path', ''))
+    except Exception as e:
+        _log(f"[workflows] endpoint failed for {project_id}: {e}")
+        wfs = []
+    return jsonify({'workflows': wfs})
+
+
 @bp.route('/api/project/<project_id>/session/<session_id>/reconstruct')
 def reconstruct_dead_session(project_id, session_id):
     """Rebuild a finalized/purged MC session's chat buffer from its transcript.

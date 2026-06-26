@@ -6,6 +6,31 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-06-25] — Workflows tab: live CC Workflow progress in MC
+
+CC's Workflow tool (`/workflow`) never streams per-agent progress to MC's agent
+channel — only the launch `tool_use` and the final `<task-notification>` arrive,
+so a workflow ran "invisibly" inside an MC session. The live progress is written
+to disk instead, at
+`~/.claude/projects/<enc>/<csid>/subagents/workflows/<wf_id>/journal.jsonl`
+(append-only `started`/`result` events per subagent). New surface tails that.
+
+- **Backend** (`mc/blueprints/agent_routes.py`): `GET /api/project/<id>/workflows`
+  + `_scan_project_workflows` / `_wf_render_ascii` / `_wf_agent_label`. Globs the
+  per-session workflow journals (≤24h), counts started-vs-result per agent,
+  best-effort labels each agent from its `agent-<id>.jsonl`, and returns a
+  pre-rendered monospace ASCII tree (`[x]` done / `[~]` running + progress bar).
+  Read-only, best-effort — returns `{workflows: []}` on any miss.
+- **Frontend** (`render-core.js`, `agent-console.js`): a "Workflows" tab
+  (desktop tab bar + mobile menu) that renders each tree in a `<pre>` and polls
+  every 3s while any workflow is `running` (self-cancels on tab switch / close).
+- Validated against the live engulfing-scanner workflows (13/13 and 9/9
+  reconstructed correctly). Backlog `7c1808c2`.
+- **Known gaps (v1):** the journal has no phase grouping (flat fan-out only);
+  identical-prefix fan-outs fall back to a generic label; MC's `live_agent`
+  still reads `idle` during a workflow (detached subagents — separate fix).
+- Needs a server restart to expose the endpoint; static JS is served no-cache.
+
 ## [2026-06-13d] — Agent follow-up messages ignored the chat zoom
 
 On mobile, a follow-up agent message rendered at the CSS default size instead of

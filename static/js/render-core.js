@@ -457,6 +457,9 @@ function modalContentHTML(p) {
             <button class="modal-menu-item${activeTab==='activity'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','activity')">
               <span class="menu-icon">&#x23F1;</span> Activity
             </button>
+            <button class="modal-menu-item${activeTab==='workflows'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','workflows')">
+              <span class="menu-icon">&#x26D3;</span> Workflows
+            </button>
             <div class="modal-menu-sep"></div>
           </div>
           <button class="modal-menu-item" onclick="_mcMenuClose();openAllHivemindsForProject('${esc(p.id)}')">
@@ -646,6 +649,7 @@ function modalContentHTML(p) {
       <div class="modal-tab ${activeTab==='agent-log'?'active':''}" data-tab-name="agent-log" onclick="switchModalTab('${esc(p.id)}','agent-log')">Agent Log</div>
       <div class="modal-tab ${activeTab==='plans'?'active':''}" onclick="switchModalTab('${esc(p.id)}','plans')">Plans</div>
       <div class="modal-tab ${activeTab==='activity'?'active':''}" onclick="switchModalTab('${esc(p.id)}','activity')">Activity</div>
+      <div class="modal-tab ${activeTab==='workflows'?'active':''}" onclick="switchModalTab('${esc(p.id)}','workflows')">Workflows</div>
       ${activeTab !== 'agent' ? `<div class="modal-tab-search">
         <input type="text" id="tab-search-${esc(p.id)}" placeholder="Filter..."
           value="${esc(modalSearchQuery[p.id] || '')}"
@@ -699,6 +703,12 @@ function modalContentHTML(p) {
         <div class="card-section">
           <div class="section-title">Activity Log</div>
           <div class="log-entries">${logHTML || '<div style="color:var(--text-faint);font-style:italic">No activity yet</div>'}</div>
+        </div>
+      </div>
+      <div class="modal-tab-content ${activeTab==='workflows'?'active':''}" data-tab="workflows">
+        <div class="card-section">
+          <div class="section-title">Workflows</div>
+          <div id="workflows-body-${esc(p.id)}"><div style="color:var(--text-faint);font-style:italic">Loading...</div></div>
         </div>
       </div>
     </div>`;

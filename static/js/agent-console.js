@@ -280,8 +280,74 @@ function switchModalTab(projectId, tab) {
     loadProjectPlans(projectId);
     return;
   }
+  if (tab === 'workflows') {
+    refreshModal();          // make the panel (+ Loading placeholder) visible
+    loadWorkflows(projectId); // then populate it from the journal scan
+    return;
+  }
   refreshModal();
 }
+
+// ── Workflow progress (ASCII tree reconstructed from on-disk CC journals) ─────
+// CC's Workflow tool never streams per-agent progress to MC's agent channel
+// (only the launch tool_use + final task-notification arrive), so the live tree
+// is read from ~/.claude/projects/<enc>/<csid>/subagents/workflows/<id>/journal.jsonl
+// server-side and rendered here as a monospace <pre>. Best-effort, read-only.
+const _wfPollTimers = {};
+function _wfStopPolling(projectId) {
+  if (_wfPollTimers[projectId]) {
+    clearInterval(_wfPollTimers[projectId]);
+    delete _wfPollTimers[projectId];
+  }
+}
+function _wfStartPolling(projectId) {
+  if (_wfPollTimers[projectId]) return;  // already polling this project
+  _wfPollTimers[projectId] = setInterval(() => {
+    // Self-cancel once the tab is no longer active or the panel is gone.
+    if ((modalActiveTab[projectId] || 'agent') !== 'workflows'
+        || !document.getElementById('workflows-body-' + projectId)) {
+      _wfStopPolling(projectId);
+      return;
+    }
+    loadWorkflows(projectId);
+  }, 3000);
+}
+async function loadWorkflows(projectId) {
+  const el = document.getElementById('workflows-body-' + projectId);
+  if (!el) return;
+  try {
+    const res = await fetch(API_BASE + `/api/project/${encodeURIComponent(projectId)}/workflows`);
+    if (!res.ok) {
+      el.innerHTML = '<div style="color:var(--text-faint);font-style:italic">Could not load workflows.</div>';
+      _wfStopPolling(projectId);
+      return;
+    }
+    const data = await res.json();
+    const wfs = data.workflows || [];
+    if (!wfs.length) {
+      el.innerHTML = '<div style="color:var(--text-faint);font-style:italic">No workflows in the last 24h. Launch one with "use a workflow to …" in the Agent tab.</div>';
+      _wfStopPolling(projectId);
+      return;
+    }
+    el.innerHTML = wfs.map(w => {
+      const badge = w.running
+        ? '<span style="color:var(--amber,#d98a00);font-weight:600">● running</span>'
+        : '<span style="color:var(--green,#2e7d32);font-weight:600">✓ complete</span>';
+      return `<div class="card-section" style="margin-bottom:10px">
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span style="font-family:var(--mono,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(w.wf_id)}</span>${badge}
+        </div>
+        <pre style="white-space:pre;overflow-x:auto;font-size:12px;line-height:1.45;font-family:var(--mono,monospace);margin:6px 0 0">${esc(w.ascii || '')}</pre>
+      </div>`;
+    }).join('');
+    if (wfs.some(w => w.running)) _wfStartPolling(projectId);
+    else _wfStopPolling(projectId);
+  } catch (e) {
+    el.innerHTML = '<div style="color:var(--text-faint);font-style:italic">Failed to load workflows.</div>';
+    _wfStopPolling(projectId);
+  }
+}
+window.loadWorkflows = loadWorkflows;
 
 // ── Tab search / filter ─────────────────────────────────────────────────────
 
