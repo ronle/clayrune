@@ -620,7 +620,6 @@ function modalContentHTML(p) {
           oninput="autoSizeNameInput(this)"
         >
         ${(() => { const cfg = getDomainConfig(p.domain||'general'); return `<span class="domain-tag" style="background:${cfg.bg};color:${cfg.color}">${esc(cfg.label||p.domain||'general')}</span>`; })()}
-        <button class="modal-pin-toggle${p.pinned_conversation ? ' pinned' : ''}" onclick="togglePinConversation('${esc(p.id)}')" title="${p.pinned_conversation ? 'Unpin conversation' : 'Pin conversation'}" aria-label="${p.pinned_conversation ? 'Unpin conversation' : 'Pin conversation'}" aria-pressed="${p.pinned_conversation ? 'true' : 'false'}">&#x1F4CC;</button>
       </div>
       <div class="modal-status-row" style="display:flex;align-items:center;gap:10px">
         <span class="status-pill friendly-${fs}"><span class="status-dot"></span>${esc(vl(FRIENDLY_TO_VOICE[fs]))}</span>

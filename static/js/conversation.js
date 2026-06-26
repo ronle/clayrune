@@ -295,8 +295,13 @@ function agentPanelHTML(p) {
         <button class="agent-tab-close" onclick="event.stopPropagation();closeAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="Close tab">&#10005;</button>
       </div>`;
     }).join('');
+    // Leading pin toggle — pins this whole conversation/chat (per-project,
+    // server-side, restart- and interface-durable). Sits at the head of the
+    // tab strip, beside the conversation tabs. Same control as the three-dot
+    // "Pin conversation" item; refreshSilent re-renders both in sync.
+    const pinBtn = `<button class="agent-tab-pin${p.pinned_conversation ? ' pinned' : ''}" onclick="togglePinConversation('${esc(p.id)}')" title="${p.pinned_conversation ? 'Unpin conversation' : 'Pin conversation'}" aria-label="${p.pinned_conversation ? 'Unpin conversation' : 'Pin conversation'}" aria-pressed="${p.pinned_conversation ? 'true' : 'false'}">&#x1F4CC;</button>`;
     tabBar = sessions.length > 0
-      ? `<div class="agent-tab-bar">${tabsHTML}<button class="agent-tab-new" onclick="newAgentTab('${esc(p.id)}')">+ New</button></div>`
+      ? `<div class="agent-tab-bar">${pinBtn}${tabsHTML}<button class="agent-tab-new" onclick="newAgentTab('${esc(p.id)}')">+ New</button></div>`
       : '';
   }
 
