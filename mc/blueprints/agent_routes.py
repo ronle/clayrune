@@ -5069,8 +5069,15 @@ def agent_status(project_id):
     # Hoist project lookup + per-project default model out of the loop. Used
     # as a fallback for legacy sessions that were dispatched before
     # session['agent_model'] was captured per-dispatch.
-    _proj_default_model = ((load_project(project_id) or {}).get('agent_model')
+    _proj = load_project(project_id) or {}
+    _proj_default_model = (_proj.get('agent_model')
                            or state.CONFIG.get('agent_model') or '')
+    # Per-conversation pin state is computed SERVER-SIDE: the server always knows
+    # a live session's claude_session_id (the durable pin key), whereas the
+    # client's cached copy can lag a freshly-assigned id (Mode B receives it via
+    # the stream init event, possibly after the client's last poll). The client
+    # renders the pin marker from this flag instead of resolving identity itself.
+    _pinned_csids = _proj.get('pinned_conversations') or []
     for sid, s in agent_sessions.items():
         if s['project_id'] == project_id:
             sessions.append({
@@ -5118,6 +5125,9 @@ def agent_status(project_id):
                 'model_source': s.get('model_source', 'manual'),
                 # Per-chat persona {name,scope,display_name} or None → header pill.
                 'character': s.get('character'),
+                # Chat-level pin marker — server-authoritative (see _pinned_csids).
+                'pinned': bool(s.get('claude_session_id')
+                               and s.get('claude_session_id') in _pinned_csids),
             })
     # Sort: running first, then newest first (ISO timestamps sort lexically)
     sessions.sort(key=lambda s: (

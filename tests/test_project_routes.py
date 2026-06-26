@@ -295,6 +295,21 @@ def test_conversation_pin_requires_id_and_project(client):
                        json={'conversation_id': 'x'}).status_code == 404
 
 
+def test_conversation_pin_resolves_live_session_id(client):
+    # The client's cached claude_session_id can be stale (Mode B assigns it late),
+    # so the server resolves it authoritatively from the live session map when
+    # given the MC session_id — even if the client sends an empty conversation_id.
+    _seed(client)
+    client.state.agent_sessions['mcsid1'] = {
+        'session_id': 'mcsid1', 'project_id': 'tproj',
+        'claude_session_id': 'claude-live-1', 'status': 'running',
+    }
+    r = client.post('/api/project/tproj/conversation-pin',
+                    json={'session_id': 'mcsid1', 'conversation_id': '', 'pinned': True})
+    assert r.status_code == 200
+    assert r.get_json()['pinned_conversations'] == ['claude-live-1']
+
+
 def test_create_project_duplicate_path_409(client):
     ws = client.tmp / 'shared_ws'
     ws.mkdir()

@@ -285,8 +285,15 @@ function agentPanelHTML(p) {
     // (chat-level, keyed on the durable claude_session_id) sort to the FRONT and
     // carry a pin marker — each chat is independently pinnable, not the project.
     const pinnedList = p.pinned_conversations || [];
-    const _csidOf = h => (agentStatusCache[h.sessionId] || {}).claudeSessionId || '';
-    const _isPinnedConv = h => { const c = _csidOf(h); return !!c && pinnedList.includes(c); };
+    // Prefer the server-authoritative per-session `pinned` flag (set by
+    // fetchAgentStatus); fall back to claude_session_id ∈ project list when the
+    // agent status hasn't been fetched yet for this session.
+    const _isPinnedConv = h => {
+      const cache = agentStatusCache[h.sessionId] || {};
+      if (typeof cache.pinned === 'boolean') return cache.pinned;
+      const c = cache.claudeSessionId || '';
+      return !!c && pinnedList.includes(c);
+    };
     const _ordered = sessions.slice().reverse();
     const renderTab = h => {
       const isActive = h.sessionId === activeSessionId;
@@ -661,7 +668,12 @@ function agentPanelHTML(p) {
 function conversationListHTML(p, sessions) {
   // Pinned chats (keyed on the durable claude_session_id) lead the list.
   const _pinnedList = p.pinned_conversations || [];
-  const _isPin = h => { const c = (agentStatusCache[h.sessionId] || {}).claudeSessionId || ''; return !!c && _pinnedList.includes(c); };
+  const _isPin = h => {
+    const cache = agentStatusCache[h.sessionId] || {};
+    if (typeof cache.pinned === 'boolean') return cache.pinned;
+    const c = cache.claudeSessionId || '';
+    return !!c && _pinnedList.includes(c);
+  };
   const _ordered = [...sessions.filter(_isPin), ...sessions.filter(h => !_isPin(h))];
   const rows = _ordered.map(h => conversationRowHTML(p, h)).join('');
   return `
@@ -700,7 +712,9 @@ function conversationRowHTML(p, h) {
     _convCharName ? `<span class="conv-tag char" title="Persona: ${esc(_convCharName)}">&#x1F3AD; ${esc(_convCharName)}</span>` : '',
     _providerBadge(convProv),
   ].join('');
-  const isPinnedConv = (() => { const c = cache.claudeSessionId || ''; return !!c && (p.pinned_conversations || []).includes(c); })();
+  const isPinnedConv = (typeof cache.pinned === 'boolean')
+    ? cache.pinned
+    : (() => { const c = cache.claudeSessionId || ''; return !!c && (p.pinned_conversations || []).includes(c); })();
   const pinMark = `<button class="conv-pin-mark${isPinnedConv ? ' pinned' : ''}" onclick="event.stopPropagation();togglePinConversationSession('${esc(p.id)}','${esc(h.sessionId)}')" title="${isPinnedConv ? 'Unpin this chat' : 'Pin this chat'}" aria-label="${isPinnedConv ? 'Unpin this chat' : 'Pin this chat'}" aria-pressed="${isPinnedConv ? 'true' : 'false'}">&#x1F4CC;</button>`;
   return `
   <div class="conv-row ${isPinnedConv ? 'pinned-conv' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task || '')}">
@@ -1483,7 +1497,7 @@ async function fetchAgentStatus(projectId) {
       // nag. The server still computes `s.long_session_advisory`; nothing
       // consumes it now. To bring the nudge back, render it somewhere
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual', character: s.character || null };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual', character: s.character || null, pinned: !!s.pinned };
       // Question-form reconciliation (parity with _reconcileAgentBuffer). The
       // wholesale cache rebuild above drops pendingQuestions on every poll. If we
       // don't re-derive it here, a form that only ever lived in the cache — the

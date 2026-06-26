@@ -424,19 +424,29 @@ async function setProjectColor(projectId, color, bg) {
 // durably pinned, so we explain instead of writing a non-persisting pin.
 async function togglePinConversationSession(projectId, sessionId) {
   const cache = (typeof agentStatusCache !== 'undefined') ? (agentStatusCache[sessionId] || {}) : {};
-  const csid = cache.claudeSessionId || '';
-  if (!csid) {
-    if (typeof showToast === 'function') showToast('You can pin this chat once it has had its first reply.', 4000);
-    return;
-  }
-  const p = (typeof allProjects !== 'undefined') ? allProjects.find(x => x.id === projectId) : null;
-  const isPinned = !!(p && Array.isArray(p.pinned_conversations) && p.pinned_conversations.includes(csid));
+  const isPinned = !!cache.pinned;
   try {
-    await fetch(API_BASE + `/api/project/${projectId}/conversation-pin`, {
+    // Send session_id so the server resolves the authoritative claude_session_id
+    // itself (the client's cached copy can be stale, esp. Mode B); conversation_id
+    // is the fallback for a closed chat no longer in the live session map.
+    const res = await fetch(API_BASE + `/api/project/${projectId}/conversation-pin`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ conversation_id: csid, pinned: !isPinned })
+      body: JSON.stringify({ session_id: sessionId, conversation_id: cache.claudeSessionId || '', pinned: !isPinned })
     });
+    if (res.status === 400) {
+      if (typeof showToast === 'function') showToast('You can pin this chat once it has had its first reply.', 4000);
+      return;
+    }
+    if (res.ok) {
+      // Apply the server's authoritative result immediately so the marker +
+      // re-sort flip without waiting on a fresh agent-status poll (refreshSilent
+      // re-fetches /api/projects but NOT agent status).
+      const data = await res.json().catch(() => ({}));
+      if (agentStatusCache[sessionId]) agentStatusCache[sessionId].pinned = !!data.pinned;
+      const p = (typeof allProjects !== 'undefined') ? allProjects.find(x => x.id === projectId) : null;
+      if (p && Array.isArray(data.pinned_conversations)) p.pinned_conversations = data.pinned_conversations;
+    }
     await refreshSilent();
   } catch(e) {}
 }

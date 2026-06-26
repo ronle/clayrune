@@ -382,16 +382,26 @@ def set_conversation_pin(project_id):
     it is identical on every interface. Deliberately does NOT touch
     `last_updated`: pinning is a view preference, not activity.
 
-    Body: {"conversation_id": "<claude_session_id>", "pinned": true|false};
-    omit "pinned" to toggle.
+    Body: {"session_id": "<mc_session_id>", "conversation_id": "<claude_session_id>",
+    "pinned": true|false}. For a LIVE session pass session_id and the server
+    resolves the authoritative claude_session_id itself (the client's cached copy
+    can lag, esp. Mode B); conversation_id is the fallback for closed/historical
+    chats. Omit "pinned" to toggle.
     """
     filepath = DATA_DIR / f'{project_id}.json'
     if not filepath.exists():
         return jsonify({'error': 'project not found'}), 404
     body = request.get_json(silent=True) or {}
     csid = (body.get('conversation_id') or '').strip()
+    # Server-authoritative resolution for a live session beats the client's
+    # (possibly stale) cached claude_session_id.
+    sid = (body.get('session_id') or '').strip()
+    if sid:
+        s = agent_sessions.get(sid)
+        if s and s.get('project_id') == project_id and s.get('claude_session_id'):
+            csid = s['claude_session_id']
     if not csid:
-        return jsonify({'error': 'conversation_id required'}), 400
+        return jsonify({'error': 'no resolvable conversation id (chat has no saved session yet)'}), 400
     existing = json.loads(filepath.read_text(encoding='utf-8'))
     pinned = existing.get('pinned_conversations')
     if not isinstance(pinned, list):
