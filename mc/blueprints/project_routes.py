@@ -189,13 +189,18 @@ def load_projects():
             # legitimately-dormant projects). Set >0 on projects you expect
             # regular activity from (e.g. scheduled scanners).
             p.setdefault('beacon_cadence_hours', 0)
-            # Durable user "pin this conversation" flag. Server-side (not
-            # per-browser localStorage like mc_modal_prefs / mc_proj_seen) so a
-            # pin survives restarts and is shared across every interface. Floats
-            # the project to the top of the recency-sorted chat list. Distinct
-            # from the modal-collapse `unpinned` pref and the status-based
-            # asking/stuck sort tier — both unrelated uses of the word "pin".
-            p.setdefault('pinned_conversation', False)
+            # Durable per-CONVERSATION pins: a list of Claude session ids
+            # (claude_session_id) for the individual chats the user pinned —
+            # chat-level, NOT a whole-project flag. Keyed on claude_session_id
+            # because that's the conversation identity that survives MC's
+            # internal session-id churn on revival, so a pin persists across
+            # restarts; stored server-side (not per-browser localStorage) so it
+            # is identical on every interface. A project is treated as "pinned"
+            # in the chat list iff this list is non-empty. Distinct from the
+            # modal-collapse `unpinned` pref and the status-based asking/stuck
+            # sort tier — both unrelated uses of the word "pin".
+            if not isinstance(p.get('pinned_conversations'), list):
+                p['pinned_conversations'] = []
             _decorate_attachments(p)
             projects.append(p)
         except Exception as e:
@@ -366,29 +371,40 @@ def update_project(project_id):
     return jsonify({'ok': True, 'id': project_id})
 
 
-@bp.route('/api/project/<project_id>/pin', methods=['POST'])
-def set_project_pin(project_id):
-    """Set / toggle the durable 'pin this conversation' flag.
+@bp.route('/api/project/<project_id>/conversation-pin', methods=['POST'])
+def set_conversation_pin(project_id):
+    """Pin / unpin a SINGLE conversation within a project — chat-level, not the
+    whole project.
 
-    Deliberately does NOT touch `last_updated`: pinning is a view-ordering
-    preference, not activity, so bumping recency would fake a fresh update and
-    reshuffle the recency-sorted chat list. Persisted in the project JSON
-    (server-side) so the pin survives restarts and is identical on every
-    interface — unlike the per-browser localStorage UI state.
+    Keys on the Claude session id (`conversation_id` == claude_session_id), the
+    stable conversation identity that survives MC's internal session-id churn on
+    revival, so the pin persists across restarts; stored in the project JSON so
+    it is identical on every interface. Deliberately does NOT touch
+    `last_updated`: pinning is a view preference, not activity.
 
-    Body: {"pinned": true|false} sets it explicitly; omit to toggle.
+    Body: {"conversation_id": "<claude_session_id>", "pinned": true|false};
+    omit "pinned" to toggle.
     """
     filepath = DATA_DIR / f'{project_id}.json'
     if not filepath.exists():
         return jsonify({'error': 'project not found'}), 404
     body = request.get_json(silent=True) or {}
+    csid = (body.get('conversation_id') or '').strip()
+    if not csid:
+        return jsonify({'error': 'conversation_id required'}), 400
     existing = json.loads(filepath.read_text(encoding='utf-8'))
-    if 'pinned' in body:
-        existing['pinned_conversation'] = bool(body['pinned'])
-    else:
-        existing['pinned_conversation'] = not bool(existing.get('pinned_conversation'))
+    pinned = existing.get('pinned_conversations')
+    if not isinstance(pinned, list):
+        pinned = []
+    is_pinned = csid in pinned
+    want = bool(body['pinned']) if 'pinned' in body else (not is_pinned)
+    if want and not is_pinned:
+        pinned.append(csid)
+    elif not want and is_pinned:
+        pinned = [c for c in pinned if c != csid]
+    existing['pinned_conversations'] = pinned
     save_project(project_id, existing)
-    return jsonify({'ok': True, 'pinned_conversation': existing['pinned_conversation']})
+    return jsonify({'ok': True, 'pinned_conversations': pinned, 'pinned': csid in pinned})
 
 
 @bp.route('/api/project/<project_id>/generate_summary', methods=['POST'])

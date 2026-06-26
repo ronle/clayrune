@@ -281,27 +281,33 @@ function agentPanelHTML(p) {
   } else {
     // Desktop tab strip: oldest conversation on the left, newest on the right
     // (append-on-right). `sessions` stays newest-first for auto-select + mobile
-    // list semantics; we only flip the render order here.
-    const tabsHTML = sessions.slice().reverse().map(h => {
+    // list semantics; we only flip the render order here. PINNED conversations
+    // (chat-level, keyed on the durable claude_session_id) sort to the FRONT and
+    // carry a pin marker — each chat is independently pinnable, not the project.
+    const pinnedList = p.pinned_conversations || [];
+    const _csidOf = h => (agentStatusCache[h.sessionId] || {}).claudeSessionId || '';
+    const _isPinnedConv = h => { const c = _csidOf(h); return !!c && pinnedList.includes(c); };
+    const _ordered = sessions.slice().reverse();
+    const renderTab = h => {
       const isActive = h.sessionId === activeSessionId;
       const label = (h.task || '').substring(0, 30) || 'Session';
       const isOrch = isHivemindOrchestrator(h);
       const hmBadge = isOrch ? '<span class="hm-tab-badge" title="Hivemind orchestrator">&#x2B21;</span>' : '';
       const isInc = h.incognito || (agentStatusCache[h.sessionId] || {}).incognito;
       const incBadge = isInc ? '<span class="agent-tab-incognito" title="Incognito session — not saved to project memory or agent log">&#x1F576;&#xFE0F;</span>' : '';
-      return `<div class="agent-tab ${isActive ? 'active' : ''} ${isOrch ? 'hivemind-orch' : ''} ${isInc ? 'incognito' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task)}${isInc ? ' (incognito)' : ''}"${isOrch ? ` onmouseenter="showHmWorkerPopover(event,'${esc(h.sessionId)}')" onmouseleave="scheduleHideHmPopover()"` : ''}>
+      const isPinnedConv = _isPinnedConv(h);
+      const pinMark = `<button class="agent-tab-pin-mark${isPinnedConv ? ' pinned' : ''}" onclick="event.stopPropagation();togglePinConversationSession('${esc(p.id)}','${esc(h.sessionId)}')" title="${isPinnedConv ? 'Unpin this chat' : 'Pin this chat'}" aria-label="${isPinnedConv ? 'Unpin this chat' : 'Pin this chat'}" aria-pressed="${isPinnedConv ? 'true' : 'false'}">&#x1F4CC;</button>`;
+      return `<div class="agent-tab ${isActive ? 'active' : ''} ${isOrch ? 'hivemind-orch' : ''} ${isInc ? 'incognito' : ''} ${isPinnedConv ? 'pinned-conv' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task)}${isInc ? ' (incognito)' : ''}"${isOrch ? ` onmouseenter="showHmWorkerPopover(event,'${esc(h.sessionId)}')" onmouseleave="scheduleHideHmPopover()"` : ''}>
         ${hmBadge}${incBadge}<span class="agent-status-dot ${h.status}"></span>
         <span class="agent-tab-label">${esc(label)}</span>
+        ${pinMark}
         <button class="agent-tab-close" onclick="event.stopPropagation();closeAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="Close tab">&#10005;</button>
       </div>`;
-    }).join('');
-    // Leading pin toggle — pins this whole conversation/chat (per-project,
-    // server-side, restart- and interface-durable). Sits at the head of the
-    // tab strip, beside the conversation tabs. Same control as the three-dot
-    // "Pin conversation" item; refreshSilent re-renders both in sync.
-    const pinBtn = `<button class="agent-tab-pin${p.pinned_conversation ? ' pinned' : ''}" onclick="togglePinConversation('${esc(p.id)}')" title="${p.pinned_conversation ? 'Unpin conversation' : 'Pin conversation'}" aria-label="${p.pinned_conversation ? 'Unpin conversation' : 'Pin conversation'}" aria-pressed="${p.pinned_conversation ? 'true' : 'false'}">&#x1F4CC;</button>`;
+    };
+    const tabsHTML = [..._ordered.filter(_isPinnedConv), ..._ordered.filter(h => !_isPinnedConv(h))]
+      .map(renderTab).join('');
     tabBar = sessions.length > 0
-      ? `<div class="agent-tab-bar">${pinBtn}${tabsHTML}<button class="agent-tab-new" onclick="newAgentTab('${esc(p.id)}')">+ New</button></div>`
+      ? `<div class="agent-tab-bar">${tabsHTML}<button class="agent-tab-new" onclick="newAgentTab('${esc(p.id)}')">+ New</button></div>`
       : '';
   }
 
@@ -653,7 +659,11 @@ function agentPanelHTML(p) {
 // a project has >1 active conversation. Each row drills into that
 // conversation's chat; a back bar (rendered by agentPanelHTML) returns here.
 function conversationListHTML(p, sessions) {
-  const rows = sessions.map(h => conversationRowHTML(p, h)).join('');
+  // Pinned chats (keyed on the durable claude_session_id) lead the list.
+  const _pinnedList = p.pinned_conversations || [];
+  const _isPin = h => { const c = (agentStatusCache[h.sessionId] || {}).claudeSessionId || ''; return !!c && _pinnedList.includes(c); };
+  const _ordered = [...sessions.filter(_isPin), ...sessions.filter(h => !_isPin(h))];
+  const rows = _ordered.map(h => conversationRowHTML(p, h)).join('');
   return `
     <div class="conv-list-header">
       <span class="conv-list-title">Conversations</span>
@@ -690,12 +700,15 @@ function conversationRowHTML(p, h) {
     _convCharName ? `<span class="conv-tag char" title="Persona: ${esc(_convCharName)}">&#x1F3AD; ${esc(_convCharName)}</span>` : '',
     _providerBadge(convProv),
   ].join('');
+  const isPinnedConv = (() => { const c = cache.claudeSessionId || ''; return !!c && (p.pinned_conversations || []).includes(c); })();
+  const pinMark = `<button class="conv-pin-mark${isPinnedConv ? ' pinned' : ''}" onclick="event.stopPropagation();togglePinConversationSession('${esc(p.id)}','${esc(h.sessionId)}')" title="${isPinnedConv ? 'Unpin this chat' : 'Pin this chat'}" aria-label="${isPinnedConv ? 'Unpin this chat' : 'Pin this chat'}" aria-pressed="${isPinnedConv ? 'true' : 'false'}">&#x1F4CC;</button>`;
   return `
-  <div class="conv-row" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task || '')}">
+  <div class="conv-row ${isPinnedConv ? 'pinned-conv' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task || '')}">
     <div class="conv-av friendly-${fs}"><span class="conv-ring"></span>${glyph}</div>
     <div class="conv-main">
       <div class="conv-top">
         <span class="conv-name">${name}</span>
+        ${pinMark}
         <span class="conv-time">${when}</span>
       </div>
       <div class="conv-bot">

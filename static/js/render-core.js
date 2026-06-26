@@ -281,7 +281,7 @@ function tileHTML(p, slotIndex) {
   <div class="card ${sc} friendly-${fs}" data-id="${esc(p.id)}" data-slot="${slotIndex !== undefined ? slotIndex : ''}"${cardBgStyle}>
     <div class="card-header">
       <div class="card-title-row">
-        ${p.pinned_conversation ? `<span class="pin-indicator" title="Pinned conversation">&#x1F4CC;</span>` : ''}
+        ${(p.pinned_conversations || []).length ? `<span class="pin-indicator" title="Has pinned chat(s)">&#x1F4CC;</span>` : ''}
         ${p.emoji ? `<span class="card-avatar">${esc(p.emoji)}</span>` : ''}
         <span class="project-name">${esc(p.name||p.id)}</span>
         <span class="domain-tag" style="background:${domCfg.bg};color:${domCfg.color}">${esc(domCfg.label||p.domain||'general')}</span>
@@ -465,10 +465,6 @@ function modalContentHTML(p) {
           </div>
           <button class="modal-menu-item" onclick="_mcMenuClose();openAllHivemindsForProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F41D;</span> Hiveminds
-          </button>
-          <div class="modal-menu-sep"></div>
-          <button class="modal-menu-item${p.pinned_conversation ? ' active' : ''}" onclick="togglePinConversation('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F4CC;</span> ${p.pinned_conversation ? 'Unpin conversation' : 'Pin conversation'}${p.pinned_conversation ? '<span style="margin-left:auto;color:var(--accent);font-size:11px">&#x2713; pinned</span>' : ''}
           </button>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'status-sub-${esc(p.id)}')">

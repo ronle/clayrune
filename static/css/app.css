@@ -693,20 +693,25 @@
   .card-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .pin-indicator { font-size: 12px; line-height: 1; flex-shrink: 0; opacity: 0.9; }
   .cr-pin { font-size: 11px; }
-  /* Pin toggle at the head of the conversation tab strip (beside the tabs).
-     Greyed + desaturated when unpinned; full colour with the accent pill
-     treatment when pinned — matches .agent-tab.active. Same control as the
-     three-dot-menu "Pin conversation" item. */
-  .agent-tab-pin {
-    display: inline-flex; align-items: center; justify-content: center;
-    padding: 4px 7px; border-radius: 5px; flex-shrink: 0;
-    background: none; border: 1px solid transparent;
-    font-size: 13px; line-height: 1; cursor: pointer;
-    opacity: 0.4; filter: grayscale(1);
-    transition: opacity .12s, filter .12s, background .12s, border-color .12s;
+  /* Per-CONVERSATION pin marker — lives inside each chat tab (chat-level, not a
+     project flag). Desktop: hidden until the tab is hovered (like the close
+     button) so unpinned tabs stay clean; a PINNED chat shows it always, full
+     colour. */
+  .agent-tab-pin-mark {
+    background: none; border: none; cursor: pointer; flex-shrink: 0;
+    padding: 0 2px; line-height: 1; font-size: 11px;
+    opacity: 0; filter: grayscale(1); transition: opacity .12s, filter .12s;
   }
-  .agent-tab-pin:hover { opacity: 0.8; background: var(--bg); }
-  .agent-tab-pin.pinned { opacity: 1; filter: none; background: var(--accent-dim); border-color: var(--accent); }
+  .agent-tab:hover .agent-tab-pin-mark { opacity: 0.5; }
+  .agent-tab-pin-mark.pinned,
+  .agent-tab:hover .agent-tab-pin-mark.pinned { opacity: 1; filter: none; }
+  /* Mobile conversation row has no hover — keep the pin always visible + tappable. */
+  .conv-pin-mark {
+    background: none; border: none; cursor: pointer; flex-shrink: 0;
+    padding: 2px 4px; line-height: 1; font-size: 13px; margin-left: 4px;
+    opacity: 0.4; filter: grayscale(1); transition: opacity .12s, filter .12s;
+  }
+  .conv-pin-mark.pinned { opacity: 1; filter: none; }
   .card-avatar {
     font-size: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
     width: 24px; height: 24px; flex-shrink: 0; overflow: hidden;

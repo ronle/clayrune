@@ -414,19 +414,28 @@ async function setProjectColor(projectId, color, bg) {
   } catch(e) {}
 }
 
-// Durable "pin this conversation" toggle. Hits the dedicated /pin endpoint
-// (which never bumps last_updated) so the pin is a server-side, cross-interface,
-// restart-proof flag — not per-browser localStorage. refreshSilent() re-renders
-// the grid + open modal, flipping the menu label and re-sorting the chat list.
-async function togglePinConversation(projectId) {
-  document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+// Durable per-CONVERSATION pin toggle (chat-level — pins THIS chat, not the
+// whole project). Resolves the tab's stable claude_session_id and hits
+// /conversation-pin (which never bumps last_updated) so the pin is server-side,
+// cross-interface and restart-proof — not per-browser localStorage.
+// refreshSilent() re-renders the grid + open modal (refreshModalById preserves
+// the live agent output DOM), flipping the tab marker and re-sorting tabs + the
+// chat list. A chat with no claude_session_id yet (no first reply) can't be
+// durably pinned, so we explain instead of writing a non-persisting pin.
+async function togglePinConversationSession(projectId, sessionId) {
+  const cache = (typeof agentStatusCache !== 'undefined') ? (agentStatusCache[sessionId] || {}) : {};
+  const csid = cache.claudeSessionId || '';
+  if (!csid) {
+    if (typeof showToast === 'function') showToast('You can pin this chat once it has had its first reply.', 4000);
+    return;
+  }
   const p = (typeof allProjects !== 'undefined') ? allProjects.find(x => x.id === projectId) : null;
-  const next = !(p && p.pinned_conversation);
+  const isPinned = !!(p && Array.isArray(p.pinned_conversations) && p.pinned_conversations.includes(csid));
   try {
-    await fetch(API_BASE + `/api/project/${projectId}/pin`, {
+    await fetch(API_BASE + `/api/project/${projectId}/conversation-pin`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ pinned: next })
+      body: JSON.stringify({ conversation_id: csid, pinned: !isPinned })
     });
     await refreshSilent();
   } catch(e) {}
@@ -891,7 +900,7 @@ window.toggleModalMenu = toggleModalMenu;
 window.toggleModalMenuSub = toggleModalMenuSub;
 window.setProjectStatus = setProjectStatus;
 window.setProjectColor = setProjectColor;
-window.togglePinConversation = togglePinConversation;
+window.togglePinConversationSession = togglePinConversationSession;
 window.setProjectModel = setProjectModel;
 window.setProjectEffort = setProjectEffort;
 window.setProjectProvider = setProjectProvider;
