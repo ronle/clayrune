@@ -151,6 +151,21 @@ function sessionPickerHTML(projectId) {
   const available = Array.from(byId.values());
   if (available.length === 0) return '';
 
+  // Pinned conversations (server-side, keyed on the durable claude_session_id
+  // via p.pinned_conversations). That list is delivered to EVERY browser by
+  // /api/projects and persisted to the project JSON, so honouring it here is
+  // what makes a pin survive a different browser AND a server restart — the
+  // live-session `pinned` flag only covers chats currently in agent_sessions,
+  // which excludes closed conversations (the only kind shown in this picker on
+  // a cold load). Flag each item and sort pinned to the FRONT *before* the
+  // slice below so a pinned older chat is never truncated off the top-12.
+  const _proj = (typeof allProjects !== 'undefined' ? allProjects.find(x => x.id === projectId) : null) || {};
+  const _pinnedSet = new Set(_proj.pinned_conversations || []);
+  for (const it of available) it.pinned = _pinnedSet.has(it.csid);
+  // Stable sort (WebView2/V8): equal keys keep insertion (recency) order, so
+  // only the pinned items move up and everything else stays as-was.
+  available.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+
   const selected = pendingResumeId[projectId] || null;
 
   const opts = available.slice(0, 12).map(item => {
@@ -160,14 +175,15 @@ function sessionPickerHTML(projectId) {
     const statusDot = item.status
       ? `<span class="agent-status-dot ${esc(item.status)}" title="${esc(item.status)}"></span>`
       : '';
+    const pinBadge = item.pinned ? '<span class="sp-pin" title="Pinned chat">&#x1F4CC;</span> ' : '';
     const meta = [item.ts, item.turns ? `${item.turns} turn${item.turns !== 1 ? 's' : ''}` : '']
       .filter(Boolean).join(' · ');
-    return `<div class="session-picker-opt ${isSelected ? 'selected' : ''}"
+    return `<div class="session-picker-opt ${isSelected ? 'selected' : ''} ${item.pinned ? 'pinned-conv' : ''}"
       onclick="selectResumeSession('${esc(projectId)}','${esc(csid)}')"
       title="${esc(item.label)}">
       <div class="sp-radio"></div>
       <div class="sp-label">
-        <div class="sp-task">${statusDot}${esc(label)}</div>
+        <div class="sp-task">${pinBadge}${statusDot}${esc(label)}</div>
         <div class="sp-meta">${esc(meta)}</div>
       </div>
     </div>`;

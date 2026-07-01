@@ -2477,6 +2477,14 @@
   .session-picker-opt .sp-meta {
     font-size: 10px; color: var(--text-faint);
   }
+  /* Pinned closed-conversation option — left accent (inset shadow, no layout
+     shift) + faint tint so a pinned chat reads as pinned in the resume picker,
+     matching the pinned-tab / pinned-row cue elsewhere. */
+  .session-picker-opt.pinned-conv {
+    box-shadow: inset 3px 0 0 var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+  .session-picker-opt .sp-pin { font-size: 11px; }
   .resume-indicator {
     font-size: 11px; color: var(--accent); margin-bottom: 6px;
     display: flex; align-items: center; gap: 6px;
