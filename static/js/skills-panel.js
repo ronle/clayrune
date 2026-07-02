@@ -227,8 +227,16 @@ function renderDistillerQueue(el, items, health) {
     // their project or global; cross-project go global only (project promote
     // needs a project_id). Handlers read the (un-serialized) path from cache.
     const isExploration = it.kind === 'exploration';
+    // Explorations are readback-only by default (their question-shaped triggers
+    // were noise as always-loaded skills — 2026-06-06). But a procedural one can
+    // be REFRAMED into a TRIGGER+procedure skill (FIX 2a): the server inverts the
+    // past-tense Q&A via an LLM and REFUSEs if there's no reusable procedure, so
+    // this is NOT the rejected promote-as-is path.
+    const reframeBtns = isCross
+      ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Reframe this exploration into a TRIGGER+procedure skill available in every project" onclick="reframeProposedByIdx(${i},'global')">Reframe &#x2192; Skill (Global)</button>`
+      : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Reframe this exploration into a TRIGGER+procedure skill in this project" onclick="reframeProposedByIdx(${i},'project')">Reframe &#x2192; Skill</button>`;
     const promoteBtns = isExploration
-      ? `<span style="font-size:10px;color:var(--text-faint);align-self:center" title="Surfaced on demand by the readback when a task matches — no install needed">&#x1F50D; auto-surfaced on demand</span>`
+      ? `<span style="font-size:10px;color:var(--text-faint);align-self:center;margin-right:auto" title="Surfaced on demand by the readback when a task matches — no install needed">&#x1F50D; auto-surfaced on demand</span>${reframeBtns}`
       : (isCross
         ? `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill available in every project" onclick="promoteProposedByIdx(${i},'global')">Promote &#x2192; Global</button>`
         : `<button class="btn-secondary" style="font-size:11px;padding:3px 8px" title="Install as a skill in this project only" onclick="promoteProposedByIdx(${i},'project')">Promote &#x2192; Project</button>
@@ -273,7 +281,7 @@ function renderDistillerQueue(el, items, health) {
 
   const bodyHtml = _distillerQueueOpen ? `
     <div style="font-size:11px;color:var(--text-faint);margin:6px 0 2px;line-height:1.45">
-      What agents worked out across sessions. <b>&#x1F50D; Explorations</b> are reference notes surfaced on demand when a task matches &#x2014; just <b>Reject</b> the noise. <b>Skills &amp; preferences</b> can be <b>Promoted</b> into artifacts the agent always loads.
+      What agents worked out across sessions. <b>&#x1F50D; Explorations</b> are reference notes surfaced on demand when a task matches &#x2014; <b>Reject</b> the noise, or <b>Reframe</b> a procedural one into an always-loaded skill. <b>Skills &amp; preferences</b> can be <b>Promoted</b> into artifacts the agent always loads.
     </div>
     ${diagHtml}
     <div style="max-height:300px;overflow-y:auto;margin-top:6px">${promotableRows || '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px">No proposals to review.</div>'}</div>
@@ -337,6 +345,11 @@ function rejectProposedByIdx(i) {
   const it = _distillerQueueItems[i];
   if (it) rejectProposed(it.directory);
 }
+function reframeProposedByIdx(i, scope) {
+  const it = _distillerQueueItems[i];
+  if (!it) return;
+  reframeProposed(it.directory, scope, scope === 'project' ? it.scope : null);
+}
 function toggleProposedReadByIdx(i, rowId) {
   const it = _distillerQueueItems[i];
   if (it) toggleProposedRead(it.directory, rowId);
@@ -351,6 +364,37 @@ async function promoteProposed(directory, scope, projectId) {
     _allSkillsCache.loaded = false;
     loadAllSkills();
     loadDistillerQueue();
+  }
+}
+
+async function reframeProposed(directory, scope, projectId) {
+  // Dedicated fetch (not _distillerPost) so the REFUSE case (422) gets its own
+  // message instead of a generic failure toast. Reframe runs an LLM call
+  // server-side, so it's slower than a plain promote — signal that.
+  showToast('Reframing exploration into a skill…');
+  const payload = { directory, scope, reframe: true };
+  if (scope === 'project' && projectId) payload.project_id = projectId;
+  try {
+    const res = await fetch(API_BASE + '/api/distiller/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 422 && data.refused) {
+      showToast('Reframe declined — no reusable procedure to make a skill from. Left as a reference note.');
+      return;
+    }
+    if (!res.ok || data.ok === false) {
+      showToast((data && data.error) ? data.error : 'Reframe failed');
+      return;
+    }
+    showToast('Reframed into a ' + (scope === 'global' ? 'global' : 'project') + ' skill');
+    _allSkillsCache.loaded = false;
+    loadAllSkills();
+    loadDistillerQueue();
+  } catch (e) {
+    showToast('Network error');
   }
 }
 
@@ -1333,6 +1377,7 @@ window.loadAllSkills = loadAllSkills;                       // interop: generate
 window.renderAllSkills = renderAllSkills;                   // interop: generated oninput/onchange (search box, scope select)
 window.loadDistillerQueue = loadDistillerQueue;             // interop: generated onclick (Learning-queue + Health-diagnostics disclosure toggles)
 window.promoteProposedByIdx = promoteProposedByIdx;         // interop: queue-row generated onclick (Promote → Project / Global)
+window.reframeProposedByIdx = reframeProposedByIdx;         // interop: queue-row generated onclick (Reframe → Skill)
 window.rejectProposedByIdx = rejectProposedByIdx;           // interop: queue-row generated onclick (Reject)
 window.toggleProposedReadByIdx = toggleProposedReadByIdx;   // interop: queue-row generated onclick (read full)
 window.openSkillEditor = openSkillEditor;                   // interop: generated onclick (+ New Skill, per-row Edit)

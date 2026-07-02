@@ -109,16 +109,22 @@ def get_distiller_loop_health():
 @bp.route('/api/distiller/promote', methods=['POST'])
 def post_distiller_promote():
     """Promote a _proposed/ artifact into a real SKILL.md (the human-promotes
-    leg — step 3). Body: {directory, scope: 'project'|'global', project_id?}.
-    Installs via skills.write_skill (overwrite), then distiller.mark_promoted
-    suppresses re-proposal + moves the proposal to _promoted/. SKILL artifacts
-    carry their own TRIGGER description; EXPLORATION/PREFERENCE get a synthesized
-    one the user can edit afterward (this is also the step-4 bridge — a great
-    exploration becomes a skill by a deliberate human click)."""
+    leg — step 3). Body: {directory, scope: 'project'|'global', project_id?,
+    reframe?}. Installs via skills.write_skill (overwrite), then
+    distiller.mark_promoted suppresses re-proposal + moves the proposal to
+    _promoted/. SKILL/PREFERENCE artifacts carry (or synthesize) a description.
+
+    `reframe: true` is the FIX 2a exploration→skill bridge: for a kind=
+    exploration artifact, run distiller.reframe_exploration_to_skill first —
+    an LLM inverts the past-tense diagnostic into a TRIGGER+procedure skill,
+    or REFUSEs if there's no reusable procedure (returns 422). This is the
+    ONLY sanctioned way to turn an exploration into a skill; installing the
+    exploration body as-is was rejected 2026-06-06."""
     body = request.get_json(silent=True) or {}
     directory = body.get('directory', '')
     scope = (body.get('scope') or 'project').strip()
     project_id = body.get('project_id') or None
+    reframe = bool(body.get('reframe'))
     if scope not in ('project', 'global'):
         return jsonify({'ok': False, 'error': 'scope must be project or global'}), 400
     try:
@@ -126,6 +132,25 @@ def post_distiller_promote():
         if art is None:
             return jsonify({'ok': False,
                             'error': 'artifact not found or outside _proposed/'}), 404
+        # FIX 2a — exploration→skill reframe. Only explorations are reframable;
+        # SKILL/PREFERENCE promote through their existing body untouched.
+        install_name = art['name']
+        install_desc = art['description']
+        install_body = art['body']
+        promoted_from = art['kind']
+        if reframe:
+            if art.get('kind') != 'exploration':
+                return jsonify({'ok': False,
+                                'error': 'reframe only applies to exploration artifacts'}), 400
+            reframed = _distiller.reframe_exploration_to_skill(directory)
+            if reframed is None:
+                return jsonify({'ok': False, 'refused': True,
+                                'error': 'reframe REFUSED — this exploration has no '
+                                         'reusable recognize→act procedure to become a skill'}), 422
+            install_name = reframed['name']
+            install_desc = reframed['description']
+            install_body = reframed['body']
+            promoted_from = 'exploration-reframed'
         project_path = None
         if scope == 'project':
             project_id = project_id or art.get('project_id')
@@ -137,15 +162,15 @@ def post_distiller_promote():
             if err:
                 return err
         rec = _skills.write_skill(
-            name=art['name'],
-            description=art['description'],
-            body=art['body'],
+            name=install_name,
+            description=install_desc,
+            body=install_body,
             scope=scope,
             project_path=project_path,
             project_id=project_id,
             extra_meta={
                 'provenance': 'distilled-promoted',
-                'promoted_from': art['kind'],
+                'promoted_from': promoted_from,
                 'source_session': art.get('source_session', ''),
                 'extraction_fingerprint_exact': art.get('exact', ''),
             },

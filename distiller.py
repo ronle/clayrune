@@ -564,7 +564,10 @@ def _extraction_prompt(project_id: str, project: dict) -> str:
         " }}\n\n"
         f"CAPS — emit AT MOST {max_topics} topics, {max_prefs} preferences, "
         f"{max_expl} explorations. Force yourself to choose the most salient "
-        "in each class.\n\n"
+        "in each class. For TOPICS specifically, PREFER ones where a concrete "
+        "problem was observed AND resolved (these become skills) over purely "
+        "navigational work — a topic with a real problem+resolution is worth "
+        "more than three bare labels.\n\n"
         "CLOSED VOCABULARY — every `phrase` field MUST match the form "
         "`<verb>-<noun>[-<modifier>]` where:\n"
         f"  verbs: {verbs_str}\n"
@@ -593,10 +596,22 @@ def _extraction_prompt(project_id: str, project: dict) -> str:
         "CONCRETE and recognition-bound: problem = what the agent would "
         "observe (an error string, a symptom, a file/condition), resolution = "
         "the actual steps or invariant that fixed it (so a future agent can "
-        "act, not just read a label). If a topic was purely navigational with "
-        "no problem/fix, leave problem/resolution as empty strings — recurrence "
-        "alone still tracks it, and the skill renderer will refuse cleanly "
-        "rather than fabricate a procedure.\n\n"
+        "act, not just read a label). WORKED EXAMPLE of a good topic object:\n"
+        '  {"phrase": "fix-condense-timeout", '
+        '"summary": "condense agent timed out on large MEMORY.md", '
+        '"problem": "structured condense returns empty + logs '
+        '`condense timeout after 14 turns` when MEMORY.md exceeds ~20KB", '
+        '"resolution": "raise condense_threshold_kb OR switch condense_mode to '
+        '`structured`; the agent path corrupts the managed region past 14 '
+        'turns — check the wm: watermark survived"}\n'
+        "That problem is an observable a future agent recognizes; that "
+        "resolution is an actionable procedure. Aim for THAT, not "
+        '`{"problem": "condense was slow", "resolution": "fixed it"}`. If a '
+        "topic was purely navigational with no problem/fix, leave "
+        "problem/resolution as empty strings — recurrence alone still tracks "
+        "it, and the skill renderer will refuse cleanly rather than fabricate "
+        "a procedure. Do NOT pad empty topics with vague filler to look "
+        "complete; an honest empty resolution is better than a fabricated one.\n\n"
         "PREFERENCES — only emit when the user expressed a behavioral "
         "preference, correction, confirmation, or constraint. "
         "`evidence_quote` MUST be a verbatim user-message substring. If "
@@ -681,6 +696,44 @@ _PREFERENCE_PROMPT_PREAMBLE = (
     "preference at all — e.g. a delegatory aside (\"your call\"), a one-off "
     "factual note, or noise. Do NOT refuse merely because a preference was "
     "observed only once; a clear one-time preference is valid."
+)
+
+# Reframe prompt (FIX 2a — exploration→skill bridge). Unlike _SKILL_PROMPT_
+# PREAMBLE (which aggregates N recurring topic signals), this takes ONE
+# human-selected EXPLORATION and INVERTS its past-tense Q&A into a forward-
+# looking recognize→act procedure. This is the sanctioned form of the
+# exploration→skill path — the naive "promote the exploration body as-is"
+# version was tested and rejected 2026-06-06 (question-shaped junk skills).
+# The reframe + a strict REFUSE bar is what makes it not that.
+_REFRAME_EXPLORATION_TO_SKILL_PREAMBLE = (
+    "You are the Phase 4 exploration→skill REFRAME generator. You receive ONE "
+    "past EXPLORATION record — a diagnostic Q&A: a question that was "
+    "investigated, the paths tried, and what worked. A human has judged this "
+    "exploration worth turning into a reusable SKILL. REFRAME it — do NOT "
+    "transcribe it — into a forward-looking operating procedure.\n\n"
+    "CRITICAL — a skill is NOT a question. The exploration asks 'why did X "
+    "happen?'; the skill answers 'when you SEE <observable>, do <procedure>'. "
+    "Invert the framing: past-tense finding → present-tense recognition + "
+    "action. If you cannot invert it (no reusable recognize→act pattern "
+    "exists), REFUSE.\n\n"
+    "REQUIRED ELEMENTS:\n"
+    "  1. **Frontmatter** with `name:` (kebab-case) and `description:` that "
+    "begins `TRIGGER when <observable symptom / file / error / condition a "
+    "future agent will SEE in incoming context>`. The trigger must be "
+    "recognizable WITHOUT re-reading this exploration.\n"
+    "  2. **Operating procedure** — `do this, then this` steps distilled from "
+    "what worked. Not a narrative of what happened.\n"
+    "  3. **## Anti-patterns** — the dead-ends from 'paths tried' that did NOT "
+    "work, named explicitly so a future agent skips them. This is the highest-"
+    "value part of a reframed exploration.\n"
+    "  4. **Body ≤120 lines**, tight and scannable. No prose outside the "
+    "SKILL.md; no markdown fences around the whole output.\n\n"
+    "REFUSE PATH — output exactly `REFUSE` and nothing else if the exploration "
+    "is a one-off factual lookup with no reusable procedure, was trivial, or is "
+    "so instance-specific that no future agent would recognize the trigger. A "
+    "finding is not automatically a skill — err toward REFUSE. Only reframe "
+    "when there is a genuine recognize→act procedure a future agent could "
+    "follow."
 )
 
 
@@ -1497,6 +1550,53 @@ def _render_preference(project_id: str, project: dict,
     target = _proposal_target(project_id, candidate['scope_tag'], 'preference',
                               candidate['exact'], name_slug)
     return body, target
+
+
+def reframe_exploration_to_skill(directory: str) -> dict | None:
+    """Reframe a human-selected _proposed/ EXPLORATION into a TRIGGER+procedure
+    SKILL (FIX 2a — the exploration→skill bridge).
+
+    This is the sanctioned form of the exploration→skill path. The naive
+    "install the exploration body as-is" version was tested and rejected
+    2026-06-06 (it flooded sessions with question-shaped junk). Here an LLM
+    reframe INVERTS the past-tense diagnostic Q&A into a forward-looking
+    recognize→act procedure, and a strict REFUSE bar drops explorations that
+    carry no reusable procedure.
+
+    Returns {name, description, body} for the promote endpoint to install via
+    skills.write_skill, or None on refuse / error / not-an-exploration.
+    Best-effort; never raises. Does NOT mutate state — the caller installs +
+    marks promoted.
+    """
+    try:
+        art = read_proposed_artifact(directory)
+    except Exception:
+        return None
+    if art is None or art.get('kind') != 'exploration':
+        return None
+    model = _cfg('distiller_model', '') or 'haiku'
+    body_in = (
+        "EXPLORATION record to reframe:\n\n"
+        f"Title: {art.get('description', '')}\n\n"
+        f"{art.get('body', '')}"
+    )
+    try:
+        out = _scribe_call(model, _REFRAME_EXPLORATION_TO_SKILL_PREAMBLE, body_in)
+    except Exception:
+        return None
+    if _is_refusal(out):
+        return None
+    text = _strip_code_fences(out)
+    if not text.strip():
+        return None
+    fm, sk_body = _split_frontmatter(text)
+    if not sk_body.strip():
+        return None
+    name = (_extract_name_from_frontmatter(text)
+            or art.get('name') or f"reframed-{(art.get('exact') or '')[:8]}")
+    desc = (fm.get('description', '')
+            or _first_heading(sk_body) or name.replace('-', ' '))
+    return {'name': name, 'description': desc, 'body': sk_body}
 
 
 def _build_evidence_block(signals: list[dict]) -> str:
