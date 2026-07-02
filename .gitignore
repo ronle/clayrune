@@ -127,6 +127,11 @@ data/maintenance_reports/
 # already covered above.)
 docs/night-review-*.md
 
+# Weekly GCP cost-review reports — runtime output of the gcp-cost-review
+# schedule (tools/gcp-cost-review/). Emailed to Ron; not committed. (Skips log
+# is a *.log, already covered above.)
+docs/gcp-cost-review-*.md
+
 # Build artifacts served from /downloads (Android APK, etc.) — produced by
 # the mobile build pipeline, not source.
 static/downloads/*.apk
