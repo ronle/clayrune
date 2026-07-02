@@ -167,16 +167,8 @@ def _load_config():
         # gated on client="mobile". When on, every Claude dispatch (desktop
         # included) gets a device-neutral brevity nudge so the agent answers
         # short and elaborates only when asked. Supersedes the phone-only gate
-        # above. ON by default (2026-06-12): short replies are the guiding
-        # line for all agents; detail only on explicit request.
-        'brief_replies_always_enabled': True,
-        # Reply-summarization gate — enforced brevity backstop on top of the
-        # directive above. A finished turn whose prose (log_lines, outside
-        # code fences) exceeds the threshold is rewritten to a Haiku-condensed
-        # summary; the original is archived to data/reply_archive/. Code-heavy
-        # turns (>2KB fenced) are exempt. Fail-open. ON by default.
-        'reply_summarize_enabled': True,
-        'reply_summarize_threshold_chars': 1500,
+        # above. Off by default.
+        'brief_replies_always_enabled': False,
         # Auto model router (experimental, default OFF). When on, every dispatch
         # runs a cheap Haiku classifier on the prompt and picks Haiku/Sonnet/Opus
         # based on task complexity. When off, the user-selected model is used

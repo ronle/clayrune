@@ -420,13 +420,6 @@ async function _renderSettings() {
       </div>
       <div class="settings-row">
         <div>
-          <div class="settings-label">Summarize long replies</div>
-          <div class="settings-hint">Enforced brevity: a reply whose prose runs long is auto-condensed to a short summary after the turn (original archived; ask the agent for full detail to elaborate). Code-heavy replies are exempt.</div>
-        </div>
-        ${toggle('reply_summarize_enabled', cfg.reply_summarize_enabled !== false)}
-      </div>
-      <div class="settings-row">
-        <div>
           <div class="settings-label">Sticky settings</div>
           <div class="settings-hint">Bakes brevity + model/effort into each chat at spawn (cached, fewer tokens per turn) instead of re-sending every message. Changing one of those mid-chat resumes the agent so it takes effect. Experimental.</div>
         </div>

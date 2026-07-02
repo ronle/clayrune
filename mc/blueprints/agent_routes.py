@@ -1501,10 +1501,9 @@ def _build_agent_context(project, incognito=False, task='', character_body=''):
     if user_name:
         parts.append(f"The user's name is {user_name}. Address them accordingly.")
     # Sticky brevity: when sticky_agent_settings is on, the device-neutral brief
-    # directive is ALSO baked here (cached, once per spawn) for system-level
-    # authority on fresh sessions. _apply_mobile_brief still prepends the
-    # per-turn variant unconditionally — that's the only path that reaches
-    # resumed sessions, since `claude -r` restores the original system prompt.
+    # directive lives HERE (cached, once per spawn) instead of being prepended to
+    # every user turn by _apply_mobile_brief. Flipping the toggle mid-session is
+    # handled by the respawn-on-flip path (see update_config / agent_followup).
     if (state.CONFIG.get('sticky_agent_settings', False)
             and state.CONFIG.get('brief_replies_always_enabled', False)):
         parts.append(_BRIEF_REPLY_DIRECTIVE_SYSTEM)
@@ -2081,10 +2080,6 @@ def _read_agent_stream(proc, session):
                         session['status'] = 'idle'
                         session['last_status_change_time'] = _time.time()
                     else:
-                        # Reply-summarization gate — BEFORE the completed flip
-                        # (same ordering contract as the Mode B turn boundary).
-                        if rc == 0:
-                            _maybe_summarize_turn(session)
                         session['status'] = 'completed' if rc == 0 else 'error'
                         session['last_status_change_time'] = _time.time()
                         if rc != 0:
@@ -2219,10 +2214,6 @@ def _read_agent_stream_b(proc, session):
                         session['num_turns'] = msg['num_turns']
                     _auto_snapshot_notes_on_turn(session)
                     _scan_result_event_for_auth(msg)
-                    # Reply-summarization gate — BEFORE the idle flip so the
-                    # SSE loop replays the rewritten lines (reset guard) ahead
-                    # of turn_complete; after the flip the FE closes the stream.
-                    _maybe_summarize_turn(session)
                     # Turn boundary — process stays alive
                     session['status'] = 'idle'
                     session['last_status_change_time'] = _time.time()
@@ -3132,12 +3123,10 @@ _BRIEF_REPLY_DIRECTIVE = (
 )
 
 # Device-neutral variant for `brief_replies_always_enabled` (applies on desktop
-# too, so it can't say "from a phone" / "switch to PC"). Prepended on EVERY
-# turn regardless of sticky_agent_settings — the system-baked variant only
-# reaches fresh spawns (`claude -r` drops resume-time appends), so this is the
-# delivery guarantee for resumed/pre-existing chats. Mirrors the hard framing
-# of the system-baked variant. Brevity targets PROSE only — necessary code,
-# file edits, and tool work are never truncated.
+# too, so it can't say "from a phone" / "switch to PC"). Per-turn prepend used
+# when sticky_agent_settings is OFF; mirrors the hard framing of the
+# system-baked variant. Brevity targets PROSE only — necessary code, file
+# edits, and tool work are never truncated.
 _BRIEF_REPLY_DIRECTIVE_ALWAYS = (
     "[BINDING for this reply — brevity is a hard rule, not a preference. Lead "
     "with the answer; hard ceiling ~4 sentences of prose (more only if the user "
@@ -3185,13 +3174,11 @@ def _apply_mobile_brief(message: str, request_data: dict) -> str:
     the ORIGINAL `message` for anything user-visible (log_lines, telemetry).
     """
     if state.CONFIG.get('brief_replies_always_enabled'):
-        # Always prepend per turn, even when sticky_agent_settings has baked
-        # the system-prompt variant at spawn. The bake only reaches FRESH
-        # spawns: `claude -r` restores the session's original system prompt
-        # (canary-proven 2026-06-04), so any chat spawned before the flag was
-        # on — or resumed across an MC restart — silently loses it. The
-        # per-turn prepend is the delivery guarantee; the ~110-token overlap
-        # on fresh sessions is the same instruction twice and is harmless.
+        # When sticky_agent_settings is on, this directive is baked into the
+        # spawn-time system prompt (_build_agent_context) — don't also prepend
+        # it per turn, or it doubles up.
+        if state.CONFIG.get('sticky_agent_settings', False):
+            return message
         return f"{_BRIEF_REPLY_DIRECTIVE_ALWAYS}\n\n{message}"
     if not state.CONFIG.get('mobile_brief_replies_enabled'):
         return message
@@ -3200,158 +3187,6 @@ def _apply_mobile_brief(message: str, request_data: dict) -> str:
     if request_data.get('client') != 'mobile':
         return message
     return f"{_BRIEF_REPLY_DIRECTIVE}\n\n{message}"
-
-
-# ── Reply-summarization gate (enforced brevity backstop) ─────────────────────
-# The brief-reply directive ASKS the model to be short; this gate MAKES long
-# replies short after the fact. Called at each turn boundary BEFORE the status
-# flip to idle/completed, so the SSE loop's existing reset guard (log_lines
-# rebuilt shorter → `reset` event → client replays) repaints the rewrite ahead
-# of turn_complete closing the stream. A turn whose prose exceeds
-# reply_summarize_threshold_chars is rewritten in log_lines to a one-shot
-# Haiku summary; the original prose is archived to
-# data/reply_archive/<project>/<session>.md (cold storage, OUTSIDE the
-# DATA_DIR project-records dir per the load-bearing pollution rule). The
-# model's own context is untouched — asking for "full detail" still works.
-# Best-effort and fail-open: any error/timeout/odd output leaves the original
-# lines untouched. Code-heavy turns (>2KB inside fences) are exempt — the
-# never-shorten-code carve-out outranks brevity, and a rewrite that mangles a
-# diff is worse than length.
-
-_REPLY_SUMMARIZE_INSTRUCTION = (
-    "You are a reply condenser. The text after ---TRANSCRIPT--- is one "
-    "assistant reply in a developer chat that ran too long. Rewrite it as the "
-    "SHORT reply that should have been sent: lead with the direct "
-    "answer/outcome in the first sentence, then only load-bearing facts. "
-    "HARD RULES: preserve every concrete datum that appears — numbers, file "
-    "paths, commands, URLs, commit hashes, error messages, names, decisions — "
-    "in compressed form; do not invent, soften, or editorialize; keep short "
-    "code/command snippets verbatim; target 3-6 sentences of prose; plain "
-    "text only — no headers, no preamble, no meta-commentary about "
-    "summarizing. Output ONLY the rewritten reply."
-)
-
-
-def _archive_full_reply(session, prose):
-    """Append the pre-summary reply to permanent per-session cold storage."""
-    try:
-        pid = session.get('project_id') or '_unknown'
-        sid = (session.get('claude_session_id') or session.get('session_id')
-               or session.get('id') or 'session')
-        d = DATA_DIR.parent / 'reply_archive' / str(pid)
-        d.mkdir(parents=True, exist_ok=True)
-        with open(d / f'{sid}.md', 'a', encoding='utf-8') as f:
-            f.write(f'\n## {now_iso()}\n\n{prose}\n')
-    except Exception as e:
-        _log(f"[reply-gate] archive write failed: {e}", flush=True)
-
-
-def _user_requested_detail(marker_line):
-    """True if the user's prompt for this turn explicitly asked for elaboration
-    or detail. The reply-gate must NOT re-shorten an answer the user asked to be
-    long — otherwise asking to "explain" just gets the long reply trimmed back to
-    the short one (reported 2026-06-12). Mirrors the brief directive's own
-    "more only if the user asked" escape hatch."""
-    if not marker_line:
-        return False
-    import re
-    msg = marker_line
-    c = msg.find(':')          # strip the "> User:" / "> [queued]:" prefix
-    if c != -1:
-        msg = msg[c + 1:]
-    return bool(re.search(
-        r'\b(explain|elaborat\w*|in[\s-]?depth|in detail|more detail|'
-        r'full(er)?\s+(detail|explanation|answer|response|version|breakdown)|'
-        r'walk me through|step[\s-]?by[\s-]?step|go deeper|deep[\s-]?dive|'
-        r'expand (on|upon)|tell me more|give me more|thorough\w*|comprehensiv\w*|'
-        r'verbose|break ?down|long(er)?\s+(answer|reply|version|explanation|response)|'
-        r"don'?t (summari|shorten)|do not (summari|shorten)|full(er)? detail)\b",
-        msg, re.IGNORECASE))
-
-
-def _maybe_summarize_turn(session):
-    """Rewrite the just-finished turn's prose in log_lines to a short summary.
-
-    MUST be called before the turn's status flip (see gate comment above).
-    Fail-open by design: returns silently on any failure, leaving the
-    original lines in place. Same posture as Scribe/Distiller.
-    """
-    try:
-        if not state.CONFIG.get('reply_summarize_enabled', True):
-            return
-        lines = session.get('log_lines') or []
-        # The final turn = everything after the last user-prompt marker
-        # ('> User: …' / '> [queued] …'). No marker = single-turn session.
-        start = 0
-        marker = ''
-        for i in range(len(lines) - 1, -1, -1):
-            if lines[i].startswith('> '):
-                start = i + 1
-                marker = lines[i]
-                break
-        turn = lines[start:]
-        if not turn:
-            return
-        # The user explicitly asked to elaborate — leave the full answer intact.
-        if _user_requested_detail(marker):
-            return
-        # Prose = everything except '['-prefixed marker lines (tool /
-        # terminal / status trace). Fences + their content stay in prose so
-        # short snippets survive the rewrite; fenced volume is tallied only
-        # for the code-heavy exemption.
-        prose_idx, fenced_chars, in_fence = [], 0, False
-        for i, ln in enumerate(turn):
-            if ln.strip().startswith('```'):
-                in_fence = not in_fence
-            elif in_fence:
-                fenced_chars += len(ln)
-            if ln and not ln.startswith('['):
-                prose_idx.append(i)
-        prose = '\n'.join(turn[i] for i in prose_idx)
-        threshold = int(state.CONFIG.get(
-            'reply_summarize_threshold_chars', 1500) or 1500)
-        if len(prose) <= threshold:
-            return
-        if fenced_chars > 2000:
-            return  # code-heavy exemption
-        result = {}
-
-        def _call():
-            try:
-                rt = _agent_runtime.get_runtime('claude')
-                r = rt.oneshot(prompt=_REPLY_SUMMARIZE_INSTRUCTION,
-                               stdin_text=prose, max_turns=1)
-                result['text'] = ((r.text or '') if r else '').strip()
-            except Exception as e:
-                result['err'] = str(e)
-
-        t = threading.Thread(target=_call, daemon=True, name='reply-gate')
-        t.start()
-        # Tight ceiling on the turn-boundary stall; an abandoned oneshot
-        # dies on its own 180s subprocess timeout.
-        t.join(25)
-        summary = (result.get('text') or '').strip()
-        if not summary or len(summary) >= len(prose):
-            _log("[reply-gate] skipped: "
-                 + ('timeout' if t.is_alive()
-                    else (result.get('err') or 'empty/longer output')),
-                 flush=True)
-            return
-        # Rebuild the turn: tool/status trace in original order, then the
-        # summary. Must end up SHORTER as an array — that's what trips the
-        # SSE reset guard so connected clients replay the rewrite.
-        prose_set = set(prose_idx)
-        kept = [turn[i] for i in range(len(turn)) if i not in prose_set]
-        new_turn = (kept + summary.split('\n')
-                    + ['[reply summarized — ask for full detail if needed]'])
-        if len(new_turn) >= len(turn):
-            return
-        _archive_full_reply(session, prose)
-        lines[start:] = new_turn
-        session['summarized_turns'] = int(
-            session.get('summarized_turns') or 0) + 1
-    except Exception as e:
-        _log(f"[reply-gate] gate failed open: {e}", flush=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Multi-provider dispatch (non-claude providers go through this)
@@ -3396,7 +3231,7 @@ def _dispatch_via_runtime(p, task, *, provider_name,
         # Pre-create the session dict so SSE clients can attach instantly
         session = {
             'status': 'running',
-            'task': _seed_task,
+            'task': task,
             'log_lines': [f"> {user_label}: {_seed_task}"],
             'started_at': now_iso(),
             'session_id': session_id,
@@ -3688,7 +3523,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             session = {
                 'proc': proc,
                 'status': 'running',
-                'task': _seed_task,
+                'task': task,
                 'log_lines': list(_seed_log_lines),
                 'started_at': now_iso(),
                 'session_id': session_id,
@@ -3773,7 +3608,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             session = {
                 'proc': proc,
                 'status': 'running',
-                'task': _seed_task,
+                'task': task,
                 'log_lines': list(_seed_log_lines),
                 'started_at': now_iso(),
                 'session_id': session_id,

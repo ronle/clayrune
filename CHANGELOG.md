@@ -136,44 +136,6 @@ entry kept in reserve: a true record-on / record-off toggle the user controls.
 - **Rollback:** revert `static/js/composer-extras.js` (the prior popup+dictation
   build) — `git revert` of this commit.
 
-## [2026-06-12d] — Reply-summarization gate: enforced brevity backstop
-
-The brief-reply directive asks the model to be short; Ron wants short
-guaranteed ("not optional, enforcing") with real summaries, not UI folds that
-hide content positionally. New server-side gate at the turn boundary.
-
-- **Mechanism:** `_maybe_summarize_turn()` (agent_routes.py) runs at the turn
-  boundary BEFORE the status flip, in both stream readers (Mode B result
-  event; Mode A rc==0 completion). If the turn's prose in `log_lines`
-  (non-`[`-marker lines) exceeds `reply_summarize_threshold_chars` (default
-  1500), a Haiku one-shot (`ClaudeRuntime.oneshot`, 25s outer ceiling on a
-  daemon thread) rewrites it: answer-first, all hard data preserved (paths,
-  commands, hashes, errors, decisions), 3-6 sentences. The turn's lines are
-  replaced with tool/status trace + summary + a
-  `[reply summarized — ask for full detail if needed]` marker.
-- **Free SSE delivery:** the rewrite shrinks `log_lines`, which trips the SSE
-  generator's existing `sent > len(lines)` reset guard — connected clients get
-  `reset` + full replay and the streamed long text visibly snaps to the
-  summary before `turn_complete`. Zero new frontend machinery
-  (resume-preview.js:594 already handles `reset`).
-- **Detail on demand:** the model's own context is untouched (the rewrite is
-  display/persistence-side), so "give me the full detail" just works. The
-  original prose is also archived permanently to
-  `data/reply_archive/<project>/<session>.md` — deliberately OUTSIDE
-  `data/projects/` per the DATA_DIR pollution rule.
-- **Exemptions + posture:** code-heavy turns (>2KB inside fences) pass
-  through — the never-shorten-code carve-out outranks brevity. Fail-open
-  everywhere (timeout/error/longer-output/array-not-shorter → original kept),
-  same best-effort posture as Scribe/Distiller. Non-Claude providers deferred
-  (their readers flip status inside agent_runtime.py).
-- **Config/UI:** `reply_summarize_enabled` (default ON) +
-  `reply_summarize_threshold_chars`; toggle in Settings → Agent ("Summarize
-  long replies") next to Brief replies; threshold is config/API-only to keep
-  the pane lean.
-- **Rollback:** Settings → Agent → Summarize long replies → off
-  (`reply_summarize_enabled=false`); no restart needed beyond the one that
-  ships it.
-
 ## [2026-06-12c] — Three-dot project menu revamp: declutter + consolidate
 
 The per-project three-dot menu had grown to ~21 desktop items with duplicates
@@ -297,28 +259,6 @@ artifact.
 - **Rollback:** the chips are additive UI; ask mode untouched. Delete the
   two new modules + revert guide_routes/claydo.js if needed.
 
-## [2026-06-12] — Brief replies: per-turn delivery guarantee + default ON
-
-"Brief replies = Everywhere" was on, yet agents across all projects still
-answered long. The setting (Settings → Agent → Brief replies) was never lost —
-its delivery was leaky.
-
-- **Root cause:** with `sticky_agent_settings` on, the brevity directive was
-  baked ONLY into the spawn-time system prompt, and `_apply_mobile_brief`
-  deliberately skipped the per-turn prepend to avoid doubling. But `claude -r`
-  restores a session's ORIGINAL system prompt (canary-proven 2026-06-04), so
-  every chat spawned before the flag flipped — or revived across an MC
-  restart — ran with no brevity directive at all.
-- **Fix:** `_apply_mobile_brief` now prepends `_BRIEF_REPLY_DIRECTIVE_ALWAYS`
-  on EVERY turn when `brief_replies_always_enabled` is on, regardless of
-  sticky. The ~110-token overlap on fresh sessions (system bake + per-turn) is
-  the same instruction twice — harmless, reinforcing. All 8 dispatch paths flow
-  through this one chokepoint.
-- **Default flip:** `brief_replies_always_enabled` now defaults ON
-  (`server.py`) — short replies are the guiding line for all agents; detail
-  only on explicit request. Existing config.json values are untouched.
-- **Rollback:** Settings → Agent → Brief replies → Off (or Phone).
-
 ## [2026-06-11] — Voice input: dictation mode so the mic rides out thinking pauses
 
 The Android mic dialog finalized the recording after ~1s of silence — pausing
@@ -425,42 +365,6 @@ Three VM-validation reports on the first-run walkthrough:
   project sticks, and established installs just get the marker stamped so
   upgrades never resurrect it. The walkthrough endpoint stays as an
   idempotent backup (shared `_seed_onboarding_project()`).
-
-## [2026-06-12] — Windows taskbar icon: right artwork at the right size
-
-Follow-up to [2026-06-11]: the VM re-test still showed the wrong/too-small
-icon. How a Chromium `--app` window's taskbar button actually gets its bitmap
-(all verified live on both browsers):
-
-- The button bitmap is the **window icon**, which Chrome derives from the
-  page **favicon** and composites with its profile-avatar badge. External
-  `WM_SETICON` is re-asserted over by Chrome; `RelaunchIconResource` feeds
-  the relaunch verb, not the button bitmap. So the favicon artwork IS the
-  taskbar artwork.
-- The button resolves **once, at creation** — property stamps after the fact
-  change nothing visible. `launch-app-window.ps1` now hides + re-shows the
-  window after stamping so the button is re-created against the stamped
-  identity (this is what flips Edge from the Edge logo to Claydo).
-- Chrome's favicon service **refetches lazily**: the first load after a
-  `?v=` bump still renders the cached old art; the next launch is correct.
-  Fresh installs have no cache and are correct from the first launch.
-
-Changes:
-- `static/icon-192/512.png` regenerated **full-bleed** (artwork coverage 69%
-  → 99%; the mascot was drowning in Play-Store-style padding) and bumped to
-  `?v=4`. The padded original is preserved as `static/icon-maskable-192.png`
-  and the manifest's `maskable` entry now points at it — Android round masks
-  NEED that margin, so don't "fix" it.
-- `assets/clayrune.ico` regenerated tight from `assets/clayrune.png`
-  (alpha>128 bbox crop — a faint glow stretches the naive bbox to the full
-  canvas, so threshold before cropping).
-- `launch-app-window.ps1`: patches the Desktop + Start Menu shortcuts with
-  `System.AppUserModel.ID=io.clayrune.app` (taskbar resolves a group's icon
-  against a matching shortcut; idempotent self-heal each launch), hide/
-  re-show button refresh, and a per-step `data\logs\launcher.log`.
-- Known cosmetic: Chrome overlays its profile-avatar badge on app-window
-  icons on signed-in/multi-profile machines; fresh single-profile installs
-  don't see it. A future PWA-install flow would remove it entirely.
 
 ## [2026-06-11] — Windows launcher: Clayrune taskbar icon on Edge-only machines
 
