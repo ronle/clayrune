@@ -73,6 +73,7 @@ EXPECTED_ROUTES = {
     '/api/project/<project_id>/search-chats',
     '/api/project/<project_id>/session/<session_id>/reconstruct',
     '/api/project/<project_id>/transcript/<claude_session_id>',
+    '/api/project/<project_id>/workflows',
 }
 
 
