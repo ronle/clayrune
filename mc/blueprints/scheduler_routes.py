@@ -294,6 +294,7 @@ def _scheduler_loop():
             schedules = _load_schedules()
             now = datetime.now(timezone.utc)
             changed = False
+            to_delete = []  # ids of once+delete_after_run schedules to drop post-fire
             for sched in schedules:
                 if not sched.get('enabled', True):
                     continue
@@ -363,11 +364,20 @@ def _scheduler_loop():
                             _log(f"[scheduler] Failed to dispatch for {pid}: {e}")
                     sched['last_run'] = now_iso()
                     if sched.get('schedule_type') == 'once':
-                        sched['enabled'] = False
-                        sched['next_run'] = None
+                        if sched.get('delete_after_run'):
+                            # Fire-and-forget: drop the row so it doesn't linger
+                            # as a disabled entry. The run itself is still logged
+                            # in agent_log (trigger_id=sched_id), so no history
+                            # is lost.
+                            to_delete.append(sched.get('id'))
+                        else:
+                            sched['enabled'] = False
+                            sched['next_run'] = None
                     else:
                         sched['next_run'] = _compute_next_run(sched)
                     changed = True
+            if to_delete:
+                schedules = [s for s in schedules if s.get('id') not in to_delete]
             if changed:
                 _save_schedules(schedules)
         except Exception as e:
@@ -660,6 +670,8 @@ def create_schedule():
         'interval_minutes': data.get('interval_minutes', 60),
         'run_at': data.get('run_at', ''),
         'cron_expr': data.get('cron_expr', ''),
+        # once-only: delete the row after it fires instead of keeping it disabled.
+        'delete_after_run': bool(data.get('delete_after_run', False)),
         'last_run': None,
         'next_run': None,
         'created_at': now_iso(),
@@ -682,7 +694,8 @@ def update_schedule(schedule_id):
 
     for key in ('project_id', 'task', 'description', 'continue_session',
                 'schedule_type', 'time', 'days',
-                'interval_minutes', 'enabled', 'run_at', 'cron_expr'):
+                'interval_minutes', 'enabled', 'run_at', 'cron_expr',
+                'delete_after_run'):
         if key in data:
             sched[key] = data[key]
 

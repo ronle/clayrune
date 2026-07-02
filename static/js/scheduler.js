@@ -201,6 +201,9 @@ function showScheduleForm(existing) {
   const selContinue = existing ? (existing.continue_session !== false) : true;
   const selRunAt = existing ? (existing.run_at || '').slice(0, 16) : '';
   const selCron = existing ? (existing.cron_expr || '') : '';
+  // once-only: new schedules default to fire-and-forget; pre-feature rows
+  // (field absent) keep the old "stay disabled" behavior.
+  const selDeleteAfter = existing ? !!existing.delete_after_run : true;
 
   area.innerHTML = `<div class="schedule-form">
     <label>Project</label>
@@ -230,7 +233,7 @@ function showScheduleForm(existing) {
       <button class="btn-sched-cancel" onclick="hideScheduleForm()">Cancel</button>
     </div>
   </div>`;
-  renderSchedTypeFields(selType, { time: selTime, days: selDays, interval_minutes: selInterval, run_at: selRunAt, cron_expr: selCron });
+  renderSchedTypeFields(selType, { time: selTime, days: selDays, interval_minutes: selInterval, run_at: selRunAt, cron_expr: selCron, delete_after_run: selDeleteAfter });
 }
 
 function hideScheduleForm() {
@@ -282,7 +285,12 @@ function renderSchedTypeFields(type, vals) {
   } else if (type === 'once') {
     container.innerHTML = `
       <label>Run At (${tzAbbr})</label>
-      <input type="datetime-local" id="sched-runat" value="${runAt}">`;
+      <input type="datetime-local" id="sched-runat" value="${runAt}">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;margin-top:10px">
+        <input type="checkbox" id="sched-delete-after" ${vals?.delete_after_run ? 'checked' : ''} style="margin:0;width:auto">
+        <span style="font-weight:600">Delete after it runs</span>
+        <span class="memory-hint" style="margin:0;font-weight:normal">(fire-and-forget &mdash; don't keep as a disabled entry)</span>
+      </label>`;
   } else if (type === 'cron') {
     container.innerHTML = `
       <label>Cron Expression (${tzAbbr})</label>
@@ -315,6 +323,7 @@ async function saveSchedule() {
   } else if (activeType === 'once') {
     const val = document.getElementById('sched-runat')?.value;
     if (val) body.run_at = new Date(val).toISOString();
+    body.delete_after_run = !!document.getElementById('sched-delete-after')?.checked;
   } else if (activeType === 'cron') {
     const expr = document.getElementById('sched-cron')?.value?.trim();
     if (!expr || expr.split(/\s+/).length !== 5) { alert('Cron expression must have exactly 5 fields'); return; }
