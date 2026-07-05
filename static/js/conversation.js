@@ -411,6 +411,13 @@ function agentPanelHTML(p) {
       const forceAll = expandedOutputSessions.has(activeSessionId);
       const truncated = !forceAll && fullBuf.length > MAX_RENDER_LINES;
       const buf = truncated ? fullBuf.slice(-MAX_RENDER_LINES) : fullBuf;
+      // §7: the latest ExitPlanMode gets the actionable plan card ONLY when the
+      // session is genuinely plan-pending (server-authoritative live_agent, or
+      // the client cache flag). Earlier/stale ExitPlanModes keep the inert
+      // Show-Plan button so a reopened old session can't re-approve a dead plan.
+      let _lastExitPlanIdx = -1;
+      for (let _j = buf.length - 1; _j >= 0; _j--) { if (buf[_j].trim() === '[tool: ExitPlanMode]') { _lastExitPlanIdx = _j; break; } }
+      const _planPending = (p.live_agent && p.live_agent.reason === 'plan') || !!(agentStatusCache[activeSessionId] && agentStatusCache[activeSessionId].waitingForPlanApproval);
       let result = '';
       let tableLines = [];
       let planBlock = '';   // accumulates non-tool lines for plan detection
@@ -425,7 +432,8 @@ function agentPanelHTML(p) {
         }
         tableLines = [];
       }
-      for (const line of buf) {
+      for (let _i = 0; _i < buf.length; _i++) {
+        const line = buf[_i];
         // Mermaid block detection: ```mermaid ... ``` becomes a placeholder
         // div that's later rendered by _renderAllMermaidPlaceholders.
         if (mermaidLines === null && /^\s*```\s*mermaid\b/.test(line)) {
@@ -448,8 +456,12 @@ function agentPanelHTML(p) {
         // Plan detection: when ExitPlanMode is hit, collapse prior non-tool lines
         if (line.trim() === '[tool: ExitPlanMode]') {
           flushTable();
-          if (planRawLines.length >= 2) {
-            planViewerContent[activeSessionId] = planRawLines;
+          if (planRawLines.length >= 2) planViewerContent[activeSessionId] = planRawLines;
+          if (_i === _lastExitPlanIdx && _planPending) {
+            // Actionable numbered card (Review reads planViewerContent set above).
+            // Wrapper id is load-bearing: approvePlan() removes #plan-approve-<sid>.
+            result += `<div class="plan-card" id="plan-approve-${esc(activeSessionId)}">${_planCardHTML(p.id, activeSessionId, planRawLines)}</div>`;
+          } else if (planRawLines.length >= 2) {
             result += `<button class="plan-show-btn" onclick="openPlanViewer('${esc(activeSessionId)}')">&#128196; Show Plan</button>`;
             result += `<div class="plan-hidden-block">${planBlock}</div>`;
           } else {
@@ -963,12 +975,9 @@ function appendAgentLine(sessionId, text) {
       const pid = cached ? cached.projectId : null;
       if (pid) {
         const approveRow = document.createElement('div');
-        approveRow.className = 'plan-approve-row';
-        approveRow.id = `plan-approve-${sessionId}`;
-        approveRow.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;margin:6px 0;flex-wrap:wrap';
-        approveRow.innerHTML = `<span style="color:var(--text-dim);font-size:12px">Agent is waiting for plan approval.</span>
-          <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>
-          <button style="background:var(--bg2);color:var(--text);border:1px solid var(--border2);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer" onclick="collapseIntoPlanButton('${esc(sessionId)}',this.closest('.agent-output'))">Collapse Plan</button>`;
+        approveRow.className = 'plan-card';
+        approveRow.id = `plan-approve-${sessionId}`;  // load-bearing: approvePlan() + stuck-loop handler look this up
+        approveRow.innerHTML = _planCardHTML(pid, sessionId, planViewerContent[sessionId] || []);
         el.appendChild(approveRow);
         if (wasPinned) _scheduleAgentPinScroll(sessionId, el, freshMount);
       }
@@ -1030,6 +1039,54 @@ function appendAgentLine(sessionId, text) {
         }).catch(() => {});
     }
   }
+}
+
+// ── Plan-approval card (§7, 2026-07-05) ────────────────────────────────────
+// Parse a plan's raw lines into ordered steps. A line is a step head if it
+// starts with a number (1. / 1)) or a bullet (- * •); following unmarked lines
+// fold into the current step as continuation. Returns null when <2 markers are
+// found (mirrors the >=2 threshold used by Path A / collapseIntoPlanButton) so
+// callers fall back to showing the raw text — never drop content.
+function _parsePlanSteps(lines) {
+  const arr = Array.isArray(lines) ? lines : String(lines || '').split('\n');
+  const markerRe = /^\s*(?:\d+[.\)]|[-*•])\s+/;
+  const steps = [];
+  let cur = null, markerCount = 0;
+  for (const raw of arr) {
+    const line = raw || '';
+    if (markerRe.test(line)) {
+      markerCount++;
+      if (cur !== null) steps.push(cur.trim());
+      cur = line.replace(markerRe, '').trim();
+    } else if (cur !== null) {
+      const t = line.trim();
+      if (t) cur += ' ' + t;  // continuation of the current step
+    }
+    // lines before the first marker (plan heading/preamble) are ignored
+  }
+  if (cur !== null) steps.push(cur.trim());
+  if (markerCount < 2) return null;
+  return { steps: steps.filter(Boolean) };
+}
+
+// Build the inner HTML of an in-thread plan card. Identical markup from both the
+// live-stream path (Path B) and the buffer-rebuild path (Path A) so a mid-
+// approval reload shows the same card. approvePlan/openPlanViewer resolve via
+// window at click time (defined in conversation.js / project-forms.js).
+function _planCardHTML(projectId, sessionId, rawLines) {
+  const parsed = _parsePlanSteps(rawLines);
+  let body;
+  if (parsed && parsed.steps.length) {
+    body = `<ol class="plan-card-steps">` + parsed.steps.map(s => `<li>${esc(s)}</li>`).join('') + `</ol>`;
+  } else {
+    body = `<div class="plan-card-raw">${esc((rawLines || []).join('\n').trim())}</div>`;
+  }
+  return `<div class="plan-card-header"><span class="plan-card-title">&#128203; Plan ready to approve</span></div>`
+    + body
+    + `<div class="plan-card-actions">`
+    +   `<button class="btn-plan-approve" onclick="approvePlan('${esc(projectId)}','${esc(sessionId)}')">Approve Plan</button>`
+    +   `<button class="btn-plan-review" onclick="openPlanViewer('${esc(sessionId)}')">Review</button>`
+    + `</div>`;
 }
 
 function approvePlan(projectId, sessionId) {
@@ -1711,6 +1768,8 @@ window.stopAgent = stopAgent;
 window.refreshProjectBacklog = refreshProjectBacklog;
 window.fetchAgentStatus = fetchAgentStatus;
 window.approvePlan = approvePlan;
+window._parsePlanSteps = _parsePlanSteps;
+window._planCardHTML = _planCardHTML;
 window.mcBackFromConv = mcBackFromConv;
 window.newAgentTab = newAgentTab;
 window.setComposerProvider = setComposerProvider;

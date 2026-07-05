@@ -2801,6 +2801,7 @@
   .agent-output .plan-hidden-block,
   .agent-output .plan-approve-row,
   .agent-output .agent-plan-stuck-warning,
+  .agent-output .plan-card,
   .agent-output .agent-question,
   .agent-output .mermaid-block {
     align-self: stretch; max-width: 100%; flex-shrink: 0;
@@ -2869,6 +2870,40 @@
     }
     .agent-output .agent-img-wrap { margin: 4px 0; }
   }
+
+  /* Plan-approval card (§7, 2026-07-05) — in-thread numbered plan + Approve/
+     Review. Token-driven for all three themes; deliberately does NOT reuse the
+     Plan-History tab's .plan-card-body/.plan-card-delete (unrelated) nor the
+     .plan-show-btn hardcoded purple / the undefined var(--bg2). */
+  .plan-card {
+    background: var(--surface3); border: 1px solid var(--accent); border-radius: 8px;
+    padding: 14px 16px; margin: 8px 4px;
+  }
+  .plan-card-header { margin-bottom: 8px; }
+  .plan-card-title {
+    font-size: 11px; color: var(--accent); font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  .plan-card-steps {
+    margin: 0 0 12px; padding-left: 22px; display: flex; flex-direction: column; gap: 4px;
+    color: var(--text); font-size: 12.5px; line-height: 1.5;
+  }
+  .plan-card-steps li { padding-left: 2px; }
+  .plan-card-raw {
+    white-space: pre-wrap; color: var(--text-dim); font-size: 12px; line-height: 1.5;
+    margin-bottom: 12px;
+  }
+  .plan-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-plan-approve {
+    background: var(--green); color: #fff; border: none;
+    padding: 7px 18px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .btn-plan-approve:hover { filter: brightness(1.06); }
+  .btn-plan-review {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border2);
+    padding: 7px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
+  }
+  .btn-plan-review:hover { border-color: var(--accent); }
 
   /* AskUserQuestion interactive form */
   .agent-question {
