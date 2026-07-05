@@ -128,6 +128,76 @@ function toggleIncognito(projectId) {
   refreshModalById(projectId);
 }
 
+// ── §8 ＋ options bottom sheet (MOBILE-only, pre-dispatch/+New screen) ───────
+// Decisions 5a (pre-dispatch only) + 6b (desktop keeps the inline controls;
+// the slide-up sheet is the mobile-canonical home). On mobile the composer
+// collapses to input + ＋ + Send; ＋ opens a sheet holding the SAME existing
+// Agent/Persona/Incognito/Resume+Search controls (relocated triggers, not new
+// logic). Desktop output is byte-identical to before.
+let composerSheetOpen = {};  // project_id → bool (mirrors incognitoToggle pattern)
+function openComposerSheet(projectId) { composerSheetOpen[projectId] = true; refreshModalById(projectId); }
+function closeComposerSheet(projectId) { composerSheetOpen[projectId] = false; refreshModalById(projectId); }
+
+// Incognito chip — extracted from the inline dispatchRow template so the old
+// call site AND the sheet share one source (preserves the forced-on branch for
+// the _incognito pseudo-project).
+function _incognitoChipHTML(p) {
+  const incOn = getIncognitoFor(p.id);
+  const incForced = isIncognitoProject(p);
+  return `<div class="incognito-toggle ${incOn ? 'on' : ''} ${incForced ? 'forced' : ''}"
+      onclick="${incForced ? '' : `toggleIncognito('${esc(p.id)}')`}"
+      title="${incForced ? 'This is the global Incognito agent — sessions here are always incognito.' : (incOn ? 'Incognito ON: agent has full project context, but the session is not logged and nothing is appended to MEMORY.md.' : 'Incognito OFF: standard project context applies.')}">
+      <span class="inc-mark">&#x1F576;&#xFE0F;</span>
+      <span class="inc-label">Incognito${incForced ? '' : (incOn ? ' on' : '')}</span>
+    </div>`;
+}
+
+// Compact status line under the mobile composer so current selections stay
+// visible without opening the sheet. Tap → open sheet. Built from existing
+// accessors only (no new state).
+function _composerPlusStatusLineHTML(p, resumeId) {
+  const curProv = _composerProvider(p);
+  const provRec = (_agentProviders || []).find(x => x.name === curProv);
+  const provName = provRec ? provRec.display_name : curProv;
+  const charMeta = resolveCharacterMeta(p.id, getPendingCharacter(p.id));
+  const inc = getIncognitoFor(p.id);
+  const parts = [`&#9680; ${esc(provName)}`];
+  if (charMeta) parts.push(esc(charMeta.display_name));
+  parts.push(`&#x1F576;&#xFE0F; ${inc ? 'Incognito on' : 'Incognito off'}`);
+  return `<div class="composer-plus-status" onclick="openComposerSheet('${esc(p.id)}')">${parts.join(' &middot; ')} &middot; <span class="cps-change">Change</span></div>`;
+}
+
+// The slide-up sheet itself. Always rendered (visibility is CSS-class driven off
+// composerSheetOpen) so the pickers' lazy _ensureCharacters() fetch timing is
+// unchanged. Calls the SAME existing picker/toggle/search functions.
+function _composerSheetHTML(p, resumeId) {
+  const open = !!composerSheetOpen[p.id];
+  const prov = _composerProviderPicker(p);                 // '' when single provider
+  const persona = _composerCharacterPicker(p, resumeId);   // '' on resume / no characters
+  const inc = _incognitoChipHTML(p);
+  const canResume = _getProviderCaps(_composerProvider(p)).supports_session_resume;
+  const search = canResume ? chatSearchHTML(p.id) : '';
+  const pane = canResume ? searchPaneInner(p.id) : '';
+  const picker = canResume ? sessionPickerHTML(p.id) : '';
+  const resumeSection = canResume ? `<div class="composer-sheet-section">
+      <div class="composer-sheet-label">Resume a past chat</div>
+      ${search}
+      <div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${pane}</div>
+      ${picker}
+    </div>` : '';
+  return `<div class="composer-sheet-overlay ${open ? 'visible' : ''}" onclick="closeComposerSheet('${esc(p.id)}')">
+    <div class="composer-sheet ${open ? 'visible' : ''}" onclick="event.stopPropagation()">
+      <div class="composer-sheet-grip"></div>
+      <div class="composer-sheet-title">Conversation options</div>
+      ${prov ? `<div class="composer-sheet-row">${prov}</div>` : ''}
+      ${persona ? `<div class="composer-sheet-row">${persona}</div>` : ''}
+      <div class="composer-sheet-row">${inc}</div>
+      ${resumeSection}
+      <button type="button" class="composer-sheet-done" onclick="closeComposerSheet('${esc(p.id)}')">Done</button>
+    </div>
+  </div>`;
+}
+
 function isHivemindWorker(h) {
   return !!(h.hivemindWsId || (agentStatusCache[h.sessionId] || {}).hivemindWsId);
 }
@@ -386,12 +456,7 @@ function agentPanelHTML(p) {
   const searchPane = showResume ? searchPaneInner(p.id) : '';
   const incOn = getIncognitoFor(p.id);
   const incForced = isIncognitoProject(p);
-  const incognitoChip = noActiveTab ? `<div class="incognito-toggle ${incOn ? 'on' : ''} ${incForced ? 'forced' : ''}"
-      onclick="${incForced ? '' : `toggleIncognito('${esc(p.id)}')`}"
-      title="${incForced ? 'This is the global Incognito agent — sessions here are always incognito.' : (incOn ? 'Incognito ON: agent has full project context, but the session is not logged and nothing is appended to MEMORY.md.' : 'Incognito OFF: standard project context applies.')}">
-      <span class="inc-mark">&#x1F576;&#xFE0F;</span>
-      <span class="inc-label">Incognito${incForced ? '' : (incOn ? ' on' : '')}</span>
-    </div>` : '';
+  const incognitoChip = noActiveTab ? _incognitoChipHTML(p) : '';  // shared with the §8 sheet
   const _dispatchPlaceholder = incOn ? 'Incognito — ephemeral, not saved to project memory...' : 'Describe a task for the agent... (paste or drop files here)';
   const _attachBtn = _pcaps.image_input ? `
     <input type="file" multiple id="agent-attach-input-${esc(p.id)}" class="agent-attach-input"
@@ -411,11 +476,22 @@ function agentPanelHTML(p) {
       `<button type="button" class="ces-chip" data-chip-text="${esc(t)}" onclick="fillStarterChip('${esc(p.id)}', this.dataset.chipText)">${esc(t)}</button>`
     ).join('')}</div>
   </div>` : '';
-  const dispatchRow = noActiveTab ? `${chatSearch}${picker}${resumeIndicator}${emptyStateHTML}<div class="agent-input-row agent-drop-zone"
+  // §8: on MOBILE, collapse the pre-dispatch control cluster into a ＋ sheet;
+  // DESKTOP keeps the inline chat-search/picker + composer-controls-row exactly
+  // as before (these branches are '' on desktop → byte-identical output).
+  const _plusBtn = mobileMode ? `<button type="button" class="btn-composer-plus" title="Options" onclick="openComposerSheet('${esc(p.id)}')">+</button>` : '';
+  const _leadResume = mobileMode ? '' : `${chatSearch}${picker}`;
+  const _trailControls = mobileMode
+    ? _composerPlusStatusLineHTML(p, resumeId)
+    : `<div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>`;
+  const _trailSearchPane = mobileMode ? '' : `<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>`;
+  const _mobileSheet = mobileMode ? _composerSheetHTML(p, resumeId) : '';
+  const dispatchRow = noActiveTab ? `${_leadResume}${resumeIndicator}${emptyStateHTML}<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
     ondragenter="handleAgentDragOver(event,this)"
     ondragleave="handleAgentDragLeave(event,this)"
     ondrop="${_pcaps.image_input ? `handleAgentDrop(event,'${esc(p.id)}')` : 'event.preventDefault()'}">
+    ${_plusBtn}
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
       placeholder="${_dispatchPlaceholder}"
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'),'${esc(p.id)}')"
@@ -425,8 +501,9 @@ function agentPanelHTML(p) {
     ${_dispatchMicBtn}
     <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
   </div>
-  <div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>
-  ${dispatchPreviews}<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>` : '';
+  ${_trailControls}
+  ${dispatchPreviews}${_trailSearchPane}
+  ${_mobileSheet}` : '';
 
   // Active tab content
   let tabContent = '';
@@ -1868,3 +1945,5 @@ window.submitQuestionAnswer = submitQuestionAnswer;
 window.submitQuestionChip = submitQuestionChip;
 window.submitQuestionOther = submitQuestionOther;
 window.toggleIncognito = toggleIncognito;
+window.openComposerSheet = openComposerSheet;
+window.closeComposerSheet = closeComposerSheet;

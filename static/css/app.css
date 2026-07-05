@@ -2511,6 +2511,62 @@
   }
   .composer-empty-state .ces-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
 
+  /* §8 ＋ options button (mobile composer) — matches .btn-attach/.btn-mic sizing */
+  .btn-composer-plus {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    background: transparent; color: var(--text-dim);
+    border: 1px solid var(--border2); border-radius: 8px;
+    width: 38px; height: 38px; font-size: 22px; line-height: 1; cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .btn-composer-plus:hover,
+  .btn-composer-plus:active { background: var(--surface3); color: var(--text); border-color: var(--accent); }
+
+  /* §8 compact selection status under the mobile composer (tap → open sheet).
+     Repurposes the dead-space the inline .composer-controls-row used pre-sheet. */
+  .composer-plus-status {
+    font-size: 11px; color: var(--text-dim); padding: 6px 4px 2px; cursor: pointer;
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+  }
+  .composer-plus-status .cps-change { color: var(--accent); font-weight: 600; }
+
+  /* §8 slide-up bottom sheet holding the relocated Agent/Persona/Incognito/
+     Resume controls. Scrim + z-index mechanics mirror .mc-dialog-overlay; the
+     slide-up panel shell is new. Visibility is class-toggled (always rendered)
+     so picker lazy-fetch timing is unchanged. */
+  .composer-sheet-overlay {
+    position: fixed; inset: 0; z-index: 9920;
+    background: rgba(0,0,0,0.45);
+    display: flex; align-items: flex-end; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity .2s ease;
+  }
+  .composer-sheet-overlay.visible { opacity: 1; pointer-events: auto; }
+  .composer-sheet {
+    width: 100%; max-width: 620px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px 16px 0 0; padding: 8px 16px 20px;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.3);
+    transform: translateY(100%); transition: transform .25s ease;
+    max-height: 80vh; overflow-y: auto;
+  }
+  .composer-sheet-overlay.visible .composer-sheet { transform: translateY(0); }
+  .composer-sheet-grip {
+    width: 36px; height: 4px; border-radius: 2px; background: var(--border2);
+    margin: 6px auto 12px;
+  }
+  .composer-sheet-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--text-dim); font-weight: 700; margin-bottom: 10px;
+  }
+  .composer-sheet-row { margin-bottom: 12px; }
+  .composer-sheet-section { margin-bottom: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .composer-sheet-label { font-size: 11px; color: var(--text-dim); font-weight: 600; margin-bottom: 8px; }
+  .composer-sheet-done {
+    width: 100%; background: var(--accent); color: var(--bg); border: none;
+    padding: 11px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: 'Inter', sans-serif; margin-top: 4px;
+  }
+
   /* Inline preview of the selected resume conversation (fills the dead space
      below the composer on the +New / dispatch screen). */
   .conv-preview {
