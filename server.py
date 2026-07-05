@@ -1373,21 +1373,56 @@ def web_app_manifest():
     return resp
 
 
+def _asset_version():
+    """Cache-bust token = newest mtime across the served static css/js + the
+    index itself. Any change to those files changes the token, so (a) index.html
+    revalidates via its ETag and (b) its rewritten asset URLs get a fresh ?v=,
+    forcing WebViews / the service worker to re-fetch the updated CSS/JS instead
+    of serving a stale cached copy (app.css/JS are otherwise linked without a
+    cache-bust)."""
+    latest = 0.0
+    for sub in ('css', 'js'):
+        d = Path(STATIC_DIR) / sub
+        if not d.exists():
+            continue
+        for f in d.rglob('*'):
+            try:
+                m = f.stat().st_mtime
+                if m > latest:
+                    latest = m
+            except OSError:
+                continue
+    try:
+        m = (Path(STATIC_DIR) / 'index.html').stat().st_mtime
+        if m > latest:
+            latest = m
+    except OSError:
+        pass
+    return str(int(latest))
+
+
 @app.route('/')
 def index():
     index_path = Path(STATIC_DIR) / 'index.html'
-    etag = None
-    if index_path.exists():
-        stat = index_path.stat()
-        etag = f'"{int(stat.st_mtime)}-{stat.st_size}"'
-    # Conditional GET — let WebView2 cache but always revalidate
-    if etag and request.headers.get('If-None-Match') == etag:
+    ver = _asset_version()
+    etag = f'"{ver}"'
+    # Conditional GET — let WebView2 cache but always revalidate. The ETag folds
+    # in the asset version so a CSS/JS-only change still invalidates index.html.
+    if request.headers.get('If-None-Match') == etag:
         return Response(status=304, headers={'ETag': etag, 'Cache-Control': 'no-cache'})
-    resp = send_from_directory(STATIC_DIR, 'index.html')
+    try:
+        html = index_path.read_text(encoding='utf-8')
+    except OSError:
+        return send_from_directory(STATIC_DIR, 'index.html')
+    # Append ?v=<ver> to every /static/*.css|js reference so each deploy busts
+    # the client cache automatically (no manual version bumps, no per-tag edits).
+    import re
+    html = re.sub(r'(src|href)="(/static/[^"?]+\.(?:js|css))"',
+                  rf'\1="\2?v={ver}"', html)
+    resp = Response(html, mimetype='text/html')
     resp.headers['Cache-Control'] = 'no-cache'  # cache OK, but must revalidate
     resp.headers['Pragma'] = 'no-cache'
-    if etag:
-        resp.headers['ETag'] = etag
+    resp.headers['ETag'] = etag
     return resp
 
 
