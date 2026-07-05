@@ -2942,6 +2942,32 @@
   .agent-question-actions button:disabled { opacity: 0.5; cursor: default; }
   .agent-question-answer { font-size: 11px; color: var(--green); margin-top: 6px; }
 
+  /* §6 quick-reply chips — a short single-select question renders as tap pills
+     (one tap = answer). Modeled on .claydo-chip; token-driven, no accent-fill
+     by default (Decision #5). The full radio/checkbox form is unchanged. */
+  .agent-question-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .agent-question-chip {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 16px; border-radius: 16px; cursor: pointer; font-size: 12.5px;
+    font-family: 'Inter', sans-serif; transition: border-color 0.15s, transform 0.15s;
+  }
+  .agent-question-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .agent-question-chip:disabled { opacity: 0.5; cursor: default; transform: none; }
+  .agent-question-chip-other { font-style: italic; color: var(--text-dim); }
+  /* "Other" text field (chip mode) — hidden until the Other chip reveals it.
+     The wrap gates visibility; the inner input overrides its own base
+     display:none so it shows once the flex wrap is visible. */
+  .agent-question-other-wrap { display: none; gap: 6px; margin-top: 8px; align-items: center; }
+  .agent-question-other-wrap.visible { display: flex; }
+  .agent-question-other-wrap .agent-question-other { display: block; flex: 1; width: auto; margin-top: 0; }
+  .agent-question-other-send {
+    background: var(--accent); color: var(--bg); border: none; padding: 7px 14px;
+    border-radius: 6px; font-weight: 600; font-size: 12px; cursor: pointer;
+    font-family: 'Inter', sans-serif; flex-shrink: 0;
+  }
+  .agent-question-other-send:hover { background: #5db3ff; }
+  .agent-question-other-send:disabled { opacity: 0.5; cursor: default; }
+
   /* Rich text formatting for agent output */
   .agent-output .hl-code {
     background: #1e2233; color: #93c5fd; padding: 1px 5px; border-radius: 3px;

@@ -1171,29 +1171,55 @@ function renderAgentQuestion(sessionId, projectId, questions, questionId) {
   if (questionId) container.dataset.qid = questionId;
 
   let html = '';
-  questions.forEach((q, qi) => {
-    const inputType = q.multiSelect ? 'checkbox' : 'radio';
-    const groupName = `${formId}-q${qi}`;
-    html += `<div class="agent-question-header">${esc(q.header || 'Question')}</div>`;
-    html += `<div class="agent-question-text">${esc(q.question)}</div>`;
-    html += `<div class="agent-question-options" data-qidx="${qi}">`;
-    (q.options || []).forEach((opt, oi) => {
-      html += `<div class="agent-question-option">
-        <input type="${inputType}" name="${groupName}" id="${groupName}-o${oi}" value="${esc(opt.label)}" data-desc="${esc(opt.description || '')}">
-        <label for="${groupName}-o${oi}">${esc(opt.label)}${opt.description ? `<span class="aq-desc">${esc(opt.description)}</span>` : ''}</label>
-      </div>`;
+  // §6: a single short-option single-select question renders as one-tap chips
+  // (one tap = answer). Anything else — multi-select, >4 options, long labels,
+  // options carrying a .description (a pill can't show it), or multiple sub-
+  // questions — keeps the full radio/checkbox form unchanged.
+  const q0 = questions[0];
+  const useChips = questions.length === 1 && !q0.multiSelect
+    && (q0.options || []).length >= 1 && (q0.options || []).length <= 4
+    && (q0.options || []).every(o => (o.label || '').length <= 24 && !o.description);
+  if (useChips) {
+    html += `<div class="agent-question-header">${esc(q0.header || 'Question')}</div>`;
+    html += `<div class="agent-question-text">${esc(q0.question)}</div>`;
+    html += `<div class="agent-question-chips">`;
+    (q0.options || []).forEach(opt => {
+      // Pass `this` (not the label) into the handler and read data-label — the
+      // attribute is HTML-escaped safely, avoiding the nested-quote break a
+      // label with an apostrophe would cause inside an onclick JS string.
+      html += `<button type="button" class="agent-question-chip" data-label="${esc(opt.label)}" onclick="submitQuestionChip('${esc(projectId)}','${esc(sessionId)}','${formId}',0,this)">${esc(opt.label)}</button>`;
     });
-    // "Other" option
-    html += `<div class="agent-question-option">
-      <input type="${inputType}" name="${groupName}" id="${groupName}-other" value="__other__" onchange="document.getElementById('${groupName}-other-text').classList.toggle('visible', this.checked || this.selected)">
-      <label for="${groupName}-other">Other</label>
-    </div>`;
-    html += `<input type="text" class="agent-question-other" id="${groupName}-other-text" placeholder="Type your answer...">`;
+    html += `<button type="button" class="agent-question-chip agent-question-chip-other" onclick="submitQuestionOther('${esc(projectId)}','${esc(sessionId)}','${formId}',0)">Other&#8230;</button>`;
     html += `</div>`;
-  });
-  html += `<div class="agent-question-actions">
-    <button onclick="submitQuestionAnswer('${esc(projectId)}','${esc(sessionId)}','${formId}',${questions.length})">Submit Answer</button>
-  </div>`;
+    html += `<div class="agent-question-other-wrap" data-qidx="0">
+      <input type="text" class="agent-question-other" placeholder="Type your answer..." onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuestionOther('${esc(projectId)}','${esc(sessionId)}','${formId}',0);}">
+      <button type="button" class="agent-question-other-send" onclick="submitQuestionOther('${esc(projectId)}','${esc(sessionId)}','${formId}',0)">Send</button>
+    </div>`;
+  } else {
+    questions.forEach((q, qi) => {
+      const inputType = q.multiSelect ? 'checkbox' : 'radio';
+      const groupName = `${formId}-q${qi}`;
+      html += `<div class="agent-question-header">${esc(q.header || 'Question')}</div>`;
+      html += `<div class="agent-question-text">${esc(q.question)}</div>`;
+      html += `<div class="agent-question-options" data-qidx="${qi}">`;
+      (q.options || []).forEach((opt, oi) => {
+        html += `<div class="agent-question-option">
+          <input type="${inputType}" name="${groupName}" id="${groupName}-o${oi}" value="${esc(opt.label)}" data-desc="${esc(opt.description || '')}">
+          <label for="${groupName}-o${oi}">${esc(opt.label)}${opt.description ? `<span class="aq-desc">${esc(opt.description)}</span>` : ''}</label>
+        </div>`;
+      });
+      // "Other" option
+      html += `<div class="agent-question-option">
+        <input type="${inputType}" name="${groupName}" id="${groupName}-other" value="__other__" onchange="document.getElementById('${groupName}-other-text').classList.toggle('visible', this.checked || this.selected)">
+        <label for="${groupName}-other">Other</label>
+      </div>`;
+      html += `<input type="text" class="agent-question-other" id="${groupName}-other-text" placeholder="Type your answer...">`;
+      html += `</div>`;
+    });
+    html += `<div class="agent-question-actions">
+      <button onclick="submitQuestionAnswer('${esc(projectId)}','${esc(sessionId)}','${formId}',${questions.length})">Submit Answer</button>
+    </div>`;
+  }
 
   container.innerHTML = html;
   el.appendChild(container);
@@ -1243,14 +1269,54 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
   }
 
   if (answers.length === 0) return;
+  _dispatchQuestionAnswer(projectId, sessionId, container, answers);
+}
 
-  // Format answer as a clear response to the agent's AskUserQuestion.
-  // Phrasing is directive because the previous turn was killed mid-tool_use:
-  // claude resumes with an unresolved AskUserQuestion in its transcript and,
-  // without explicit framing, can interpret the user's reply as a fresh
-  // unrelated turn and re-ask the same questions in plain text. We tell it
+// §6 one-tap chip → posts a single answer immediately. `btn` is the clicked
+// chip; the answer is read from its data-label (HTML-escaped safely) so labels
+// with quotes/apostrophes survive.
+function submitQuestionChip(projectId, sessionId, formId, qIndex, btn) {
+  const container = document.getElementById(formId);
+  if (!container || container.classList.contains('answered')) return;
+  const label = (btn && btn.dataset && btn.dataset.label != null) ? btn.dataset.label : (btn ? btn.textContent.trim() : '');
+  const qTextEl = container.querySelectorAll('.agent-question-text')[qIndex];
+  const qText = qTextEl ? qTextEl.textContent : '';
+  _dispatchQuestionAnswer(projectId, sessionId, container, [{ question: qText, answer: label }]);
+}
+
+// §6 "Other" chip in chip-mode: first tap reveals the text field; once visible,
+// the Send button / Enter confirms and posts the typed answer.
+function submitQuestionOther(projectId, sessionId, formId, qIndex) {
+  const container = document.getElementById(formId);
+  if (!container || container.classList.contains('answered')) return;
+  const wrap = container.querySelector(`.agent-question-other-wrap[data-qidx="${qIndex}"]`);
+  if (!wrap) return;
+  const input = wrap.querySelector('.agent-question-other');
+  if (!wrap.classList.contains('visible')) {
+    wrap.classList.add('visible');
+    if (input) input.focus();
+    return;
+  }
+  const val = input ? input.value.trim() : '';
+  if (!val) { if (input) input.focus(); return; }
+  const qTextEl = container.querySelectorAll('.agent-question-text')[qIndex];
+  const qText = qTextEl ? qTextEl.textContent : '';
+  _dispatchQuestionAnswer(projectId, sessionId, container, [{ question: qText, answer: val }]);
+}
+
+// Shared dispatch for BOTH the radio/checkbox form and the tap chips (§6).
+// answers = [{question, answer}]. Builds the directive message, marks the card
+// answered, tears down inputs+chips, clears waiting state, and sends via
+// sendFollowup (or a raw POST fallback). One network path, no duplication.
+function _dispatchQuestionAnswer(projectId, sessionId, container, answers) {
+  if (!container || !answers || !answers.length) return;
+  if (container.classList.contains('answered')) return;
+
+  // Directive phrasing: the prior turn was killed mid-tool_use, so claude
+  // resumes with an unresolved AskUserQuestion in its transcript and, without
+  // explicit framing, can treat the reply as a fresh turn and re-ask. Tell it
   // up front: this IS the answer, do not re-ask.
-  let message = (
+  const message = (
     'I answered your AskUserQuestion through the Clayrune UI. The values '
     + 'below are my chosen responses — proceed with the task using them. '
     + 'Do NOT re-ask these questions.\n\n'
@@ -1258,33 +1324,30 @@ function submitQuestionAnswer(projectId, sessionId, formId, questionCount) {
     a.question ? `Q: ${a.question}\nA: ${a.answer}` : a.answer
   ).join('\n\n');
 
-  // Mark the form as answered (both in the DOM and in the per-turn answered-set
-  // so a rebuild-after-answer can't re-render it from cache before turn_start).
+  // Mark answered (DOM + per-turn answered-set so a rebuild can't re-render it
+  // from cache before turn_start).
   container.classList.add('answered');
   if (container.dataset.qid) {
     (_answeredQuestionIds[sessionId] || (_answeredQuestionIds[sessionId] = new Set())).add(container.dataset.qid);
   }
+  const summary = `<div class="agent-question-answer">Answered: ${esc(answers.map(a => a.answer).join(', '))}</div>`;
   const actionsEl = container.querySelector('.agent-question-actions');
-  if (actionsEl) actionsEl.innerHTML = `<div class="agent-question-answer">Answered: ${esc(answers.map(a => a.answer).join(', '))}</div>`;
-  // Disable inputs
+  if (actionsEl) actionsEl.innerHTML = summary;         // form mode
+  else container.insertAdjacentHTML('beforeend', summary); // chip mode (no actions row)
+  // Disable both form inputs and chip buttons (each a no-op in the other mode).
   container.querySelectorAll('input').forEach(i => i.disabled = true);
-  // Clear waiting_for_question locally — server will confirm on turn_start,
-  // but we want the tile + feed to drop out of "asking" immediately.
+  container.querySelectorAll('button.agent-question-chip, button.agent-question-other-send').forEach(b => b.disabled = true);
+  // Drop out of "asking" immediately (server confirms on turn_start).
   if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForQuestion = false;
   const _hAns = agentHistory.find(h => h.sessionId === sessionId);
   if (_hAns) _hAns.waitingForQuestion = false;
-  // Drop the cached pending question(s) so a post-rebuild re-render can't
-  // resurrect this now-answered form. (Dedup is DOM-based and the answered card
-  // keeps its data-qid, so a stray re-delivery is a no-op regardless.)
   if (agentStatusCache[sessionId]) agentStatusCache[sessionId].pendingQuestions = [];
 
-  // Send as follow-up
   const input = document.getElementById(`agent-followup-${sessionId}`);
   if (input) {
     input.value = message;
     sendFollowup(projectId, sessionId);
   } else {
-    // Fallback: direct API call
     fetch(API_BASE + `/api/project/${projectId}/agent/followup`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -1775,4 +1838,6 @@ window.newAgentTab = newAgentTab;
 window.setComposerProvider = setComposerProvider;
 window.showHmWorkerPopover = showHmWorkerPopover;
 window.submitQuestionAnswer = submitQuestionAnswer;
+window.submitQuestionChip = submitQuestionChip;
+window.submitQuestionOther = submitQuestionOther;
 window.toggleIncognito = toggleIncognito;
