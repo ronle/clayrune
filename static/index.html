@@ -645,6 +645,18 @@
   </div>
 </div>
 
+<!-- §1b Mobile "Waiting on you" inbox (≤960px). Opened from the repurposed
+     Needs-you pill (and, later, the bottom-bar Inbox slot). Each row deep-links
+     to the exact waiting chat via openProjectAtSession. Full-screen overlay;
+     header back / Android back / tap-a-row closes it. -->
+<div class="mobile-inbox-overlay" id="mobile-inbox" aria-hidden="true">
+  <div class="mobile-inbox-head">
+    <button class="mib-back" onclick="closeInbox()" aria-label="Back">&#x2039;</button>
+    <span class="mib-title">Waiting on you</span>
+  </div>
+  <div class="mobile-inbox-list" id="mobile-inbox-list"></div>
+</div>
+
 <!-- Mobile navigation drawer (≤960px). Hamburger top-left of the mobile app
      bar opens it; tap-outside / Android back / tap-an-item closes it. Bottom
      tab bar = quick access (5 user-tunable slots, later); this drawer = full
@@ -1039,8 +1051,12 @@ catch (e) { projectLastSeen = {}; }
 // closeModalById pattern: clear the flag, then navigate, popstate no-ops).
 let _mcDrawerHistoryActive = false;  // drawer-open sentinel (higher priority)
 let _mcSuppressPop = false;          // next popstate is our own synthetic nav
+let _mcInboxOpen = false;            // §1b mobile inbox sentinel (top-most surface)
 window.addEventListener('popstate', () => {
   if (_mcSuppressPop) { _mcSuppressPop = false; return; }  // our own nav
+  // §1b inbox is the top-most mobile surface when open — hardware back closes
+  // it first, DOM-only (the sentinel is already consumed by this back).
+  if (_mcInboxOpen) { _mcInboxOpen = false; _closeInboxUI(); return; }
   // Innermost level wins. Drawer is on top of everything else when open —
   // hardware back must close it first, before any modal/conv unwind.
   if (_mcDrawerHistoryActive) {

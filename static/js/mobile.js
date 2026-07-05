@@ -42,7 +42,10 @@ function renderMobileFilterPills() {
   row.innerHTML = pills.map(p => {
     if (!p.count && p.id !== 'all' && af !== p.id) return '';
     const active = af === p.id;
-    return `<button class="mc-pill ${p.cls} ${active ? 'active' : ''}" onclick="setFilter('${p.id}')">${esc(p.label)}${p.count ? ` <span class="count">${p.count}</span>` : ''}</button>`;
+    // §1b: the "Needs you" pill now opens the dedicated inbox surface (Decision
+    // 5a) instead of filtering the list; the other pills still filter.
+    const onclick = p.id === 'urgent' ? 'openInbox()' : `setFilter('${p.id}')`;
+    return `<button class="mc-pill ${p.cls} ${active ? 'active' : ''}" onclick="${onclick}">${esc(p.label)}${p.count ? ` <span class="count">${p.count}</span>` : ''}</button>`;
   }).join('');
 }
 
@@ -142,6 +145,63 @@ function renderMobileChatList(col) {
     row.addEventListener('click', () => openProjectModal(row.dataset.id));
   });
 }
+
+// ── §1b Mobile "Waiting on you" inbox ───────────────────────────────────────
+// A dedicated attention surface (replaces the old "Needs you" filter pill,
+// Decision 5a). Reuses _buildAttentionList (each item carries a sessionId from
+// §1a) and deep-links each row to the exact waiting chat via openProjectAtSession.
+function renderInbox() {
+  const list = document.getElementById('mobile-inbox-list');
+  if (!list) return;
+  const items = (typeof _buildAttentionList === 'function') ? _buildAttentionList() : [];
+  if (!items.length) {
+    list.innerHTML = '<div class="mib-empty">Nothing needs you right now.</div>';
+    return;
+  }
+  list.innerHTML = items.map(it => `
+    <div class="mib-row" data-project-id="${esc(it.projectId)}" data-session-id="${esc(it.sessionId || '')}">
+      <span class="mib-icon">${it.icon}</span>
+      <div class="mib-main">
+        <div class="mib-project">${esc(it.project)}</div>
+        <div class="mib-msg">${esc(it.msg)}</div>
+      </div>
+      <span class="mib-chev">&#x203A;</span>
+    </div>`).join('');
+  list.querySelectorAll('.mib-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const sid = row.dataset.sessionId;
+      closeInbox();
+      if (sid) openProjectAtSession(row.dataset.projectId, sid);
+      else openProjectModal(row.dataset.projectId);
+    });
+  });
+}
+function openInbox() {
+  const el = document.getElementById('mobile-inbox');
+  if (!el) return;
+  renderInbox();
+  el.classList.add('open');
+  el.setAttribute('aria-hidden', 'false');
+  if (!_mcInboxOpen) {
+    try { history.pushState({ mc: 'inbox' }, ''); _mcInboxOpen = true; } catch (e) {}
+  }
+}
+// DOM-only close — shared by the header button, row-tap, and the popstate
+// handler (which has already consumed the sentinel, so it must NOT re-unwind).
+function _closeInboxUI() {
+  const el = document.getElementById('mobile-inbox');
+  if (!el) return;
+  el.classList.remove('open');
+  el.setAttribute('aria-hidden', 'true');
+}
+function closeInbox() {
+  if (_mcInboxOpen) { _mcInboxOpen = false; _mcUnwindHistory(1); }
+  _closeInboxUI();
+}
+window.openInbox = openInbox;
+window.closeInbox = closeInbox;
+window.renderInbox = renderInbox;
+window._closeInboxUI = _closeInboxUI;
 
 function mcPushModalHistory() {
   if (!isMobileChatList() || _mcModalHistoryActive) return;

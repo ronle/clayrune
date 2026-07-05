@@ -195,3 +195,4 @@ function renderFeed() {
 
 // ── interop: window re-exposure for inline/generated/cross-module callers ──
 window.renderFeed = renderFeed;
+window._buildAttentionList = _buildAttentionList;  // §1b: mobile inbox reuses it
