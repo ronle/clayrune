@@ -861,6 +861,11 @@ function conversationRowHTML(p, h) {
 // Pure UI — also called by the popstate handler (which already consumed the
 // L2 history entry). Do NOT touch history here.
 function backToConvList(projectId) {
+  // "Back to conversations" means the chat list, which lives in the Agent tab.
+  // Reset the active modal tab so this also works from a non-Agent tab (e.g.
+  // tapping Chats in the §1c bottom bar while on the Backlog tab) — otherwise
+  // the user stays stranded on Backlog. No-op when already on the Agent tab.
+  modalActiveTab[projectId] = 'agent';
   delete activeAgentTab[projectId];
   delete agentConvNew[projectId];
   refreshModal();

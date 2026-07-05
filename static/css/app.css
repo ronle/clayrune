@@ -1018,6 +1018,10 @@
     transition: all 0.15s;
   }
   .modal-menu-btn:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+  /* §1c dedup: on mobile the context bottom bar's "More" opens this same menu,
+     so hide the redundant header ⋮ (the dropdown it anchors stays in the DOM
+     and is toggled by the bottom-bar More button). Desktop keeps the header ⋮. */
+  @media (max-width: 960px) { .modal-menu-btn { display: none; } }
   .modal-menu-dropdown {
     display: none; position: absolute; top: 36px; right: 0;
     background: var(--surface); border: 1px solid var(--border);
@@ -1268,6 +1272,14 @@
     padding: 1px 4px; background: var(--surface);
   }
   .backlog-meta { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  /* Mobile: .backlog-meta is flex-shrink:0, so on a narrow modal it kept full
+     width and crushed the title to one word per line. Let the item wrap so the
+     text takes the first row and the meta badges drop below it. (Exposed once
+     §1c made the Backlog tab reachable from the mobile bottom bar.) */
+  @media (max-width: 960px) {
+    .backlog-item { flex-wrap: wrap; }
+    .backlog-meta { flex-wrap: wrap; margin-left: 30px; }
+  }
 
   .priority-badge {
     font-size: 9px; padding: 2px 7px; border-radius: 3px;

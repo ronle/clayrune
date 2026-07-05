@@ -581,6 +581,17 @@ function connectAgentStream(projectId, sessionId) {
           }
         }
         appendAgentLine(sessionId, msg.text);
+        // §4 fix: appendAgentLine removed the typing indicator above. While the
+        // turn is still running (e.g. after an interrupt ack like "[Got your
+        // message]", or between streamed lines), re-add it so it trails the
+        // latest line and "thinking" stays visible — not only at turn_start.
+        // Guarded like the cold-render so it never shows during a plan/question wait.
+        {
+          const _rc = agentStatusCache[sessionId] || {};
+          if (_rc.status === 'running' && !_rc.waitingForPlanApproval && !_rc.waitingForQuestion) {
+            showTypingIndicator(sessionId);
+          }
+        }
         updateConsoleOutput(sessionId);
         // Update live activity ticker for tool lines
         if (msg.text && msg.text.startsWith('[tool:')) {
