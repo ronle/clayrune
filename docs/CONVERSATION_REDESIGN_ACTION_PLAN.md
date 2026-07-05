@@ -12,6 +12,41 @@ called out inline.
 `refactor/backend`. Land each § as its own commit in the order in §"Commit
 order" below.
 
+## Implementation status (2026-07-05)
+
+| § | Task | Status | Commit |
+|---|------|--------|--------|
+| §3 | Chat bubbles on desktop (+ mermaid bugfix, 720px cap) | ✅ shipped | `ed3bd15` |
+| §4 | Typing-dots indicator | ✅ shipped | `8114775` |
+| §7 | Numbered plan-approval card | ✅ shipped | `8a123ea` |
+| §6 | Quick-reply chips (AskUserQuestion) | ✅ shipped | `ca682ca` |
+| §5 | Starter suggestion chips | ✅ shipped | `f06a3ff` |
+| §8 | ＋ options bottom sheet (mobile) | ✅ shipped | `fa88463` |
+| §1a | "Needs you" feed → deep-link to waiting chat | ✅ shipped | `c1e0fd4` |
+| §1b | Mobile inbox surface | ⏸ deferred | — |
+| §1c | Context-adaptive bottom nav bar | ⏸ deferred | — |
+| §1d | Desktop multi-pane (recents rail + thread) | ⏸ deferred | — |
+| §1e | Desktop docked nav cluster | ⏸ deferred | — |
+
+**Verified:** all edits pass `node --check`; CSS brace balance unchanged from
+baseline; desktop composer output is byte-identical (§8 is mobile-gated); DOM-
+structure assumptions confirmed by reading the JS (direct `.agent-output`
+children for stretch rules; both render paths for plan/typing). **NOT verified:**
+live pixels — needs a hard-reloaded MC tab (Ctrl+Shift+R; CSS/JS don't reach a
+live SPA tab otherwise). QA checklist: bubbles both themes + both breakpoints;
+typing dots appear/clear on every run-end path incl. manual Stop; plan card
+Approve/Review; a yes/no AskUserQuestion → chips; empty +New → starter chips;
+mobile ＋ sheet opens/holds selections; "Needs you" tap lands on the plan/
+question state.
+
+**§1b–§1e deferred — NOT a scope cut, a gate.** These four are genuinely new
+surfaces (not restyle/relocate) and each needs one of the five open product
+questions answered before it can be built correctly (see §1 "Open questions"):
+what "Search"/"You"/"Backlog" mean at Layer 1, recents-rail scope, and whether
+the mobile inbox replaces or sits beside the existing "Needs you" filter pill.
+Building them blind would mean guessing product decisions and risking core
+navigation. The 720px cap (§1's only CSS-only part) already shipped with §3.
+
 **The golden rule (from the brief's Ground Rules §0, confirmed by every agent).**
 This is a **restyle / relocate** effort, not a new-capability effort. Specifically:
 
