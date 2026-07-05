@@ -499,6 +499,14 @@ function agentPanelHTML(p) {
     const stopBtn = (isRunning || st === 'idle' || st === 'error')
       ? `<button class="btn-stop" onclick="stopAgent('${esc(p.id)}','${esc(activeSessionId)}')">Stop</button>` : '';
 
+    // §4 cold-render: derive the typing indicator declaratively from run-state
+    // so it survives a refreshModal rebuild (turn_start/turn_complete skip
+    // refreshModal, but switchAgentTab / modal reopen DO rebuild). Suppressed
+    // while parked on a plan/question — those states aren't "generating".
+    const showTyping = isRunning && !(activeSession?.waitingForPlanApproval || activeSession?.waitingForQuestion);
+    const typingHTML = showTyping
+      ? `<div class="agent-line typing-indicator" id="typing-${esc(activeSessionId)}"><span></span><span></span><span></span></div>` : '';
+
     // Same vocabulary AND same detected-wait distinction as the project
     // badge (see consoleStatusLabel) — activeSession carries the pending
     // plan/question flags that gate "Awaiting input".
@@ -645,7 +653,7 @@ function agentPanelHTML(p) {
         ${mobileMode ? `<button class="conv-new-btn" style="margin-left:auto" onclick="newAgentTab('${esc(p.id)}')" title="Start a new conversation">+ New</button>` : ''}
       </div>
       <div class="agent-chat">
-        <div class="agent-output" id="agent-output-${esc(activeSessionId)}">${outputLines}</div>
+        <div class="agent-output" id="agent-output-${esc(activeSessionId)}">${outputLines}${typingHTML}</div>
         ${chatInput ? `<div class="agent-chat-separator"></div>${chatInput}` : ''}
       </div>`;
   }
@@ -820,9 +828,34 @@ function selectResumeSession(projectId, claudeSessionId) {
   setTimeout(() => document.getElementById(`agent-task-${projectId}`)?.focus(), 50);
 }
 
+// ── Typing indicator (§4, 2026-07-05) ──────────────────────────────────────
+// A left bubble with three pulsing dots shown while the agent generates. It is
+// an EPHEMERAL DOM node (id=typing-<sid>); it is never written to
+// agentOutputBuffers, so a rebuild (refreshModal) drops it and re-derives it
+// declaratively from run-state in agentPanelHTML. Both are exported on window
+// so resume-preview.js (a separate module) can call them by bare name.
+function hideTypingIndicator(sessionId) {
+  document.getElementById(`typing-${sessionId}`)?.remove();
+}
+function showTypingIndicator(sessionId) {
+  const el = document.getElementById(`agent-output-${sessionId}`);
+  if (!el) return;
+  if (document.getElementById(`typing-${sessionId}`)) return; // already shown
+  const wasPinned = _isAgentOutputPinned(el, sessionId);
+  const div = document.createElement('div');
+  div.className = 'agent-line typing-indicator';
+  div.id = `typing-${sessionId}`;
+  div.innerHTML = '<span></span><span></span><span></span>';
+  el.appendChild(div);
+  if (wasPinned) _scheduleAgentPinScroll(sessionId, el, false);
+}
+
 function appendAgentLine(sessionId, text) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el) return;
+  // The instant any real line streams in, the typing indicator is stale — drop
+  // it before appending (runs on every recursive multiline call; idempotent).
+  hideTypingIndicator(sessionId);
   const freshMount = !el.dataset.scrollInitialized;
   const wasPinned = freshMount || _isAgentOutputPinned(el, sessionId);
   // NOTE: do NOT set `el.style.display = 'block'` here. That inline style
@@ -1061,6 +1094,10 @@ function _rerenderPendingQuestions(projectId, sessionId) {
 function renderAgentQuestion(sessionId, projectId, questions, questionId) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el || !questions || !questions.length) return;
+  // Agent is parked waiting for an answer → definitively not generating.
+  // Covers all 3 call sites (SSE question, fetchAgentStatus, rerender) and the
+  // turn_complete-suppressed window where status never flips to idle. (§4)
+  hideTypingIndicator(sessionId);
   if (questionId) {
     // Don't resurrect a form the user already answered this turn…
     if ((_answeredQuestionIds[sessionId] || _EMPTY_SET).has(questionId)) return;
@@ -1430,6 +1467,10 @@ async function stopAgent(projectId, sessionId) {
     delete agentEventSources[sessionId];
   }
   if (agentSSEWatchdogs[sessionId]) { clearInterval(agentSSEWatchdogs[sessionId]); delete agentSSEWatchdogs[sessionId]; }
+  // REQUIRED: stopAgent closes its own EventSource synchronously above, so no
+  // terminal 'status' SSE arrives to remove the dots — without this they'd
+  // animate forever after a manual Stop. (§4)
+  hideTypingIndicator(sessionId);
 
   // Fire the stop request with a timeout — server kill can take seconds
   const controller = new AbortController();
@@ -1660,6 +1701,8 @@ window.switchAgentTab = switchAgentTab;
 window.getDefaultResumeId = getDefaultResumeId;
 window.selectResumeSession = selectResumeSession;
 window.appendAgentLine = appendAgentLine;
+window.showTypingIndicator = showTypingIndicator;
+window.hideTypingIndicator = hideTypingIndicator;
 window._cachePendingQuestion = _cachePendingQuestion;
 window._rerenderPendingQuestions = _rerenderPendingQuestions;
 window.renderAgentQuestion = renderAgentQuestion;

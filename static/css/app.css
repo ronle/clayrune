@@ -2810,6 +2810,28 @@
     display: block; overflow-x: auto;
   }
 
+  /* Typing indicator — a left bubble with three staggered pulsing dots, shown
+     as the last child of .agent-output while the agent is generating (§4,
+     2026-07-05). Ephemeral DOM node (id=typing-<sid>) — NOT persisted to
+     agentOutputBuffers. Do NOT reuse claydo-dots: it animates a single ::after
+     `content` string and can't stagger three independent dots. */
+  .typing-indicator {
+    display: flex; align-self: flex-start; gap: 4px;
+    background: var(--surface3); border: 1px solid var(--border2);
+    border-radius: 14px 14px 14px 4px; padding: 10px 12px; max-width: 60px;
+  }
+  .typing-indicator span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-dim);
+    animation: typing-pulse 1.2s infinite ease-in-out;
+  }
+  .typing-indicator span:nth-child(2) { animation-delay: .2s; }
+  .typing-indicator span:nth-child(3) { animation-delay: .4s; }
+  @keyframes typing-pulse {
+    0%, 60%, 100% { opacity: .3; transform: scale(.8); }
+    30% { opacity: 1; transform: scale(1); }
+  }
+
   /* Thread caps at 720px and centers on DESKTOP ONLY (>960px). Gated behind
      min-width:961px so the shipped 720–960px tablet behavior (edge-to-edge)
      is unchanged. Cap .agent-chat (NOT .agent-output) because the composer

@@ -640,6 +640,10 @@ function connectAgentStream(projectId, sessionId) {
         delete _answeredQuestionIds[sessionId];  // new turn → answered-set is moot
         updateHistoryStatus(sessionId, 'running');
         updateAgentStatusUI(sessionId, 'running');
+        // §4: turn_start is the reliable hot-path show point (it skips
+        // refreshModal, so the declarative cold-render won't fire here).
+        hideTypingIndicator(sessionId);  // clear any stale node first
+        showTypingIndicator(sessionId);
         // NOTE: deliberately NO refreshModal() here. It does
         // content.innerHTML = modalContentHTML(p), which detaches/recreates
         // the chat textarea on EVERY turn — measured root cause of the mobile
@@ -668,6 +672,10 @@ function connectAgentStream(projectId, sessionId) {
           const _qc = agentStatusCache[sessionId];
           if (_qc && (_qc.waitingForQuestion || _qc.waitingForPlanApproval)) return;
         }
+        // §4: after the blocked-on-user guard so a turn_complete masking a
+        // pending question doesn't wrongly hide (that path hides via
+        // renderAgentQuestion). Genuine completion → dots gone.
+        hideTypingIndicator(sessionId);
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Mode B: turn finished, process still alive. We close the SSE here to free
         // a browser per-origin connection slot (Chromium caps at 6 over HTTP/1.1).
@@ -706,6 +714,7 @@ function connectAgentStream(projectId, sessionId) {
           if (_qc && (_qc.waitingForQuestion || _qc.waitingForPlanApproval)) return;
         }
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
+        hideTypingIndicator(sessionId);  // §4 backstop: remote-stop / natural completion
         // Terminal status — close SSE
         if (agentStatusCache[sessionId]) {
           agentStatusCache[sessionId].status = msg.status;
@@ -745,6 +754,7 @@ function connectAgentStream(projectId, sessionId) {
           return;
         }
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
+        hideTypingIndicator(sessionId);  // §4 backstop: guardian crash / error exit
         if (agentStatusCache[sessionId]) agentStatusCache[sessionId].status = 'error';
         updateHistoryStatus(sessionId, 'error');
         es.close();
