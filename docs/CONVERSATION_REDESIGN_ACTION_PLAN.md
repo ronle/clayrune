@@ -23,10 +23,34 @@ order" below.
 | §5 | Starter suggestion chips | ✅ shipped | `f06a3ff` |
 | §8 | ＋ options bottom sheet (mobile) | ✅ shipped | `fa88463` |
 | §1a | "Needs you" feed → deep-link to waiting chat | ✅ shipped | `c1e0fd4` |
-| §1b | Mobile inbox surface | ⏸ deferred | — |
-| §1c | Context-adaptive bottom nav bar | ⏸ deferred | — |
-| §1d | Desktop multi-pane (recents rail + thread) | ⏸ deferred | — |
-| §1e | Desktop docked nav cluster | ⏸ deferred | — |
+| §1b | Mobile "Waiting on you" inbox (replaces the pill) | ✅ shipped | `32d4967` |
+| §1c | Context-adaptive mobile bottom nav bar | ✅ shipped | `8bf10d9` |
+| Search | Cross-project transcript search (Decision 2b) | ⏸ remaining | — |
+| §1d | Desktop multi-pane (per-project recents rail + thread) | ⏸ remaining | — |
+| §1e | Desktop docked nav cluster | ⏸ remaining | — |
+
+**§1 decisions (2026-07-05):** 1a Backlog = global at L1 · 2b Search = cross-
+project transcript search (backend) · 3a "You" = Settings, Hivemind → drawer ·
+4a recents rail = per-project · 5a mobile inbox replaces the "Needs you" pill.
+
+**Why the last three stopped here (honest):**
+- **Search (2b)** — the backend is safely buildable (aggregate the existing
+  `_search_project_transcripts` across projects), BUT its entry point is the
+  Layer-1 bar's Search slot, which requires the global-bar redesign
+  (add Inbox/Search/You, move Scheduler/Hivemind to the drawer) that §1c
+  deliberately did NOT touch. Shipping an endpoint nothing calls = dead code.
+  Needs: agree the global-bar redesign + a search overlay, then wire.
+- **§1d desktop multi-pane** — requires relaxing the "one `.modal-tab-content`
+  visible" invariant (`app.css:1188-1189`) + a net-new >1400px grid. Deep
+  surgery on the modal render system; the investigation flagged it "its own
+  spike." Unverifiable without a live desktop browser.
+- **§1e desktop nav cluster** — net-new docked cluster with unresolved
+  coexistence vs. the always-on `.sidebar` (no z-index/space contract). A UX
+  decision, not a relocation.
+
+These three need a design pass (Search entry point, global-bar redesign) and/or
+live visual iteration (desktop layout) — not blind bulk code. Recommend a
+focused follow-up where the desktop layout can be driven in a real browser.
 
 **Verified:** all edits pass `node --check`; CSS brace balance unchanged from
 baseline; desktop composer output is byte-identical (§8 is mobile-gated); DOM-
