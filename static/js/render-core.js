@@ -129,7 +129,10 @@ function computeLiveStatus(projectId) {
     }
   }
 
-  return { currentTask, currentTaskClass, nextAction, nextActionClass };
+  return { currentTask, currentTaskClass, nextAction, nextActionClass,
+    // §1: surface the live session id (already resolved above) so the "Needs
+    // you" feed can deep-link straight to the waiting chat, not just the project.
+    sessionId: runningSess ? runningSess.sessionId : null };
 }
 
 // Collapse internal project status + live agent state into one of the 5

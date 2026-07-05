@@ -48,7 +48,8 @@ function _buildAttentionList() {
         msg = 'Stuck — needs intervention';
       }
     }
-    items.push({ projectId: p.id, project: p.name || p.id, domain: p.domain, msg, icon });
+    items.push({ projectId: p.id, project: p.name || p.id, domain: p.domain, msg, icon,
+      sessionId: live.sessionId || null });  // §1: deep-link target (may be null)
   });
   return items;
 }
@@ -114,7 +115,7 @@ function renderFeed() {
     attention.forEach(it => {
       const color = getDomainConfig(it.domain).color;
       parts.push(`
-        <div class="feed-entry attention" data-project-id="${esc(it.projectId)}" title="Click to open">
+        <div class="feed-entry attention" data-project-id="${esc(it.projectId)}" data-session-id="${esc(it.sessionId || '')}" title="Click to open the waiting chat">
           <div class="feed-entry-row">
             <span class="fe-icon attention">${it.icon}</span>
             <div>
@@ -177,7 +178,15 @@ function renderFeed() {
 
   feedEl.innerHTML = parts.join('');
   feedEl.querySelectorAll('.feed-entry[data-project-id]').forEach(el => {
-    el.addEventListener('click', () => openProjectModal(el.dataset.projectId));
+    el.addEventListener('click', () => {
+      // §1: "Needs you" rows carry a session id → deep-link straight to the
+      // waiting chat (plan/question state), skipping the project list. Recent
+      // rows (and any attention row with no live session) fall back to the
+      // project modal as before.
+      const sid = el.dataset.sessionId;
+      if (sid) openProjectAtSession(el.dataset.projectId, sid);
+      else openProjectModal(el.dataset.projectId);
+    });
   });
 
   _updateFeedAttentionBadge(attention.length);

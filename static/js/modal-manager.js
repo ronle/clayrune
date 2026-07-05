@@ -121,6 +121,47 @@ function focusModal(modalId) {
 // On native, the tap can fire before allProjects is populated — in that case
 // we cache the URL on window._mcPendingDeepLink and replay it from
 // fetchProjects().then(...) below.
+// §1: open a project modal AND select a specific session, with the same
+// authoritative load + reconstruct-from-transcript fallback the URL deep-link
+// path uses. Shared by _handleDeepLinkFromUrl (push/URL) and the "Needs you"
+// feed so neither duplicates the race-prone logic. sid may be empty (opens the
+// project at its list, like a bare openProjectModal).
+async function openProjectAtSession(pid, sid) {
+  try { openProjectModal(pid); } catch (e) { console.warn('openProjectModal', e); }
+  if (!sid) return;
+  // openProjectModal kicks off fetchAgentStatus async (and skips it entirely on
+  // a warm tap where the modal is already open). Await an authoritative load
+  // before selecting the tab so the chat doesn't render before the agent's
+  // reply loads from server log_lines. If sid is stale (server restarted →
+  // session revived under a new id) fall back to the project's real active
+  // session so the conversation still shows.
+  try { await fetchAgentStatus(pid); } catch (_) {}
+  // If the target session isn't live (server bounced, not yet revived) it won't
+  // be in the status response — reconstruct a read-only buffer from its
+  // transcript so the tap shows the full conversation, not an empty tab.
+  if (!agentStatusCache[sid] && !activeAgentTab[pid]) {
+    try {
+      const rr = await fetch(API_BASE + `/api/project/${pid}/session/${encodeURIComponent(sid)}/reconstruct`);
+      if (rr.ok) {
+        const rd = await rr.json();
+        agentStatusCache[sid] = { status: 'completed', task: rd.task || '', projectId: pid,
+          startedAt: rd.started_at || '', claudeSessionId: rd.claude_session_id || '',
+          _readOnlyRevived: true };
+        agentOutputBuffers[sid] = rd.log_lines || [];
+        agentServerLines[sid] = (rd.log_lines || []).length;
+        if (!agentHistory.find(h => h.sessionId === sid)) {
+          const pName = (allProjects.find(x => x.id === pid) || {}).name || pid;
+          agentHistory.unshift({ projectId: pid, sessionId: sid, projectName: pName,
+            task: rd.task || '', status: 'completed', startedAt: rd.started_at || '' });
+        }
+      }
+    } catch (_) {}
+  }
+  const targetSid = agentStatusCache[sid] ? sid : (activeAgentTab[pid] || sid);
+  try { switchAgentTab(pid, targetSid); } catch (e) { console.warn('switchAgentTab', e); }
+  try { refreshModalById(pid); } catch (_) {}
+}
+
 async function _handleDeepLinkFromUrl(rawUrl) {
   let url;
   try { url = new URL(rawUrl || window.location.href, window.location.origin); }
@@ -136,45 +177,7 @@ async function _handleDeepLinkFromUrl(rawUrl) {
   }
   const known = new Set(allProjects.map(p => p.id));
   if (!known.has(pid)) return;
-  try { openProjectModal(pid); } catch (e) { console.warn('openProjectModal', e); }
-  if (sid) {
-    // openProjectModal kicks off fetchAgentStatus async (and skips it
-    // entirely on a warm tap where the modal is already open). The old
-    // fixed-80ms guess lost that race on mobile cold-start, so the chat
-    // rendered before the agent's reply was loaded from server log_lines —
-    // user saw only their own message. Await an authoritative load, then
-    // select the tab. If the URL's session id is stale (server restarted →
-    // session revived under a new id) fall back to the project's real
-    // active session so the conversation still shows.
-    try { await fetchAgentStatus(pid); } catch (_) {}
-    // If the deep-linked session isn't live (server bounced and it hasn't
-    // been revived — no follow-up sent yet), it won't be in the status
-    // response at all. Reconstruct a read-only buffer from its transcript so
-    // the tap shows the full conversation (incl. the agent reply the push
-    // was about) instead of an empty tab. Falls back silently if the session
-    // can't be reconstructed.
-    if (!agentStatusCache[sid] && !activeAgentTab[pid]) {
-      try {
-        const rr = await fetch(API_BASE + `/api/project/${pid}/session/${encodeURIComponent(sid)}/reconstruct`);
-        if (rr.ok) {
-          const rd = await rr.json();
-          agentStatusCache[sid] = { status: 'completed', task: rd.task || '', projectId: pid,
-            startedAt: rd.started_at || '', claudeSessionId: rd.claude_session_id || '',
-            _readOnlyRevived: true };
-          agentOutputBuffers[sid] = rd.log_lines || [];
-          agentServerLines[sid] = (rd.log_lines || []).length;
-          if (!agentHistory.find(h => h.sessionId === sid)) {
-            const pName = (allProjects.find(x => x.id === pid) || {}).name || pid;
-            agentHistory.unshift({ projectId: pid, sessionId: sid, projectName: pName,
-              task: rd.task || '', status: 'completed', startedAt: rd.started_at || '' });
-          }
-        }
-      } catch (_) {}
-    }
-    const targetSid = agentStatusCache[sid] ? sid : (activeAgentTab[pid] || sid);
-    try { switchAgentTab(pid, targetSid); } catch (e) { console.warn('switchAgentTab', e); }
-    try { refreshModalById(pid); } catch (_) {}
-  }
+  await openProjectAtSession(pid, sid);
   // Clean the URL so a manual refresh doesn't keep re-firing the deep link.
   try {
     const cleaned = new URL(window.location.href);
@@ -905,6 +908,7 @@ window._positionSettingsModal = _positionSettingsModal;
 window.focusModal = focusModal;
 window._handleDeepLinkFromUrl = _handleDeepLinkFromUrl;
 window.openProjectModal = openProjectModal;
+window.openProjectAtSession = openProjectAtSession;
 window.closeModalById = closeModalById;
 window.toggleModalMenu = toggleModalMenu;
 window.toggleModalMenuSub = toggleModalMenuSub;
