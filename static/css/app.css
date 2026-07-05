@@ -2495,6 +2495,22 @@
   }
   .resume-indicator .ri-clear:hover { color: var(--text); }
 
+  /* §5 starter-prompt empty state — shown above the composer on a truly empty
+     +New screen. Token-driven, both breakpoints (.agent-panel is flex-column).
+     Chips modeled on .claydo-chip. */
+  .composer-empty-state { text-align: center; padding: 18px 8px 14px; }
+  .composer-empty-state .ces-icon { font-size: 28px; opacity: .7; margin-bottom: 6px; }
+  .composer-empty-state .ces-heading {
+    font-size: 14px; font-weight: 600; color: var(--text-dim); margin-bottom: 12px;
+  }
+  .composer-empty-state .ces-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .composer-empty-state .ces-chip {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 14px; border-radius: 16px; cursor: pointer; font-size: 12px;
+    font-family: inherit; transition: border-color .15s, transform .15s;
+  }
+  .composer-empty-state .ces-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+
   /* Inline preview of the selected resume conversation (fills the dead space
      below the composer on the +New / dispatch screen). */
   .conv-preview {

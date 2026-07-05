@@ -218,6 +218,20 @@ function cancelHideHmPopover() {
 }
 
 
+// §5: static starter prompts for the empty +New screen (project-aware is v2).
+const STARTER_CHIPS = ['Fix a failing test or bug', 'Add a feature to this project', 'Explain how the codebase works'];
+
+// Fill the dispatch textarea with a starter prompt and focus it — does NOT send
+// (the user edits/confirms). No refreshModal/setTimeout: the textarea is already
+// on screen when the chip is clickable.
+function fillStarterChip(projectId, text) {
+  const ta = document.getElementById(`agent-task-${projectId}`);
+  if (!ta) return;
+  ta.value = text;
+  ta.focus();
+  ta.setSelectionRange(text.length, text.length);
+}
+
 function agentPanelHTML(p) {
   const pp = p.project_path || '';
   if (!pp) {
@@ -385,7 +399,19 @@ function agentPanelHTML(p) {
     <button class="btn-attach" type="button" title="Attach files or take a photo"
       onclick="triggerAgentAttach('${esc(p.id)}')">&#128206;</button>` : '';
   const _dispatchMicBtn = micBtnHTML(`agent-task-${esc(p.id)}`);
-  const dispatchRow = noActiveTab ? `${chatSearch}${picker}${resumeIndicator}<div class="agent-input-row agent-drop-zone"
+  // §5 starter chips: on a truly empty +New screen (no session AND not resuming),
+  // show "What should Claude work on?" + 3 tappable prompts that FILL the dispatch
+  // textarea (never auto-send). Gated on !resumeId so they don't appear next to
+  // the "Resuming: …" indicator. Read this.dataset.chipText to dodge quote-escaping.
+  const showEmptyState = noActiveTab && !resumeId;
+  const emptyStateHTML = showEmptyState ? `<div class="composer-empty-state">
+    <div class="ces-icon">&#128172;</div>
+    <div class="ces-heading">What should Claude work on?</div>
+    <div class="ces-chips">${STARTER_CHIPS.map(t =>
+      `<button type="button" class="ces-chip" data-chip-text="${esc(t)}" onclick="fillStarterChip('${esc(p.id)}', this.dataset.chipText)">${esc(t)}</button>`
+    ).join('')}</div>
+  </div>` : '';
+  const dispatchRow = noActiveTab ? `${chatSearch}${picker}${resumeIndicator}${emptyStateHTML}<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
     ondragenter="handleAgentDragOver(event,this)"
     ondragleave="handleAgentDragLeave(event,this)"
@@ -1835,6 +1861,7 @@ window._parsePlanSteps = _parsePlanSteps;
 window._planCardHTML = _planCardHTML;
 window.mcBackFromConv = mcBackFromConv;
 window.newAgentTab = newAgentTab;
+window.fillStarterChip = fillStarterChip;
 window.setComposerProvider = setComposerProvider;
 window.showHmWorkerPopover = showHmWorkerPopover;
 window.submitQuestionAnswer = submitQuestionAnswer;
