@@ -203,6 +203,62 @@ window.closeInbox = closeInbox;
 window.renderInbox = renderInbox;
 window._closeInboxUI = _closeInboxUI;
 
+// ── §1c Context-adaptive bottom nav bar ─────────────────────────────────────
+// "Inside a project, the bar becomes the project" (mockup Turn 4). When a
+// project modal is focused on mobile, the global bar swaps to project surfaces
+// (Home / Chats / +New chat / Backlog / More); back to global otherwise.
+// Self-healing: driven off live state every render tick with a change-guard, so
+// no lifecycle path can leave a stale/orphaned bar and the 2s poll never
+// clobbers the active :active state or an open ⋮ menu.
+let _globalBarHTML = null;      // snapshot of the static global markup (captured once)
+let _barContextPid = undefined; // current context key, to skip needless re-renders
+
+function _focusedProjectModalId() {
+  if (!isMobileChatList()) return null;
+  if (typeof openModals === 'undefined' || !openModals.size) return null;
+  let top = null, topZ = -1;
+  openModals.forEach((entry, id) => {
+    if (!id || id.startsWith('__')) return;         // skip special modals (settings/all-backlog/…)
+    if (!entry || entry.minimized) return;
+    const z = parseInt((entry.element && entry.element.style.zIndex) || entry.zIndex || 0, 10) || 0;
+    if (z >= topZ) { topZ = z; top = entry.projectId || id; }
+  });
+  return top;
+}
+
+function _projectContextBarHTML(pid) {
+  const e = esc(pid);
+  return `
+    <div class="bottom-tab-item" data-nav="dashboard" onclick="sidebarNav('dashboard')">
+      <span class="bti-icon">&#x1F3E0;</span>Home
+    </div>
+    <div class="bottom-tab-item" data-nav="chats" onclick="backToConvList('${e}')">
+      <span class="bti-icon">&#x1F4AC;</span>Chats
+    </div>
+    <div class="bottom-tab-item fab" data-nav="newchat" onclick="newAgentTab('${e}')" title="New chat">
+      <span class="bti-icon">+</span>New
+    </div>
+    <div class="bottom-tab-item" data-nav="backlog" onclick="_mcMenuSwitchTab('${e}','backlog')">
+      <span class="bti-icon">&#x2611;</span>Backlog
+    </div>
+    <div class="bottom-tab-item" data-nav="more" onclick="toggleModalMenu(event,'${e}')">
+      <span class="bti-icon">&#x22EF;</span>More
+    </div>`;
+}
+
+function _syncBottomBarContext() {
+  const bar = document.getElementById('bottom-tab-bar');
+  if (!bar) return;
+  if (_globalBarHTML === null) _globalBarHTML = bar.innerHTML;  // capture static global markup once
+  const pid = _focusedProjectModalId();
+  const ctx = pid || '__global__';
+  if (ctx === _barContextPid) return;   // unchanged → don't re-render (preserves :active + open ⋮ menu)
+  _barContextPid = ctx;
+  bar.classList.toggle('project-context', !!pid);
+  bar.innerHTML = pid ? _projectContextBarHTML(pid) : _globalBarHTML;
+}
+window._syncBottomBarContext = _syncBottomBarContext;
+
 function mcPushModalHistory() {
   if (!isMobileChatList() || _mcModalHistoryActive) return;
   try { history.pushState({ mc: 'modal' }, ''); _mcModalHistoryActive = true; } catch (e) {}

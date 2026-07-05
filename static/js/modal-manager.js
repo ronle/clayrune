@@ -285,6 +285,8 @@ function openProjectModal(projectId, restoreState) {
     focusModal(projectId);
   }
   _saveOpenModalsSnapshot();
+  // §1c: immediately switch the mobile bottom bar to this project's context.
+  if (typeof _syncBottomBarContext === 'function') _syncBottomBarContext();
   // /api/projects trims backlog note/attachment BODIES to counts; lazy-load this
   // project's FULL backlog so the modal's note/attachment panels populate.
   Promise.all([fetchAgentStatus(projectId), fetchTerminalStatus(projectId), refreshProjectBacklog(projectId)])
@@ -343,6 +345,10 @@ function closeModalById(modalId) {
     if (topId) focusModal(topId);
   }
   _saveOpenModalsSnapshot();
+  // §1c: revert/refresh the mobile bottom bar immediately so it doesn't linger
+  // in project-context (with buttons pointing at a closed modal) until the next
+  // poll tick. Guarded + idempotent (no-op on desktop / when context unchanged).
+  if (typeof _syncBottomBarContext === 'function') _syncBottomBarContext();
   // Closed via UI (X / Esc / Home), not via hardware back: unwind every MC
   // sentinel we pushed (L1 + L2 if drilled in) so a later back press isn't
   // swallowed by now-dead entries. On the hardware-back path the relevant

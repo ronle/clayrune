@@ -1025,9 +1025,9 @@ function buildSlotArray(filteredIds) {
   return slots;
 }
 
-function render() { renderStats(); renderProjects(); renderListView(); renderFeed(); if (typeof renderBeacon === 'function') renderBeacon(); renderSidebarProjects(); applyViewMode(); renderMobileAppBar(); renderMobileFilterPills(); if (openModals.has('__all_backlog')) renderAllBacklog(); if (openModals.has('__all_hivemind')) renderAllHiveminds(); }
+function render() { renderStats(); renderProjects(); renderListView(); renderFeed(); if (typeof renderBeacon === 'function') renderBeacon(); renderSidebarProjects(); applyViewMode(); renderMobileAppBar(); renderMobileFilterPills(); if (typeof _syncBottomBarContext === 'function') _syncBottomBarContext(); if (openModals.has('__all_backlog')) renderAllBacklog(); if (openModals.has('__all_hivemind')) renderAllHiveminds(); }
 
-window.addEventListener('resize', () => { renderMobileAppBar(); renderMobileFilterPills(); renderProjects(); });
+window.addEventListener('resize', () => { renderMobileAppBar(); renderMobileFilterPills(); if (typeof _syncBottomBarContext === 'function') _syncBottomBarContext(); renderProjects(); });
 
 let projectLastSeen = {};
 try { projectLastSeen = JSON.parse(localStorage.getItem('mc_proj_seen') || '{}') || {}; }
