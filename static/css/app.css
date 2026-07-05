@@ -2618,11 +2618,19 @@
     background: var(--border); transition: background 0.15s;
   }
   .agent-chat-separator:hover::after { background: var(--accent); }
+  /* Chat-bubble mode is the DEFAULT at all widths (promoted 2026-07-05, §3
+     conversation redesign, out of the former ≤960px-only block). .agent-output
+     is a flex column so prompts align right (align-self:flex-end) and agent
+     narration left; per-line divs are restyled into bubbles below. The ≤960px
+     @media block now retains ONLY mobile-ergonomic overrides. */
   .agent-output {
     flex: 1; min-height: 0;
-    overflow-y: auto; overflow-x: hidden; padding: 12px;
-    font-family: 'JetBrains Mono', monospace; font-size: var(--mc-zoom-font, 12px); line-height: 1.6;
-    color: var(--text); white-space: pre-wrap; word-break: break-word; min-width: 0;
+    overflow-y: auto; overflow-x: hidden; padding: 12px 10px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-size: var(--mc-zoom-font, 13px); line-height: 1.45;
+    color: var(--text); white-space: normal; word-break: break-word; min-width: 0;
+    background: var(--bg);
   }
   .agent-output:empty { display: none; }
   .agent-chat-input {
@@ -2695,118 +2703,129 @@
   }
   .agent-output::-webkit-scrollbar { width: 5px; }
   .agent-output::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
-  .agent-output .agent-line { padding: 1px 0; }
+  /* ── Chat-bubble mode — DEFAULT at all widths ──────────────────────
+     Promoted 2026-07-05 (§3) out of the former ≤960px-only block so desktop
+     matches mobile: user prompts = right accent bubbles, agent narration =
+     left bubbles, tool/status = quiet centered chips. agentLineCls() + the
+     render pipeline are unchanged — pure visual re-skin. To revert: re-wrap
+     the shape rules below in @media (max-width:960px) and restore the plain
+     .agent-output line rules + the mono container font. */
+
+  /* Line status colors (unconditional; chip LAYOUT applied further below) */
   .agent-output .agent-line-tool { color: var(--amber-text); }
   .agent-output .agent-line-status { color: var(--green-text); font-weight: 600; }
   .agent-output .agent-line-error { color: var(--red-text); }
   .agent-output .agent-line-followup { color: var(--accent); font-weight: 600; }
   .agent-output .agent-line-queued { color: var(--yellow, #e5c07b); font-weight: 600; font-style: italic; }
-  .agent-output .agent-line-prompt, .ac-session-output .agent-line-prompt {
+
+  /* Agent-console session output keeps the plain prompt BOX (not a bubble) —
+     the .ac-session-output surface is out of scope for the chat redesign. */
+  .ac-session-output .agent-line-prompt {
     color: var(--text); font-weight: 500; background: var(--surface2);
     margin: 6px -8px; padding: 8px 10px; border-radius: 5px; border-left: 3px solid var(--accent);
     -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
     white-space: pre-wrap;
   }
-  .agent-output .agent-echo-queued {
-    border-left-color: var(--yellow, #e5c07b); opacity: 0.7;
+
+  /* Agent narration — left bubble. --surface3 sits one tier above --bg + a
+     soft border so it reads clearly on dark AND cream/editorial tones (where
+     --surface2 alone was nearly flush with the canvas). */
+  .agent-output .agent-line {
+    align-self: flex-start;
+    background: var(--surface3);
+    color: var(--text);
+    border: 1px solid var(--border2);
+    padding: 8px 12px;
+    border-radius: 14px 14px 14px 4px;
+    max-width: 84%;
+    word-break: break-word;
+    white-space: pre-wrap;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: var(--mc-zoom-font, 12.5px);
   }
+  .agent-output .agent-line:empty { display: none; }
+  /* User input / followup — right accent bubble */
+  .agent-output .agent-line-prompt {
+    align-self: flex-end;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 14px 14px 4px 14px;
+    margin: 0;
+    padding: 9px 13px;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-size: var(--mc-zoom-font, 13px);
+    font-weight: 500;
+    max-width: 84%;
+    white-space: pre-wrap;
+  }
+  .agent-output .agent-echo-queued { opacity: 0.7; }
   .agent-output .agent-echo-queued::after {
     content: '  ⏳ queued — will send when current response completes';
     font-size: 10px; font-weight: 400; font-style: italic; color: var(--yellow, #e5c07b);
   }
+  /* Tool / status / error / queued / followup — quiet centered chips (they
+     shouldn't dominate visually in a chat view). Decision #2 (2026-07-05):
+     these keep a MONOSPACE font so [tool: …] / file-path traces stay legible.
+     (Agent narration .agent-line is also mono; user prompts are sans/Inter.) */
+  .agent-output .agent-line-tool,
+  .agent-output .agent-line-status,
+  .agent-output .agent-line-error,
+  .agent-output .agent-line-queued,
+  .agent-output .agent-line-followup {
+    align-self: center;
+    background: transparent;
+    font-size: var(--mc-zoom-font, 11px);
+    padding: 2px 8px;
+    text-align: center;
+    max-width: 92%;
+    border: none;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  /* Wide blocks stretch full width so they remain readable.
+     flex-shrink:0 is LOAD-BEARING: .agent-output is a flex column with a
+     constrained height (flex:1 inside .agent-chat) and overflow-y:auto. Any
+     child with overflow other than visible (.hl-table / .hl-table-pre /
+     .mermaid-block carry overflow-x/auto) gets an automatic min-height of 0
+     per the flexbox spec, so the default flex-shrink:1 lets the column crush
+     it to just its padding+border — a ~6px "black line" with the real content
+     clipped inside. Pinning flex-shrink:0 keeps each block at content height
+     and lets .agent-output scroll instead. (Text bubbles are overflow:visible,
+     so their min-height = content and they never hit this.)
+     NOTE: .mermaid-block (fixed 2026-07-05 from the dead .mermaid-placeholder
+     selector — mermaid.js emits .mermaid-block), .plan-approve-row and
+     .agent-plan-stuck-warning are all direct .agent-output children. */
+  .agent-output .hl-table,
+  .agent-output .hl-table-pre,
+  .agent-output .plan-show-btn,
+  .agent-output .plan-hidden-block,
+  .agent-output .plan-approve-row,
+  .agent-output .agent-plan-stuck-warning,
+  .agent-output .agent-question,
+  .agent-output .mermaid-block {
+    align-self: stretch; max-width: 100%; flex-shrink: 0;
+  }
+  /* Code blocks inside a bubble — keep monospace, allow horizontal scroll */
+  .agent-output .agent-line .hl-codeblock {
+    display: block; overflow-x: auto;
+  }
 
-  /* ── Mobile chat-bubble mode for agent output (≤960px) ─────────────
-     Restyles the existing per-line divs into iMessage/WhatsApp-style
-     bubbles so the conversation feels like text-msgs, not a data dump.
-     Render pipeline is unchanged — purely a visual layer. To revert,
-     delete this @media block. */
+  /* Thread caps at 720px and centers on DESKTOP ONLY (>960px). Gated behind
+     min-width:961px so the shipped 720–960px tablet behavior (edge-to-edge)
+     is unchanged. Cap .agent-chat (NOT .agent-output) because the composer
+     (.agent-chat-input) is a SIBLING of .agent-output — capping only the
+     output centers the bubbles but leaves the composer full-width beneath.
+     max-width/margin are cross-axis only, safe with .agent-chat's flex:1;
+     min-height:0. On a default 700px modal this cap is inert; it bites only
+     when the modal is dragged wider or snapped/maximized. */
+  @media (min-width: 961px) {
+    .agent-chat { max-width: 720px; margin: 0 auto; width: 100%; }
+  }
+
+  /* ── Mobile-only ergonomic overrides (≤960px) ────────────────────── */
   @media (max-width: 960px) {
-    .agent-output {
-      display: flex; flex-direction: column;
-      gap: 6px;
-      padding: 12px 10px 14px;
-      font-family: 'Inter', -apple-system, system-ui, sans-serif;
-      font-size: var(--mc-zoom-font, 13px); line-height: 1.45;
-      white-space: normal;
-      background: var(--bg);
-    }
-    /* Agent narration — left-aligned bubble. Background sits one tier above
-       --bg + a soft border so it reads clearly against both the dark page
-       (where --surface2 alone was almost flush with --bg) and the warm cream
-       page (where the bubble was barely distinguishable from the canvas). */
-    .agent-output .agent-line {
-      align-self: flex-start;
-      background: var(--surface3);
-      color: var(--text);
-      border: 1px solid var(--border2);
-      padding: 8px 12px;
-      border-radius: 14px 14px 14px 4px;
-      max-width: 84%;
-      word-break: break-word;
-      white-space: pre-wrap;
-      font-family: 'JetBrains Mono', ui-monospace, monospace;
-      font-size: var(--mc-zoom-font, 12.5px);
-    }
-    .agent-output .agent-line:empty { display: none; }
-    /* User input / followup — right-aligned accent bubble */
-    .agent-output .agent-line-prompt {
-      align-self: flex-end;
-      background: var(--accent);
-      color: #fff;
-      border-radius: 14px 14px 4px 14px;
-      border-left: none;
-      margin: 0;
-      padding: 9px 13px;
-      font-family: 'Inter', -apple-system, system-ui, sans-serif;
-      font-size: var(--mc-zoom-font, 13px);
-      font-weight: 500;
-      max-width: 84%;
-    }
-    .agent-output .agent-echo-queued {
-      opacity: 0.7;
-    }
-    /* Tool / status / error / queued / followup — small centered chips
-       (they shouldn't dominate visually in a chat view) */
-    .agent-output .agent-line-tool,
-    .agent-output .agent-line-status,
-    .agent-output .agent-line-error,
-    .agent-output .agent-line-queued,
-    .agent-output .agent-line-followup {
-      align-self: center;
-      background: transparent;
-      font-size: var(--mc-zoom-font, 11px);
-      padding: 2px 8px;
-      text-align: center;
-      max-width: 92%;
-      border: none;
-      font-family: 'Inter', -apple-system, system-ui, sans-serif;
-    }
-    /* Wide blocks stretch full width so they remain readable.
-       flex-shrink:0 is LOAD-BEARING: .agent-output is a flex column with a
-       constrained height (flex:1 inside .agent-chat) and overflow-y:auto. Any
-       child with overflow other than visible (.hl-table / .hl-table-pre carry
-       overflow-x:auto) gets an automatic min-height of 0 per the flexbox spec,
-       so the default flex-shrink:1 lets the column crush it to just its
-       padding+border — a ~6px "black line" with the real <table> (100px+)
-       clipped inside. Pinning flex-shrink:0 keeps each block at content height
-       and lets .agent-output scroll instead. (Text bubbles are overflow:visible,
-       so their min-height = content and they never hit this.) */
-    .agent-output .hl-table,
-    .agent-output .hl-table-pre,
-    .agent-output .plan-show-btn,
-    .agent-output .plan-hidden-block,
-    .agent-output .agent-question,
-    .agent-output .mermaid-placeholder {
-      align-self: stretch; max-width: 100%; flex-shrink: 0;
-    }
-    /* Code blocks inside a bubble — keep monospace, allow horizontal scroll */
-    .agent-output .agent-line .hl-codeblock {
-      display: block; overflow-x: auto;
-    }
-    /* Paperclip attachment button — slightly larger on mobile for thumb
-       comfort. Base styles inherited from the desktop rule above. On
-       Android / iOS the native picker surfaces Camera / Photos / Files
-       as separate sources. */
+    /* Paperclip attachment button — larger for thumb comfort. On Android/iOS
+       the native picker surfaces Camera / Photos / Files as separate sources. */
     .btn-attach {
       width: 38px; height: 38px;
       border-radius: 8px;
@@ -2819,8 +2838,7 @@
     }
     /* Inline image attachments — cap at thumbnail size on mobile so chat
        bubbles don't get dominated by a single screenshot. Tap → full-size
-       lightbox via the existing onclick handler. Applies to both user-prompt
-       and agent-narration bubbles. */
+       lightbox via the existing onclick handler. */
     .agent-output .agent-img {
       max-width: 180px;
       max-height: 140px;

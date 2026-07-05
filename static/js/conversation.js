@@ -949,6 +949,7 @@ function appendAgentLine(sessionId, text) {
       const cached = agentStatusCache[sessionId];
       const pid = cached ? cached.projectId : null;
       const warn = document.createElement('div');
+      warn.className = 'agent-plan-stuck-warning';
       warn.style.cssText = 'background:var(--amber-dim);border:1px solid var(--amber);color:var(--amber-text);padding:8px 12px;border-radius:6px;margin:6px 0;font-size:12px;line-height:1.5;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
       warn.innerHTML = `&#x26A0; Agent is stuck trying to exit plan mode.${pid ? ` <button style="background:var(--green);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" onclick="approvePlan('${esc(pid)}','${esc(sessionId)}')">Approve Plan</button>` : ''}`;
       el.appendChild(warn);
