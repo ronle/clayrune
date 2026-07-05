@@ -38,10 +38,39 @@ This is a **restyle / relocate** effort, not a new-capability effort. Specifical
 
 ---
 
-## Decisions needed from Ron BEFORE coding
+## Decisions — RESOLVED by Ron (2026-07-05)
 
-These are genuine product/UX judgment calls surfaced across the investigation.
-They should not be silently decided by an implementer.
+All gating decisions answered. Build to these; the detailed rationale for each is
+retained below.
+
+| # | Decision | Ron's pick |
+|---|----------|-----------|
+| 1 | Unified desktop bubbles | **YES** — desktop = bubbles + typing dots, same as mobile |
+| 2 | Tool/status chip font | **Sans narration + mono override on `[tool:]` traces** |
+| 3 | §1 nav/IA scope | **FULL IA build now** (~450 LOC): desktop recents rail + thread, context-adaptive bottom bar. Not deferred. |
+| 4 | Where chat-search lands | **Inside the ＋ sheet's Resume section** now (revisit at §1) |
+| 5 | ＋ sheet scope | **Pre-dispatch / +New screen only** — in-chat composer keeps attach+mic inline |
+| 6 | Desktop ＋ treatment | **Header pills on desktop** (`◐ model · resume ↻ · ⋮`); the slide-up sheet is mobile-canonical |
+| 7 | Primary/accent chip | **All chips equal** — no data field justifies a primary |
+| 8 | Multi-question fallback | **>1 sub-question → full radio/checkbox form always** |
+
+**Visual reference (confirms all of the above):** `C:\Users\levir\Documents\_claude\Simplified Dashboard.pdf`
+(single tall board, Turns 1–7). Readable crops rendered to `_scratch/redesign_pdf/`
+(gitignored). Turn-5 states `b_turn5_phones.png` (5a Start / 5b Working / 5c Needs
+you / 5d Resume / 5e ＋sheet), desktop `c_turn5_desktop.png` (recents rail + thread),
+project bottom bar `d_turn4_projectbar.png`. Concrete UI copy the mockup pins down:
+5a empty-state = "What should Claude work on?" + 3 chips ("Fix a failing test or
+bug" / "Add a feature to this project" / "Explain how the codebase works") + status
+line "◐ Claude Sonnet · Incognito off · Change"; 5c plan card header = "📋 Plan ready
+to approve" with Approve Plan / Review buttons; bottom bar = 🏠 Home · 💬 Chats ·
+⊕ New Chat · ☑ Backlog · ⋮ More (More = today's project 3-dot menu: Agent Log ·
+Plans · Memory & Rules · Skills/MCP · Appearance · Settings).
+
+---
+
+### Rationale (original decision analysis)
+
+These were genuine product/UX judgment calls surfaced across the investigation.
 
 1. **Unified desktop bubbles — the core product bet (§3, §2).**
    Decision: Promote the mobile chat-bubble treatment to desktop as the default
