@@ -1273,11 +1273,18 @@
   }
   .backlog-meta { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
   /* Mobile: .backlog-meta is flex-shrink:0, so on a narrow modal it kept full
-     width and crushed the title to one word per line. Let the item wrap so the
-     text takes the first row and the meta badges drop below it. (Exposed once
-     §1c made the Backlog tab reachable from the mobile bottom bar.) */
+     width and crushed the title to one word per line. Force meta (and any open
+     att/notes panel) onto its own full-width row via flex-basis:100% — this is
+     what actually causes the wrap; flex-wrap alone does NOT, because the title
+     is flex:1 (flex-basis:0) and simply shrinks to ~0, letting meta stay on the
+     first row. With meta pushed down, the title (flex-grow) keeps the first row
+     beside the checkbox. (Exposed once §1c made the Backlog tab reachable from
+     the mobile bottom bar.) */
   @media (max-width: 960px) {
     .backlog-item { flex-wrap: wrap; }
+    .backlog-meta,
+    .backlog-item > .att-panel,
+    .backlog-item > .notes-panel { flex-basis: 100%; }
     .backlog-meta { flex-wrap: wrap; margin-left: 30px; }
   }
 
