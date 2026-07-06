@@ -794,6 +794,13 @@ document.addEventListener('touchmove', (e) => {
 
 document.addEventListener('touchend', (e) => {
   modalTouchResize = null;
+  // #3: persist a pinch-zoom text-size change so it survives a modal reopen.
+  // (Button/keyboard zoom already saves via _setModalPref at applyZoom; the
+  // pinch handler updated modalZoomLevels + applied it live but never saved the
+  // pref, so reopening the modal reverted to the default size.)
+  if (modalPinch && modalPinch.isZoom && typeof _setModalPref === 'function') {
+    _setModalPref(modalPinch.modalId, { zoom: modalZoomLevels[modalPinch.modalId] });
+  }
   if (e.touches.length < 2) modalPinch = null;
 });
 
