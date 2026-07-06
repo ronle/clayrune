@@ -226,51 +226,25 @@ function _focusedProjectModalId() {
   return top;
 }
 
-function _projectContextBarHTML(pid) {
-  const e = esc(pid);
-  return `
-    <div class="bottom-tab-item" data-nav="dashboard" onclick="sidebarNav('dashboard')">
-      <span class="bti-icon">&#x1F3E0;</span>Home
-    </div>
-    <div class="bottom-tab-item" data-nav="chats" onclick="backToConvList('${e}')">
-      <span class="bti-icon">&#x1F4AC;</span>Chats
-    </div>
-    <div class="bottom-tab-item fab" data-nav="newchat" onclick="newAgentTab('${e}')" title="New chat">
-      <span class="bti-icon">+</span>New
-    </div>
-    <div class="bottom-tab-item" data-nav="backlog" onclick="_mcMenuSwitchTab('${e}','backlog')">
-      <span class="bti-icon">&#x2611;</span>Backlog
-    </div>
-    <div class="bottom-tab-item" data-nav="more" onclick="toggleModalMenu(event,'${e}')">
-      <span class="bti-icon">&#x22EF;</span>More
-    </div>`;
-}
-
 function _syncBottomBarContext() {
   const bar = document.getElementById('bottom-tab-bar');
   if (!bar) return;
   if (_globalBarHTML === null) _globalBarHTML = bar.innerHTML;  // capture static global markup once
-  const pid = _focusedProjectModalId();
-  // #5: hide the bar entirely at Layer 3 (inside a conversation OR the +New
-  // composer) — the mockup shows no bottom bar there, and it removes the
-  // double-＋ (bottom "New" FAB vs the composer ＋). The bar shows on the
-  // conversation list (Layer 2) and the dashboard (Layer 1).
-  let atLayer3 = false;
-  if (pid) {
-    const hasSessions = typeof agentHistory !== 'undefined' && agentHistory.some(h => h.projectId === pid);
-    atLayer3 = !!(typeof activeAgentTab !== 'undefined' && activeAgentTab[pid])
-            || (typeof agentConvNew !== 'undefined' && agentConvNew[pid] === true)
-            || !hasSessions;
-  }
-  const ctx = !pid ? '__global__' : (atLayer3 ? '__hidden__' : pid);
-  if (ctx === _barContextPid) return;   // unchanged → don't re-render (preserves :active + open ⋮ menu)
+  // Spec §1 (2026-07-06): the bottom bar exists ONLY on the Layer-1 Dashboard.
+  // Inside a project — the conversation LIST (Layer 2) or a THREAD (Layer 3) —
+  // there is NO bar; navigation is the header ‹ back + ⋮ project menu (iOS
+  // push/pop; "the user chose no-bar"). So hide the bar whenever a project modal
+  // is focused on mobile (and let the modal fill full height); restore the
+  // global dashboard bar otherwise. (Supersedes the earlier context-adaptive
+  // project bar.)
+  const inProject = !!_focusedProjectModalId();
+  const ctx = inProject ? '__hidden__' : '__global__';
+  if (ctx === _barContextPid) return;   // unchanged → skip re-render
   _barContextPid = ctx;
-  bar.classList.toggle('mc-bar-hidden', atLayer3);
-  bar.classList.toggle('project-context', !!pid && !atLayer3);
-  // Batch #2: with the bar hidden at Layer 3, let the mobile modal fill the
-  // full viewport (the CSS drops the 52px bar reservation).
-  document.body.classList.toggle('mc-modal-fullh', atLayer3);
-  if (!atLayer3) bar.innerHTML = pid ? _projectContextBarHTML(pid) : _globalBarHTML;
+  bar.classList.remove('project-context');
+  bar.classList.toggle('mc-bar-hidden', inProject);
+  document.body.classList.toggle('mc-modal-fullh', inProject);
+  if (!inProject) bar.innerHTML = _globalBarHTML;
 }
 window._syncBottomBarContext = _syncBottomBarContext;
 

@@ -175,26 +175,9 @@ function _composerSheetHTML(p, resumeId) {
   const prov = _composerProviderPicker(p);                 // '' when single provider
   const persona = _composerCharacterPicker(p, resumeId);   // '' on resume / no characters
   const inc = _incognitoChipHTML(p);
-  const canResume = _getProviderCaps(_composerProvider(p)).supports_session_resume;
-  const search = canResume ? chatSearchHTML(p.id) : '';
-  const pane = canResume ? searchPaneInner(p.id) : '';
-  const picker = canResume ? sessionPickerHTML(p.id) : '';
-  // Batch #4: list FIRST (right under the search) so you can browse/scroll the
-  // prior chats; the selected chat's preview sits below, height-capped, instead
-  // of dominating the sheet and pushing the list off-screen.
-  const resumeSection = canResume ? `<div class="composer-sheet-section">
-      <div class="composer-sheet-label">Resume a past chat</div>
-      ${search}
-      ${picker}
-      <div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${pane}</div>
-    </div>` : '';
-  // #9: a visible Resume action when a past chat is selected (pendingResumeId
-  // set) — previously the only way to resume was pressing Enter in the composer.
-  const resumeBtn = resumeId
-    ? `<button type="button" class="composer-sheet-resume" onclick="resumeSelectedChat('${esc(p.id)}')">&#9654; Resume this chat</button>`
-    : '';
-  // #8: scrollable body + a fixed footer so Done/Resume stay visible no matter
-  // how long the resume preview gets (they used to scroll off-screen).
+  // Spec §8 (2026-07-06): the sheet holds per-message COMPOSE options only —
+  // Agent / Persona / Incognito. NO resume/search here: resuming = tap a chat in
+  // the Layer-2 conversation list (a Resume action in the sheet was dead weight).
   return `<div class="composer-sheet-overlay ${open ? 'visible' : ''}" onclick="closeComposerSheet('${esc(p.id)}')">
     <div class="composer-sheet ${open ? 'visible' : ''}" onclick="event.stopPropagation()">
       <div class="composer-sheet-grip"></div>
@@ -203,22 +186,12 @@ function _composerSheetHTML(p, resumeId) {
         ${prov ? `<div class="composer-sheet-row">${prov}</div>` : ''}
         ${persona ? `<div class="composer-sheet-row">${persona}</div>` : ''}
         <div class="composer-sheet-row">${inc}</div>
-        ${resumeSection}
       </div>
       <div class="composer-sheet-footer">
-        ${resumeBtn}
         <button type="button" class="composer-sheet-done" onclick="closeComposerSheet('${esc(p.id)}')">Done</button>
       </div>
     </div>
   </div>`;
-}
-
-// #9: resume the selected past chat directly from the sheet — close the sheet
-// and dispatch (dispatchAgent resumes with pendingResumeId, defaulting the
-// message to "Continue where we left off." when the composer is empty).
-function resumeSelectedChat(projectId) {
-  closeComposerSheet(projectId);
-  if (typeof dispatchAgent === 'function') dispatchAgent(projectId);
 }
 
 function isHivemindWorker(h) {
@@ -2002,4 +1975,3 @@ window.submitQuestionOther = submitQuestionOther;
 window.toggleIncognito = toggleIncognito;
 window.openComposerSheet = openComposerSheet;
 window.closeComposerSheet = closeComposerSheet;
-window.resumeSelectedChat = resumeSelectedChat;

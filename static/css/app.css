@@ -1018,10 +1018,10 @@
     transition: all 0.15s;
   }
   .modal-menu-btn:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
-  /* §1c dedup: on mobile the context bottom bar's "More" opens this same menu,
-     so hide the redundant header ⋮ (the dropdown it anchors stays in the DOM
-     and is toggled by the bottom-bar More button). Desktop keeps the header ⋮. */
-  @media (max-width: 960px) { .modal-menu-btn { display: none; } }
+  /* Spec §1 (2026-07-06): with no bottom bar inside a project, the header ⋮ IS
+     the project menu (Backlog · Plans · Agent Log · Memory · Settings) on both
+     breakpoints — it must stay visible on mobile. (Reverts the earlier hide,
+     which assumed the bottom-bar "More" covered it.) */
   .modal-menu-dropdown {
     display: none; position: absolute; top: 36px; right: 0;
     background: var(--surface); border: 1px solid var(--border);
