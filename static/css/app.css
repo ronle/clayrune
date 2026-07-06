@@ -1739,6 +1739,8 @@
     .sidebar { display: none; }
     .feed-col { display: none; }
     .bottom-tab-bar { display: flex !important; }
+    /* #5: hidden at Layer 3 (conversation / +New composer) — beats the !important above */
+    .bottom-tab-bar.mc-bar-hidden { display: none !important; }
     .agent-console { left: 0 !important; bottom: 52px; }
     .card-summary { display: none !important; }
     .modal-content {

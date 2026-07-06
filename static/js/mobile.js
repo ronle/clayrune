@@ -251,11 +251,23 @@ function _syncBottomBarContext() {
   if (!bar) return;
   if (_globalBarHTML === null) _globalBarHTML = bar.innerHTML;  // capture static global markup once
   const pid = _focusedProjectModalId();
-  const ctx = pid || '__global__';
+  // #5: hide the bar entirely at Layer 3 (inside a conversation OR the +New
+  // composer) — the mockup shows no bottom bar there, and it removes the
+  // double-＋ (bottom "New" FAB vs the composer ＋). The bar shows on the
+  // conversation list (Layer 2) and the dashboard (Layer 1).
+  let atLayer3 = false;
+  if (pid) {
+    const hasSessions = typeof agentHistory !== 'undefined' && agentHistory.some(h => h.projectId === pid);
+    atLayer3 = !!(typeof activeAgentTab !== 'undefined' && activeAgentTab[pid])
+            || (typeof agentConvNew !== 'undefined' && agentConvNew[pid] === true)
+            || !hasSessions;
+  }
+  const ctx = !pid ? '__global__' : (atLayer3 ? '__hidden__' : pid);
   if (ctx === _barContextPid) return;   // unchanged → don't re-render (preserves :active + open ⋮ menu)
   _barContextPid = ctx;
-  bar.classList.toggle('project-context', !!pid);
-  bar.innerHTML = pid ? _projectContextBarHTML(pid) : _globalBarHTML;
+  bar.classList.toggle('mc-bar-hidden', atLayer3);
+  bar.classList.toggle('project-context', !!pid && !atLayer3);
+  if (!atLayer3) bar.innerHTML = pid ? _projectContextBarHTML(pid) : _globalBarHTML;
 }
 window._syncBottomBarContext = _syncBottomBarContext;
 

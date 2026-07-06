@@ -1748,6 +1748,9 @@ function refreshModal() {
   for (const [modalId, entry] of openModals) {
     if (entry.projectId && !modalId.startsWith('__hivemind_')) refreshModalById(modalId);
   }
+  // #5: keep the mobile bottom bar in sync on every modal re-render (Layer 2↔3
+  // transitions: open a chat / back to list / new chat). Guarded + idempotent.
+  if (typeof _syncBottomBarContext === 'function') _syncBottomBarContext();
 }
 
 // Global keyboard shortcuts
