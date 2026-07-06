@@ -267,6 +267,9 @@ function _syncBottomBarContext() {
   _barContextPid = ctx;
   bar.classList.toggle('mc-bar-hidden', atLayer3);
   bar.classList.toggle('project-context', !!pid && !atLayer3);
+  // Batch #2: with the bar hidden at Layer 3, let the mobile modal fill the
+  // full viewport (the CSS drops the 52px bar reservation).
+  document.body.classList.toggle('mc-modal-fullh', atLayer3);
   if (!atLayer3) bar.innerHTML = pid ? _projectContextBarHTML(pid) : _globalBarHTML;
 }
 window._syncBottomBarContext = _syncBottomBarContext;

@@ -179,11 +179,14 @@ function _composerSheetHTML(p, resumeId) {
   const search = canResume ? chatSearchHTML(p.id) : '';
   const pane = canResume ? searchPaneInner(p.id) : '';
   const picker = canResume ? sessionPickerHTML(p.id) : '';
+  // Batch #4: list FIRST (right under the search) so you can browse/scroll the
+  // prior chats; the selected chat's preview sits below, height-capped, instead
+  // of dominating the sheet and pushing the list off-screen.
   const resumeSection = canResume ? `<div class="composer-sheet-section">
       <div class="composer-sheet-label">Resume a past chat</div>
       ${search}
-      <div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${pane}</div>
       ${picker}
+      <div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${pane}</div>
     </div>` : '';
   // #9: a visible Resume action when a past chat is selected (pendingResumeId
   // set) — previously the only way to resume was pressing Enter in the composer.
@@ -513,7 +516,10 @@ function agentPanelHTML(p) {
   // §8: on MOBILE, collapse the pre-dispatch control cluster into a ＋ sheet;
   // DESKTOP keeps the inline chat-search/picker + composer-controls-row exactly
   // as before (these branches are '' on desktop → byte-identical output).
-  const _plusBtn = mobileMode ? `<button type="button" class="btn-composer-plus" title="Options" onclick="openComposerSheet('${esc(p.id)}')">+</button>` : '';
+  // Batch #1: removed the composer ＋ button — a bare "+" next to the input read
+  // as "attach" (there's already a 📎) and was unintuitive. The options sheet is
+  // reachable from the status line's "Change" (the whole line opens it).
+  const _plusBtn = '';
   const _leadResume = mobileMode ? '' : `${chatSearch}${picker}`;
   const _trailControls = mobileMode
     ? _composerPlusStatusLineHTML(p, resumeId)
