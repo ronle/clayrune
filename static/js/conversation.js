@@ -337,17 +337,15 @@ function agentPanelHTML(p) {
     delete activeAgentTab[p.id];
   }
   // Auto-select a tab when none is active:
-  //  • desktop → classic: most-recent running/idle (else newest) so a tab
-  //    is always open and the strip behaves like before the drill-down.
-  //  • mobile  → only the lone session (single = direct chat); multi stays
-  //    unselected so the drill-down list is the home view.
-  if (!wantNew && !activeAgentTab[p.id] && sessions.length) {
-    if (!mobileMode) {
-      const running = sessions.find(s => s.status === 'running' || s.status === 'idle');
-      activeAgentTab[p.id] = (running || sessions[0]).sessionId;
-    } else if (!multi) {
-      activeAgentTab[p.id] = sessions[0].sessionId;
-    }
+  //  • desktop → classic: most-recent running/idle (else newest) so a tab is
+  //    always open and the strip behaves like before the drill-down.
+  //  • mobile → NEVER auto-select. Always land on the Layer-2 conversations
+  //    list (even for a single chat) so resume/new stays reachable — auto-
+  //    opening the lone chat trapped the user with no route to resume (and
+  //    "← All conversations" just re-selected it).
+  if (!wantNew && !activeAgentTab[p.id] && sessions.length && !mobileMode) {
+    const running = sessions.find(s => s.status === 'running' || s.status === 'idle');
+    activeAgentTab[p.id] = (running || sessions[0]).sessionId;
   }
   const activeSessionId = wantNew ? null : (activeAgentTab[p.id] || null);
   const activeSession = activeSessionId ? agentStatusCache[activeSessionId] : null;
