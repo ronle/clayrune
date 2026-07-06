@@ -2481,6 +2481,11 @@
   .agent-task-input:focus { border-color: var(--accent); }
   .agent-drop-zone.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 5px; background: var(--accent-dim); }
   .agent-task-input::placeholder { color: var(--text-faint); }
+  /* #7: roomier compose box on the +New/dispatch screen (id starts agent-task-);
+     the active-chat follow-up input (agent-followup-) keeps its compact size. */
+  @media (max-width: 960px) {
+    .agent-task-input[id^="agent-task-"] { min-height: 84px; }
+  }
 
   .btn-dispatch {
     background: var(--green-dim); border: 1px solid var(--green);
@@ -2590,19 +2595,24 @@
     opacity: 0; pointer-events: none; transition: opacity .2s ease;
   }
   .composer-sheet-overlay.visible { opacity: 1; pointer-events: auto; }
+  /* #8: flex column — grip + scrollable body + fixed footer. The body scrolls;
+     the footer (Resume/Done) stays pinned so it can't scroll off with a long
+     resume preview. */
   .composer-sheet {
     width: 100%; max-width: 620px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 16px 16px 0 0; padding: 8px 16px 20px;
+    border-radius: 16px 16px 0 0; padding: 8px 16px 16px;
     box-shadow: 0 -8px 32px rgba(0,0,0,0.3);
     transform: translateY(100%); transition: transform .25s ease;
-    max-height: 80vh; overflow-y: auto;
+    max-height: 85vh; display: flex; flex-direction: column;
   }
   .composer-sheet-overlay.visible .composer-sheet { transform: translateY(0); }
   .composer-sheet-grip {
+    flex-shrink: 0;
     width: 36px; height: 4px; border-radius: 2px; background: var(--border2);
     margin: 6px auto 12px;
   }
+  .composer-sheet-scroll { flex: 1; min-height: 0; overflow-y: auto; }
   .composer-sheet-title {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
     color: var(--text-dim); font-weight: 700; margin-bottom: 10px;
@@ -2610,11 +2620,21 @@
   .composer-sheet-row { margin-bottom: 12px; }
   .composer-sheet-section { margin-bottom: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
   .composer-sheet-label { font-size: 11px; color: var(--text-dim); font-weight: 600; margin-bottom: 8px; }
-  .composer-sheet-done {
-    width: 100%; background: var(--accent); color: var(--bg); border: none;
-    padding: 11px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
-    font-family: 'Inter', sans-serif; margin-top: 4px;
+  .composer-sheet-footer {
+    flex-shrink: 0; display: flex; gap: 8px; align-items: stretch;
+    padding-top: 10px; margin-top: 4px; border-top: 1px solid var(--border);
   }
+  .composer-sheet-done {
+    flex: 1; background: var(--surface2); color: var(--text); border: 1px solid var(--border2);
+    padding: 11px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: 'Inter', sans-serif;
+  }
+  .composer-sheet-resume {
+    flex: 2; background: var(--green); color: #fff; border: none;
+    padding: 11px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
+    font-family: 'Inter', sans-serif;
+  }
+  .composer-sheet-resume:hover { filter: brightness(1.06); }
 
   /* Inline preview of the selected resume conversation (fills the dead space
      below the composer on the +New / dispatch screen). */
@@ -2954,17 +2974,12 @@
     30% { opacity: 1; transform: scale(1); }
   }
 
-  /* Thread caps at 720px and centers on DESKTOP ONLY (>960px). Gated behind
-     min-width:961px so the shipped 720–960px tablet behavior (edge-to-edge)
-     is unchanged. Cap .agent-chat (NOT .agent-output) because the composer
-     (.agent-chat-input) is a SIBLING of .agent-output — capping only the
-     output centers the bubbles but leaves the composer full-width beneath.
-     max-width/margin are cross-axis only, safe with .agent-chat's flex:1;
-     min-height:0. On a default 700px modal this cap is inert; it bites only
-     when the modal is dragged wider or snapped/maximized. */
-  @media (min-width: 961px) {
-    .agent-chat { max-width: 720px; margin: 0 auto; width: 100%; }
-  }
+  /* NOTE (#1, 2026-07-06): the desktop 720px thread cap was REMOVED — it left
+     large empty gutters on a wide modal ("trimmed to part of the screen"). The
+     thread now fills the modal width; the per-bubble max-width (84%/92%) keeps
+     lines from spanning edge-to-edge. The proper 5f treatment (a recents rail
+     filling that space beside a capped thread) is the desktop multi-pane build
+     (§1d, #2) — reintroduce a cap there, scoped to the multi-pane grid. */
 
   /* ── Mobile-only ergonomic overrides (≤960px) ────────────────────── */
   @media (max-width: 960px) {

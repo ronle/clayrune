@@ -185,17 +185,37 @@ function _composerSheetHTML(p, resumeId) {
       <div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${pane}</div>
       ${picker}
     </div>` : '';
+  // #9: a visible Resume action when a past chat is selected (pendingResumeId
+  // set) — previously the only way to resume was pressing Enter in the composer.
+  const resumeBtn = resumeId
+    ? `<button type="button" class="composer-sheet-resume" onclick="resumeSelectedChat('${esc(p.id)}')">&#9654; Resume this chat</button>`
+    : '';
+  // #8: scrollable body + a fixed footer so Done/Resume stay visible no matter
+  // how long the resume preview gets (they used to scroll off-screen).
   return `<div class="composer-sheet-overlay ${open ? 'visible' : ''}" onclick="closeComposerSheet('${esc(p.id)}')">
     <div class="composer-sheet ${open ? 'visible' : ''}" onclick="event.stopPropagation()">
       <div class="composer-sheet-grip"></div>
-      <div class="composer-sheet-title">Conversation options</div>
-      ${prov ? `<div class="composer-sheet-row">${prov}</div>` : ''}
-      ${persona ? `<div class="composer-sheet-row">${persona}</div>` : ''}
-      <div class="composer-sheet-row">${inc}</div>
-      ${resumeSection}
-      <button type="button" class="composer-sheet-done" onclick="closeComposerSheet('${esc(p.id)}')">Done</button>
+      <div class="composer-sheet-scroll">
+        <div class="composer-sheet-title">Conversation options</div>
+        ${prov ? `<div class="composer-sheet-row">${prov}</div>` : ''}
+        ${persona ? `<div class="composer-sheet-row">${persona}</div>` : ''}
+        <div class="composer-sheet-row">${inc}</div>
+        ${resumeSection}
+      </div>
+      <div class="composer-sheet-footer">
+        ${resumeBtn}
+        <button type="button" class="composer-sheet-done" onclick="closeComposerSheet('${esc(p.id)}')">Done</button>
+      </div>
     </div>
   </div>`;
+}
+
+// #9: resume the selected past chat directly from the sheet — close the sheet
+// and dispatch (dispatchAgent resumes with pendingResumeId, defaulting the
+// message to "Continue where we left off." when the composer is empty).
+function resumeSelectedChat(projectId) {
+  closeComposerSheet(projectId);
+  if (typeof dispatchAgent === 'function') dispatchAgent(projectId);
 }
 
 function isHivemindWorker(h) {
@@ -298,8 +318,12 @@ function fillStarterChip(projectId, text) {
   const ta = document.getElementById(`agent-task-${projectId}`);
   if (!ta) return;
   ta.value = text;
-  ta.focus();
-  ta.setSelectionRange(text.length, text.length);
+  // #6: don't pop the mobile keyboard just from tapping a chip — only focus on
+  // desktop. On mobile the user taps the field or Dispatch when ready.
+  if (window.innerWidth > 960) {
+    ta.focus();
+    ta.setSelectionRange(text.length, text.length);
+  }
 }
 
 function agentPanelHTML(p) {
@@ -925,7 +949,9 @@ function newAgentTab(projectId) {
   // still meaning "no resume" to dispatchAgent and sessionPickerHTML.
   pendingResumeId[projectId] = null;
   refreshModal();
-  setTimeout(() => document.getElementById(`agent-task-${projectId}`)?.focus(), 50);
+  // #6: desktop-only auto-focus — on mobile this popped the keyboard the moment
+  // you entered the +New screen, covering the composer/sheet.
+  if (window.innerWidth > 960) setTimeout(() => document.getElementById(`agent-task-${projectId}`)?.focus(), 50);
 }
 
 function getDefaultResumeId(projectId) {
@@ -945,7 +971,8 @@ function getDefaultResumeId(projectId) {
 function selectResumeSession(projectId, claudeSessionId) {
   pendingResumeId[projectId] = claudeSessionId || null;
   refreshModal();
-  setTimeout(() => document.getElementById(`agent-task-${projectId}`)?.focus(), 50);
+  // #6: desktop-only auto-focus (mobile keyboard should wait for an explicit tap).
+  if (window.innerWidth > 960) setTimeout(() => document.getElementById(`agent-task-${projectId}`)?.focus(), 50);
 }
 
 // ── Typing indicator (§4, 2026-07-05) ──────────────────────────────────────
@@ -1952,3 +1979,4 @@ window.submitQuestionOther = submitQuestionOther;
 window.toggleIncognito = toggleIncognito;
 window.openComposerSheet = openComposerSheet;
 window.closeComposerSheet = closeComposerSheet;
+window.resumeSelectedChat = resumeSelectedChat;
