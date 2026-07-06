@@ -359,28 +359,25 @@ function agentPanelHTML(p) {
   // haven't opened one (activeSession), started a new one (wantNew), or armed a
   // resume (pendingResumeId). Compose (5a) + resume + thread are Layer 3.
   const _resumeArmed = !!pendingResumeId[p.id];
-  const _mobileHasRecents = mobileMode && (
-    (conversationsCache[p.id] || []).length > 0 || sessions.length > 0 || (agentLogCache[p.id] || []).length > 0
-  );
-  const _mobileListMode = mobileMode && !activeSession && !wantNew && !_resumeArmed && _mobileHasRecents;
+  // Layer 2 shows the project's ACTIVE conversations. Past (non-running) chats
+  // are resumable from the 5a compose view's picker, not listed here.
+  const _mobileHasActive = mobileMode && sessions.length > 0;
+  const _mobileListMode = mobileMode && !activeSession && !wantNew && !_resumeArmed && _mobileHasActive;
 
   // View chrome: mobile = drill-down list + back bar; desktop = tab strip.
   let convListHTML = '', convBackBar = '', tabBar = '';
   if (mobileMode) {
     if (_mobileListMode) {
-      // Layer 2 — the Conversations list: search + the durable recents picker.
-      // The "+ New conversation" launcher is a sticky bottom button (item 7).
-      convListHTML = `
-        ${chatSearchHTML(p.id)}
-        <div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPaneInner(p.id)}</div>
-        ${sessionPickerHTML(p.id)}
-        <div class="conv-newbtn-spacer"></div>
+      // Layer 2 — the active-conversations list (item 1), with a "+ New
+      // conversation" launcher pinned to the bottom edge (item 2).
+      convListHTML = `<div class="mobile-conv-list-view">
+        <div class="conv-list-scroll">${conversationListHTML(p, sessions)}</div>
         <div class="conv-newbtn-bar">
           <button class="conv-newbtn" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
-        </div>`;
+        </div>
+      </div>`;
     } else {
-      const showConvList = multi && !activeSession && !wantNew;
-      convListHTML = showConvList ? conversationListHTML(p, sessions) : '';
+      convListHTML = '';
     }
     // "← All conversations" back bar lives on Layer 3 (compose/thread) only —
     // it returns to the list. On the list itself, the header ✕ goes to Dashboard.
@@ -532,9 +529,13 @@ function agentPanelHTML(p) {
     : `<div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>`;
   const _trailSearchPane = `<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>`;
   const _mobileSheet = mobileMode ? _composerSheetHTML(p, resumeId) : '';
-  // Item 1: on mobile the resume PREVIEW goes ABOVE the composer; item 6: the
-  // dispatch composer drops the ＋ (redundant with the "Change" status line).
+  // Item 1 (prev batch): on mobile the resume PREVIEW goes ABOVE the composer.
+  // Item 3: the 5a compose view carries a "resume a past conversation" section
+  // (search + picker) BELOW the composer, shown while nothing is armed. The
+  // single #agent-search-pane serves either the preview (armed) or the search
+  // results (browsing) — mutually exclusive via resumeId, so no duplicate id.
   const _mobilePreviewAbove = (mobileMode && resumeId) ? _trailSearchPane : '';
+  const _mobileResumeSection = (mobileMode && !resumeId) ? `${chatSearch}${picker}${_trailSearchPane}` : '';
   const _trailSearchPaneBelow = mobileMode ? '' : _trailSearchPane;
   const dispatchRow = (noActiveTab && !_mobileListMode) ? `${_leadResume}${resumeIndicator}${_mobilePreviewAbove}${emptyStateHTML}<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
@@ -551,6 +552,7 @@ function agentPanelHTML(p) {
     ${_dispatchBtn}
   </div>
   ${_trailControls}
+  ${_mobileResumeSection}
   ${dispatchPreviews}${_trailSearchPaneBelow}
   ${_mobileSheet}` : '';
 
@@ -855,7 +857,6 @@ function conversationListHTML(p, sessions) {
     <div class="conv-list-header">
       <span class="conv-list-title">Conversations</span>
       <span class="conv-list-count">${sessions.length}</span>
-      <button class="conv-new-btn" onclick="newAgentTab('${esc(p.id)}')" title="Start a new conversation">+ New</button>
     </div>
     <div class="conv-list">${rows}</div>`;
 }

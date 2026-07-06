@@ -2628,10 +2628,12 @@
   .composer-empty-state .ces-chip-label { flex: 1; }
   .composer-empty-state .ces-chip-chev { color: var(--text-faint); font-size: 17px; flex-shrink: 0; }
 
-  /* Item 7: "New conversation" launcher pinned to the bottom of the mobile
-     Layer-2 conversations list (replaces the removed top "+ New" button). */
-  .conv-newbtn-spacer { height: 10px; }
-  .conv-newbtn-bar { position: sticky; bottom: 0; background: var(--bg); padding: 8px 0 10px; }
+  /* Item 1/2: mobile Layer-2 active-conversations list fills the panel; the
+     "+ New conversation" launcher is pinned to the bottom edge (.agent-panel is
+     already a flex column, so the list scrolls and the button bar stays put). */
+  .mobile-conv-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .conv-list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+  .conv-newbtn-bar { flex-shrink: 0; background: var(--bg); padding: 8px 0 4px; }
   .conv-newbtn {
     width: 100%; background: var(--accent); color: #fff; border: none;
     padding: 13px; border-radius: 12px; font-size: 14px; font-weight: 600;
