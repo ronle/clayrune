@@ -416,10 +416,14 @@ function agentPanelHTML(p) {
     ? ((sessions.length === 0) || wantNew)
     : (!activeSession || !activeSessionId);
   if (noActiveTab) {
-    // Auto-load agent log and set default resume on first render
+    // Auto-load agent log and set default resume on first render.
     if (!agentLogCache[p.id]) {
       loadAgentLog(p.id);
-    } else if (!(p.id in pendingResumeId)) {
+    } else if (!mobileMode && !(p.id in pendingResumeId)) {
+      // Desktop only: pre-select the most-recent chat to resume. On mobile this
+      // hid the recents LIST behind a "Resuming: X" composer — the spec wants
+      // the list shown so the user taps a chat to resume (Layer 2). (Regression:
+      // §8 also removed the inline recents picker on mobile — restored below.)
       pendingResumeId[p.id] = getDefaultResumeId(p.id);
     }
     // Also load .jsonl-derived conversation list (captures interrupted sessions)
@@ -498,11 +502,15 @@ function agentPanelHTML(p) {
   const _dispatchBtn = mobileMode
     ? `<button class="btn-send-arrow" onclick="dispatchAgent('${esc(p.id)}')" title="${resumeId ? 'Continue' : 'Dispatch'}" aria-label="${resumeId ? 'Continue' : 'Dispatch'}">&#8593;</button>`
     : `<button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>`;
-  const _leadResume = mobileMode ? '' : `${chatSearch}${picker}`;
+  // Recents list (durable, from conversationsCache) + search shown on BOTH
+  // breakpoints now — it's the Layer-2 conversation list. (§8 had hidden it on
+  // mobile behind the ＋ sheet; the spec-alignment then dropped it from the
+  // sheet, so it rendered nowhere → "the conversation list doesn't show".)
+  const _leadResume = `${chatSearch}${picker}`;
   const _trailControls = mobileMode
     ? _composerPlusStatusLineHTML(p, resumeId)
     : `<div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>`;
-  const _trailSearchPane = mobileMode ? '' : `<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>`;
+  const _trailSearchPane = `<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>`;
   const _mobileSheet = mobileMode ? _composerSheetHTML(p, resumeId) : '';
   const dispatchRow = noActiveTab ? `${_leadResume}${resumeIndicator}${emptyStateHTML}<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
