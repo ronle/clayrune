@@ -2628,6 +2628,17 @@
   .composer-empty-state .ces-chip-label { flex: 1; }
   .composer-empty-state .ces-chip-chev { color: var(--text-faint); font-size: 17px; flex-shrink: 0; }
 
+  /* Item 7: "New conversation" launcher pinned to the bottom of the mobile
+     Layer-2 conversations list (replaces the removed top "+ New" button). */
+  .conv-newbtn-spacer { height: 10px; }
+  .conv-newbtn-bar { position: sticky; bottom: 0; background: var(--bg); padding: 8px 0 10px; }
+  .conv-newbtn {
+    width: 100%; background: var(--accent); color: #fff; border: none;
+    padding: 13px; border-radius: 12px; font-size: 14px; font-weight: 600;
+    cursor: pointer; font-family: 'Inter', sans-serif;
+  }
+  .conv-newbtn:active { filter: brightness(1.06); }
+
   /* §8 ＋ options button (mobile composer) — matches .btn-attach/.btn-mic sizing */
   .btn-composer-plus {
     display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;

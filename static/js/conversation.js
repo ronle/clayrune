@@ -354,17 +354,40 @@ function agentPanelHTML(p) {
   const st = activeSession ? (activeSession.status || 'idle') : 'idle';
   const isRunning = st === 'running';
 
+  // Mobile Layer-2 "Conversations list" vs Layer-3 compose/thread (spec §1).
+  // Land on the LIST (search + recents) whenever there are prior chats and you
+  // haven't opened one (activeSession), started a new one (wantNew), or armed a
+  // resume (pendingResumeId). Compose (5a) + resume + thread are Layer 3.
+  const _resumeArmed = !!pendingResumeId[p.id];
+  const _mobileHasRecents = mobileMode && (
+    (conversationsCache[p.id] || []).length > 0 || sessions.length > 0 || (agentLogCache[p.id] || []).length > 0
+  );
+  const _mobileListMode = mobileMode && !activeSession && !wantNew && !_resumeArmed && _mobileHasRecents;
+
   // View chrome: mobile = drill-down list + back bar; desktop = tab strip.
   let convListHTML = '', convBackBar = '', tabBar = '';
   if (mobileMode) {
-    const showConvList = multi && !activeSession && !wantNew;
-    convListHTML = showConvList ? conversationListHTML(p, sessions) : '';
-    const showBackBar = (multi && activeSession) || (wantNew && sessions.length > 0);
-    const backLabel = multi ? '&#8592; All conversations' : '&#8592; Back';
+    if (_mobileListMode) {
+      // Layer 2 — the Conversations list: search + the durable recents picker.
+      // The "+ New conversation" launcher is a sticky bottom button (item 7).
+      convListHTML = `
+        ${chatSearchHTML(p.id)}
+        <div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPaneInner(p.id)}</div>
+        ${sessionPickerHTML(p.id)}
+        <div class="conv-newbtn-spacer"></div>
+        <div class="conv-newbtn-bar">
+          <button class="conv-newbtn" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
+        </div>`;
+    } else {
+      const showConvList = multi && !activeSession && !wantNew;
+      convListHTML = showConvList ? conversationListHTML(p, sessions) : '';
+    }
+    // "← All conversations" back bar lives on Layer 3 (compose/thread) only —
+    // it returns to the list. On the list itself, the header ✕ goes to Dashboard.
+    const showBackBar = !_mobileListMode && (activeSession || wantNew || _resumeArmed);
     convBackBar = showBackBar
       ? `<div class="conv-back-bar">
-          <button class="conv-back-btn" onclick="mcBackFromConv('${esc(p.id)}')">${backLabel}</button>
-          ${multi ? `<span class="conv-list-count">${sessions.length} conversations</span>` : ''}
+          <button class="conv-back-btn" onclick="mcBackFromConv('${esc(p.id)}')">&#8592; All conversations</button>
         </div>`
       : '';
   } else {
@@ -493,31 +516,31 @@ function agentPanelHTML(p) {
   // §8: on MOBILE, collapse the pre-dispatch control cluster into a ＋ sheet;
   // DESKTOP keeps the inline chat-search/picker + composer-controls-row exactly
   // as before (these branches are '' on desktop → byte-identical output).
-  // ＋ options button — lives inside the composer pill on the left, per the 5a
-  // design doc (opens the Conversation-options sheet; "Change" in the status
-  // line is the same action).
-  const _plusBtn = mobileMode ? `<button type="button" class="btn-composer-plus" title="Options" aria-label="Options" onclick="openComposerSheet('${esc(p.id)}')">+</button>` : '';
+  // Item 6: the +New/resume composer no longer carries a ＋ — it's redundant
+  // with the "Change" status line right below it (both open the options sheet).
   // Mobile send control: a circular ↑ (per the doc) instead of the green
   // Dispatch/Send text button. Desktop keeps the labelled button.
   const _dispatchBtn = mobileMode
     ? `<button class="btn-send-arrow" onclick="dispatchAgent('${esc(p.id)}')" title="${resumeId ? 'Continue' : 'Dispatch'}" aria-label="${resumeId ? 'Continue' : 'Dispatch'}">&#8593;</button>`
     : `<button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>`;
-  // Recents list (durable, from conversationsCache) + search shown on BOTH
-  // breakpoints now — it's the Layer-2 conversation list. (§8 had hidden it on
-  // mobile behind the ＋ sheet; the spec-alignment then dropped it from the
-  // sheet, so it rendered nowhere → "the conversation list doesn't show".)
-  const _leadResume = `${chatSearch}${picker}`;
+  // Desktop keeps the inline recents/search on the +New screen; on mobile the
+  // recents ARE the Layer-2 list (rendered above), so the compose view is just
+  // the composer (+ resume preview / starter chips).
+  const _leadResume = mobileMode ? '' : `${chatSearch}${picker}`;
   const _trailControls = mobileMode
     ? _composerPlusStatusLineHTML(p, resumeId)
     : `<div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>`;
   const _trailSearchPane = `<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>`;
   const _mobileSheet = mobileMode ? _composerSheetHTML(p, resumeId) : '';
-  const dispatchRow = noActiveTab ? `${_leadResume}${resumeIndicator}${emptyStateHTML}<div class="agent-input-row agent-drop-zone"
+  // Item 1: on mobile the resume PREVIEW goes ABOVE the composer; item 6: the
+  // dispatch composer drops the ＋ (redundant with the "Change" status line).
+  const _mobilePreviewAbove = (mobileMode && resumeId) ? _trailSearchPane : '';
+  const _trailSearchPaneBelow = mobileMode ? '' : _trailSearchPane;
+  const dispatchRow = (noActiveTab && !_mobileListMode) ? `${_leadResume}${resumeIndicator}${_mobilePreviewAbove}${emptyStateHTML}<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
     ondragenter="handleAgentDragOver(event,this)"
     ondragleave="handleAgentDragLeave(event,this)"
     ondrop="${_pcaps.image_input ? `handleAgentDrop(event,'${esc(p.id)}')` : 'event.preventDefault()'}">
-    ${_plusBtn}
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
       placeholder="${_dispatchPlaceholder}"
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'),'${esc(p.id)}')"
@@ -528,7 +551,7 @@ function agentPanelHTML(p) {
     ${_dispatchBtn}
   </div>
   ${_trailControls}
-  ${dispatchPreviews}${_trailSearchPane}
+  ${dispatchPreviews}${_trailSearchPaneBelow}
   ${_mobileSheet}` : '';
 
   // Active tab content
@@ -793,13 +816,14 @@ function agentPanelHTML(p) {
         ${_pcaps.supports_plan_mode ? `<span id="plan-file-btn-${esc(activeSessionId)}">${planFileBtn}</span>` : ''}
         <button class="btn-popout" onclick="openPlanViewer('${esc(activeSessionId)}')" title="Open output in viewer window">Pop Out &#8599;</button>
         ${orchHmId ? `<button class="btn-hm-dash" onclick="openHivemindDashboard('${esc(orchHmId)}')">Dashboard &#8599;</button>` : ''}
-        ${mobileMode ? `<button class="conv-new-btn" style="margin-left:auto" onclick="newAgentTab('${esc(p.id)}')" title="Start a new conversation">+ New</button>` : ''}
       </div>
       <div class="agent-chat">
         <div class="agent-output" id="agent-output-${esc(activeSessionId)}">${outputLines}${typingHTML}</div>
         ${chatInput ? `<div class="agent-chat-separator"></div>${chatInput}` : ''}
       </div>`;
   }
+  // (item 5) The mobile header "+ New" button was removed — new conversation is
+  // launched from the Layer-2 list's bottom button (composer ＋ behavior: TBD).
 
   return `<div class="agent-panel">
     <div class="agent-panel-header">
@@ -896,6 +920,7 @@ function backToConvList(projectId) {
   modalActiveTab[projectId] = 'agent';
   delete activeAgentTab[projectId];
   delete agentConvNew[projectId];
+  delete pendingResumeId[projectId];  // deselect any armed resume → back to the Layer-2 list
   refreshModal();
 }
 
