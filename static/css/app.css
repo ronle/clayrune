@@ -2491,10 +2491,43 @@
   .agent-task-input:focus { border-color: var(--accent); }
   .agent-drop-zone.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 5px; background: var(--accent-dim); }
   .agent-task-input::placeholder { color: var(--text-faint); }
-  /* #7: roomier compose box on the +New/dispatch screen (id starts agent-task-);
-     the active-chat follow-up input (agent-followup-) keeps its compact size. */
+  /* ── Mobile composer pill (5a design doc) ─────────────────────────
+     Single rounded pill: ＋ · text · 📎 · 🎤 · circular ↑. Applies to both the
+     +New dispatch row and the in-chat follow-up row. */
   @media (max-width: 960px) {
-    .agent-task-input[id^="agent-task-"] { min-height: 84px; }
+    .agent-input-row, .agent-chat-input-row {
+      background: var(--bg); border: 1px solid var(--border2);
+      border-radius: 24px; padding: 5px 6px 5px 8px; gap: 4px; align-items: center;
+    }
+    .agent-input-row.drag-over, .agent-chat-input-row.drag-over { border-color: var(--accent); }
+    /* Textarea sits transparent inside the pill (comfortable single line that
+       auto-grows) — no inner box/border. */
+    .agent-input-row .agent-task-input, .agent-chat-input-row .agent-task-input {
+      background: transparent !important; border: none !important; outline: none !important;
+      min-height: 44px; padding: 10px 4px; resize: none;
+    }
+    /* ＋ options — circular, subtle, on the left of the pill. Scoped to
+       .agent-input-row so it beats the base .btn-composer-plus rule that's
+       defined later in the file (equal specificity would otherwise win by
+       source order). */
+    .agent-input-row .btn-composer-plus {
+      background: var(--surface3); border: none; border-radius: 50%;
+      color: var(--accent); width: 34px; height: 34px; font-size: 22px;
+    }
+    /* Attach / mic — subtle icon buttons inside the pill (no box) */
+    .agent-input-row .btn-attach, .agent-input-row .btn-mic,
+    .agent-chat-input-row .btn-attach, .agent-chat-input-row .btn-mic {
+      background: transparent !important; border: none !important;
+      width: 34px; height: 34px; color: var(--text-dim); font-size: 18px;
+    }
+    /* ↑ send — circular, accent-tinted, replaces the Dispatch/Send text button */
+    .btn-send-arrow {
+      display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+      width: 36px; height: 36px; border-radius: 50%; border: none;
+      background: var(--accent-dim); color: var(--accent);
+      font-size: 18px; font-weight: 700; line-height: 1; cursor: pointer;
+    }
+    .btn-send-arrow:active { background: var(--accent); color: #fff; }
   }
 
   .btn-dispatch {

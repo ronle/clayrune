@@ -516,10 +516,15 @@ function agentPanelHTML(p) {
   // §8: on MOBILE, collapse the pre-dispatch control cluster into a ＋ sheet;
   // DESKTOP keeps the inline chat-search/picker + composer-controls-row exactly
   // as before (these branches are '' on desktop → byte-identical output).
-  // Batch #1: removed the composer ＋ button — a bare "+" next to the input read
-  // as "attach" (there's already a 📎) and was unintuitive. The options sheet is
-  // reachable from the status line's "Change" (the whole line opens it).
-  const _plusBtn = '';
+  // ＋ options button — lives inside the composer pill on the left, per the 5a
+  // design doc (opens the Conversation-options sheet; "Change" in the status
+  // line is the same action).
+  const _plusBtn = mobileMode ? `<button type="button" class="btn-composer-plus" title="Options" aria-label="Options" onclick="openComposerSheet('${esc(p.id)}')">+</button>` : '';
+  // Mobile send control: a circular ↑ (per the doc) instead of the green
+  // Dispatch/Send text button. Desktop keeps the labelled button.
+  const _dispatchBtn = mobileMode
+    ? `<button class="btn-send-arrow" onclick="dispatchAgent('${esc(p.id)}')" title="${resumeId ? 'Continue' : 'Dispatch'}" aria-label="${resumeId ? 'Continue' : 'Dispatch'}">&#8593;</button>`
+    : `<button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>`;
   const _leadResume = mobileMode ? '' : `${chatSearch}${picker}`;
   const _trailControls = mobileMode
     ? _composerPlusStatusLineHTML(p, resumeId)
@@ -539,7 +544,7 @@ function agentPanelHTML(p) {
     ></textarea>
     ${_attachBtn}
     ${_dispatchMicBtn}
-    <button class="btn-dispatch" onclick="dispatchAgent('${esc(p.id)}')">${resumeId ? 'Continue' : 'Dispatch'}</button>
+    ${_dispatchBtn}
   </div>
   ${_trailControls}
   ${dispatchPreviews}${_trailSearchPane}
@@ -706,7 +711,9 @@ function agentPanelHTML(p) {
             ></textarea>
             ${_fuAttachBtn}
             ${_fuMicBtn}
-            <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>
+            ${mobileMode
+              ? `<button class="btn-send-arrow" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')" title="Send" aria-label="Send">&#8593;</button>`
+              : `<button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')">Send</button>`}
           </div>
         </div>` : '';
 
