@@ -624,24 +624,24 @@
   </div>
 </div>
 
-<!-- Bottom Tab Bar (mobile) — 5 slots: Home | Backlog | + FAB | Scheduler | Settings.
-     Activity (Processes view) removed 2026-05-04: not usable on mobile; still
-     reachable from desktop sidebar. -->
+<!-- Bottom Tab Bar (mobile, Layer-1 Dashboard ONLY per spec §1) — 5 slots:
+     Home · Inbox · ＋ New Project · Search · You. Backlog / Scheduler / Hivemind
+     moved to the hamburger drawer (still one tap away). -->
 <div class="bottom-tab-bar" id="bottom-tab-bar">
   <div class="bottom-tab-item active" data-nav="dashboard" onclick="sidebarNav('dashboard')">
     <span class="bti-icon">&#x1F3E0;</span>Home
   </div>
-  <div class="bottom-tab-item" data-nav="backlog" onclick="sidebarNav('backlog')">
-    <span class="bti-icon">&#x2630;</span>Backlog
+  <div class="bottom-tab-item" data-nav="inbox" onclick="openInbox()">
+    <span class="bti-icon">&#x1F514;</span>Inbox
   </div>
   <div class="bottom-tab-item fab" data-nav="new" onclick="openNewProjectForm()" title="New project">
     <span class="bti-icon">+</span>New
   </div>
-  <div class="bottom-tab-item" data-nav="scheduler" onclick="sidebarNav('scheduler')">
-    <span class="bti-icon">&#x23F1;</span>Scheduler
+  <div class="bottom-tab-item" data-nav="search" onclick="openGlobalSearch()">
+    <span class="bti-icon">&#x1F50D;</span>Search
   </div>
-  <div class="bottom-tab-item" data-nav="hivemind" onclick="sidebarNav('hivemind')">
-    <span class="bti-icon">&#x1F41D;</span>Hivemind
+  <div class="bottom-tab-item" data-nav="you" onclick="sidebarNav('settings')">
+    <span class="bti-icon">&#x1F464;</span>You
   </div>
 </div>
 
@@ -655,6 +655,17 @@
     <span class="mib-title">Waiting on you</span>
   </div>
   <div class="mobile-inbox-list" id="mobile-inbox-list"></div>
+</div>
+
+<!-- §1 Global "🔍 Search" overlay (≤960px) — cross-project transcript search
+     from the Dashboard bottom bar. Each result deep-links to that chat. -->
+<div class="mobile-inbox-overlay" id="global-search" aria-hidden="true">
+  <div class="mobile-inbox-head">
+    <button class="mib-back" onclick="closeGlobalSearch()" aria-label="Back">&#x2039;</button>
+    <input type="text" class="gs-input" id="global-search-input" placeholder="Search all chats…"
+      spellcheck="false" autocomplete="off" oninput="onGlobalSearchInput(this.value)">
+  </div>
+  <div class="mobile-inbox-list" id="global-search-list"></div>
 </div>
 
 <!-- Mobile navigation drawer (≤960px). Hamburger top-left of the mobile app
@@ -1052,10 +1063,12 @@ catch (e) { projectLastSeen = {}; }
 let _mcDrawerHistoryActive = false;  // drawer-open sentinel (higher priority)
 let _mcSuppressPop = false;          // next popstate is our own synthetic nav
 let _mcInboxOpen = false;            // §1b mobile inbox sentinel (top-most surface)
+let _mcGlobalSearchOpen = false;    // §1 global search overlay sentinel
 window.addEventListener('popstate', () => {
   if (_mcSuppressPop) { _mcSuppressPop = false; return; }  // our own nav
-  // §1b inbox is the top-most mobile surface when open — hardware back closes
-  // it first, DOM-only (the sentinel is already consumed by this back).
+  // §1b inbox / §1 global search are top-most mobile surfaces when open —
+  // hardware back closes them first, DOM-only (sentinel already consumed).
+  if (_mcGlobalSearchOpen) { _mcGlobalSearchOpen = false; _closeGlobalSearchUI(); return; }
   if (_mcInboxOpen) { _mcInboxOpen = false; _closeInboxUI(); return; }
   // Innermost level wins. Drawer is on top of everything else when open —
   // hardware back must close it first, before any modal/conv unwind.

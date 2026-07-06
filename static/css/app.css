@@ -1892,6 +1892,13 @@
   .mib-msg { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; word-break: break-word; }
   .mib-chev { color: var(--text-faint); font-size: 18px; flex-shrink: 0; }
   .mib-empty { text-align: center; color: var(--text-dim); padding: 40px 20px; font-size: 13px; }
+  /* §1 global search input (shares the inbox overlay shell) */
+  .mobile-inbox-head .gs-input {
+    flex: 1; min-width: 0; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 12px; font-size: 14px; color: var(--text);
+    outline: none; font-family: 'Inter', sans-serif;
+  }
+  .mobile-inbox-head .gs-input:focus { border-color: var(--accent); }
 
   /* ── BOTTOM TAB BAR (mobile) ─────────────────────────────────── */
   .bottom-tab-bar {

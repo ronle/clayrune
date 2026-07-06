@@ -203,6 +203,76 @@ window.closeInbox = closeInbox;
 window.renderInbox = renderInbox;
 window._closeInboxUI = _closeInboxUI;
 
+// ── §1 Global "🔍 Search" — cross-project transcript search overlay ──────────
+let _gsTimer = null, _gsSeq = 0;
+function renderGlobalSearchResults(data) {
+  const list = document.getElementById('global-search-list');
+  if (!list) return;
+  const q = (data && data.query) || '';
+  const results = (data && data.results) || [];
+  if (q.length < 2) { list.innerHTML = '<div class="mib-empty">Type to search across all chats.</div>'; return; }
+  if (!results.length) { list.innerHTML = `<div class="mib-empty">No chats mention “${esc(q)}”.</div>`; return; }
+  list.innerHTML = results.map(r => `
+    <div class="mib-row" data-project-id="${esc(r.project_id)}" data-csid="${esc(r.csid)}">
+      <div class="mib-main">
+        <div class="mib-project">${esc(r.project)} · ${esc((r.label || '').slice(0, 60))}</div>
+        <div class="mib-msg">${esc(r.snippet || '')}</div>
+      </div>
+      <span class="mib-chev">&#x203A;</span>
+    </div>`).join('');
+  list.querySelectorAll('.mib-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const pid = row.dataset.projectId, csid = row.dataset.csid;
+      closeGlobalSearch();
+      // Deep-link: open the project and arm resume of that past chat (matches
+      // the per-project search behavior; the thread preview + Continue follow).
+      if (typeof openProjectModal === 'function') openProjectModal(pid);
+      if (typeof selectResumeSession === 'function') setTimeout(() => selectResumeSession(pid, csid), 60);
+    });
+  });
+}
+function onGlobalSearchInput(value) {
+  clearTimeout(_gsTimer);
+  const q = (value || '').trim();
+  if (q.length < 2) { renderGlobalSearchResults({ query: q, results: [] }); return; }
+  const list = document.getElementById('global-search-list');
+  if (list) list.innerHTML = '<div class="mib-empty">Searching…</div>';
+  _gsTimer = setTimeout(() => runGlobalSearch(q), 350);
+}
+async function runGlobalSearch(q) {
+  const seq = ++_gsSeq;
+  let data = { query: q, results: [] };
+  try {
+    const res = await fetch(API_BASE + '/api/search/global?q=' + encodeURIComponent(q));
+    if (res.ok) data = await res.json();
+  } catch (e) { /* network/parse error → empty */ }
+  if (seq !== _gsSeq) return;  // superseded by a newer query
+  renderGlobalSearchResults(data);
+}
+function openGlobalSearch() {
+  const el = document.getElementById('global-search');
+  if (!el) return;
+  renderGlobalSearchResults({ query: '', results: [] });
+  el.classList.add('open');
+  el.setAttribute('aria-hidden', 'false');
+  if (!_mcGlobalSearchOpen) { try { history.pushState({ mc: 'gsearch' }, ''); _mcGlobalSearchOpen = true; } catch (e) {} }
+  setTimeout(() => document.getElementById('global-search-input')?.focus(), 60);
+}
+function _closeGlobalSearchUI() {
+  const el = document.getElementById('global-search');
+  if (!el) return;
+  el.classList.remove('open');
+  el.setAttribute('aria-hidden', 'true');
+}
+function closeGlobalSearch() {
+  if (_mcGlobalSearchOpen) { _mcGlobalSearchOpen = false; _mcUnwindHistory(1); }
+  _closeGlobalSearchUI();
+}
+window.openGlobalSearch = openGlobalSearch;
+window.closeGlobalSearch = closeGlobalSearch;
+window.onGlobalSearchInput = onGlobalSearchInput;
+window._closeGlobalSearchUI = _closeGlobalSearchUI;
+
 // ── §1c Context-adaptive bottom nav bar ─────────────────────────────────────
 // "Inside a project, the bar becomes the project" (mockup Turn 4). When a
 // project modal is focused on mobile, the global bar swaps to project surfaces

@@ -5487,6 +5487,41 @@ def search_project_chats(project_id):
     return jsonify({'query': q, 'count': len(results), 'results': results})
 
 
+@bp.route('/api/search/global')
+def search_global():
+    """Cross-project transcript search — spec §1 Layer-1 "🔍 Search".
+
+    Aggregates the existing per-project _search_project_transcripts over every
+    project and tags each hit with its project id/name so the client can
+    deep-link. Read-only, best-effort; caps per-project + total to stay snappy.
+    """
+    q = (request.args.get('q', '') or '').strip()
+    try:
+        limit = int(request.args.get('limit', 40))
+    except Exception:
+        limit = 40
+    limit = max(1, min(limit, 100))
+    if len(q) < 2:
+        return jsonify({'query': q, 'count': 0, 'results': []})
+    out = []
+    for p in load_projects():
+        if not p.get('project_path'):
+            continue
+        try:
+            hits = _search_project_transcripts(p, q, limit=8)  # cap per project
+        except Exception:
+            continue
+        pid = p.get('id') or ''
+        pname = p.get('name') or pid
+        for r in hits:
+            r2 = dict(r)
+            r2['project_id'] = pid
+            r2['project'] = pname
+            out.append(r2)
+    out.sort(key=lambda r: r.get('mtime', 0), reverse=True)
+    return jsonify({'query': q, 'count': len(out), 'results': out[:limit]})
+
+
 @bp.route('/api/project/<project_id>/conversations')
 def get_project_conversations(project_id):
     """Return recent Claude Code conversations for a project, read from .jsonl transcripts.
