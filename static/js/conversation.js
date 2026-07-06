@@ -939,9 +939,10 @@ function switchAgentTab(projectId, sessionId) {
   delete agentConvNew[projectId];
   const wasOnList = !activeAgentTab[projectId];
   activeAgentTab[projectId] = sessionId;
-  // Forward nav into a conversation when a list level exists (>1 convo):
-  // push the L2 sentinel now so hardware-back returns to the list.
-  if (wasOnList && getProjectTabSessions(projectId).length > 1) {
+  // Mobile always lands on the conversations list now, so entering ANY chat
+  // (even the lone one) is a Layer-3 push → hardware-back returns to the list.
+  // (Desktop: mcPushConvHistory no-ops.)
+  if (wasOnList) {
     mcPushConvHistory();
   }
   refreshModal();
@@ -965,9 +966,9 @@ function newAgentTab(projectId) {
   const wasOnList = !activeAgentTab[projectId] && agentConvNew[projectId] !== true;
   delete activeAgentTab[projectId];
   agentConvNew[projectId] = true;
-  // The "New" screen is a sub-level of the list when one exists (>1 convo):
-  // push the L2 sentinel so hardware-back returns to the list, not out.
-  if (wasOnList && getProjectTabSessions(projectId).length > 1) {
+  // The "New / Resume" screen is a sub-level of the list — push the L2 sentinel
+  // so hardware-back returns to the list, not out (mobile always has a list now).
+  if (wasOnList) {
     mcPushConvHistory();
   }
   // Set null explicitly — do NOT delete. Deleting causes agentPanelHTML to
