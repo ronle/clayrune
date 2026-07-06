@@ -2641,6 +2641,12 @@
   }
   .conv-newbtn:active { filter: brightness(1.06); }
 
+  /* Issue A: mobile compose view — preview / chips / picker scroll on top, the
+     composer stays pinned to the bottom edge (fills .agent-panel's flex column). */
+  .mobile-compose-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .compose-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+  .compose-bottom { flex-shrink: 0; padding-top: 6px; }
+
   /* §8 ＋ options button (mobile composer) — matches .btn-attach/.btn-mic sizing */
   .btn-composer-plus {
     display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;

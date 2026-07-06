@@ -256,6 +256,10 @@ async function dispatchAgent(projectId) {
   // Check if we're resuming a prior session
   const resumeId = pendingResumeId[projectId] || null;
   delete pendingResumeId[projectId];
+  // Dispatching consumes the armed-resume sub-level; clear its flag so a later
+  // back doesn't misfire the resume-deselect handler (the conv level still
+  // returns the thread to the list).
+  if (resumeId && typeof _mcResumeHistoryActive !== 'undefined') _mcResumeHistoryActive = false;
 
   // Require a prompt for fresh sessions; resume can go without one
   if (!task && !resumeId) { input.focus(); return; }

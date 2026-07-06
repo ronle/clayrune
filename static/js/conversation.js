@@ -535,7 +535,7 @@ function agentPanelHTML(p) {
   const _mobilePreviewAbove = (mobileMode && resumeId) ? _trailSearchPane : '';
   const _mobileResumeSection = (mobileMode && !resumeId) ? `${chatSearch}${picker}${_trailSearchPane}` : '';
   const _trailSearchPaneBelow = mobileMode ? '' : _trailSearchPane;
-  const dispatchRow = (noActiveTab && !_mobileListMode) ? `${_leadResume}${resumeIndicator}${_mobilePreviewAbove}${emptyStateHTML}<div class="agent-input-row agent-drop-zone"
+  const _composerBlock = `<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
     ondragenter="handleAgentDragOver(event,this)"
     ondragleave="handleAgentDragLeave(event,this)"
@@ -548,11 +548,24 @@ function agentPanelHTML(p) {
     ${_attachBtn}
     ${_dispatchMicBtn}
     ${_dispatchBtn}
-  </div>
-  ${_trailControls}
-  ${_mobileResumeSection}
-  ${dispatchPreviews}${_trailSearchPaneBelow}
-  ${_mobileSheet}` : '';
+  </div>`;
+  // Mobile compose = flex column: the preview / starter chips / resume picker
+  // SCROLL in the top area, and the composer stays pinned to the BOTTOM edge
+  // (Issue A). Desktop keeps the flat, top-anchored layout.
+  const dispatchRow = (noActiveTab && !_mobileListMode)
+    ? (mobileMode
+        ? `<div class="mobile-compose-view">
+            <div class="compose-scroll">${_mobilePreviewAbove}${emptyStateHTML}${_mobileResumeSection}</div>
+            <div class="compose-bottom">
+              ${resumeIndicator}
+              ${_composerBlock}
+              ${_trailControls}
+              ${dispatchPreviews}
+            </div>
+            ${_mobileSheet}
+          </div>`
+        : `${_leadResume}${resumeIndicator}${emptyStateHTML}${_composerBlock}${_trailControls}${dispatchPreviews}${_trailSearchPaneBelow}`)
+    : '';
 
   // Active tab content
   let tabContent = '';
@@ -998,7 +1011,19 @@ function getDefaultResumeId(projectId) {
 }
 
 function selectResumeSession(projectId, claudeSessionId) {
+  const was = pendingResumeId[projectId] || null;
   pendingResumeId[projectId] = claudeSessionId || null;
+  // Back-stack: arming a resume (picker → preview) pushes a sub-level so
+  // hardware-back returns to the picker; the UI "clear" unwinds it to stay in
+  // sync (Issue B). Mobile only — mcPushResumeHistory no-ops on desktop.
+  if (claudeSessionId && !was) {
+    if (typeof mcPushResumeHistory === 'function') mcPushResumeHistory();
+  } else if (!claudeSessionId && was) {
+    if (typeof _mcResumeHistoryActive !== 'undefined' && _mcResumeHistoryActive) {
+      _mcResumeHistoryActive = false;
+      if (typeof _mcUnwindHistory === 'function') _mcUnwindHistory(1);
+    }
+  }
   refreshModal();
   // #6: desktop-only auto-focus (mobile keyboard should wait for an explicit tap).
   if (window.innerWidth > 960) setTimeout(() => document.getElementById(`agent-task-${projectId}`)?.focus(), 50);

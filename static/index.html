@@ -762,6 +762,7 @@ const COLOR_PRESETS = [
 ];
 let _mcModalHistoryActive  = false;  // L1 sentinel present
 let _mcConvHistoryActive   = false;  // L2 sentinel present
+let _mcResumeHistoryActive = false;  // resume-preview sub-level (deeper than conv)
 // Settings modal has its own two-level depth (master list ↔ detail screen), so
 // it gets its own sentinels: hardware back steps detail → list → close, instead
 // of tearing the whole modal down (the bug Ron hit). Gated to touch devices /
@@ -1087,6 +1088,15 @@ window.addEventListener('popstate', () => {
   if (_mcSettingsHistoryActive) {
     _mcSettingsHistoryActive = false;            // modal entry consumed by back
     closeModalById('__settings');                // category list → close settings
+    return;
+  }
+  // Deepest: an armed resume preview inside the 5a compose → back deselects it,
+  // returning to the resume picker (not all the way to the list).
+  if (_mcResumeHistoryActive) {
+    _mcResumeHistoryActive = false;              // resume entry consumed by back
+    const rid = Array.from(openModals.keys()).find(k =>
+      typeof pendingResumeId !== 'undefined' && pendingResumeId[k]);
+    if (rid) { delete pendingResumeId[rid]; refreshModal(); }
     return;
   }
   // Then: drilled-in conversation → conversations list.

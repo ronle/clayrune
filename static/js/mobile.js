@@ -326,6 +326,13 @@ function mcPushConvHistory() {
   if (!isMobileChatList() || _mcConvHistoryActive) return;
   try { history.pushState({ mc: 'conv' }, ''); _mcConvHistoryActive = true; } catch (e) {}
 }
+// Arming a resume preview inside the 5a compose is a sub-level of the compose
+// screen → push so hardware-back returns to the picker, not out to the list.
+function mcPushResumeHistory() {
+  if (!isMobileChatList() || _mcResumeHistoryActive) return;
+  try { history.pushState({ mc: 'resume' }, ''); _mcResumeHistoryActive = true; } catch (e) {}
+}
+window.mcPushResumeHistory = mcPushResumeHistory;
 function mcPushDrawerHistory() {
   if (_mcDrawerHistoryActive) return;
   try { history.pushState({ mc: 'drawer' }, ''); _mcDrawerHistoryActive = true; } catch (e) {}
