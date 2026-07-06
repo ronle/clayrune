@@ -371,7 +371,7 @@ function agentPanelHTML(p) {
       convListHTML = `<div class="mobile-conv-list-view">
         <div class="conv-list-scroll">${conversationListHTML(p, sessions)}</div>
         <div class="conv-newbtn-bar">
-          <button class="conv-newbtn" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
+          <button class="conv-newbtn" onclick="newAgentTab('${esc(p.id)}')">&#43; New / Resume conversation</button>
         </div>
       </div>`;
     } else {
