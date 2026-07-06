@@ -2554,18 +2554,31 @@
   /* §5 starter-prompt empty state — shown above the composer on a truly empty
      +New screen. Token-driven, both breakpoints (.agent-panel is flex-column).
      Chips modeled on .claydo-chip. */
-  .composer-empty-state { text-align: center; padding: 18px 8px 14px; }
-  .composer-empty-state .ces-icon { font-size: 28px; opacity: .7; margin-bottom: 6px; }
+  /* #4: 5a empty-state — centered icon + heading + subtitle, then full-width
+     tappable rows (leading icon + trailing chevron), matching the mockup. */
+  .composer-empty-state { text-align: center; padding: 22px 8px 14px; }
+  .composer-empty-state .ces-icon {
+    font-size: 26px; width: 46px; height: 46px; margin: 0 auto 10px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface3); border-radius: 12px;
+  }
   .composer-empty-state .ces-heading {
-    font-size: 14px; font-weight: 600; color: var(--text-dim); margin-bottom: 12px;
+    font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 6px;
   }
-  .composer-empty-state .ces-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .composer-empty-state .ces-sub {
+    font-size: 12.5px; color: var(--text-dim); line-height: 1.5; margin-bottom: 16px;
+  }
+  .composer-empty-state .ces-chips { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
   .composer-empty-state .ces-chip {
-    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
-    padding: 7px 14px; border-radius: 16px; cursor: pointer; font-size: 12px;
-    font-family: inherit; transition: border-color .15s, transform .15s;
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    padding: 12px 14px; border-radius: 12px; cursor: pointer; font-size: 13px;
+    font-family: inherit; transition: border-color .15s, background .15s;
   }
-  .composer-empty-state .ces-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .composer-empty-state .ces-chip:hover { border-color: var(--accent); }
+  .composer-empty-state .ces-chip-icon { font-size: 16px; flex-shrink: 0; }
+  .composer-empty-state .ces-chip-label { flex: 1; }
+  .composer-empty-state .ces-chip-chev { color: var(--text-faint); font-size: 17px; flex-shrink: 0; }
 
   /* §8 ＋ options button (mobile composer) — matches .btn-attach/.btn-mic sizing */
   .btn-composer-plus {

@@ -309,7 +309,12 @@ function cancelHideHmPopover() {
 
 
 // §5: static starter prompts for the empty +New screen (project-aware is v2).
-const STARTER_CHIPS = ['Fix a failing test or bug', 'Add a feature to this project', 'Explain how the codebase works'];
+// #4: full-width rows with a leading icon + trailing chevron, per the 5a mockup.
+const STARTER_CHIPS = [
+  { icon: '\u{1F9EA}', label: 'Fix a failing test or bug' },       // 🧪
+  { icon: '\u{2728}',  label: 'Add a feature to this project' },   // ✨
+  { icon: '\u{1F4D6}', label: 'Explain how the codebase works' },  // 📖
+];
 
 // Fill the dispatch textarea with a starter prompt and focus it — does NOT send
 // (the user edits/confirms). No refreshModal/setTimeout: the textarea is already
@@ -496,8 +501,13 @@ function agentPanelHTML(p) {
   const emptyStateHTML = showEmptyState ? `<div class="composer-empty-state">
     <div class="ces-icon">&#128172;</div>
     <div class="ces-heading">What should Claude work on?</div>
-    <div class="ces-chips">${STARTER_CHIPS.map(t =>
-      `<button type="button" class="ces-chip" data-chip-text="${esc(t)}" onclick="fillStarterChip('${esc(p.id)}', this.dataset.chipText)">${esc(t)}</button>`
+    <div class="ces-sub">Describe a task in plain language.<br>The agent plans, edits files, and reports back.</div>
+    <div class="ces-chips">${STARTER_CHIPS.map(c =>
+      `<button type="button" class="ces-chip" data-chip-text="${esc(c.label)}" onclick="fillStarterChip('${esc(p.id)}', this.dataset.chipText)">
+        <span class="ces-chip-icon">${c.icon}</span>
+        <span class="ces-chip-label">${esc(c.label)}</span>
+        <span class="ces-chip-chev">&#8250;</span>
+      </button>`
     ).join('')}</div>
   </div>` : '';
   // §8: on MOBILE, collapse the pre-dispatch control cluster into a ＋ sheet;
