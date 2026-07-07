@@ -5293,6 +5293,37 @@ def reconstruct_dead_session(project_id, session_id):
     })
 
 
+@bp.route('/api/project/<project_id>/transcript/<claude_session_id>/reconstruct')
+def reconstruct_from_transcript(project_id, claude_session_id):
+    """Rebuild a chat buffer directly from a claude_session_id transcript.
+
+    For transcript-only conversations — interrupted sessions or fresh-start
+    continuations that never got an MC agent_log entry (mc_session_id == '') —
+    so /session/<id>/reconstruct can't resolve them. Renders with the SAME
+    _transcript_buffer_lines() the tracked chats use, so the caller can open it
+    in the identical read-only thread view instead of the resume-compose path
+    (which renders blank on Android WebView). Returns 404 when the transcript
+    can't be resolved (caller falls back to arming a resume).
+    """
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    user_label = state.CONFIG.get('user_name') or 'User'
+    lines = _transcript_buffer_lines(p.get('project_path', ''), claude_session_id,
+                                     user_label, max_messages=300)
+    if not lines:
+        return jsonify({'error': 'transcript not found or empty'}), 404
+    lines.append('[— read-only history; send a message to resume this session —]')
+    return jsonify({
+        'session_id': '',
+        'claude_session_id': claude_session_id,
+        'task': '',
+        'started_at': '',
+        'log_lines': lines,
+        'read_only': True,
+    })
+
+
 @bp.route('/api/recent-runs')
 def api_recent_runs():
     """Aggregate agent_log entries across all projects within a time window.

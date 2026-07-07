@@ -981,8 +981,36 @@ async function openConversation(projectId, csid, mcSessionId, isLive) {
       }
     } catch (e) { /* fall through to resume */ }
   }
-  // No MC id, or reconstruct failed → arm resume so the next message revives it.
-  if (csid) selectResumeSession(projectId, csid);
+  // Transcript-only conversation (no MC session id, e.g. an interrupted chat or
+  // a fresh-start continuation): reconstruct straight from the claude_session_id
+  // transcript into the SAME read-only thread view the tracked chats use. Keyed
+  // on the csid as a synthetic session id. This avoids the resume-compose path,
+  // which renders a blank page on Android WebView — and matches "tap opens it in
+  // chat mode ready to continue". Falls back to arming a resume if unreconstructable.
+  if (csid) {
+    if (agentStatusCache[csid]) { switchAgentTab(projectId, csid); return; }
+    try {
+      const rr = await fetch(API_BASE + `/api/project/${projectId}/transcript/${encodeURIComponent(csid)}/reconstruct`);
+      if (rr.ok) {
+        const rd = await rr.json();
+        agentStatusCache[csid] = {
+          status: 'completed', task: rd.task || '', projectId,
+          startedAt: rd.started_at || '', claudeSessionId: csid,
+          _readOnlyRevived: true,
+        };
+        agentOutputBuffers[csid] = rd.log_lines || [];
+        agentServerLines[csid] = (rd.log_lines || []).length;
+        if (!agentHistory.find(h => h.sessionId === csid)) {
+          const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
+          agentHistory.unshift({ projectId, sessionId: csid, projectName: pName,
+            task: rd.task || '', status: 'completed', startedAt: rd.started_at || '' });
+        }
+        switchAgentTab(projectId, csid);
+        return;
+      }
+    } catch (e) { /* fall through to resume */ }
+    selectResumeSession(projectId, csid);
+  }
 }
 window.openConversation = openConversation;
 
