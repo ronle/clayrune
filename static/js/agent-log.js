@@ -84,8 +84,11 @@ async function loadAgentLog(projectId) {
         }
       }
     }
-    // Auto-set default resume if not explicitly chosen yet
-    if (!(projectId in pendingResumeId)) {
+    // Auto-set default resume if not explicitly chosen yet — DESKTOP ONLY.
+    // On mobile this fired after the async log load and jumped the user from the
+    // conversations list / 5a picker straight into a resume preview they never
+    // selected. Mobile shows the list and waits for an explicit tap.
+    if (!(projectId in pendingResumeId) && window.innerWidth > 960) {
       pendingResumeId[projectId] = getDefaultResumeId(projectId);
     }
     refreshModal();
