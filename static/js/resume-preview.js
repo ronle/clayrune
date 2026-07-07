@@ -314,7 +314,7 @@ async function dispatchAgent(projectId) {
   const fullTask = buildTaskWithImages(displayTask, imagePaths);
   clearAgentImages(projectId);
 
-  const body = { task: fullTask };
+  const body = { task: fullTask, source: 'ui' };  // dispatched from the app UI (vs agent/API)
   if (resumeId) body.resume_conversation_id = resumeId;
   if (incognitoFlag) body.incognito = true;
   // Per-conversation provider — the composer dropdown is authoritative. The

@@ -897,10 +897,12 @@ window.toggleShowHiddenConvos = toggleShowHiddenConvos;
 // scheduled trigger types → the ⋮ Agent Log side flow) minus manually-hidden.
 function _userInitiatedConvos(projectId) {
   const AGENT_TRIGGERS = new Set(['schedule', 'hivemind_worker', 'hivemind_orchestrator', 'hivemind', 'auto', 'housekeeping']);
+  const AGENT_SOURCES = new Set(['agent', 'api', 'cron']);  // programmatic dispatch → side flow
   const hidden = _hiddenConvSet(projectId);
   const showHidden = !!_showHiddenConvos[projectId];
   return (conversationsCache[projectId] || []).filter(c => {
     if (AGENT_TRIGGERS.has(c.trigger_type || '')) return false;
+    if (AGENT_SOURCES.has(c.source || '')) return false;
     if (!showHidden && hidden.has(c.claude_session_id || '')) return false;
     return true;
   });

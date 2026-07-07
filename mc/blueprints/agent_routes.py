@@ -2769,6 +2769,7 @@ def _log_agent_dispatch_pending(session):
         'hivemind_ws_id': session.get('hivemind_ws_id', ''),
         'hivemind_role': session.get('hivemind_role', ''),
         'trigger_type': session.get('trigger_type', 'manual'),
+        'source': session.get('source', ''),
         'trigger_id': session.get('trigger_id', ''),
         'character': session.get('character'),
     }
@@ -2852,6 +2853,7 @@ def _log_agent_completion(session):
         # trigger_type: 'manual' | 'schedule' | 'hivemind_orchestrator' | 'hivemind_worker'
         # trigger_id: schedule_id, hivemind_id, or workstream_id depending on type
         'trigger_type': session.get('trigger_type', 'manual'),
+        'source': session.get('source', ''),
         'trigger_id': session.get('trigger_id', ''),
         # Provider that ran this session ('claude', 'gemini', ...). Absent on
         # pre-multi-provider entries; treat missing as 'claude' when reading.
@@ -3330,7 +3332,7 @@ def _resolve_character(pp, character):
 def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                              trigger_type='manual', trigger_id='',
                              reuse_session_id='', provider_override='',
-                             display_task=None, character=''):
+                             display_task=None, character='', source=''):
     """Core dispatch logic shared by HTTP endpoint and scheduler.
 
     Returns session_id on success, raises ValueError on error.
@@ -3543,6 +3545,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'incognito': bool(incognito),
                 'trigger_type': trigger_type,
                 'trigger_id': trigger_id,
+                # Who dispatched this: '' (legacy/unknown) · 'ui' (app) · 'agent'
+                # (programmatic / agent self-dispatch). Lets the mobile
+                # conversations list route agent-initiated chats to the side flow.
+                'source': source or '',
                 'agent_model': p.get('agent_model', '') or state.CONFIG.get('agent_model', ''),
                 # Auto-router attribution — `model` is what actually got
                 # passed via --model (after override); `model_source` is
@@ -3626,6 +3632,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'incognito': bool(incognito),
                 'trigger_type': trigger_type,
                 'trigger_id': trigger_id,
+                # Who dispatched this: '' (legacy/unknown) · 'ui' (app) · 'agent'
+                # (programmatic / agent self-dispatch). Lets the mobile
+                # conversations list route agent-initiated chats to the side flow.
+                'source': source or '',
                 'agent_model': p.get('agent_model', '') or state.CONFIG.get('agent_model', ''),
                 'model': routed_model,
                 'model_source': routed_source,
@@ -3681,11 +3691,20 @@ def agent_dispatch(project_id):
     # Mobile brief replies: augmented version goes to the agent. The frontend's
     # local echo already shows the original task as the user's chat bubble.
     claude_task = _apply_mobile_brief(task, data)
+    # Who dispatched: the app UI sends source='ui'; a programmatic/agent caller
+    # sends source='agent' (routed to the side flow). Absent = '' (legacy → user).
+    # Heuristic: a raw agent/curl dispatch has no browser Origin and no mobile
+    # client tag → treat as 'agent' so it auto-routes to the side flow without
+    # the caller having to remember. Real UI requests always carry an Origin.
+    source = (data.get('source') or '').strip().lower()
+    if not source and not request.headers.get('Origin') and not data.get('client'):
+        source = 'agent'
     try:
         session_id = _dispatch_agent_internal(project_id, claude_task, resume_id,
                                               incognito=incognito,
                                               provider_override=provider_override,
-                                              display_task=task, character=character)
+                                              display_task=task, character=character,
+                                              source=source)
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code
@@ -5596,10 +5615,11 @@ def get_project_conversations(project_id):
             'ts': ts_iso,
             'ts_relative': time_ago(ts_iso) if ts_iso else '',
             'live': bool(live),
-            # trigger_type lets the mobile list show ONLY user-initiated chats
-            # and route agent/scheduled runs to the Agent Log side flow. Empty
-            # (transcript-only / manual) counts as user-initiated.
+            # trigger_type + source let the mobile list show ONLY user-initiated
+            # chats and route agent/scheduled runs to the Agent Log side flow.
+            # Empty (transcript-only / manual, no 'agent' source) = user-initiated.
             'trigger_type': (log_entry.get('trigger_type') or '') if log_entry else '',
+            'source': (log_entry.get('source') or '') if log_entry else '',
         })
     return jsonify(out)
 
