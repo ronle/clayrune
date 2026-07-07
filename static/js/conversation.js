@@ -135,6 +135,7 @@ function toggleIncognito(projectId) {
 // Agent/Persona/Incognito/Resume+Search controls (relocated triggers, not new
 // logic). Desktop output is byte-identical to before.
 let composerSheetOpen = {};  // project_id → bool (mirrors incognitoToggle pattern)
+let convListFilter = {};     // project_id → raw filter string for the Layer-2 conversation list (client-side name filter)
 function openComposerSheet(projectId) { composerSheetOpen[projectId] = true; refreshModalById(projectId); }
 function closeComposerSheet(projectId) { composerSheetOpen[projectId] = false; refreshModalById(projectId); }
 
@@ -863,20 +864,66 @@ function conversationListHTML(p, sessions) {
     return !!c && _pinnedList.includes(c);
   };
   const _ordered = [...sessions.filter(_isPin), ...sessions.filter(h => !_isPin(h))];
-  const rows = _ordered.map(h => conversationRowHTML(p, h)).join('');
+  // Client-side filter: hide non-matching rows AT RENDER TIME so the filtered
+  // state survives refreshModal ticks (the query is preserved in convListFilter,
+  // the input value is preserved by refreshModalById). filterConvList() does the
+  // same show/hide in-place on each keystroke for snappiness without a re-render.
+  const q = (convListFilter[p.id] || '').trim().toLowerCase();
+  const rows = _ordered.map(h => {
+    const hay = (h.task || '').toLowerCase();
+    return conversationRowHTML(p, h, hay, !!q && !hay.includes(q));
+  }).join('');
+  // Only surface the filter box once the list is long enough to warrant it.
+  const searchBox = sessions.length >= 4 ? convListSearchHTML(p.id) : '';
+  const noMatch = _ordered.every(h => q && !(h.task || '').toLowerCase().includes(q));
+  const emptyMsg = `<div class="conv-list-empty" id="conv-list-empty-${esc(p.id)}"${(q && noMatch) ? '' : ' style="display:none"'}>No conversations match your filter.</div>`;
   return `
     <div class="conv-list-header">
       <span class="conv-list-title">Conversations</span>
       <span class="conv-list-count">${sessions.length}</span>
     </div>
-    <div class="conv-list">${rows}</div>`;
+    ${searchBox}
+    <div class="conv-list" id="conv-list-${esc(p.id)}">${rows}</div>
+    ${emptyMsg}`;
+}
+
+// Search/filter box pinned to the top of the Layer-2 conversation list. Pure
+// client-side name filter (no backend) — content search over PAST chats lives in
+// the 5a compose "resume" section. Shown only when sessions.length >= 4.
+function convListSearchHTML(projectId) {
+  const q = convListFilter[projectId] || '';
+  return `<div class="conv-list-search">
+    <span class="cls-icon">&#128269;</span>
+    <input type="text" class="cls-input" id="conv-list-search-${esc(projectId)}"
+      placeholder="Filter conversations…" value="${esc(q)}" spellcheck="false"
+      oninput="filterConvList('${esc(projectId)}', this.value)"
+      onkeydown="if(event.key==='Escape'){this.value='';filterConvList('${esc(projectId)}','')}">
+  </div>`;
+}
+
+// In-place show/hide of the Layer-2 conversation rows as the user types. Keyed on
+// each row's data-conv-search (lowercased task); no re-render so focus/caret hold.
+function filterConvList(projectId, value) {
+  convListFilter[projectId] = value;
+  const q = (value || '').trim().toLowerCase();
+  const list = document.getElementById(`conv-list-${projectId}`);
+  if (!list) return;
+  let shown = 0;
+  list.querySelectorAll('.conv-row').forEach(row => {
+    const hay = row.getAttribute('data-conv-search') || '';
+    const match = !q || hay.includes(q);
+    row.style.display = match ? '' : 'none';
+    if (match) shown++;
+  });
+  const empty = document.getElementById(`conv-list-empty-${projectId}`);
+  if (empty) empty.style.display = (q && shown === 0) ? '' : 'none';
 }
 
 // One row in the conversation drill-down list. Mirrors the consolidated
 // status vocabulary: ring/dot colour and sub-line come from the same
 // resolver the badge/console use (running→working, detected plan/question→
 // asking "Awaiting input", error→stuck, turn-done idle→done "All done").
-function conversationRowHTML(p, h) {
+function conversationRowHTML(p, h, searchHay, hidden) {
   const cache = agentStatusCache[h.sessionId] || {};
   const sst = cache.status || h.status || 'idle';
   const waiting = cache.waitingForPlanApproval || cache.waitingForQuestion;
@@ -904,7 +951,7 @@ function conversationRowHTML(p, h) {
     : (() => { const c = cache.claudeSessionId || ''; return !!c && (p.pinned_conversations || []).includes(c); })();
   const pinMark = `<button class="conv-pin-mark${isPinnedConv ? ' pinned' : ''}" onclick="event.stopPropagation();togglePinConversationSession('${esc(p.id)}','${esc(h.sessionId)}')" title="${isPinnedConv ? 'Unpin this chat' : 'Pin this chat'}" aria-label="${isPinnedConv ? 'Unpin this chat' : 'Pin this chat'}" aria-pressed="${isPinnedConv ? 'true' : 'false'}">&#x1F4CC;</button>`;
   return `
-  <div class="conv-row ${isPinnedConv ? 'pinned-conv' : ''}" onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task || '')}">
+  <div class="conv-row ${isPinnedConv ? 'pinned-conv' : ''}" data-conv-search="${esc(searchHay || (h.task || '').toLowerCase())}"${hidden ? ' style="display:none"' : ''} onclick="switchAgentTab('${esc(p.id)}','${esc(h.sessionId)}')" title="${esc(h.task || '')}">
     <div class="conv-av friendly-${fs}"><span class="conv-ring"></span>${glyph}</div>
     <div class="conv-main">
       <div class="conv-top">
@@ -933,6 +980,7 @@ function backToConvList(projectId) {
   delete activeAgentTab[projectId];
   delete agentConvNew[projectId];
   delete pendingResumeId[projectId];  // deselect any armed resume → back to the Layer-2 list
+  delete convListFilter[projectId];   // reset the Layer-2 list filter on every return
   refreshModal();
 }
 
@@ -2006,6 +2054,7 @@ window.scheduleHideHmPopover = scheduleHideHmPopover;
 window.cancelHideHmPopover = cancelHideHmPopover;
 window.agentPanelHTML = agentPanelHTML;
 window.backToConvList = backToConvList;
+window.filterConvList = filterConvList;
 window.switchAgentTab = switchAgentTab;
 window.getDefaultResumeId = getDefaultResumeId;
 window.selectResumeSession = selectResumeSession;
