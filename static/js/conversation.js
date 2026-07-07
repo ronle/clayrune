@@ -358,19 +358,20 @@ function agentPanelHTML(p) {
   // haven't opened one (activeSession), started a new one (wantNew), or armed a
   // resume (pendingResumeId). Compose (5a) + resume + thread are Layer 3.
   const _resumeArmed = !!pendingResumeId[p.id];
-  // Layer 2 shows the project's ACTIVE conversations. Past (non-running) chats
-  // are resumable from the 5a compose view's picker, not listed here.
-  const _mobileHasActive = mobileMode && sessions.length > 0;
-  const _mobileListMode = mobileMode && !activeSession && !wantNew && !_resumeArmed && _mobileHasActive;
+  // Layer 2 lists ALL the USER's conversations (durable, transcript-derived —
+  // past + present), filtered to user-initiated. Agent/scheduled runs live in
+  // the ⋮ → Agent Log side flow, not here. Tapping a row opens it in the thread.
+  const _mobileUserConvos = mobileMode ? _userInitiatedConvos(p.id) : [];
+  const _mobileListMode = mobileMode && !activeSession && !wantNew && !_resumeArmed && _mobileUserConvos.length > 0;
 
   // View chrome: mobile = drill-down list + back bar; desktop = tab strip.
   let convListHTML = '', convBackBar = '', tabBar = '';
   if (mobileMode) {
     if (_mobileListMode) {
-      // Layer 2 — the active-conversations list (item 1), with a "+ New
-      // conversation" launcher pinned to the bottom edge (item 2).
+      // Layer 2 — all user conversations, with a "+ New / Resume" launcher
+      // pinned to the bottom edge.
       convListHTML = `<div class="mobile-conv-list-view">
-        <div class="conv-list-scroll">${conversationListHTML(p, sessions)}</div>
+        <div class="conv-list-scroll">${mobileUserConversationsHTML(p, _mobileUserConvos)}</div>
         <div class="conv-newbtn-bar">
           <button class="conv-newbtn" onclick="newAgentTab('${esc(p.id)}')">&#43; New / Resume conversation</button>
         </div>
@@ -449,6 +450,12 @@ function agentPanelHTML(p) {
     if (!conversationsCache[p.id]) {
       loadConversations(p.id);
     }
+  }
+  // Mobile Layer-2 list is built from the durable conversations — ensure they
+  // load whenever we're not inside a specific chat (even if live sessions exist,
+  // where noActiveTab is false and the block above wouldn't fire).
+  if (mobileMode && !activeSession && !wantNew && !conversationsCache[p.id]) {
+    loadConversations(p.id);
   }
   // Provider capability gate — all defaults match claude (safe for existing
   // callers). An active session is bound to the provider it began with; the
@@ -854,6 +861,55 @@ function agentPanelHTML(p) {
 // WhatsApp-Communities-style conversation list: shown in the Agent panel when
 // a project has >1 active conversation. Each row drills into that
 // conversation's chat; a back bar (rendered by agentPanelHTML) returns here.
+// Durable, transcript-derived conversations for a project, filtered to
+// user-initiated (empty/manual trigger). Agent/scheduled runs are excluded —
+// they live in the ⋮ → Agent Log side flow.
+function _userInitiatedConvos(projectId) {
+  const AGENT_TRIGGERS = new Set(['schedule', 'hivemind_worker', 'hivemind', 'auto', 'housekeeping']);
+  return (conversationsCache[projectId] || []).filter(c => !AGENT_TRIGGERS.has(c.trigger_type || ''));
+}
+
+// Layer-2 list rows for the user's conversations. Tapping opens it in chat mode
+// (openConversation): live → its thread; past → reconstructed thread ready to
+// continue.
+function mobileUserConversationsHTML(p, convos) {
+  const rows = convos.map(c => {
+    const csid = c.claude_session_id || '';
+    const mcsid = c.mc_session_id || '';
+    const label = esc((c.label || '(empty conversation)').substring(0, 90));
+    const stt = c.live ? (c.status || 'running') : (c.status || 'completed');
+    const dot = `<span class="agent-status-dot ${esc(stt)}" title="${esc(stt)}"></span>`;
+    const meta = [esc(c.ts_relative || ''), c.turns ? `${c.turns} turn${c.turns !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+    return `<div class="conv-row" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
+      <div class="conv-main">
+        <div class="conv-top">
+          <span class="conv-name">${dot}${label}</span>
+          <span class="conv-time">${esc(c.ts_relative || '')}</span>
+        </div>
+        <div class="conv-bot"><span class="conv-sub">${esc(meta)}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="conv-list-header"><span class="conv-list-title">Conversations</span><span class="conv-list-count">${convos.length}</span></div>
+    <div class="conv-list">${rows}</div>`;
+}
+
+// Open a conversation in chat mode. Live/tracked → its thread; past chat with a
+// log entry → reconstruct its transcript into the thread (ready to continue);
+// transcript-only → arm resume so the next message revives it.
+function openConversation(projectId, csid, mcSessionId, isLive) {
+  if (mcSessionId && agentStatusCache[mcSessionId]) {
+    switchAgentTab(projectId, mcSessionId);
+    return;
+  }
+  if (mcSessionId && typeof openProjectAtSession === 'function') {
+    openProjectAtSession(projectId, mcSessionId);
+    return;
+  }
+  if (csid) selectResumeSession(projectId, csid);
+}
+window.openConversation = openConversation;
+
 function conversationListHTML(p, sessions) {
   // Pinned chats (keyed on the durable claude_session_id) lead the list.
   const _pinnedList = p.pinned_conversations || [];

@@ -5596,6 +5596,10 @@ def get_project_conversations(project_id):
             'ts': ts_iso,
             'ts_relative': time_ago(ts_iso) if ts_iso else '',
             'live': bool(live),
+            # trigger_type lets the mobile list show ONLY user-initiated chats
+            # and route agent/scheduled runs to the Agent Log side flow. Empty
+            # (transcript-only / manual) counts as user-initiated.
+            'trigger_type': (log_entry.get('trigger_type') or '') if log_entry else '',
         })
     return jsonify(out)
 
