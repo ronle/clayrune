@@ -861,26 +861,68 @@ function agentPanelHTML(p) {
 // WhatsApp-Communities-style conversation list: shown in the Agent panel when
 // a project has >1 active conversation. Each row drills into that
 // conversation's chat; a back bar (rendered by agentPanelHTML) returns here.
-// Durable, transcript-derived conversations for a project, filtered to
-// user-initiated (empty/manual trigger). Agent/scheduled runs are excluded —
-// they live in the ⋮ → Agent Log side flow.
+// Manually-hidden conversations (per project, by claude_session_id) — the user
+// can move any chat "sideways" out of the main list. Persisted in localStorage.
+let _showHiddenConvos = {};   // projectId → reveal hidden rows this session
+function _hiddenConvMap() {
+  try { return JSON.parse(localStorage.getItem('mc_hidden_convos') || '{}') || {}; }
+  catch (e) { return {}; }
+}
+function _hiddenConvSet(projectId) { return new Set(_hiddenConvMap()[projectId] || []); }
+function hideConversation(event, projectId, csid) {
+  if (event) event.stopPropagation();
+  if (!csid) return;
+  const all = _hiddenConvMap();
+  const s = new Set(all[projectId] || []); s.add(csid);
+  all[projectId] = Array.from(s);
+  try { localStorage.setItem('mc_hidden_convos', JSON.stringify(all)); } catch (e) {}
+  refreshModal();
+}
+function unhideConversation(event, projectId, csid) {
+  if (event) event.stopPropagation();
+  const all = _hiddenConvMap();
+  all[projectId] = (all[projectId] || []).filter(x => x !== csid);
+  try { localStorage.setItem('mc_hidden_convos', JSON.stringify(all)); } catch (e) {}
+  refreshModal();
+}
+function toggleShowHiddenConvos(projectId) {
+  _showHiddenConvos[projectId] = !_showHiddenConvos[projectId];
+  refreshModal();
+}
+window.hideConversation = hideConversation;
+window.unhideConversation = unhideConversation;
+window.toggleShowHiddenConvos = toggleShowHiddenConvos;
+
+// Durable, transcript-derived conversations, filtered to user-initiated (agent/
+// scheduled trigger types → the ⋮ Agent Log side flow) minus manually-hidden.
 function _userInitiatedConvos(projectId) {
-  const AGENT_TRIGGERS = new Set(['schedule', 'hivemind_worker', 'hivemind', 'auto', 'housekeeping']);
-  return (conversationsCache[projectId] || []).filter(c => !AGENT_TRIGGERS.has(c.trigger_type || ''));
+  const AGENT_TRIGGERS = new Set(['schedule', 'hivemind_worker', 'hivemind_orchestrator', 'hivemind', 'auto', 'housekeeping']);
+  const hidden = _hiddenConvSet(projectId);
+  const showHidden = !!_showHiddenConvos[projectId];
+  return (conversationsCache[projectId] || []).filter(c => {
+    if (AGENT_TRIGGERS.has(c.trigger_type || '')) return false;
+    if (!showHidden && hidden.has(c.claude_session_id || '')) return false;
+    return true;
+  });
 }
 
 // Layer-2 list rows for the user's conversations. Tapping opens it in chat mode
 // (openConversation): live → its thread; past → reconstructed thread ready to
 // continue.
 function mobileUserConversationsHTML(p, convos) {
+  const hidden = _hiddenConvSet(p.id);
   const rows = convos.map(c => {
     const csid = c.claude_session_id || '';
     const mcsid = c.mc_session_id || '';
+    const isHidden = hidden.has(csid);
     const label = esc((c.label || '(empty conversation)').substring(0, 90));
     const stt = c.live ? (c.status || 'running') : (c.status || 'completed');
     const dot = `<span class="agent-status-dot ${esc(stt)}" title="${esc(stt)}"></span>`;
     const meta = [esc(c.ts_relative || ''), c.turns ? `${c.turns} turn${c.turns !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
-    return `<div class="conv-row" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
+    const hideBtn = isHidden
+      ? `<button class="conv-hide" onclick="unhideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Move back to the list" aria-label="Unhide">&#8617;</button>`
+      : `<button class="conv-hide" onclick="hideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Hide from this list" aria-label="Hide">&#10005;</button>`;
+    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
       <div class="conv-main">
         <div class="conv-top">
           <span class="conv-name">${dot}${label}</span>
@@ -888,10 +930,16 @@ function mobileUserConversationsHTML(p, convos) {
         </div>
         <div class="conv-bot"><span class="conv-sub">${esc(meta)}</span></div>
       </div>
+      ${hideBtn}
     </div>`;
   }).join('');
+  const hiddenCount = hidden.size;
+  const toggle = hiddenCount > 0
+    ? `<button class="conv-hidden-toggle" onclick="toggleShowHiddenConvos('${esc(p.id)}')">${_showHiddenConvos[p.id] ? 'Hide' : 'Show'} ${hiddenCount} hidden</button>`
+    : '';
   return `<div class="conv-list-header"><span class="conv-list-title">Conversations</span><span class="conv-list-count">${convos.length}</span></div>
-    <div class="conv-list">${rows}</div>`;
+    <div class="conv-list">${rows}</div>
+    ${toggle}`;
 }
 
 // Open a conversation in chat mode. Live/tracked → its thread; past chat with a

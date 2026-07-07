@@ -2669,6 +2669,18 @@
   .compose-scroll { flex: 1; min-height: 0; overflow-y: auto; }
   .compose-bottom { flex-shrink: 0; padding-top: 6px; }
 
+  /* Manual "move sideways" — hide a conversation from the main list. */
+  .conv-row .conv-hide {
+    flex-shrink: 0; align-self: center; background: transparent; border: none;
+    color: var(--text-faint); font-size: 14px; padding: 4px 8px; cursor: pointer;
+  }
+  .conv-row .conv-hide:hover { color: var(--red-text); }
+  .conv-row.conv-hidden { opacity: 0.5; }
+  .conv-hidden-toggle {
+    display: block; margin: 8px auto 4px; background: transparent; border: none;
+    color: var(--accent); font-size: 12px; cursor: pointer; padding: 6px;
+  }
+
   /* §8 ＋ options button (mobile composer) — matches .btn-attach/.btn-mic sizing */
   .btn-composer-plus {
     display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
