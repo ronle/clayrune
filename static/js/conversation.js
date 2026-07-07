@@ -942,18 +942,39 @@ function mobileUserConversationsHTML(p, convos) {
     ${toggle}`;
 }
 
-// Open a conversation in chat mode. Live/tracked → its thread; past chat with a
-// log entry → reconstruct its transcript into the thread (ready to continue);
-// transcript-only → arm resume so the next message revives it.
-function openConversation(projectId, csid, mcSessionId, isLive) {
+// Open a conversation in chat mode. Live/tracked → its thread; past chat with an
+// MC session id → reconstruct its transcript into a read-only thread (ready to
+// continue) and switch to THAT session; transcript-only / failure → arm resume.
+// Deliberately does NOT reuse openProjectAtSession — its `activeAgentTab || sid`
+// fallback dumped every tap back onto the currently-open chat.
+async function openConversation(projectId, csid, mcSessionId, isLive) {
   if (mcSessionId && agentStatusCache[mcSessionId]) {
     switchAgentTab(projectId, mcSessionId);
     return;
   }
-  if (mcSessionId && typeof openProjectAtSession === 'function') {
-    openProjectAtSession(projectId, mcSessionId);
-    return;
+  if (mcSessionId) {
+    try {
+      const rr = await fetch(API_BASE + `/api/project/${projectId}/session/${encodeURIComponent(mcSessionId)}/reconstruct`);
+      if (rr.ok) {
+        const rd = await rr.json();
+        agentStatusCache[mcSessionId] = {
+          status: 'completed', task: rd.task || '', projectId,
+          startedAt: rd.started_at || '', claudeSessionId: rd.claude_session_id || csid || '',
+          _readOnlyRevived: true,
+        };
+        agentOutputBuffers[mcSessionId] = rd.log_lines || [];
+        agentServerLines[mcSessionId] = (rd.log_lines || []).length;
+        if (!agentHistory.find(h => h.sessionId === mcSessionId)) {
+          const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
+          agentHistory.unshift({ projectId, sessionId: mcSessionId, projectName: pName,
+            task: rd.task || '', status: 'completed', startedAt: rd.started_at || '' });
+        }
+        switchAgentTab(projectId, mcSessionId);
+        return;
+      }
+    } catch (e) { /* fall through to resume */ }
   }
+  // No MC id, or reconstruct failed → arm resume so the next message revives it.
   if (csid) selectResumeSession(projectId, csid);
 }
 window.openConversation = openConversation;
