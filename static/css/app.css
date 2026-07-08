@@ -2662,8 +2662,13 @@
   /* Item 1/2: mobile Layer-2 active-conversations list fills the panel; the
      "+ New conversation" launcher is pinned to the bottom edge (.agent-panel is
      already a flex column, so the list scrolls and the button bar stays put). */
-  .mobile-conv-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* Sit the conversation list on the warm page background (--bg) with white
+     (--surface) cards — matching the thread view, which already uses --bg + a
+     surface bubble. Fixes the white-on-white "chats and background same colour"
+     look and stays consistent in every theme (both tokens are theme-defined). */
+  .mobile-conv-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
   .conv-list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+  .mobile-conv-list-view .conv-list { background: var(--surface); }
   .conv-newbtn-bar { flex-shrink: 0; background: var(--bg); padding: 8px 0 4px; }
   .conv-newbtn {
     width: 100%; background: var(--accent); color: #fff; border: none;
