@@ -368,12 +368,13 @@ function agentPanelHTML(p) {
   let convListHTML = '', convBackBar = '', tabBar = '';
   if (mobileMode) {
     if (_mobileListMode) {
-      // Layer 2 — all user conversations, with a "+ New / Resume" launcher
-      // pinned to the bottom edge.
+      // Layer 2 — all user conversations, with a "+ New" launcher pinned to the
+      // bottom edge. Resume is reachable by tapping a conversation row (it opens
+      // in the thread, ready to continue), so the button is New-only.
       convListHTML = `<div class="mobile-conv-list-view">
         <div class="conv-list-scroll">${mobileUserConversationsHTML(p, _mobileUserConvos)}</div>
         <div class="conv-newbtn-bar">
-          <button class="conv-newbtn" onclick="newAgentTab('${esc(p.id)}')">&#43; New / Resume conversation</button>
+          <button class="conv-newbtn" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
         </div>
       </div>`;
     } else {
@@ -535,13 +536,13 @@ function agentPanelHTML(p) {
     : `<div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>`;
   const _trailSearchPane = `<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>`;
   const _mobileSheet = mobileMode ? _composerSheetHTML(p, resumeId) : '';
-  // Item 1 (prev batch): on mobile the resume PREVIEW goes ABOVE the composer.
-  // Item 3: the 5a compose view carries a "resume a past conversation" section
-  // (search + picker) BELOW the composer, shown while nothing is armed. The
-  // single #agent-search-pane serves either the preview (armed) or the search
-  // results (browsing) — mutually exclusive via resumeId, so no duplicate id.
+  // Item 1 (prev batch): on mobile the resume PREVIEW goes ABOVE the composer
+  // when a resume is armed (the rare fallback path). The "resume a past
+  // conversation" browse section (search + picker + preview of all chats) is
+  // GONE from the mobile +New menu — the Layer-2 conversation list already lists
+  // every past chat and tapping one opens it in the thread. Desktop keeps it.
   const _mobilePreviewAbove = (mobileMode && resumeId) ? _trailSearchPane : '';
-  const _mobileResumeSection = (mobileMode && !resumeId) ? `${chatSearch}${picker}${_trailSearchPane}` : '';
+  const _mobileResumeSection = '';
   const _trailSearchPaneBelow = mobileMode ? '' : _trailSearchPane;
   const _composerBlock = `<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
@@ -922,7 +923,7 @@ function mobileUserConversationsHTML(p, convos) {
     const csid = c.claude_session_id || '';
     const mcsid = c.mc_session_id || '';
     const isHidden = hidden.has(csid);
-    const label = esc((c.label || '(empty conversation)').substring(0, 90));
+    const label = esc((stripSysPreamble(c.label || '') || '(empty conversation)').substring(0, 90));
     const stt = c.live ? (c.status || 'running') : (c.status || 'completed');
     const dot = `<span class="agent-status-dot ${esc(stt)}" title="${esc(stt)}"></span>`;
     const meta = [esc(c.ts_relative || ''), c.turns ? `${c.turns} turn${c.turns !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');

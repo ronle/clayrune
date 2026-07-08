@@ -846,7 +846,20 @@ function connectAgentStream(projectId, sessionId) {
 // skip the rest of formatAgentText (markdown headers, bullets, code, etc.)
 // for prompts — those would re-render the user's own markup in surprising
 // ways. Image rendering only.
+// The system continuation/compaction preamble MC prepends to a resumed or
+// auto-freshed message — e.g. "[Resuming a previous conversation that grew too
+// large to resume directly (6 MB). Start fresh but continue the user's request
+// below.]" or "[Continuing from a previous conversation … Start fresh …]". It's
+// an agent-facing directive, NOT something the user typed, so it's hidden from
+// the chat view (the full text is still what's sent to the agent). Matches a
+// leading-or-inline bracketed block that opens with Resuming/Continuing and
+// carries one of the known system phrases; eats the trailing blank line too.
+const _SYS_PREAMBLE_RE = /\[(?:Resuming|Continuing)\b[^\][]*?(?:Start fresh|grew too large|could not be resumed|process exited|starting fresh)[^\][]*?\]\s*/gi;
+function stripSysPreamble(s) { return (s || '').replace(_SYS_PREAMBLE_RE, ''); }
+window.stripSysPreamble = stripSysPreamble;
+
 function escPromptWithImages(raw) {
+  raw = stripSysPreamble(raw);   // hide the resume/compaction system preamble
   // Strip the `[Screenshot: <path>]` / `[Attachment: <path>]` wrapper that
   // `buildTaskWithImages` adds when the user attaches an image — once we
   // render a thumbnail the wrapper text is redundant clutter. Non-image
