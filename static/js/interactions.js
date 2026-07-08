@@ -184,6 +184,45 @@ document.addEventListener('touchmove', (e) => {
 
 document.addEventListener('touchend', () => { cancelTileLongPress(); endTileDrag(); });
 
+// ── Conversation-row long-press → delete (mobile) ───────────────────────────
+// Press-and-hold a chat row for 550ms to delete it (confirm dialog). A normal
+// tap (released before the timer, or any finger movement) still opens the chat.
+// Delegated on document so it survives the list's frequent innerHTML rebuilds.
+let convLongPressTimer = null;
+let convLongPressFired = false;
+function cancelConvLongPress() {
+  if (convLongPressTimer) { clearTimeout(convLongPressTimer); convLongPressTimer = null; }
+}
+document.addEventListener('touchstart', (e) => {
+  cancelConvLongPress();
+  convLongPressFired = false;
+  if (e.touches.length > 1) return;
+  const row = e.target.closest('.conv-row');
+  if (!row) return;
+  if (e.target.closest('button, a, input, textarea')) return;  // let ✕/hide work
+  const oc = row.getAttribute('onclick') || '';
+  const m = oc.match(/openConversation\('([^']*)','([^']*)'/);
+  if (!m) return;
+  const projectId = m[1], csid = m[2];
+  const label = (row.querySelector('.conv-name') || {}).textContent || '';
+  convLongPressTimer = setTimeout(() => {
+    convLongPressTimer = null;
+    convLongPressFired = true;   // suppress the click that follows touchend
+    if (navigator.vibrate) { try { navigator.vibrate(15); } catch (_) {} }
+    if (typeof promptDeleteConversation === 'function') promptDeleteConversation(projectId, csid, label);
+  }, 550);
+}, { passive: true });
+document.addEventListener('touchmove', () => { cancelConvLongPress(); }, { passive: true });
+document.addEventListener('touchend', () => { cancelConvLongPress(); }, { passive: true });
+// Capture-phase click swallow: after a long-press fired, kill the row's tap-open
+// so deleting doesn't also open the chat.
+document.addEventListener('click', (e) => {
+  if (convLongPressFired && e.target.closest('.conv-row')) {
+    e.preventDefault(); e.stopPropagation();
+  }
+  convLongPressFired = false;
+}, true);
+
 // ── Modal drag-to-move (multi-modal) ────────────────────────────────────────
 
 // ── Aero-Snap engine ────────────────────────────────────────────────────────

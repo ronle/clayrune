@@ -894,6 +894,26 @@ window.hideConversation = hideConversation;
 window.unhideConversation = unhideConversation;
 window.toggleShowHiddenConvos = toggleShowHiddenConvos;
 
+// Permanently delete a conversation (mobile long-press → confirm). Unlike hide
+// (per-device, reversible), this renames the transcript server-side so it's gone
+// from the list on every device. Guarded server-side against live sessions.
+function promptDeleteConversation(projectId, csid, label) {
+  if (!csid) return;
+  const name = (label || '').trim().replace(/\s+/g, ' ').slice(0, 60) || 'this conversation';
+  if (!confirm(`Delete "${name}"?\n\nThis permanently removes the conversation.`)) return;
+  fetch(API_BASE + `/api/project/${projectId}/conversation/${encodeURIComponent(csid)}`, { method: 'DELETE' })
+    .then(r => r.json().then(d => ({ ok: r.ok, d })).catch(() => ({ ok: r.ok, d: {} })))
+    .then(({ ok, d }) => {
+      if (!ok) { try { showToast(d.error || 'Delete failed', 4000); } catch (_) {} return; }
+      if (conversationsCache[projectId]) {
+        conversationsCache[projectId] = conversationsCache[projectId].filter(c => (c.claude_session_id || '') !== csid);
+      }
+      try { refreshModalById(projectId); } catch (_) {}
+    })
+    .catch(() => { try { showToast('Delete failed — network error', 4000); } catch (_) {} });
+}
+window.promptDeleteConversation = promptDeleteConversation;
+
 // Durable, transcript-derived conversations, filtered to user-initiated (agent/
 // scheduled trigger types → the ⋮ Agent Log side flow) minus manually-hidden.
 // Legacy agent/system chats (dispatched before source tracking) that no filter

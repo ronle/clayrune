@@ -5324,6 +5324,38 @@ def reconstruct_from_transcript(project_id, claude_session_id):
     })
 
 
+@bp.route('/api/project/<project_id>/conversation/<claude_session_id>', methods=['DELETE'])
+def delete_conversation(project_id, claude_session_id):
+    """Delete a conversation the user chose to remove (mobile long-press).
+
+    The conversation list is transcript-derived (it globs *.jsonl), so we rename
+    the transcript to <name>.jsonl.deleted — that drops it from the list on every
+    device while keeping it trivially recoverable (rename back) and NOT touching
+    the agent_log or already-written memory. Refuses a currently-live session
+    (409) so we never yank a transcript out from under a running process.
+    """
+    p = load_project(project_id)
+    if not p:
+        return jsonify({'error': 'project not found'}), 404
+    for s in agent_sessions.values():
+        if s.get('project_id') == project_id and s.get('claude_session_id') == claude_session_id:
+            return jsonify({'error': 'conversation is live — stop it first'}), 409
+    f = _find_transcript_file(p.get('project_path', ''), claude_session_id)
+    if not f:
+        return jsonify({'error': 'transcript not found'}), 404
+    try:
+        src = Path(f)
+        dst = src.parent / (src.name + '.deleted')
+        if dst.exists():
+            dst.unlink()
+        src.rename(dst)
+    except Exception as e:
+        _log(f"[delete-conversation] failed for {claude_session_id}: {e}", flush=True)
+        return jsonify({'error': 'delete failed'}), 500
+    _log(f"[delete-conversation] {project_id} / {claude_session_id} → {dst.name}", flush=True)
+    return jsonify({'ok': True, 'claude_session_id': claude_session_id})
+
+
 @bp.route('/api/recent-runs')
 def api_recent_runs():
     """Aggregate agent_log entries across all projects within a time window.
