@@ -924,27 +924,69 @@ function _userInitiatedConvos(projectId) {
   });
 }
 
+// Cross-reference the durable conversation rows against LIVE agent state so a
+// chat that's currently working or awaiting the user shows it in the list.
+// Keyed by BOTH claude_session_id (a resume reuses it under a fresh mc id) and
+// mc_session_id. Value: 'waiting' (needs the user) | 'working' (running).
+function _liveConvStates(p) {
+  const byCsid = {}, byMcid = {};
+  for (const sid in agentStatusCache) {
+    const s = agentStatusCache[sid];
+    if (!s || s.projectId !== p.id) continue;
+    const waiting = !!(s.waitingForQuestion || s.waitingForPlanApproval);
+    const working = s.status === 'running';
+    if (!waiting && !working) continue;
+    const st = waiting ? 'waiting' : 'working';
+    byMcid[sid] = st;
+    if (s.claudeSessionId) byCsid[s.claudeSessionId] = st;
+  }
+  // Server-authoritative fallback for a live session not yet in the cache.
+  const la = p.live_agent;
+  if (la && la.session_id && !byMcid[la.session_id]) {
+    byMcid[la.session_id] = (la.reason === 'plan' || la.reason === 'question') ? 'waiting' : 'working';
+  }
+  return { byCsid, byMcid };
+}
+function _convLiveState(live, c) {
+  return live.byCsid[c.claude_session_id || ''] || live.byMcid[c.mc_session_id || ''] || null;
+}
+
 // Layer-2 list rows for the user's conversations. Tapping opens it in chat mode
 // (openConversation): live → its thread; past → reconstructed thread ready to
 // continue.
 function mobileUserConversationsHTML(p, convos) {
   const hidden = _hiddenConvSet(p.id);
-  const rows = convos.map(c => {
+  const live = _liveConvStates(p);
+  // Bubble chats that need attention (waiting) then working ones to the top so
+  // an active/awaiting conversation is never buried under older history.
+  const _rank = c => { const s = _convLiveState(live, c); return s === 'waiting' ? 0 : s === 'working' ? 1 : 2; };
+  const ordered = convos.map((c, i) => [c, i]).sort((a, b) => _rank(a[0]) - _rank(b[0]) || a[1] - b[1]).map(x => x[0]);
+  const rows = ordered.map(c => {
     const csid = c.claude_session_id || '';
     const mcsid = c.mc_session_id || '';
     const isHidden = hidden.has(csid);
     const label = esc((stripSysPreamble(c.label || '') || '(empty conversation)').substring(0, 90));
-    const stt = c.live ? (c.status || 'running') : (c.status || 'completed');
-    const dot = `<span class="agent-status-dot ${esc(stt)}" title="${esc(stt)}"></span>`;
+    const liveSt = _convLiveState(live, c);
+    let dot, badge = '';
+    if (liveSt === 'waiting') {
+      dot = `<span class="agent-status-dot needs-attention" title="Waiting for your reply"></span>`;
+      badge = `<span class="conv-live-badge waiting">Waiting for you</span>`;
+    } else if (liveSt === 'working') {
+      dot = `<span class="agent-status-dot running" title="Working…"></span>`;
+      badge = `<span class="conv-live-badge working">Working…</span>`;
+    } else {
+      const stt = c.live ? (c.status || 'running') : (c.status || 'completed');
+      dot = `<span class="agent-status-dot ${esc(stt)}" title="${esc(stt)}"></span>`;
+    }
     const meta = [esc(c.ts_relative || ''), c.turns ? `${c.turns} turn${c.turns !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
     const hideBtn = isHidden
       ? `<button class="conv-hide" onclick="unhideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Move back to the list" aria-label="Unhide">&#8617;</button>`
       : `<button class="conv-hide" onclick="hideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Hide from this list" aria-label="Hide">&#10005;</button>`;
-    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
+    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
       <div class="conv-main">
         <div class="conv-top">
           <span class="conv-name">${dot}${label}</span>
-          <span class="conv-time">${esc(c.ts_relative || '')}</span>
+          <span class="conv-time">${badge || esc(c.ts_relative || '')}</span>
         </div>
         <div class="conv-bot"><span class="conv-sub">${esc(meta)}</span></div>
       </div>
