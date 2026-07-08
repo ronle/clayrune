@@ -798,8 +798,12 @@ document.addEventListener('touchend', (e) => {
   // (Button/keyboard zoom already saves via _setModalPref at applyZoom; the
   // pinch handler updated modalZoomLevels + applied it live but never saved the
   // pref, so reopening the modal reverted to the default size.)
-  if (modalPinch && modalPinch.isZoom && typeof _setModalPref === 'function') {
-    _setModalPref(modalPinch.modalId, { zoom: modalZoomLevels[modalPinch.modalId] });
+  if (modalPinch && modalPinch.isZoom) {
+    // Persist via the mobile-inclusive zoom store (the geometry pref no-ops on
+    // mobile, which is exactly where pinch-zoom lives). Keep the geometry-pref
+    // write too so existing desktop prefs stay consistent.
+    if (typeof _setModalZoom === 'function') _setModalZoom(modalPinch.modalId, modalZoomLevels[modalPinch.modalId]);
+    if (typeof _setModalPref === 'function') _setModalPref(modalPinch.modalId, { zoom: modalZoomLevels[modalPinch.modalId] });
   }
   if (e.touches.length < 2) modalPinch = null;
 });
@@ -840,6 +844,7 @@ document.getElementById('modal-layer').addEventListener('wheel', (e) => {
   const delta = e.deltaY > 0 ? -1 : 1;
   modalZoomLevels[modalId] = Math.max(8, Math.min(24, modalZoomLevels[modalId] + delta));
   applyModalZoom(modal, modalZoomLevels[modalId]);
+  if (typeof _setModalZoom === 'function') _setModalZoom(modalId, modalZoomLevels[modalId]);
   _setModalPref(modalId, { zoom: modalZoomLevels[modalId] });
 }, { passive: false });
 

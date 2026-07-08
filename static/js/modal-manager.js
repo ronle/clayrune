@@ -17,6 +17,22 @@ function _getModalPref(projectId) {
   const all = _loadModalPrefs();
   return all[projectId] || null;
 }
+// Text zoom is persisted SEPARATELY from geometry so it survives on mobile too.
+// Geometry prefs (_get/_setModalPref) are desktop-only — the modal is
+// full-screen on mobile — but a pinch-to-zoom text size should stick across
+// reopen/reload on every device. Keyed by projectId in its own localStorage map.
+function _getModalZoom(projectId) {
+  try { return (JSON.parse(localStorage.getItem('mc_modal_zoom') || '{}') || {})[projectId] || 0; }
+  catch { return 0; }
+}
+function _setModalZoom(projectId, size) {
+  if (!projectId || projectId.startsWith('__') || !size) return;
+  try {
+    const all = JSON.parse(localStorage.getItem('mc_modal_zoom') || '{}') || {};
+    all[projectId] = size;
+    localStorage.setItem('mc_modal_zoom', JSON.stringify(all));
+  } catch {}
+}
 let _modalPrefSaveTimer = null;
 let _modalPrefPending = null; // latest in-memory prefs object awaiting flush
 function _flushModalPrefs() {
@@ -237,9 +253,12 @@ function openProjectModal(projectId, restoreState) {
   const pref = (!_isMobileDevice && window.innerWidth > 960) ? _getModalPref(projectId) : null;
   if (pref && pref.width)  content.style.width  = Math.min(pref.width,  window.innerWidth)  + 'px';
   if (pref && pref.height) content.style.height = Math.min(pref.height, window.innerHeight) + 'px';
-  if (pref && pref.zoom) {
-    modalZoomLevels[projectId] = pref.zoom;
-    applyModalZoom(win, pref.zoom);
+  // Zoom re-applies on EVERY device (mobile included) from its own store, with a
+  // fallback to the legacy per-project geometry pref for existing desktop users.
+  const savedZoom = _getModalZoom(projectId) || (pref && pref.zoom) || 0;
+  if (savedZoom) {
+    modalZoomLevels[projectId] = savedZoom;
+    applyModalZoom(win, savedZoom);
   }
   // Restore pin state (snapshot wins over saved pref for per-instance memory)
   const unpinnedToRestore = (restoreState && typeof restoreState.unpinned === 'boolean')
@@ -906,6 +925,8 @@ function restoreModal(modalId) {
 
 // ── interop: window re-exposure for inline/generated/cross-module callers ──
 window._flushModalPrefs = _flushModalPrefs;
+window._getModalZoom = _getModalZoom;
+window._setModalZoom = _setModalZoom;
 window._setModalPref = _setModalPref;
 window._saveOpenModalsSnapshot = _saveOpenModalsSnapshot;
 window._loadOpenModalsSnapshot = _loadOpenModalsSnapshot;
