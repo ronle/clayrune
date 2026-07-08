@@ -900,6 +900,12 @@ window.toggleShowHiddenConvos = toggleShowHiddenConvos;
 // can catch by trigger/source — recognised by their task text. Applied ONLY to
 // source-less rows so it never hides a real UI conversation going forward.
 const _AGENT_LABEL_RE = /^\s*(\[scheduled run|\[task-notification|<task-notification|you are the |\[binding for this reply|base directory for this skill|weekly learning-loop|\[system)/i;
+// Empty-task resume default (nobody typed a real message — the composer was
+// blank on Continue) and trivial one-turn acknowledgements ("ok", "yes", …).
+// These are transcript-only sessions with no substantive user content; they're
+// not conversations worth surfacing. Whole-label match, source-less rows only.
+const _NOISE_RESUME_RE = /^continue where we left off\.?$/i;
+const _TRIVIAL_ACK_RE = /^(ok(ay)?|kk?|yes|yep|yeah|ya|no|nope|nvm|sure|thanks|thank you|ty|thx|continue|go|go on|go ahead|proceed|done|got it)[.!]?$/i;
 function _userInitiatedConvos(projectId) {
   const AGENT_TRIGGERS = new Set(['schedule', 'hivemind_worker', 'hivemind_orchestrator', 'hivemind', 'auto', 'housekeeping']);
   const AGENT_SOURCES = new Set(['agent', 'api', 'cron']);  // programmatic dispatch → side flow
@@ -908,7 +914,11 @@ function _userInitiatedConvos(projectId) {
   return (conversationsCache[projectId] || []).filter(c => {
     if (AGENT_TRIGGERS.has(c.trigger_type || '')) return false;
     if (AGENT_SOURCES.has(c.source || '')) return false;
-    if (!(c.source || '') && _AGENT_LABEL_RE.test(c.label || '')) return false;  // legacy agent/system chat
+    const src = c.source || '';
+    const label = (c.label || '').trim();
+    if (!src && _AGENT_LABEL_RE.test(label)) return false;         // legacy agent/system chat
+    if (!src && _NOISE_RESUME_RE.test(label)) return false;         // empty-task "Continue where we left off."
+    if (!src && (c.turns || 0) <= 1 && _TRIVIAL_ACK_RE.test(label)) return false;  // trivial 1-turn ack
     if (!showHidden && hidden.has(c.claude_session_id || '')) return false;
     return true;
   });
