@@ -2052,10 +2052,20 @@
        than the viewport and shoves the timestamp off-screen. Not :has() —
        Android WebView support is uneven and this is load-bearing. */
     .projects-col.mc-chat-mode {
-      display: block; padding: 0 0 16px; gap: 0;
+      display: block; padding: 0 12px 16px; gap: 0;
       min-width: 0; max-width: 100%; overflow-x: hidden;
     }
-    .mc-chat-list { display: flex; flex-direction: column; width: 100%; }
+    /* Projects sit in a single white (--surface) card on the warm page
+       background (2a), with hairline trim lines between rows — same figure/
+       ground as the conversation list. Theme tokens keep it consistent in
+       every theme. */
+    .mc-chat-list {
+      display: flex; flex-direction: column; width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
     .mc-chat-row {
       display: flex; align-items: center; gap: 12px;
       padding: 11px 16px; cursor: pointer;
@@ -2063,6 +2073,7 @@
       -webkit-tap-highlight-color: transparent;
       max-width: 100%; overflow: hidden;
     }
+    .mc-chat-row:last-child { border-bottom: none; }
     .mc-chat-row:active { background: var(--surface3); }
     .cr-avatar {
       position: relative; width: 50px; height: 50px; flex-shrink: 0;
