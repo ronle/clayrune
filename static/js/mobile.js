@@ -16,6 +16,12 @@
     document.documentElement.style.setProperty('--mc-app-vh', Math.round(h) + 'px');
   }
   function schedule() { if (!_raf) _raf = requestAnimationFrame(apply); }
+  // Re-apply across a settle window: some Android WebViews report a stale
+  // viewport height for a beat after the keyboard animates away, and the vv
+  // 'resize' event can fire before the height finishes updating — or not at all
+  // on a programmatic blur (e.g. sending a follow-up that interrupts the agent),
+  // which left the modal stuck at keyboard height (the "split screen").
+  function settle() { schedule(); setTimeout(apply, 120); setTimeout(apply, 350); setTimeout(apply, 700); }
   apply();
   if (vv) {
     vv.addEventListener('resize', schedule);
@@ -23,6 +29,11 @@
   }
   window.addEventListener('resize', schedule);
   window.addEventListener('orientationchange', () => setTimeout(apply, 200));
+  // Keyboard show/hide tracks focus entering/leaving a text field — the most
+  // reliable signal when the vv event is flaky. Settle on both.
+  const _isField = t => t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT');
+  document.addEventListener('focusin', e => { if (_isField(e.target)) settle(); });
+  document.addEventListener('focusout', e => { if (_isField(e.target)) settle(); });
 })();
 
 // ── Mobile UI: app bar greeting + filter pills (≤960px, warm tone) ──────────
