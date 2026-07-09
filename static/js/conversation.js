@@ -935,7 +935,11 @@ function _userInitiatedConvos(projectId) {
     if (AGENT_TRIGGERS.has(c.trigger_type || '')) return false;
     if (AGENT_SOURCES.has(c.source || '')) return false;
     const src = c.source || '';
-    const label = (c.label || '').trim();
+    // Test the label with agent-facing preambles (resume/continue + the per-turn
+    // brevity directive) stripped, so a genuine user chat whose message merely
+    // CARRIES a prepended "[BINDING…]" directive isn't misread as a system chat.
+    const label = stripSysPreamble(c.label || '').trim();
+    if (!src && !label) return false;                              // nothing but a system preamble
     if (!src && _AGENT_LABEL_RE.test(label)) return false;         // legacy agent/system chat
     if (!src && _NOISE_RESUME_RE.test(label)) return false;         // empty-task "Continue where we left off."
     if (!src && (c.turns || 0) <= 1 && _TRIVIAL_ACK_RE.test(label)) return false;  // trivial 1-turn ack

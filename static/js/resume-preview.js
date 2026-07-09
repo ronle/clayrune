@@ -855,7 +855,14 @@ function connectAgentStream(projectId, sessionId) {
 // leading-or-inline bracketed block that opens with Resuming/Continuing and
 // carries one of the known system phrases; eats the trailing blank line too.
 const _SYS_PREAMBLE_RE = /\[(?:Resuming|Continuing)\b[^\][]*?(?:Start fresh|grew too large|could not be resumed|process exited|starting fresh)[^\][]*?\]\s*/gi;
-function stripSysPreamble(s) { return (s || '').replace(_SYS_PREAMBLE_RE, ''); }
+// The per-turn brevity directive MC prepends to a user message when
+// sticky_agent_settings is OFF (_BRIEF_REPLY_DIRECTIVE_ALWAYS, agent_routes.py).
+// It's agent-facing ("hidden from the user") but lands at the START of the stored
+// conversation label — making a genuine chat display the directive AND get
+// misfiltered as a "[binding…" system chat by _AGENT_LABEL_RE. Strip it so the
+// real user message drives both the label and the user-conversation filter.
+const _BRIEF_DIRECTIVE_RE = /\[BINDING for this reply\b[\s\S]*?hidden from the user\.\]\s*/gi;
+function stripSysPreamble(s) { return (s || '').replace(_SYS_PREAMBLE_RE, '').replace(_BRIEF_DIRECTIVE_RE, ''); }
 window.stripSysPreamble = stripSysPreamble;
 
 function escPromptWithImages(raw) {
