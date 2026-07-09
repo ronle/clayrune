@@ -2368,28 +2368,6 @@
   .conv-list-count {
     font-size: 11px; font-weight: 600; color: var(--text-faint);
   }
-  /* Layer-2 conversation-list filter box (client-side name filter). */
-  .conv-list-search {
-    position: relative; display: flex; align-items: center;
-    margin-bottom: 8px; flex-shrink: 0;
-  }
-  .conv-list-search .cls-icon {
-    position: absolute; left: 10px; font-size: 12px;
-    opacity: 0.5; pointer-events: none;
-  }
-  .conv-list-search .cls-input {
-    width: 100%; box-sizing: border-box;
-    padding: 8px 12px 8px 30px; border-radius: 8px;
-    background: var(--surface2); border: 1px solid var(--border);
-    color: var(--text); font-size: 13px; outline: none;
-    transition: border-color 0.15s;
-  }
-  .conv-list-search .cls-input::placeholder { color: var(--text-faint); }
-  .conv-list-search .cls-input:focus { border-color: var(--accent); }
-  .conv-list-empty {
-    padding: 14px; text-align: center;
-    color: var(--text-faint); font-size: 12px;
-  }
   .conv-new-btn, .conv-back-btn {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 5px 11px; border-radius: 6px;
