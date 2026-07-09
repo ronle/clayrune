@@ -233,6 +233,29 @@ def strip_mc_tool_blocks(text: str) -> str:
     return _MC_TOOL_BLOCK_RE.sub('', text)
 
 
+# Agent-facing preambles MC prepends to a USER message before it reaches the CLI:
+#  • the per-turn brevity directive (_BRIEF_REPLY_DIRECTIVE_ALWAYS, agent_routes)
+#    when sticky_agent_settings is OFF — a single "[BINDING for this reply … hidden
+#    from the user.]" block, ~600 chars, no internal ']';
+#  • the resume/continue compaction preamble.
+# Both land at the START of the user's message, so a conversation label derived
+# from that message (first_user/last_user, truncated to 300 chars) can be 100%
+# preamble — burying the real message past the cutoff and making a genuine user
+# chat look like a system chat. Strip them at extraction, BEFORE truncation.
+_INJECTED_PREAMBLE_RE = re.compile(
+    r'\[BINDING for this reply\b[^\]]*\]\s*'
+    r'|\[(?:Resuming|Continuing)\b[^\]]*?'
+    r'(?:Start fresh|grew too large|could not be resumed|process exited|starting fresh)'
+    r'[^\]]*?\]\s*',
+    re.IGNORECASE,
+)
+
+
+def strip_injected_preamble(text: str) -> str:
+    """Remove MC-injected agent-facing preambles from a user-message string."""
+    return _INJECTED_PREAMBLE_RE.sub('', text or '').strip()
+
+
 # MC Tool Protocol side-effect hooks. mc:todo backlog sync lives in server.py
 # (_sync_todowrite_to_backlog) which agent_runtime.py cannot import — server.py
 # registers it here at startup, same pattern as _CLAUDE_HOOKS.
@@ -1007,9 +1030,13 @@ class ClaudeRuntime(AgentRuntime):
                         if not text:
                             continue
                         turns += 1
+                        # Strip MC-injected preambles so the label reflects the
+                        # user's real message, not the "[BINDING…]" directive
+                        # (which alone exceeds the 300-char label cap below).
+                        clean = strip_injected_preamble(text) or text
                         if not first_user:
-                            first_user = text
-                        last_user = text
+                            first_user = clean
+                        last_user = clean
             except Exception:
                 pass
             try:
