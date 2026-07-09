@@ -923,7 +923,7 @@ const _AGENT_LABEL_RE = /^\s*(\[scheduled run|\[task-notification|<task-notifica
 // blank on Continue) and trivial one-turn acknowledgements ("ok", "yes", …).
 // These are transcript-only sessions with no substantive user content; they're
 // not conversations worth surfacing. Whole-label match, source-less rows only.
-const _NOISE_RESUME_RE = /^continue where we left off\.?$/i;
+const _NOISE_RESUME_RE = /^continue (?:where we|from where you) left off\.?$/i;
 const _TRIVIAL_ACK_RE = /^(ok(ay)?|kk?|yes|yep|yeah|ya|no|nope|nvm|sure|thanks|thank you|ty|thx|continue|go|go on|go ahead|proceed|done|got it)[.!]?$/i;
 function _userInitiatedConvos(projectId) {
   const AGENT_TRIGGERS = new Set(['schedule', 'hivemind_worker', 'hivemind_orchestrator', 'hivemind', 'auto', 'housekeeping']);

@@ -247,6 +247,7 @@ def strip_mc_tool_blocks(text: str) -> str:
 # extraction, BEFORE truncation.
 _INJECTED_PREAMBLE_RE = re.compile(
     r'\[BINDING for this reply\b[^\]]*\]\s*'
+    r'|\[the user is messaging you from a phone\b[^\]]*\]\s*'
     r'|\[(?:Resuming|Continuing)\b[^\]]*?'
     r'(?:Start fresh|grew too large|could not be resumed|process exited|starting fresh)'
     r'[^\]]*?\]\s*'
@@ -255,14 +256,16 @@ _INJECTED_PREAMBLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# After stripping the blocks above, a message that STILL opens with one of these
-# is a non-user turn (an unclosed/variant notification, a scheduled-run prompt, a
-# skill preamble, …) — skip it for labeling so the label falls back to real user
-# text. Mirrors the client's _AGENT_LABEL_RE.
+# After stripping the blocks above, a turn that STILL opens with one of these is
+# an injected mid-conversation turn whose real user text lives ELSEWHERE (a
+# fed-back notification/reminder, possibly unclosed so strip missed it) — skip it
+# for labeling so the label falls back to the user's real message. We deliberately
+# do NOT list "[scheduled run" / skill / system-prompt markers: those ARE the
+# identifying label of a non-user chat we want to KEEP so the client filters the
+# whole conversation out. Skipping them here unmasked scheduled runs as fake user
+# chats (the label fell through to the "Continue from where you left off." nudge).
 _NONUSER_LABEL_RE = re.compile(
-    r'^\s*(?:\[scheduled run|\[task-notification|<task-notification'
-    r'|you are the |base directory for this skill|weekly learning-loop'
-    r'|\[system|<system-reminder)',
+    r'^\s*(?:<task-notification|<system-reminder)',
     re.IGNORECASE,
 )
 
