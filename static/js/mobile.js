@@ -1,3 +1,30 @@
+// ── Viewport-height sync (keyboard show/hide) ───────────────────────────────
+// Android WebView doesn't reliably recompute `dvh` after the soft keyboard is
+// dismissed, so a full-height project modal (height:100dvh) stayed pinned at the
+// keyboard-open height — leaving the dashboard visible below it (the "split
+// screen" bug). Drive the mobile modal height from visualViewport.height via a
+// CSS var instead; it updates on every keyboard show AND hide, so the modal
+// shrinks to keep the composer above the keyboard and expands back on dismiss.
+// Desktop is unaffected: the mobile modal-height CSS rules live inside the
+// ≤960px media query, and the var falls back to 100dvh until first set.
+(function mcViewportHeightSync() {
+  const vv = window.visualViewport || null;
+  let _raf = 0;
+  function apply() {
+    _raf = 0;
+    const h = (vv && vv.height) ? vv.height : window.innerHeight;
+    document.documentElement.style.setProperty('--mc-app-vh', Math.round(h) + 'px');
+  }
+  function schedule() { if (!_raf) _raf = requestAnimationFrame(apply); }
+  apply();
+  if (vv) {
+    vv.addEventListener('resize', schedule);
+    vv.addEventListener('scroll', schedule);
+  }
+  window.addEventListener('resize', schedule);
+  window.addEventListener('orientationchange', () => setTimeout(apply, 200));
+})();
+
 // ── Mobile UI: app bar greeting + filter pills (≤960px, warm tone) ──────────
 function renderMobileAppBar() {
   if (window.innerWidth > 960) return;
