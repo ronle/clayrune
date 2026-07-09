@@ -233,27 +233,48 @@ def strip_mc_tool_blocks(text: str) -> str:
     return _MC_TOOL_BLOCK_RE.sub('', text)
 
 
-# Agent-facing preambles MC prepends to a USER message before it reaches the CLI:
+# Content injected into the USER-role message stream that is NOT something the
+# user typed, so it must never become a conversation label:
 #  • the per-turn brevity directive (_BRIEF_REPLY_DIRECTIVE_ALWAYS, agent_routes)
-#    when sticky_agent_settings is OFF — a single "[BINDING for this reply … hidden
-#    from the user.]" block, ~600 chars, no internal ']';
-#  • the resume/continue compaction preamble.
-# Both land at the START of the user's message, so a conversation label derived
-# from that message (first_user/last_user, truncated to 300 chars) can be 100%
-# preamble — burying the real message past the cutoff and making a genuine user
-# chat look like a system chat. Strip them at extraction, BEFORE truncation.
+#    when sticky_agent_settings is OFF — a "[BINDING for this reply … hidden from
+#    the user.]" block, ~600 chars, no internal ']';
+#  • the resume/continue compaction preamble;
+#  • workflow <task-notification>…</task-notification> results and
+#    <system-reminder>…</system-reminder> blocks fed back as user turns.
+# These land in first_user/last_user (truncated to 300 chars), so a label derived
+# from them buries the real message or makes a genuine user chat look like a
+# system chat (and the mobile list then filters it out). Strip them at
+# extraction, BEFORE truncation.
 _INJECTED_PREAMBLE_RE = re.compile(
     r'\[BINDING for this reply\b[^\]]*\]\s*'
     r'|\[(?:Resuming|Continuing)\b[^\]]*?'
     r'(?:Start fresh|grew too large|could not be resumed|process exited|starting fresh)'
-    r'[^\]]*?\]\s*',
+    r'[^\]]*?\]\s*'
+    r'|<task-notification\b[\s\S]*?</task-notification>\s*'
+    r'|<system-reminder\b[\s\S]*?</system-reminder>\s*',
+    re.IGNORECASE,
+)
+
+# After stripping the blocks above, a message that STILL opens with one of these
+# is a non-user turn (an unclosed/variant notification, a scheduled-run prompt, a
+# skill preamble, …) — skip it for labeling so the label falls back to real user
+# text. Mirrors the client's _AGENT_LABEL_RE.
+_NONUSER_LABEL_RE = re.compile(
+    r'^\s*(?:\[scheduled run|\[task-notification|<task-notification'
+    r'|you are the |base directory for this skill|weekly learning-loop'
+    r'|\[system|<system-reminder)',
     re.IGNORECASE,
 )
 
 
 def strip_injected_preamble(text: str) -> str:
-    """Remove MC-injected agent-facing preambles from a user-message string."""
+    """Remove MC-injected agent-facing content from a user-message string."""
     return _INJECTED_PREAMBLE_RE.sub('', text or '').strip()
+
+
+def is_nonuser_message(text: str) -> bool:
+    """True if `text` is an injected/system turn, not something the user typed."""
+    return bool(_NONUSER_LABEL_RE.match(text or ''))
 
 
 # MC Tool Protocol side-effect hooks. mc:todo backlog sync lives in server.py
@@ -1030,10 +1051,15 @@ class ClaudeRuntime(AgentRuntime):
                         if not text:
                             continue
                         turns += 1
-                        # Strip MC-injected preambles so the label reflects the
-                        # user's real message, not the "[BINDING…]" directive
-                        # (which alone exceeds the 300-char label cap below).
-                        clean = strip_injected_preamble(text) or text
+                        # Derive the label from REAL user text only: strip
+                        # MC-injected preambles ([BINDING…], resume/continue,
+                        # <task-notification>/<system-reminder>) and skip a turn
+                        # that is nothing but an injected/system block — otherwise
+                        # the label defaults to e.g. a workflow "<task-notification>"
+                        # and the mobile list filters the whole chat out as noise.
+                        clean = strip_injected_preamble(text)
+                        if not clean or is_nonuser_message(clean):
+                            continue
                         if not first_user:
                             first_user = clean
                         last_user = clean
