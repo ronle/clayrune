@@ -2263,7 +2263,12 @@ async function fetchAgentStatus(projectId) {
     // instant the list appears (the "flashes then jumps" bug).
     if (sessions.length > 0 && !activeAgentTab[projectId]) {
       const visible = sessions.filter(s => !s.hivemind_ws_id);
-      if (!isMobileChatList() || visible.length <= 1) {
+      // DESKTOP only. MOBILE never auto-selects — even a lone conversation lands
+      // on the Layer-2 list (the home view), so hardware-back returns there
+      // instead of exiting to the dashboard. The old `|| visible.length <= 1`
+      // exception drilled straight into a single active chat on project open
+      // (Engulfing Dashboard), stranding the back button.
+      if (!isMobileChatList()) {
         const running = visible.find(s => s.status === 'running' || s.status === 'idle');
         activeAgentTab[projectId] = running ? running.session_id : (visible[0] || sessions[0]).session_id;
       }
