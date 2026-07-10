@@ -2197,7 +2197,7 @@
 
     /* Bottom tab bar — 5 slots, FAB centered. Compact (~52px tall incl. FAB lift) */
     .bottom-tab-bar {
-      display: grid !important; grid-template-columns: repeat(5, 1fr);
+      display: grid !important; grid-template-columns: repeat(4, 1fr);
       padding: 4px 8px 6px;
       border-top: 1.5px solid var(--border);
     }
