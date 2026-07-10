@@ -2440,6 +2440,11 @@
     width: 264px; flex-shrink: 0; display: flex; flex-direction: column;
     border-right: 1px solid var(--border); overflow: hidden; min-height: 0;
   }
+  .agent-3pane .agent-rail-resizer {
+    flex-shrink: 0; width: 7px; margin: 0 -4px; cursor: col-resize;
+    position: relative; z-index: 2; background: transparent; transition: background 0.12s;
+  }
+  .agent-3pane .agent-rail-resizer:hover { background: var(--accent-dim); }
   .agent-3pane .agent-rail-new {
     margin: 12px; flex-shrink: 0; padding: 9px 12px;
     background: var(--accent); color: #fff; border: none; border-radius: 8px;

@@ -857,11 +857,14 @@ function agentPanelHTML(p) {
     const railRows = _railConvos.length
       ? mobileUserConversationsHTML(p, _railConvos)
       : '<div class="agent-rail-empty">No conversations yet.</div>';
+    const _railW = parseInt(localStorage.getItem('mc_rail_w') || '', 10);
+    const _railStyle = (_railW >= 200 && _railW <= 560) ? ` style="width:${_railW}px"` : '';
     return `<div class="agent-panel agent-3pane">
-      <div class="agent-rail">
+      <div class="agent-rail"${_railStyle}>
         <button class="conv-newbtn agent-rail-new" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
         <div class="agent-rail-list">${railRows}</div>
       </div>
+      <div class="agent-rail-resizer" onmousedown="startRailResize(event)" title="Drag to resize"></div>
       <div class="agent-main">
         ${tabContent}
         ${dispatchRow}
@@ -880,6 +883,34 @@ function agentPanelHTML(p) {
     ${dispatchRow}
   </div>`;
 }
+
+// Draggable splitter between the desktop 3-pane recents rail and the thread.
+// Width persists in localStorage (mc_rail_w) and is re-applied on every render.
+let _railResize = null;
+function startRailResize(e) {
+  const panel = e.target.closest('.agent-3pane');
+  const rail = panel && panel.querySelector('.agent-rail');
+  if (!rail) return;
+  e.preventDefault();
+  _railResize = { rail, startX: e.clientX, startW: rail.offsetWidth };
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+function _railResizeMove(e) {
+  if (!_railResize) return;
+  const w = Math.max(200, Math.min(_railResize.startW + (e.clientX - _railResize.startX), 560));
+  _railResize.rail.style.width = w + 'px';
+}
+function _railResizeEnd() {
+  if (!_railResize) return;
+  try { localStorage.setItem('mc_rail_w', String(_railResize.rail.offsetWidth)); } catch (e) {}
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  _railResize = null;
+}
+document.addEventListener('mousemove', _railResizeMove);
+document.addEventListener('mouseup', _railResizeEnd);
+window.startRailResize = startRailResize;
 
 // WhatsApp-Communities-style conversation list: shown in the Agent panel when
 // a project has >1 active conversation. Each row drills into that
