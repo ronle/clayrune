@@ -1993,10 +1993,12 @@
      companion HTML/JS (see CHANGELOG.md). */
   @media (max-width: 960px) {
     .header { display: none; }
-    /* Clean mobile dashboard (design mockup): drop the Schedule + Beacon bars.
+    /* Clean mobile dashboard (design mockup): drop the Schedule + Beacon bars
+       AND their .top-strip-row wrapper (it has its own surface bg + border, so
+       an empty wrapper left a thin white strip at the top of the page).
        !important beats the inline display JS sets when it populates them. They
        stay on desktop; still reachable there / via their own surfaces. */
-    .schedule-banner, .beacon-bar { display: none !important; }
+    .schedule-banner, .beacon-bar, .top-strip-row { display: none !important; }
     .content-main { padding: 0 0 80px; }
     .toolbar { display: none; }
     .projects-col { padding: 0 16px 16px; gap: 12px; }
