@@ -226,6 +226,15 @@
   .sidebar-item.si-advanced:hover, .sidebar-item.si-advanced.active { opacity: 1; }
   /* "New Project" reads as the primary create action. */
   .sidebar-item.si-new .si-icon, .sidebar-item.si-new .si-label { color: var(--accent); }
+  /* Sidebar unread badge (Inbox). */
+  .si-icon { position: relative; }
+  .si-badge {
+    position: absolute; top: -5px; right: -9px;
+    min-width: 15px; height: 15px; padding: 0 4px; box-sizing: border-box;
+    border-radius: 8px; background: var(--red, #e05252); color: #fff;
+    font-size: 9px; font-weight: 700; line-height: 15px; text-align: center;
+  }
+  .si-badge[hidden] { display: none; }
   /* "Update available" badge: small accent-colored dot on the icon. Pulses
      gently to draw attention without being aggressive. Only present on
      items with .has-update (set by checkClayruneUpdateAvailable). */
@@ -3906,6 +3915,45 @@
   }
   #waiting-on-you .woy-act.woy-primary { background: var(--accent); color: #fff; }
   #waiting-on-you .woy-act.woy-ghost { background: transparent; color: var(--accent); }
+
+  /* Desktop redesign step 3: the right-hand activity feed is replaced by the
+     Inbox surface — remove the column + its expand tab. */
+  .feed-col, .feed-expand-tab { display: none !important; }
+  /* Desktop Inbox modal timeline (scoped so it never collides with the mobile
+     .mib-* rules in the ≤960 block). */
+  .desktop-inbox-body { padding: 0 8px 8px; }
+  #desktop-inbox-list { max-height: 66vh; overflow-y: auto; }
+  #desktop-inbox-list .mib-day {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    color: var(--text-faint); padding: 12px 16px 6px; position: sticky; top: 0;
+    background: var(--surface); z-index: 2;
+  }
+  #desktop-inbox-list .mib-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  #desktop-inbox-list .mib-row:hover { background: var(--surface2); }
+  #desktop-inbox-list .mib-row.mib-unread { background: var(--surface2); }
+  #desktop-inbox-list .mib-icon { font-size: 18px; flex-shrink: 0; position: relative; }
+  #desktop-inbox-list .mib-row.mib-unread .mib-icon::after {
+    content: ''; position: absolute; top: -2px; right: -5px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--surface);
+  }
+  #desktop-inbox-list .mib-main { flex: 1; min-width: 0; }
+  #desktop-inbox-list .mib-project {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    font-size: 13.5px; font-weight: 600; color: var(--text);
+  }
+  #desktop-inbox-list .mib-row.mib-unread .mib-project { font-weight: 700; }
+  #desktop-inbox-list .mib-time { font-size: 11px; font-weight: 500; color: var(--text-faint); flex-shrink: 0; }
+  #desktop-inbox-list .mib-msg { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; word-break: break-word; }
+  #desktop-inbox-list .mib-del {
+    background: transparent; border: none; color: var(--text-faint);
+    font-size: 14px; line-height: 1; cursor: pointer; padding: 6px 4px; flex-shrink: 0;
+  }
+  #desktop-inbox-list .mib-del:hover { color: var(--red, #e05252); }
+  #desktop-inbox-list .mib-empty { text-align: center; color: var(--text-dim); padding: 40px 20px; font-size: 13px; }
   .top-strip-row .schedule-banner,
   .top-strip-row .beacon-bar {
     position: static;

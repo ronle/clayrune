@@ -256,8 +256,9 @@ function _inboxRowHTML(it) {
   </div>`;
 }
 
-async function renderInbox() {
-  const list = document.getElementById('mobile-inbox-list');
+// Shared timeline renderer — fills any list element (mobile overlay OR the
+// desktop Inbox modal) from /api/notifications. The two never render at once.
+async function _renderInboxList(list) {
   if (!list) return;
   const seq = ++_inboxSeq;
   const q = _inboxQuery.trim();
@@ -291,11 +292,17 @@ async function renderInbox() {
     btn.addEventListener('click', e => { e.stopPropagation(); deleteNotification(btn.dataset.id); });
   });
 }
+function renderInbox() { return _renderInboxList(document.getElementById('mobile-inbox-list')); }
+function renderDesktopInbox() { return _renderInboxList(document.getElementById('desktop-inbox-list')); }
+// Re-render whichever inbox is currently on screen (desktop modal wins if open).
+function _renderActiveInbox() {
+  return document.getElementById('desktop-inbox-list') ? renderDesktopInbox() : renderInbox();
+}
 
 function onInboxSearchInput(v) {
   _inboxQuery = v;
   clearTimeout(_inboxTimer);
-  _inboxTimer = setTimeout(renderInbox, 250);
+  _inboxTimer = setTimeout(_renderActiveInbox, 250);
 }
 
 function openNotification(id, projectId, sessionId) {
@@ -305,6 +312,15 @@ function openNotification(id, projectId, sessionId) {
     body: JSON.stringify({ ids: [id] }),
   }).catch(() => {});
   if (!projectId) { setTimeout(updateInboxBadge, 300); return; }
+  // Desktop Inbox is a modal — close it, then open the project (no mobile
+  // back-stack dance).
+  if (typeof openModals !== 'undefined' && openModals.has && openModals.has('__inbox')) {
+    closeModalById('__inbox');
+    if (sessionId && typeof openProjectAtSession === 'function') openProjectAtSession(projectId, sessionId);
+    else if (typeof openProjectModal === 'function') openProjectModal(projectId);
+    setTimeout(updateInboxBadge, 300);
+    return;
+  }
   // Keep the inbox on the back-stack: hide its UI but KEEP _mcInboxOpen + its
   // history sentinel, so hardware-back from the chat returns to the INBOX (not
   // the project's conversation list). Suppress the conv-list history level so
@@ -324,7 +340,7 @@ function openNotification(id, projectId, sessionId) {
 async function deleteNotification(id) {
   try { await fetch(API_BASE + '/api/notifications/' + encodeURIComponent(id), { method: 'DELETE' }); }
   catch (e) { /* keep the row on failure */ return; }
-  renderInbox();
+  _renderActiveInbox();
 }
 
 async function inboxMarkAllRead() {
@@ -334,15 +350,18 @@ async function inboxMarkAllRead() {
       body: JSON.stringify({ all: true }),
     });
   } catch (e) { return; }
-  renderInbox();
+  _renderActiveInbox();
 }
 
-// Bottom-bar Inbox tab unread badge.
+// Unread badges — mobile bottom-bar tab (#inbox-badge) + desktop sidebar
+// (#sidebar-inbox-badge). Whichever exists gets updated.
 function setInboxBadge(n) {
-  const b = document.getElementById('inbox-badge');
-  if (!b) return;
-  if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.hidden = false; }
-  else { b.hidden = true; }
+  const show = n > 0, txt = n > 99 ? '99+' : String(n);
+  ['inbox-badge', 'sidebar-inbox-badge'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    if (show) { b.textContent = txt; b.hidden = false; } else { b.hidden = true; }
+  });
 }
 
 async function updateInboxBadge() {
@@ -351,6 +370,47 @@ async function updateInboxBadge() {
     if (r.ok) { const d = await r.json(); setInboxBadge(d.unread || 0); }
   } catch (e) { /* leave the badge as-is */ }
 }
+// Desktop Inbox — the notification timeline as a floating surface modal (same
+// family as All Backlog / Skills / etc.). Reuses the shared timeline renderer.
+function openInboxSurface() {
+  if (typeof openModals === 'undefined') return;
+  const modalId = '__inbox';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized && typeof restoreModal === 'function') restoreModal(modalId);
+    if (typeof focusModal === 'function') focusModal(modalId);
+    renderDesktopInbox();
+    return;
+  }
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  if (typeof _clampModalSize === 'function') _clampModalSize(content, 640);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;gap:12px;padding:16px 20px 12px 24px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">Inbox</span>
+      <input type="text" id="desktop-inbox-search" placeholder="Search updates&hellip;" value="${esc(_inboxQuery || '')}" spellcheck="false"
+        style="flex:1;min-width:120px;padding:7px 12px;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);outline:none"
+        oninput="onInboxSearchInput(this.value)">
+      <button onclick="inboxMarkAllRead()" title="Mark all read" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:14px;padding:4px 6px">&#10003;&#10003;</button>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div class="desktop-inbox-body"><div id="desktop-inbox-list"></div></div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  if (typeof centerModalElement === 'function') centerModalElement(win);
+  if (typeof focusModal === 'function') focusModal(modalId);
+  renderDesktopInbox();
+}
+
 function openInbox() {
   const el = document.getElementById('mobile-inbox');
   if (!el) return;
@@ -374,6 +434,8 @@ function closeInbox() {
   _closeInboxUI();
 }
 window.openInbox = openInbox;
+window.openInboxSurface = openInboxSurface;
+window.renderDesktopInbox = renderDesktopInbox;
 window.closeInbox = closeInbox;
 window.renderInbox = renderInbox;
 window._closeInboxUI = _closeInboxUI;

@@ -406,6 +406,10 @@
       <span class="si-icon">&#x25A6;</span>
       <span class="si-label">Dashboard</span>
     </div>
+    <div class="sidebar-item" data-nav="inbox" onclick="sidebarNav('inbox')">
+      <span class="si-icon">&#x1F514;<span class="si-badge" id="sidebar-inbox-badge" hidden></span></span>
+      <span class="si-label">Inbox</span>
+    </div>
     <div class="sidebar-item si-new" data-nav="new" onclick="openNewProjectForm()">
       <span class="si-icon">&#x2795;</span>
       <span class="si-label">New Project</span>
@@ -1285,6 +1289,7 @@ function sidebarNav(target) {
       showDesktop();
     }
   }
+  else if (target === 'inbox') openInboxSurface();
   else if (target === 'scheduler') openScheduler();
   else if (target === 'settings') openSettings();
   else if (target === 'shared-rules') openSharedRulesEditor();
