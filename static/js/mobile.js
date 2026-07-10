@@ -46,13 +46,6 @@ function renderMobileAppBar() {
   const h = now.getHours();
   const part = h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
   eyebrow.textContent = `${day} ${part}`;
-  // Avatar initials: from configured display name, else fall back to "C" for Clayrune
-  const name = (_globalConfig && (_globalConfig.user_display_name || _globalConfig.user_name)) || '';
-  const initials = name
-    ? name.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
-    : 'C';
-  const av = document.getElementById('mc-avatar-btn');
-  if (av) av.textContent = initials;
 }
 
 function renderMobileFilterPills() {
