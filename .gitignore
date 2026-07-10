@@ -90,6 +90,7 @@ data/session_labels.json
 # system_status.json is restart/heartbeat state. All regenerated at runtime.
 data/push_vapid.json
 data/push_subscriptions.json
+data/notifications.json
 data/system_status.json
 
 # First-boot onboarding-seed marker (guide_routes.seed_onboarding_on_startup).

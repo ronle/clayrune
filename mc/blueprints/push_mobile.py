@@ -11,7 +11,9 @@ late-bound via wire() until their families extract.
 
 import json
 import os
+import threading
 import time as _time
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -40,11 +42,16 @@ def wire(*, data_root, load_project_fn, cf_session_nonce_fn, get_remote_provider
     register_blueprint). data_root → the four storage paths; load_project →
     projects family (1.11); CF session nonce → remote family (1.7)."""
     global PUSH_VAPID_PATH, PUSH_SUBS_PATH, PUSH_FCM_KEY_PATH, MOBILE_PAIRING_PATH
+    global PUSH_NOTIF_PATH
     global load_project, _cf_session_nonce_from_request, _get_remote_provider
     PUSH_VAPID_PATH = data_root / 'data' / 'push_vapid.json'
     PUSH_SUBS_PATH = data_root / 'data' / 'push_subscriptions.json'
     PUSH_FCM_KEY_PATH = data_root / 'data' / 'firebase_admin.json'
     MOBILE_PAIRING_PATH = data_root / 'data' / 'mobile_pairing.json'
+    # Cross-project notification timeline backing the mobile Inbox. NOT under
+    # data/projects/ (that dir is the project-records store — a stray file there
+    # 500s load_projects; see CLAUDE.md DATA_DIR pollution rule).
+    PUSH_NOTIF_PATH = data_root / 'data' / 'notifications.json'
     load_project = load_project_fn
     _cf_session_nonce_from_request = cf_session_nonce_fn
     _get_remote_provider = get_remote_provider_fn
@@ -182,6 +189,73 @@ def _save_push_subscriptions(d: dict) -> None:
     os.replace(tmp, PUSH_SUBS_PATH)
 
 
+# ── Notification timeline (mobile Inbox source of truth) ─────────────────────
+# Every intended push (kind 'agent' | 'turn_complete') is appended here so the
+# Inbox is exactly "what pushed", by construction. Rolling history: bounded by
+# both age and count so the file can't grow unbounded. Best-effort — a log
+# failure never breaks push delivery. Guarded by its own lock; atomic writes.
+PUSH_NOTIF_PATH: Path = None  # type: ignore[assignment]  # wired from _DATA_ROOT
+_NOTIF_MAX_AGE_SEC = 30 * 24 * 3600   # keep 30 days of history
+_NOTIF_MAX_ITEMS = 1000               # hard cap regardless of age
+_notif_lock = threading.Lock()
+
+
+def _load_notifications() -> list:
+    try:
+        with open(PUSH_NOTIF_PATH, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+            return d if isinstance(d, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    except Exception as e:
+        _log(f"[notif] load failed: {e}", flush=True)
+        return []
+
+
+def _save_notifications(items: list) -> None:
+    PUSH_NOTIF_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = PUSH_NOTIF_PATH.with_suffix('.json.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(items, f, ensure_ascii=False)
+    os.replace(tmp, PUSH_NOTIF_PATH)
+
+
+def _prune_notifications(items: list) -> list:
+    """Drop items older than the age window, then cap to the newest N."""
+    cutoff = int(_time.time()) - _NOTIF_MAX_AGE_SEC
+    kept = [n for n in items if (n.get('ts') or 0) >= cutoff]
+    kept.sort(key=lambda n: n.get('ts') or 0, reverse=True)  # newest first
+    return kept[:_NOTIF_MAX_ITEMS]
+
+
+def _append_notification(*, title: str, body: str, url: str, kind: str,
+                         project_id: str, session_id: str) -> None:
+    """Append one Inbox event. Best-effort — never raises to the caller."""
+    if PUSH_NOTIF_PATH is None:
+        return
+    try:
+        p = load_project(project_id) if (load_project and project_id) else None
+        project_name = (p or {}).get('name') or project_id or 'Clayrune'
+        item = {
+            'id': uuid.uuid4().hex,
+            'ts': int(_time.time()),
+            'project_id': project_id or '',
+            'project_name': project_name,
+            'title': (title or '')[:120],
+            'body': (body or '')[:280],
+            'url': url or '',
+            'kind': kind or 'agent',
+            'session_id': session_id or '',
+            'read': False,
+        }
+        with _notif_lock:
+            items = _load_notifications()
+            items.insert(0, item)
+            _save_notifications(_prune_notifications(items))
+    except Exception as e:
+        _log(f"[notif] append failed: {e}", flush=True)
+
+
 def _push_subject() -> str:
     """VAPID `sub` claim. Must be mailto: or https: URL."""
     email = (state.CONFIG.get('user_email') or '').strip()
@@ -284,7 +358,7 @@ def _push_send_fcm(sub: dict, payload: dict) -> tuple[bool, str, bool]:
 
 def _notify_push(title: str, body: str, *, url: str = '',
                  project_id: str = '', session_id: str = '',
-                 kind: str = 'agent') -> dict:
+                 kind: str = 'agent', log_inbox: bool = True) -> dict:
     """Deliver a push notification to every subscribed device that opted in
     for this `kind` (`'agent'` for PushNotification tool, `'turn_complete'`
     for end-of-turn). Removes 404/410 subscriptions automatically.
@@ -292,7 +366,16 @@ def _notify_push(title: str, body: str, *, url: str = '',
     Dispatches per-subscription based on `sub['type']`:
       'fcm' → Firebase Cloud Messaging (native Android shell)
       else  → Web push via VAPID (browsers, PWA)
+
+    `log_inbox` records the event to the notification timeline (the Inbox)
+    regardless of whether a device is subscribed / delivery succeeds — so the
+    Inbox is a complete history of what pushed. Set False for test pushes.
     """
+    # Record BEFORE the delivery early-returns so the Inbox captures the event
+    # even with no subscribers / no VAPID key configured yet.
+    if log_inbox:
+        _append_notification(title=title, body=body, url=url, kind=kind,
+                             project_id=project_id, session_id=session_id)
     try:
         from pywebpush import webpush, WebPushException
     except Exception as e:
@@ -639,8 +722,85 @@ def push_test():
     if not url:
         url = '/'
     result = _notify_push(title, msg, url=url, project_id=pid,
-                          session_id=sid, kind='agent')
+                          session_id=sid, kind='agent', log_inbox=False)
     return jsonify(result)
+
+
+# ── Notification timeline (mobile Inbox) endpoints ───────────────────────────
+@bp.route('/api/notifications')
+def api_notifications():
+    """The Inbox feed: newest-first, optional text search + unread filter,
+    paginated. `unread` (count) is over the WHOLE store, not just this page."""
+    items = _load_notifications()
+    q = (request.args.get('q') or '').strip().lower()
+    if q:
+        def _hit(n):
+            return q in (n.get('title', '') + ' ' + n.get('body', '')
+                         + ' ' + n.get('project_name', '')).lower()
+        items = [n for n in items if _hit(n)]
+    unread = sum(1 for n in _load_notifications() if not n.get('read'))
+    if request.args.get('unread') in ('1', 'true'):
+        items = [n for n in items if not n.get('read')]
+    try:
+        limit = max(1, min(int(request.args.get('limit', 50)), 200))
+        offset = max(0, int(request.args.get('offset', 0)))
+    except Exception:
+        limit, offset = 50, 0
+    total = len(items)
+    return jsonify({
+        'items': items[offset:offset + limit],
+        'total': total,
+        'unread': unread,
+        'offset': offset,
+        'limit': limit,
+    })
+
+
+@bp.route('/api/notifications/read', methods=['POST'])
+def api_notifications_read():
+    """Mark notifications read. Body: {ids:[...]} or {all:true}."""
+    body = request.get_json(silent=True) or {}
+    ids = set(body.get('ids') or [])
+    mark_all = bool(body.get('all'))
+    with _notif_lock:
+        items = _load_notifications()
+        changed = 0
+        for n in items:
+            if (mark_all or n.get('id') in ids) and not n.get('read'):
+                n['read'] = True
+                changed += 1
+        if changed:
+            _save_notifications(items)
+        unread = sum(1 for n in items if not n.get('read'))
+    return jsonify({'ok': True, 'changed': changed, 'unread': unread})
+
+
+@bp.route('/api/notifications/<nid>', methods=['DELETE'])
+def api_notifications_delete(nid):
+    """Dismiss one notification (removes the Inbox entry, not the chat)."""
+    with _notif_lock:
+        items = _load_notifications()
+        kept = [n for n in items if n.get('id') != nid]
+        removed = len(items) - len(kept)
+        if removed:
+            _save_notifications(kept)
+        unread = sum(1 for n in kept if not n.get('read'))
+    return jsonify({'ok': True, 'removed': removed, 'unread': unread})
+
+
+@bp.route('/api/notifications/clear', methods=['POST'])
+def api_notifications_clear():
+    """Bulk clear. Body: {scope:'all'|'read'} (default 'all')."""
+    scope = ((request.get_json(silent=True) or {}).get('scope') or 'all')
+    with _notif_lock:
+        items = _load_notifications()
+        if scope == 'read':
+            kept = [n for n in items if not n.get('read')]
+        else:
+            kept = []
+        removed = len(items) - len(kept)
+        _save_notifications(kept)
+    return jsonify({'ok': True, 'removed': removed, 'unread': len(kept)})
 
 
 # ── Mobile pairing (WhatsApp-style QR onboarding for the Android APK) ───────
