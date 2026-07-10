@@ -846,6 +846,25 @@ function agentPanelHTML(p) {
   // (item 5) The mobile header "+ New" button was removed — new conversation is
   // launched from the Layer-2 list's bottom button (composer ＋ behavior: TBD).
 
+  // Desktop (>960): 5f three-pane conversation view — a per-project recents RAIL
+  // on the left + the thread/compose on the right. Mobile keeps its Layer-2
+  // drill-down (tabBar / convList above). Redesign step 7.
+  if (!mobileMode) {
+    const railRows = sessions.length
+      ? conversationListHTML(p, sessions)
+      : '<div class="agent-rail-empty">No conversations yet.</div>';
+    return `<div class="agent-panel agent-3pane">
+      <div class="agent-rail">
+        <button class="conv-newbtn agent-rail-new" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
+        <div class="agent-rail-list">${railRows}</div>
+      </div>
+      <div class="agent-main">
+        ${tabContent}
+        ${dispatchRow}
+      </div>
+    </div>`;
+  }
+
   return `<div class="agent-panel">
     <div class="agent-panel-header">
       <div class="section-title" style="margin-bottom:0">Agent</div>
