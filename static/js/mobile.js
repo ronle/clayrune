@@ -184,35 +184,124 @@ function renderMobileChatList(col) {
   });
 }
 
-// ── §1b Mobile "Waiting on you" inbox ───────────────────────────────────────
-// A dedicated attention surface (replaces the old "Needs you" filter pill,
-// Decision 5a). Reuses _buildAttentionList (each item carries a sessionId from
-// §1a) and deep-links each row to the exact waiting chat via openProjectAtSession.
-function renderInbox() {
+// ── Mobile Inbox — the cross-project notification timeline ───────────────────
+// "What happened while I was away" (past-tense, non-blocking). Distinct from
+// "Waiting on you" (blocking/actionable, on the dashboard). Backed by
+// /api/notifications — every agent update that fired a push. Email-like:
+// search, read/unread, dismiss. Tapping a row opens that chat.
+let _inboxQuery = '', _inboxTimer = null, _inboxSeq = 0;
+
+function _inboxDayLabel(ts) {
+  const d = new Date(ts * 1000), now = new Date();
+  const same = (a, b) => a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (same(d, now)) return 'Today';
+  if (same(d, y)) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function _inboxRowHTML(it) {
+  const icon = it.kind === 'turn_complete' ? '✓' : '💬';  // ✓ done · 💬 update
+  const when = timeAgoJS(new Date((it.ts || 0) * 1000).toISOString()) || '';
+  const text = (it.body || it.title || '').slice(0, 160);
+  return `<div class="mib-row${it.read ? '' : ' mib-unread'}" data-id="${esc(it.id)}"
+      data-project-id="${esc(it.project_id || '')}" data-session-id="${esc(it.session_id || '')}">
+    <span class="mib-icon">${icon}</span>
+    <div class="mib-main">
+      <div class="mib-project">${esc(it.project_name || 'Clayrune')}<span class="mib-time">${esc(when)}</span></div>
+      <div class="mib-msg">${esc(text)}</div>
+    </div>
+    <button class="mib-del" data-id="${esc(it.id)}" title="Dismiss" aria-label="Dismiss">&#10005;</button>
+  </div>`;
+}
+
+async function renderInbox() {
   const list = document.getElementById('mobile-inbox-list');
   if (!list) return;
-  const items = (typeof _buildAttentionList === 'function') ? _buildAttentionList() : [];
+  const seq = ++_inboxSeq;
+  const q = _inboxQuery.trim();
+  if (!list.dataset.loaded) list.innerHTML = '<div class="mib-empty">Loading…</div>';
+  let data = { items: [], unread: 0 };
+  try {
+    const res = await fetch(API_BASE + '/api/notifications?limit=200'
+      + (q ? '&q=' + encodeURIComponent(q) : ''));
+    if (res.ok) data = await res.json();
+  } catch (e) { /* offline → keep whatever's shown */ }
+  if (seq !== _inboxSeq) return;  // a newer render superseded this one
+  list.dataset.loaded = '1';
+  setInboxBadge(data.unread || 0);
+  const items = data.items || [];
   if (!items.length) {
-    list.innerHTML = '<div class="mib-empty">Nothing needs you right now.</div>';
+    list.innerHTML = `<div class="mib-empty">${q ? 'No updates match &ldquo;' + esc(q) + '&rdquo;.' : 'No updates yet.'}</div>`;
     return;
   }
-  list.innerHTML = items.map(it => `
-    <div class="mib-row" data-project-id="${esc(it.projectId)}" data-session-id="${esc(it.sessionId || '')}">
-      <span class="mib-icon">${it.icon}</span>
-      <div class="mib-main">
-        <div class="mib-project">${esc(it.project)}</div>
-        <div class="mib-msg">${esc(it.msg)}</div>
-      </div>
-      <span class="mib-chev">&#x203A;</span>
-    </div>`).join('');
-  list.querySelectorAll('.mib-row').forEach(row => {
-    row.addEventListener('click', () => {
-      const sid = row.dataset.sessionId;
-      closeInbox();
-      if (sid) openProjectAtSession(row.dataset.projectId, sid);
-      else openProjectModal(row.dataset.projectId);
-    });
+  let html = '', curLabel = null;
+  items.forEach(it => {
+    const label = _inboxDayLabel(it.ts);
+    if (label !== curLabel) { curLabel = label; html += `<div class="mib-day">${esc(label)}</div>`; }
+    html += _inboxRowHTML(it);
   });
+  list.innerHTML = html;
+  list.querySelectorAll('.mib-row').forEach(row => {
+    row.addEventListener('click', () => openNotification(row.dataset.id,
+      row.dataset.projectId, row.dataset.sessionId));
+  });
+  list.querySelectorAll('.mib-del').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); deleteNotification(btn.dataset.id); });
+  });
+}
+
+function onInboxSearchInput(v) {
+  _inboxQuery = v;
+  clearTimeout(_inboxTimer);
+  _inboxTimer = setTimeout(renderInbox, 250);
+}
+
+function openNotification(id, projectId, sessionId) {
+  // Mark read (best-effort) then open the chat the notification points to.
+  fetch(API_BASE + '/api/notifications/read', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: [id] }),
+  }).catch(() => {});
+  closeInbox();
+  if (sessionId && projectId && typeof openProjectAtSession === 'function') {
+    openProjectAtSession(projectId, sessionId);
+  } else if (projectId && typeof openProjectModal === 'function') {
+    openProjectModal(projectId);
+  }
+  setTimeout(updateInboxBadge, 300);
+}
+
+async function deleteNotification(id) {
+  try { await fetch(API_BASE + '/api/notifications/' + encodeURIComponent(id), { method: 'DELETE' }); }
+  catch (e) { /* keep the row on failure */ return; }
+  renderInbox();
+}
+
+async function inboxMarkAllRead() {
+  try {
+    await fetch(API_BASE + '/api/notifications/read', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ all: true }),
+    });
+  } catch (e) { return; }
+  renderInbox();
+}
+
+// Bottom-bar Inbox tab unread badge.
+function setInboxBadge(n) {
+  const b = document.getElementById('inbox-badge');
+  if (!b) return;
+  if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.hidden = false; }
+  else { b.hidden = true; }
+}
+
+async function updateInboxBadge() {
+  try {
+    const r = await fetch(API_BASE + '/api/notifications?limit=1');
+    if (r.ok) { const d = await r.json(); setInboxBadge(d.unread || 0); }
+  } catch (e) { /* leave the badge as-is */ }
 }
 function openInbox() {
   const el = document.getElementById('mobile-inbox');
@@ -240,6 +329,11 @@ window.openInbox = openInbox;
 window.closeInbox = closeInbox;
 window.renderInbox = renderInbox;
 window._closeInboxUI = _closeInboxUI;
+window.onInboxSearchInput = onInboxSearchInput;
+window.inboxMarkAllRead = inboxMarkAllRead;
+window.updateInboxBadge = updateInboxBadge;
+// Keep the Inbox tab badge fresh: on boot + a light poll (unread count only).
+try { updateInboxBadge(); setInterval(updateInboxBadge, 30000); } catch (e) {}
 
 // ── §1 Global "🔍 Search" — cross-project transcript search overlay ──────────
 let _gsTimer = null, _gsSeq = 0;

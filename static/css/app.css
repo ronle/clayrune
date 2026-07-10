@@ -1903,6 +1903,33 @@
     outline: none; font-family: 'Inter', sans-serif;
   }
   .mobile-inbox-head .gs-input:focus { border-color: var(--accent); }
+  .mobile-inbox-head .mib-markall {
+    background: transparent; border: none; color: var(--accent);
+    font-size: 15px; cursor: pointer; padding: 0 6px; flex-shrink: 0; letter-spacing: -2px;
+  }
+  /* ── Inbox timeline (notification feed) ─────────────────────────── */
+  .mib-day {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    color: var(--text-faint); padding: 14px 16px 6px; position: sticky; top: 0;
+    background: var(--bg);
+  }
+  .mib-project {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  }
+  .mib-time { font-size: 11px; font-weight: 500; color: var(--text-faint); flex-shrink: 0; }
+  .mib-row.mib-unread { background: var(--surface2); }
+  .mib-row.mib-unread .mib-project { font-weight: 700; }
+  .mib-row .mib-icon { position: relative; }
+  .mib-row.mib-unread .mib-icon::after {
+    content: ''; position: absolute; top: -2px; right: -5px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg);
+  }
+  .mib-del {
+    background: transparent; border: none; color: var(--text-faint);
+    font-size: 15px; line-height: 1; cursor: pointer; padding: 6px 4px; flex-shrink: 0;
+  }
+  .mib-del:active { color: var(--red, #e05252); }
 
   /* ── BOTTOM TAB BAR (mobile) ─────────────────────────────────── */
   .bottom-tab-bar {
@@ -1918,7 +1945,14 @@
     cursor: pointer; transition: color 0.12s;
   }
   .bottom-tab-item.active { color: var(--accent); }
-  .bottom-tab-item .bti-icon { font-size: 18px; margin-bottom: 2px; }
+  .bottom-tab-item .bti-icon { font-size: 18px; margin-bottom: 2px; position: relative; }
+  .bti-badge {
+    position: absolute; top: -5px; right: -11px;
+    min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+    border-radius: 8px; background: var(--red, #e05252); color: #fff;
+    font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+  }
+  .bti-badge[hidden] { display: none; }
 
   /* ── MOBILE FRIENDLY UI (≤960px, all tones) ─────────────────────
      Adapted from the mobile design system handoff. All rules below

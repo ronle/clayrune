@@ -632,7 +632,7 @@
     <span class="bti-icon">&#x1F3E0;</span>Home
   </div>
   <div class="bottom-tab-item" data-nav="inbox" onclick="openInbox()">
-    <span class="bti-icon">&#x1F514;</span>Inbox
+    <span class="bti-icon">&#x1F514;<span class="bti-badge" id="inbox-badge" hidden></span></span>Inbox
   </div>
   <div class="bottom-tab-item fab" data-nav="new" onclick="openNewProjectForm()" title="New project">
     <span class="bti-icon">+</span>New
@@ -652,7 +652,9 @@
 <div class="mobile-inbox-overlay" id="mobile-inbox" aria-hidden="true">
   <div class="mobile-inbox-head">
     <button class="mib-back" onclick="closeInbox()" aria-label="Back">&#x2039;</button>
-    <span class="mib-title">Waiting on you</span>
+    <input type="text" class="gs-input" id="inbox-search-input" placeholder="Search updates&hellip;"
+      spellcheck="false" autocomplete="off" oninput="onInboxSearchInput(this.value)">
+    <button class="mib-markall" onclick="inboxMarkAllRead()" title="Mark all read" aria-label="Mark all read">&#10003;&#10003;</button>
   </div>
   <div class="mobile-inbox-list" id="mobile-inbox-list"></div>
 </div>
