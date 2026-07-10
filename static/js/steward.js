@@ -77,7 +77,10 @@ function showStewardForm() {
   stewardFormOpen = true;
   const area = document.getElementById('steward-form-area');
   if (!area) return;
-  const projects = (window.allProjects || []).filter(p => p.project_path);
+  // NOTE: `allProjects` is a top-level `let` in a classic index.html script — a
+  // bare-name global, NOT a window property (window.allProjects is undefined).
+  // Read it by bare name like scheduler.js does; window.allProjects → empty list.
+  const projects = (typeof allProjects !== 'undefined' ? allProjects : []).filter(p => p.project_path);
   area.innerHTML = `<div class="schedule-form">
     <label>Project <span class="memory-hint" style="margin:0;font-weight:normal">(the field of responsibility)</span></label>
     <select id="steward-project">${projects.map(p =>
