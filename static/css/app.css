@@ -227,6 +227,25 @@
   .sidebar-adv-toggle.expanded .sas-chev { transform: rotate(90deg); }
   .sidebar-advanced-group { display: none; }
   .sidebar-advanced-group.expanded { display: block; }
+
+  /* Pages mode (Settings → Appearance "Open surfaces as: Pages"): surface modals
+     (__-prefixed ids) dock into the content area instead of floating. The sidebar
+     is raised above the modal-layer (z-300) so its hover-expand stays usable over
+     the docked page; project-chat modals (non-__) still float. */
+  body.surface-pages .sidebar { z-index: 400; }
+  body.surface-pages .modal-window[data-modal-id^="__"] {
+    position: absolute !important;
+    left: var(--sidebar-w) !important; top: var(--header-h) !important;
+    right: 0 !important; bottom: 0 !important;
+    width: auto !important; height: auto !important;
+    transform: none !important; filter: none !important;
+  }
+  body.surface-pages .modal-window[data-modal-id^="__"] .modal-content {
+    width: 100% !important; height: 100% !important;
+    max-width: none !important; max-height: none !important;
+    border-radius: 0 !important; box-shadow: none !important; resize: none !important;
+    border: none !important; border-left: 1px solid var(--border) !important;
+  }
   /* "New Project" reads as the primary create action. */
   .sidebar-item.si-new .si-icon, .sidebar-item.si-new .si-label { color: var(--accent); }
   /* History surface (unified run log). */

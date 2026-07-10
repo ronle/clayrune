@@ -2102,6 +2102,7 @@ function _applyAppearanceOnInit() {
   else if (tone === 'editorial') document.body.classList.add('tone-editorial');
   const accent = localStorage.getItem('mc_accent');
   if (accent) document.body.setAttribute('data-accent', accent);
+  if ((localStorage.getItem('mc_surface_mode') || 'windows') === 'pages') document.body.classList.add('surface-pages');
   // Apply voice to the header breadcrumb label after DOM is parsed
   const applyVoiceLabel = () => {
     const bc = document.getElementById('header-breadcrumb-label');
@@ -2137,6 +2138,15 @@ let bgPosY  = parseInt(localStorage.getItem('mc_bg_posy') || '50', 10);
 // reads this `let`. Declared after the call it was in the temporal dead zone, so a
 // ReferenceError aborted the ENTIRE boot script — modals/settings/clicks all dead.
 let _bgDimsLoading = false;
+// Surface style (desktop): 'windows' = floating modals (default); 'pages' = the
+// surface fills the main content area, sidebar stays. Per-browser preference.
+let _surfaceMode = localStorage.getItem('mc_surface_mode') || 'windows';
+function setSurfaceMode(m) {
+  _surfaceMode = (m === 'pages') ? 'pages' : 'windows';
+  try { localStorage.setItem('mc_surface_mode', _surfaceMode); } catch (e) {}
+  document.body.classList.toggle('surface-pages', _surfaceMode === 'pages');
+  if (document.getElementById('settings-body')) _renderSettings();
+}
 
 _applyAppearanceOnInit();
 

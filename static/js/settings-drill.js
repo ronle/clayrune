@@ -511,6 +511,13 @@ async function _renderSettings() {
           <button class="${currentVoice==='pro'?'active':''}" onclick="setVoice('pro')">Professional</button>
         </div>
       </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Open surfaces as</div><div class="settings-hint">Windows float over the dashboard; Pages fill the main area (desktop)</div></div>
+        <div class="mc-seg">
+          <button class="${(typeof _surfaceMode!=='undefined'&&_surfaceMode==='windows')||typeof _surfaceMode==='undefined'?'active':''}" onclick="setSurfaceMode('windows')">Windows</button>
+          <button class="${typeof _surfaceMode!=='undefined'&&_surfaceMode==='pages'?'active':''}" onclick="setSurfaceMode('pages')">Pages</button>
+        </div>
+      </div>
     </div>
 
     <div class="settings-section">

@@ -583,6 +583,10 @@ function modalDragStart(x, y, target) {
   if (target.closest('input, button, select, textarea, [contenteditable]')) return false;
   const win = target.closest('.modal-window');
   if (!win) return false;
+  // Docked "Pages" surfaces (surface-pages mode, __-prefixed) are pinned to the
+  // main area — no dragging.
+  if (document.body.classList.contains('surface-pages')
+      && String(win.dataset.modalId || '').startsWith('__')) return false;
   const rect = win.getBoundingClientRect();
   // Find the modal entry so we can read/clear snap state during the drag.
   let entryRef = null, modalIdRef = null;
