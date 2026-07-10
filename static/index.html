@@ -1067,12 +1067,20 @@ let _mcDrawerHistoryActive = false;  // drawer-open sentinel (higher priority)
 let _mcSuppressPop = false;          // next popstate is our own synthetic nav
 let _mcInboxOpen = false;            // §1b mobile inbox sentinel (top-most surface)
 let _mcGlobalSearchOpen = false;    // §1 global search overlay sentinel
+let _mcConvFromInbox = false;       // drilled into a chat FROM the inbox → back returns to the inbox, not the conv list
+let _mcSuppressConvPush = false;    // suppress the conv-list history level once (inbox→chat deep-link)
 window.addEventListener('popstate', () => {
   if (_mcSuppressPop) { _mcSuppressPop = false; return; }  // our own nav
-  // §1b inbox / §1 global search are top-most mobile surfaces when open —
-  // hardware back closes them first, DOM-only (sentinel already consumed).
-  if (_mcGlobalSearchOpen) { _mcGlobalSearchOpen = false; _closeGlobalSearchUI(); return; }
-  if (_mcInboxOpen) { _mcInboxOpen = false; _closeInboxUI(); return; }
+  // §1b inbox / §1 global search are top-most mobile surfaces — BUT only when no
+  // project modal is open on top of them. Drilling from the inbox into a chat
+  // opens a modal ABOVE the still-open inbox; that back must resolve the
+  // modal/conversation first, and the modal-close branch below reveals the inbox.
+  const _projModalOpen = (typeof openModals !== 'undefined')
+    && Array.from(openModals.keys()).some(k => !String(k).startsWith('__'));
+  if (!_projModalOpen) {
+    if (_mcGlobalSearchOpen) { _mcGlobalSearchOpen = false; _closeGlobalSearchUI(); return; }
+    if (_mcInboxOpen) { _mcInboxOpen = false; _closeInboxUI(); return; }
+  }
   // Innermost level wins. Drawer is on top of everything else when open —
   // hardware back must close it first, before any modal/conv unwind.
   if (_mcDrawerHistoryActive) {
@@ -1112,6 +1120,16 @@ window.addEventListener('popstate', () => {
   if (_mcModalHistoryActive) {
     _mcModalHistoryActive = false;               // L1 entry consumed by back
     if (openModals.size) Array.from(openModals.keys()).forEach(id => closeModalById(id));
+    // Drilled in FROM the inbox → reveal the inbox that's still on the stack
+    // underneath (its sentinel + _mcInboxOpen were kept), not the dashboard.
+    if (_mcConvFromInbox) {
+      _mcConvFromInbox = false;
+      if (_mcInboxOpen) {
+        const _ib = document.getElementById('mobile-inbox');
+        if (_ib) { _ib.classList.add('open'); _ib.setAttribute('aria-hidden', 'false'); }
+        if (typeof renderInbox === 'function') renderInbox();
+      }
+    }
   }
 });
 

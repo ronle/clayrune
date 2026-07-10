@@ -374,12 +374,21 @@ function closeModalById(modalId) {
   // flag is already false (popstate cleared it), so n=0 and this is a no-op
   // — no double-close.
   if (openModals.size === 0) {
+    // A still-true _mcModalHistoryActive means this is a UI close (X/Esc/Home);
+    // on the hardware-back path popstate already cleared it. Only on a UI close
+    // do we also drop a parked inbox sentinel (a chat opened FROM the inbox) —
+    // the hardware-back path keeps it so popstate can reveal the inbox.
+    const _uiClose = _mcModalHistoryActive;
+    const _dropInbox = _uiClose && (typeof _mcConvFromInbox !== 'undefined')
+      && _mcConvFromInbox && _mcInboxOpen;
     const n = (_mcConvHistoryActive ? 1 : 0) + (_mcModalHistoryActive ? 1 : 0)
-            + _mcSettingsNavDepth + (_mcSettingsHistoryActive ? 1 : 0);
+            + _mcSettingsNavDepth + (_mcSettingsHistoryActive ? 1 : 0)
+            + (_dropInbox ? 1 : 0);
     _mcConvHistoryActive = false;
     _mcModalHistoryActive = false;
     _mcSettingsNavDepth = 0;
     _mcSettingsHistoryActive = false;
+    if (_dropInbox) { _mcConvFromInbox = false; _mcInboxOpen = false; }
     _mcUnwindHistory(n);
   }
 }

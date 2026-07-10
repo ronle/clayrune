@@ -300,12 +300,20 @@ function openNotification(id, projectId, sessionId) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids: [id] }),
   }).catch(() => {});
-  closeInbox();
-  if (sessionId && projectId && typeof openProjectAtSession === 'function') {
-    openProjectAtSession(projectId, sessionId);
-  } else if (projectId && typeof openProjectModal === 'function') {
-    openProjectModal(projectId);
-  }
+  if (!projectId) { setTimeout(updateInboxBadge, 300); return; }
+  // Keep the inbox on the back-stack: hide its UI but KEEP _mcInboxOpen + its
+  // history sentinel, so hardware-back from the chat returns to the INBOX (not
+  // the project's conversation list). Suppress the conv-list history level so
+  // that's a single back — straight from the chat back to the inbox.
+  _closeInboxUI();
+  _mcConvFromInbox = true;
+  _mcSuppressConvPush = true;
+  var _clear = function () { _mcSuppressConvPush = false; };
+  if (sessionId && typeof openProjectAtSession === 'function') {
+    Promise.resolve(openProjectAtSession(projectId, sessionId)).finally(_clear);
+  } else if (typeof openProjectModal === 'function') {
+    try { openProjectModal(projectId); } finally { _clear(); }
+  } else { _clear(); }
   setTimeout(updateInboxBadge, 300);
 }
 
@@ -492,6 +500,9 @@ function mcPushModalHistory() {
 }
 function mcPushConvHistory() {
   if (!isMobileChatList() || _mcConvHistoryActive) return;
+  // Opened from the inbox → the chat sits directly above the inbox on the stack
+  // (no conv-list level) so hardware-back returns to the inbox in one step.
+  if (_mcSuppressConvPush) { _mcSuppressConvPush = false; return; }
   try { history.pushState({ mc: 'conv' }, ''); _mcConvHistoryActive = true; } catch (e) {}
 }
 // Arming a resume preview inside the 5a compose is a sub-level of the compose
