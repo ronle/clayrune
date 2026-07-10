@@ -429,26 +429,30 @@
       <span class="si-label">History</span>
     </div>
 
-    <div class="sidebar-section-label">Advanced</div>
-    <div class="sidebar-item si-advanced" data-nav="hivemind" onclick="sidebarNav('hivemind')">
-      <span class="si-icon">&#x1F41D;</span>
-      <span class="si-label">Hivemind</span>
+    <div class="sidebar-section-label sidebar-adv-toggle" id="sidebar-adv-toggle" onclick="toggleAdvancedSection()">
+      <span>Advanced</span><span class="sas-chev">&#x25B8;</span>
     </div>
-    <div class="sidebar-item si-advanced" data-nav="skills" onclick="sidebarNav('skills')">
-      <span class="si-icon">&#x1F9E9;</span>
-      <span class="si-label">Skills &amp; MCP</span>
-    </div>
-    <div class="sidebar-item si-advanced" data-nav="shared-rules" onclick="sidebarNav('shared-rules')">
-      <span class="si-icon">&#x1F4DC;</span>
-      <span class="si-label">Shared Rules</span>
-    </div>
-    <div class="sidebar-item si-advanced" data-nav="processes" onclick="sidebarNav('processes')">
-      <span class="si-icon">&#x2630;</span>
-      <span class="si-label">Processes</span>
-    </div>
-    <div class="sidebar-item si-advanced" data-nav="incognito" onclick="openIncognito()" title="Ephemeral scratch agent — skips memory and rules">
-      <span class="si-icon">&#x1F576;&#xFE0F;</span>
-      <span class="si-label">Incognito</span>
+    <div class="sidebar-advanced-group" id="sidebar-advanced-group">
+      <div class="sidebar-item si-advanced" data-nav="hivemind" onclick="sidebarNav('hivemind')">
+        <span class="si-icon">&#x1F41D;</span>
+        <span class="si-label">Hivemind</span>
+      </div>
+      <div class="sidebar-item si-advanced" data-nav="skills" onclick="sidebarNav('skills')">
+        <span class="si-icon">&#x1F9E9;</span>
+        <span class="si-label">Skills &amp; MCP</span>
+      </div>
+      <div class="sidebar-item si-advanced" data-nav="shared-rules" onclick="sidebarNav('shared-rules')">
+        <span class="si-icon">&#x1F4DC;</span>
+        <span class="si-label">Shared Rules</span>
+      </div>
+      <div class="sidebar-item si-advanced" data-nav="processes" onclick="sidebarNav('processes')">
+        <span class="si-icon">&#x2630;</span>
+        <span class="si-label">Processes</span>
+      </div>
+      <div class="sidebar-item si-advanced" data-nav="incognito" onclick="openIncognito()" title="Ephemeral scratch agent — skips memory and rules">
+        <span class="si-icon">&#x1F576;&#xFE0F;</span>
+        <span class="si-label">Incognito</span>
+      </div>
     </div>
 
     <div class="sidebar-divider"></div>
@@ -1276,6 +1280,26 @@ async function openIncognito() {
     showToast('Could not open Incognito (server may need restart for this feature)', 4000);
   }
 }
+
+// Collapsible "Advanced" sidebar group — click the label to show/hide the power
+// surfaces. Collapsed by default; state persists in localStorage.
+function toggleAdvancedSection() {
+  const g = document.getElementById('sidebar-advanced-group');
+  const t = document.getElementById('sidebar-adv-toggle');
+  if (!g) return;
+  const open = !g.classList.contains('expanded');
+  g.classList.toggle('expanded', open);
+  if (t) t.classList.toggle('expanded', open);
+  try { localStorage.setItem('mc_sidebar_advanced_open', open ? '1' : '0'); } catch (e) {}
+}
+(function _restoreAdvancedSection() {
+  try {
+    if (localStorage.getItem('mc_sidebar_advanced_open') === '1') {
+      document.getElementById('sidebar-advanced-group')?.classList.add('expanded');
+      document.getElementById('sidebar-adv-toggle')?.classList.add('expanded');
+    }
+  } catch (e) {}
+})();
 
 function sidebarNav(target) {
   if (target === 'dashboard') {

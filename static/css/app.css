@@ -220,10 +220,13 @@
   .sidebar-item:hover { background: var(--surface2); color: var(--text); }
   .sidebar-item.active { background: var(--accent-dim); color: var(--accent); }
   .sidebar-item { position: relative; }
-  /* Desktop redesign (Calm): the ADVANCED tier is present but visually demoted
-     so power surfaces don't compete with the everyday ones. */
-  .sidebar-item.si-advanced { opacity: 0.55; }
-  .sidebar-item.si-advanced:hover, .sidebar-item.si-advanced.active { opacity: 1; }
+  /* Desktop redesign (Calm): ADVANCED is a collapsible group — click the label
+     to reveal the power surfaces (collapsed by default, no fade). */
+  .sidebar-adv-toggle { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+  .sidebar-adv-toggle .sas-chev { font-size: 9px; transition: transform 0.15s; }
+  .sidebar-adv-toggle.expanded .sas-chev { transform: rotate(90deg); }
+  .sidebar-advanced-group { display: none; }
+  .sidebar-advanced-group.expanded { display: block; }
   /* "New Project" reads as the primary create action. */
   .sidebar-item.si-new .si-icon, .sidebar-item.si-new .si-label { color: var(--accent); }
   /* History surface (unified run log). */
