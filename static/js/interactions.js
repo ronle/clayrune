@@ -583,10 +583,16 @@ function modalDragStart(x, y, target) {
   if (target.closest('input, button, select, textarea, [contenteditable]')) return false;
   const win = target.closest('.modal-window');
   if (!win) return false;
-  // Docked "Pages" surfaces (surface-pages mode, __-prefixed) are pinned to the
-  // main area — no dragging.
-  if (document.body.classList.contains('surface-pages')
-      && String(win.dataset.modalId || '').startsWith('__')) return false;
+  // Docked "Pages" surfaces are pinned to the main area — no dragging. Matches
+  // the CSS dock allow-list: project chats (non-__) + the primary surfaces.
+  if (document.body.classList.contains('surface-pages')) {
+    const _id = String(win.dataset.modalId || '');
+    const _dockable = !_id.startsWith('__') || [
+      '__extensions', '__history', '__inbox', '__all_backlog',
+      '__scheduler', '__all_hivemind', '__shared_rules', '__processes',
+    ].includes(_id);
+    if (_dockable) return false;
+  }
   const rect = win.getBoundingClientRect();
   // Find the modal entry so we can read/clear snap state during the drag.
   let entryRef = null, modalIdRef = null;

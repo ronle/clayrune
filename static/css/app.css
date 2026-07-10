@@ -233,14 +233,34 @@
      is raised above the modal-layer (z-300) so its hover-expand stays usable over
      the docked page; project-chat modals (non-__) still float. */
   body.surface-pages .sidebar { z-index: 400; }
-  body.surface-pages .modal-window[data-modal-id^="__"] {
+  /* Dockable in Pages mode = project chats (non-__ ids) + the primary surfaces.
+     Small editor/dialog modals (__skill_*, __mcp_*, __plan_*, __new_project,
+     __hivemind_*, …) are deliberately NOT listed, so they keep floating and
+     overlay the docked page. */
+  body.surface-pages .modal-window:not([data-modal-id^="__"]),
+  body.surface-pages .modal-window[data-modal-id="__extensions"],
+  body.surface-pages .modal-window[data-modal-id="__history"],
+  body.surface-pages .modal-window[data-modal-id="__inbox"],
+  body.surface-pages .modal-window[data-modal-id="__all_backlog"],
+  body.surface-pages .modal-window[data-modal-id="__scheduler"],
+  body.surface-pages .modal-window[data-modal-id="__all_hivemind"],
+  body.surface-pages .modal-window[data-modal-id="__shared_rules"],
+  body.surface-pages .modal-window[data-modal-id="__processes"] {
     position: absolute !important;
     left: var(--sidebar-w) !important; top: var(--header-h) !important;
     right: 0 !important; bottom: 0 !important;
     width: auto !important; height: auto !important;
     transform: none !important; filter: none !important;
   }
-  body.surface-pages .modal-window[data-modal-id^="__"] .modal-content {
+  body.surface-pages .modal-window:not([data-modal-id^="__"]) > .modal-content,
+  body.surface-pages .modal-window[data-modal-id="__extensions"] > .modal-content,
+  body.surface-pages .modal-window[data-modal-id="__history"] > .modal-content,
+  body.surface-pages .modal-window[data-modal-id="__inbox"] > .modal-content,
+  body.surface-pages .modal-window[data-modal-id="__all_backlog"] > .modal-content,
+  body.surface-pages .modal-window[data-modal-id="__scheduler"] > .modal-content,
+  body.surface-pages .modal-window[data-modal-id="__all_hivemind"] > .modal-content,
+  body.surface-pages .modal-window[data-modal-id="__shared_rules"] > .modal-content,
+  body.surface-pages .modal-window[data-modal-id="__processes"] > .modal-content {
     width: 100% !important; height: 100% !important;
     max-width: none !important; max-height: none !important;
     border-radius: 0 !important; box-shadow: none !important; resize: none !important;
