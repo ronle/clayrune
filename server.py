@@ -1420,7 +1420,14 @@ def index():
     html = re.sub(r'(src|href)="(/static/[^"?]+\.(?:js|css))"',
                   rf'\1="\2?v={ver}"', html)
     resp = Response(html, mimetype='text/html')
-    resp.headers['Cache-Control'] = 'no-cache'  # cache OK, but must revalidate
+    # no-STORE (not just no-cache): some Android WebViews keep serving a cached
+    # index.html from their disk cache without revalidating even under no-cache,
+    # which pins the whole SPA to a stale ?v= (a deploy never reaches the app —
+    # a force-stop kills the process but not the disk cache). no-store forbids
+    # caching index.html at all, so every load fetches fresh HTML → fresh ?v= →
+    # fresh JS/CSS. The JS/CSS themselves stay no-cache (ETag-revalidated, 304
+    # when unchanged) so only the tiny HTML pays the always-fetch cost.
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     resp.headers['Pragma'] = 'no-cache'
     resp.headers['ETag'] = etag
     return resp
