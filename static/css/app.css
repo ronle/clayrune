@@ -2207,16 +2207,7 @@
     }
     .bottom-tab-item .bti-icon { font-size: 18px; margin: 0; line-height: 1; }
     .bottom-tab-item.active { color: var(--accent); }
-    .bottom-tab-item.fab .bti-icon {
-      width: 36px; height: 36px; border-radius: 50%;
-      background: var(--accent); color: #fff;
-      display: grid; place-items: center;
-      font-size: 22px; font-weight: 800; line-height: 1;
-      border: 1.5px solid var(--text);
-      box-shadow: 0 2px 0 var(--text);
-      margin-top: -12px;
-    }
-    .bottom-tab-item.fab { color: var(--accent); }
+    /* The New (＋) tab renders like every other tab now — no raised FAB circle. */
   }
   /* Hide the mobile-only scaffolding outside mobile widths */
   @media (min-width: 961px) {
