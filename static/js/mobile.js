@@ -557,6 +557,20 @@ function closeMobileDrawer() {
 // everything else goes through sidebarNav (which already knows how to close
 // any open project modal on 'dashboard').
 function mobileDrawerNav(target) {
+  // Global surfaces (skills/mcp/backlog/scheduler/hivemind/shared-rules/processes)
+  // open a non-project modal with no mobile back entry of its own. Reuse the
+  // drawer's history entry AS the surface entry (relabel — no pop+push, so no
+  // history race): one hardware-back then closes the surface → dashboard.
+  const _isSurface = target !== 'dashboard' && target !== 'settings' && target !== 'incognito';
+  if (_isSurface && _mcDrawerHistoryActive) {
+    _mcDrawerHistoryActive = false;
+    _mcSurfaceOpen = true;
+    _closeMobileDrawerUI();
+    sidebarNav(target);
+    return;
+  }
+  // dashboard / settings / incognito manage their own history — close the drawer
+  // normally (unwind its sentinel), then route.
   closeMobileDrawer();
   if (target === 'incognito') { openIncognito(); return; }
   sidebarNav(target);

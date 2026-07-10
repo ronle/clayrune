@@ -1065,6 +1065,7 @@ let _mcInboxOpen = false;            // §1b mobile inbox sentinel (top-most sur
 let _mcGlobalSearchOpen = false;    // §1 global search overlay sentinel
 let _mcConvFromInbox = false;       // drilled into a chat FROM the inbox → back returns to the inbox, not the conv list
 let _mcSuppressConvPush = false;    // suppress the conv-list history level once (inbox→chat deep-link)
+let _mcSurfaceOpen = false;         // a global surface modal (skills/mcp/backlog/scheduler/…) opened from the drawer
 window.addEventListener('popstate', () => {
   if (_mcSuppressPop) { _mcSuppressPop = false; return; }  // our own nav
   // §1b inbox / §1 global search are top-most mobile surfaces — BUT only when no
@@ -1094,6 +1095,15 @@ window.addEventListener('popstate', () => {
   if (_mcSettingsHistoryActive) {
     _mcSettingsHistoryActive = false;            // modal entry consumed by back
     closeModalById('__settings');                // category list → close settings
+    return;
+  }
+  // A global surface modal (Skills / MCP / Backlog / Scheduler / Hivemind /
+  // Shared Rules / Processes) opened from the drawer → back closes it → dashboard.
+  if (_mcSurfaceOpen) {
+    _mcSurfaceOpen = false;                       // surface entry consumed by back
+    Array.from(openModals.keys()).forEach(id => {
+      if (String(id).startsWith('__') && id !== '__settings') closeModalById(id);
+    });
     return;
   }
   // Deepest: an armed resume preview inside the 5a compose → back deselects it,

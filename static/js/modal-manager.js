@@ -381,14 +381,18 @@ function closeModalById(modalId) {
     const _uiClose = _mcModalHistoryActive;
     const _dropInbox = _uiClose && (typeof _mcConvFromInbox !== 'undefined')
       && _mcConvFromInbox && _mcInboxOpen;
+    // A surface closed via its X (not hardware-back): its sentinel is still set
+    // (the popstate path clears it before calling here), so unwind it too.
+    const _dropSurface = (typeof _mcSurfaceOpen !== 'undefined') && _mcSurfaceOpen;
     const n = (_mcConvHistoryActive ? 1 : 0) + (_mcModalHistoryActive ? 1 : 0)
             + _mcSettingsNavDepth + (_mcSettingsHistoryActive ? 1 : 0)
-            + (_dropInbox ? 1 : 0);
+            + (_dropInbox ? 1 : 0) + (_dropSurface ? 1 : 0);
     _mcConvHistoryActive = false;
     _mcModalHistoryActive = false;
     _mcSettingsNavDepth = 0;
     _mcSettingsHistoryActive = false;
     if (_dropInbox) { _mcConvFromInbox = false; _mcInboxOpen = false; }
+    if (_dropSurface) _mcSurfaceOpen = false;
     _mcUnwindHistory(n);
   }
 }
