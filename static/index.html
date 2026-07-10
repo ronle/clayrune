@@ -1474,6 +1474,14 @@ function sizeAgentChat(win, sessionId) {
     ? (freshMount || (out.scrollHeight - out.scrollTop - out.clientHeight) <= 8)
     : true;
   if (!scrollBody || !chat) return;
+  // 5f three-pane: the chat is nested in .agent-main (not a direct child of the
+  // panel), so the sibling-subtraction math below would collapse it. CSS flex
+  // sizes it there — just pin fresh output to the bottom and bail.
+  const panel3 = chat.closest('.agent-panel');
+  if (panel3 && panel3.classList.contains('agent-3pane')) {
+    if (out && freshMount) { out.scrollTop = out.scrollHeight; out.dataset.scrollInitialized = '1'; }
+    return;
+  }
   scrollBody.style.overflow = 'hidden';
   // Constrain the tab content and agent panel to fill scroll body exactly
   const tabContent = chat.closest('.modal-tab-content');

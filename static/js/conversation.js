@@ -850,8 +850,12 @@ function agentPanelHTML(p) {
   // on the left + the thread/compose on the right. Mobile keeps its Layer-2
   // drill-down (tabBar / convList above). Redesign step 7.
   if (!mobileMode) {
-    const railRows = sessions.length
-      ? conversationListHTML(p, sessions)
+    // Rail = ALL the project's user conversations (durable, transcript-derived),
+    // same source as the mobile Layer-2 list — not just the open tabs.
+    if (!conversationsCache[p.id]) loadConversations(p.id);
+    const _railConvos = (typeof _userInitiatedConvos === 'function') ? _userInitiatedConvos(p.id) : [];
+    const railRows = _railConvos.length
+      ? mobileUserConversationsHTML(p, _railConvos)
       : '<div class="agent-rail-empty">No conversations yet.</div>';
     return `<div class="agent-panel agent-3pane">
       <div class="agent-rail">
