@@ -3091,5 +3091,48 @@ window.addEventListener('beforeunload', () => {
 <script type="module" src="/static/js/mobile.js"></script>
 <script type="module" src="/static/js/feed.js"></script>
 <script type="module" src="/static/js/beacon.js"></script>
+<script>
+// ── Deploy version watcher ───────────────────────────────────────────────────
+// A server restart doesn't reload an already-open WebView / tab, so it keeps
+// running stale JS after a deploy (the recurring "UI still looks the same"). This
+// polls /api/version (the static-asset token that also drives the ?v= bust); when
+// it changes, a non-intrusive pill offers a one-tap reload. Classic inline script
+// (not a module) so it self-runs and needs no window wiring.
+(function mcVersionWatcher() {
+  var boot = null, shown = false;
+  var base = (typeof API_BASE !== 'undefined' && API_BASE) ? API_BASE : '';
+  function getVer() {
+    return fetch(base + '/api/version', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { return d && d.version ? String(d.version) : null; })
+      .catch(function () { return null; });
+  }
+  function showPill() {
+    if (shown) return; shown = true;
+    var p = document.createElement('div');
+    p.setAttribute('role', 'status');
+    p.style.cssText = 'position:fixed;left:50%;bottom:76px;transform:translateX(-50%);' +
+      'z-index:9999;display:flex;align-items:center;gap:10px;padding:10px 14px;' +
+      'border-radius:999px;background:#222;color:#fff;font:600 13px/1 Inter,sans-serif;' +
+      'box-shadow:0 6px 24px rgba(0,0,0,.35);max-width:92vw;';
+    var t = document.createElement('span'); t.textContent = 'New version available';
+    var b = document.createElement('button');
+    b.textContent = 'Reload';
+    b.style.cssText = 'border:none;border-radius:999px;padding:7px 14px;font:700 13px Inter,sans-serif;' +
+      'background:#4888de;color:#fff;cursor:pointer;';
+    b.onclick = function () { location.reload(); };
+    p.appendChild(t); p.appendChild(b); document.body.appendChild(p);
+  }
+  function check() {
+    getVer().then(function (v) {
+      if (!v) return;
+      if (boot === null) { boot = v; return; }   // establish baseline on first poll
+      if (v !== boot) showPill();
+    });
+  }
+  check();
+  setInterval(check, 60000);
+})();
+</script>
 </body>
 </html>

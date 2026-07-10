@@ -1426,6 +1426,15 @@ def index():
     return resp
 
 
+@app.route('/api/version')
+def api_version():
+    """Deploy token (newest static-asset mtime) — same value used for the index
+    ETag + the ?v= cache-bust. The frontend version-watcher polls this and
+    prompts a reload when it changes, so a deploy reaches an already-open
+    WebView/tab that would otherwise keep running stale JS."""
+    return jsonify({'version': _asset_version()})
+
+
 import atexit
 
 def _cleanup_persistent_agents():
