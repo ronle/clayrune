@@ -1,6 +1,22 @@
 # Autonomous Steward — `fire-and-forget` self-directing agent (SCOPE)
 
-**Status: SCOPE / paper-only (2026-07-10). No code yet. Decisions locked below.**
+**Status: BUILT (2026-07-10). MVP steps 1–5 shipped behind the enable/disable
+API; 78 tests green. Goes LIVE on the next MC restart (installs the mc-steward
+builtin + registers the blueprint). Remaining: a Skills-style UI + merge to
+master. Decisions locked below.**
+
+**Build ledger (2026-07-10):**
+- Step 1 — `mc-steward` builtin directive skill (`data/skills/builtin/mc-steward/`). ✅ `fc5dccc`
+- Step 2 — steward/ package: config, charter, cycle-task, notify seam. ✅
+- Step 3 — bootstrap (`/steward/enable` seeds charter + schedule + fence) & kill switch. ✅
+- Step 4 — reversibility FENCE (`steward/fence.py` PreToolUse hook, fail-closed;
+  verified it fires even under `--dangerously-skip-permissions`). ✅
+- Step 5 — loop-health (`GET /api/steward/loop-health`). ✅
+- Fence wiring: installed into the project's own `.claude/settings.json` (MVP;
+  fences all sessions in a dedicated steward project). Per-session `--settings`
+  (mixed-use projects) is the reserved refinement — `ensure_fence_settings()`.
+- NOT built: a dashboard UI to enable/steward + review the decision queue (curl
+  the API for now); merge to master.
 
 The north star: dispatch an agent **once**, hand it a *field of responsibility*,
 and let it run unattended — it assesses state, **sets its own next goal and next

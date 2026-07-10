@@ -1828,6 +1828,27 @@ _bp_push_mobile.wire(
 app.register_blueprint(_bp_push_mobile.bp)
 
 
+# ── Autonomous Steward ── framework-agnostic steward/ package + thin blueprint.
+# Wired AFTER push_mobile (needs _notify_push) and projects (needs the backlog
+# note writer). State (fence-settings) persists under data/steward/ — OUTSIDE
+# DATA_DIR (the pollution rule), so pass DATA_DIR.parent. Scope:
+# docs/AUTONOMOUS_STEWARD_SCOPE.md. Reversibility fence: steward/fence.py.
+from mc.blueprints import steward_routes as _bp_steward  # noqa: E402
+
+_bp_steward.wire(
+    data_root=DATA_DIR.parent,
+    load_project_fn=_bp_projects.load_project,
+    save_project_fn=_bp_projects.save_project,
+    load_projects_fn=_bp_projects.load_projects,
+    append_note_fn=_bp_projects._append_note_to_backlog_item,
+    notify_push_fn=(lambda pid, kind, title, body:
+                    _bp_push_mobile._notify_push(title, body, project_id=pid,
+                                                 kind='agent')),
+    log_fn=lambda m: _log(m, flush=True),
+)
+app.register_blueprint(_bp_steward.bp)
+
+
 # ── Local (LAN) passcode gate ── extracted to mc/blueprints/local_auth.py (1.1) ──
 # Routes, helpers, and the gate body moved verbatim. wire() late-binds the
 # _DATA_ROOT path + _is_cf_tunneled_request (re-homed onto _bp_remote at
