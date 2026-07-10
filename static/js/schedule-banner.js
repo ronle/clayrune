@@ -251,12 +251,130 @@ document.addEventListener('keydown', (ev) => {
 // Refresh schedule banner every 60s
 setInterval(refreshScheduleBanner, 60000);
 
+// ── History — unified run log (Agent Log + Schedule Runs + Hivemind Runs),
+// backed by /api/recent-runs (all agent_log entries, tagged by trigger_type).
+// Filterable by source; a row opens that run's transcript. Desktop redesign
+// step 5 — one surface replacing the three separate run-history views.
+let _histState = { runs: [], rendered: [], loading: false, filter: 'all', hours: 168 };
+
+function _histTrigGroup(t) {
+  t = String(t || '').toLowerCase();
+  if (t === 'schedule') return 'scheduled';
+  if (t.indexOf('hivemind') === 0) return 'hivemind';
+  return 'manual';
+}
+function _histBadge(g) { return g === 'scheduled' ? 'Scheduled' : g === 'hivemind' ? 'Hivemind' : 'Manual'; }
+function _histDayLabel(ts) {
+  try {
+    const d = new Date(ts), now = new Date();
+    const same = (a, b) => a.toDateString() === b.toDateString();
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (same(d, now)) return 'Today';
+    if (same(d, y)) return 'Yesterday';
+    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  } catch (e) { return ''; }
+}
+async function _histLoad() {
+  _histState.loading = true;
+  _histRenderList();
+  try {
+    const res = await fetch(API_BASE + `/api/recent-runs?hours=${_histState.hours}&limit=200`);
+    const data = await res.json();
+    _histState.runs = Array.isArray(data.runs) ? data.runs : [];
+  } catch (e) { _histState.runs = []; }
+  _histState.loading = false;
+  _histRenderList();
+}
+function _histRenderList() {
+  const el = document.getElementById('history-list');
+  if (!el) return;
+  if (_histState.loading && !_histState.runs.length) { el.innerHTML = '<div class="mib-empty">Loading&hellip;</div>'; return; }
+  const f = _histState.filter;
+  const rows = _histState.runs.filter(r => f === 'all' || _histTrigGroup(r.trigger_type) === f);
+  _histState.rendered = rows;
+  if (!rows.length) { el.innerHTML = '<div class="mib-empty">No runs in this window.</div>'; return; }
+  let html = '', curDay = null;
+  rows.forEach((r, i) => {
+    const day = _histDayLabel(r.ts);
+    if (day !== curDay) { curDay = day; html += `<div class="mib-day">${esc(day)}</div>`; }
+    const g = _histTrigGroup(r.trigger_type);
+    const st = String(r.status || '').toLowerCase();
+    html += `<div class="hist-row" onclick="_histOpenRunIdx(${i})">
+      <span class="hist-badge hist-${g}">${_histBadge(g)}</span>
+      <div class="hist-main">
+        <div class="hist-top"><span class="hist-proj">${esc(r.project_name || r.project_id || '')}</span><span class="hist-time">${esc(r.ts_relative || '')}</span></div>
+        <div class="hist-task">${esc((r.task || '(no task)').slice(0, 160))}</div>
+      </div>
+      <span class="hist-status s-${esc(st)}">${esc(r.status || '')}</span>
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+function _histOpenRunIdx(i) {
+  const r = _histState.rendered[i];
+  if (!r) return;
+  const pid = r.project_id || '', csid = r.claude_session_id || '';
+  if (pid && csid && typeof openTranscriptViewer === 'function') openTranscriptViewer(pid, csid, r.task || '');
+  else if (pid && typeof openProjectModal === 'function') { modalActiveTab[pid] = 'agent-log'; openProjectModal(pid); }
+}
+function _histSetFilter(f) {
+  _histState.filter = f;
+  document.querySelectorAll('.hist-filter').forEach(b => b.classList.toggle('active', b.dataset.f === f));
+  _histRenderList();
+}
+function _histSetWindow(h) { _histState.hours = h || 168; _histLoad(); }
+
+function openHistory() {
+  const modalId = '__history';
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    _histLoad();
+    return;
+  }
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  if (typeof _clampModalSize === 'function') _clampModalSize(content, 720);
+  const chip = (f, label) => `<button class="hist-filter${_histState.filter === f ? ' active' : ''}" data-f="${f}" onclick="_histSetFilter('${f}')">${label}</button>`;
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;gap:12px;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">History</span>
+      <div class="hist-filters">${chip('all', 'All')}${chip('manual', 'Manual')}${chip('scheduled', 'Scheduled')}${chip('hivemind', 'Hivemind')}</div>
+      <select onchange="_histSetWindow(parseInt(this.value,10))" style="margin-left:auto;padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text)">
+        <option value="24">24 hours</option>
+        <option value="168" selected>7 days</option>
+        <option value="720">30 days</option>
+      </select>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div id="history-list" style="max-height:66vh;overflow-y:auto;padding:0 8px 8px"></div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  if (typeof centerModalElement === 'function') centerModalElement(win);
+  focusModal(modalId);
+  _histLoad();
+}
+
 // ── Interop: re-expose for inline / cross-module + region-generated on*=
 //    handler callers. All runtime-only. `refreshScheduleBanner` is called
 //    by the inline fetchProjects().then initial-paint AND by scheduler.js
 //    (×3, after schedule mutations) — both runtime, resolve the window prop.
 //    `_sbState` (const) + _sbRender / _sbLoadRecent / _sbFormatAbs are
 //    module-private. ──
+window.openHistory = openHistory;
+window._histSetFilter = _histSetFilter;
+window._histSetWindow = _histSetWindow;
+window._histOpenRunIdx = _histOpenRunIdx;
 window.refreshScheduleBanner = refreshScheduleBanner; // fetchProjects initial paint + scheduler.js mutations
 // region-generated on*= handler targets:
 window.toggleSchedulePanel = toggleSchedulePanel;

@@ -424,6 +424,10 @@
       <span class="si-icon">&#x23F1;</span>
       <span class="si-label">Automation</span>
     </div>
+    <div class="sidebar-item" data-nav="history" onclick="sidebarNav('history')">
+      <span class="si-icon">&#x1F553;</span>
+      <span class="si-label">History</span>
+    </div>
 
     <div class="sidebar-section-label">Advanced</div>
     <div class="sidebar-item si-advanced" data-nav="hivemind" onclick="sidebarNav('hivemind')">
@@ -702,7 +706,10 @@
       <span class="mdi-icon">&#x1F41D;</span><span class="mdi-label">Hivemind</span>
     </div>
     <div class="mobile-drawer-item" data-nav="scheduler" onclick="mobileDrawerNav('scheduler')">
-      <span class="mdi-icon">&#x23F1;</span><span class="mdi-label">Scheduler</span>
+      <span class="mdi-icon">&#x23F1;</span><span class="mdi-label">Automation</span>
+    </div>
+    <div class="mobile-drawer-item" data-nav="history" onclick="mobileDrawerNav('history')">
+      <span class="mdi-icon">&#x1F553;</span><span class="mdi-label">History</span>
     </div>
     <div class="mobile-drawer-item" data-nav="shared-rules" onclick="mobileDrawerNav('shared-rules')">
       <span class="mdi-icon">&#x1F4DC;</span><span class="mdi-label">Shared Rules</span>
@@ -1283,6 +1290,7 @@ function sidebarNav(target) {
     }
   }
   else if (target === 'inbox') openInboxSurface();
+  else if (target === 'history') openHistory();
   else if (target === 'scheduler') openScheduler();
   else if (target === 'settings') openSettings();
   else if (target === 'shared-rules') openSharedRulesEditor();
