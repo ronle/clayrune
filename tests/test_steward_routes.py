@@ -14,6 +14,7 @@ def sclient(tmp_path, monkeypatch):
     from mc.blueprints import project_routes as pr
     from mc.blueprints import scheduler_routes as sr
     from mc.blueprints import local_auth as la
+    from mc import state
     import steward
 
     monkeypatch.setattr(la, 'LOCAL_AUTH_PATH', tmp_path / 'local_auth.json')
@@ -23,6 +24,7 @@ def sclient(tmp_path, monkeypatch):
     monkeypatch.setattr(sr, 'SCHEDULES_PATH', tmp_path / 'schedules.json')
     monkeypatch.setattr(steward.CFG, 'data_root', tmp_path)
     monkeypatch.setattr(steward.CFG, 'notify_push', lambda *a, **k: None)
+    monkeypatch.setitem(state.CONFIG, 'auto_workspace_base', str(tmp_path / 'ws'))
 
     proj_path = tmp_path / 'proj'
     proj_path.mkdir()
@@ -124,6 +126,53 @@ def test_loop_health_endpoint(sclient):
     h = client.get('/api/steward/loop-health').get_json()
     assert h['projects_enabled'] == 1
     assert h['enabled'][0]['project_id'] == 'p1'
+
+
+def test_standalone_requires_name_and_objective(sclient):
+    client, *_ = sclient
+    assert client.post('/api/steward/standalone/enable', json={'objective': 'o'}).status_code == 400
+    assert client.post('/api/steward/standalone/enable', json={'name': 'X'}).status_code == 400
+
+
+def test_standalone_bootstraps_workspace(sclient):
+    client, proj_path, pr, sr = sclient
+    r = client.post('/api/steward/standalone/enable',
+                    json={'name': 'Env Health', 'objective': 'Keep my environment healthy',
+                          'cadence_minutes': 120})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body['ok'] and body['enabled'] and body['standalone']
+    pid = body['project_id']
+    assert pid.startswith('_steward_')
+
+    # workspace pseudo-project provisioned, flagged, hidden-eligible
+    ws = pr.load_project(pid)
+    assert ws is not None and ws['_is_steward_workspace'] is True
+    assert ws['project_path']
+    # charter + schedule + fence all bootstrapped on the workspace
+    assert any(it['source'] == 'steward-charter' for it in ws['backlog'])
+    scheds = json.loads((sr.SCHEDULES_PATH).read_text(encoding='utf-8'))
+    assert any(s.get('steward') and s['project_id'] == pid for s in scheds)
+    fence = _settings(__import__('pathlib').Path(ws['project_path']))
+    assert 'fence.py' in fence['hooks']['PreToolUse'][0]['hooks'][0]['command']
+
+
+def test_standalone_idempotent_by_name(sclient):
+    client, proj_path, pr, sr = sclient
+    for _ in range(2):
+        client.post('/api/steward/standalone/enable',
+                    json={'name': 'Weekly Research', 'objective': 'o'})
+    ws_projects = [p for p in pr.load_projects() if p.get('_is_steward_workspace')]
+    assert len(ws_projects) == 1  # same slug reused, not duplicated
+
+
+def test_standalone_shows_in_loop_health(sclient):
+    client, *_ = sclient
+    client.post('/api/steward/standalone/enable',
+                json={'name': 'Dep Watch', 'objective': 'Watch dependencies'})
+    h = client.get('/api/steward/loop-health').get_json()
+    entry = next(e for e in h['enabled'] if e['standalone'])
+    assert entry['objective'] == 'Watch dependencies'
 
 
 def test_disable_preserves_user_hooks(sclient):

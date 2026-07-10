@@ -1179,10 +1179,16 @@ function isIncognitoProject(p) {
   return !!(p && (p._is_incognito_project || p.id === '_incognito'));
 }
 
+// Standalone-steward workspaces are pseudo-projects (like _incognito) — hidden
+// from the grid; reached via the steward card's Review button instead.
+function isStewardWorkspace(p) {
+  return !!(p && (p._is_steward_workspace || String(p.id || '').startsWith('_steward_')));
+}
+
 function filterProjects() {
   // Hide the global incognito pseudo-project from regular listings — it's
   // surfaced via the dedicated "Incognito" sidebar entry instead.
-  const base = allProjects.filter(p => !isIncognitoProject(p));
+  const base = allProjects.filter(p => !isIncognitoProject(p) && !isStewardWorkspace(p));
   if (activeFilter === 'all') return base;
   if (activeFilter === 'unread') return base.filter(p => unreadCount(p) > 0);
   if (activeFilter === 'urgent')
@@ -2831,7 +2837,7 @@ fetchProjects().then(async () => {
   // Filter out the auto-created `_incognito` pseudo-project — it always exists
   // even on fresh installs, so counting it would suppress the walkthrough on
   // the exact users it's meant for.
-  const realProjectCount = allProjects.filter(p => !isIncognitoProject(p)).length;
+  const realProjectCount = allProjects.filter(p => !isIncognitoProject(p) && !isStewardWorkspace(p)).length;
   if (realProjectCount === 0 && !localStorage.getItem('walkthrough_done')) {
     setTimeout(() => startWalkthrough(), 600);
   }

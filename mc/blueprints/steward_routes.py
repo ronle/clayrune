@@ -7,10 +7,13 @@ Disable is the kill switch. Loop-health surfaces pending decisions / blocked.
 Precedent: distiller_routes / beacon_routes (born-outside-server package + thin
 blueprint wired from server.py). Scope: docs/AUTONOMOUS_STEWARD_SCOPE.md.
 """
+import re
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from flask import Blueprint, jsonify, request
 
+from mc import state
 from mc.core import _log, now_iso
 import steward
 from steward import core as _core
@@ -93,18 +96,12 @@ def steward_status(project_id):
     })
 
 
-@bp.route('/api/project/<project_id>/steward/enable', methods=['POST'])
-def steward_enable(project_id):
-    """Turn a project into an autonomous steward. Idempotent."""
-    data = request.get_json() or {}
+def _do_enable(project_id, objective, cadence):
+    """Shared enable bootstrap (used by the per-project AND standalone paths).
+    Assumes the project record already exists. Returns (response_dict, status)."""
     p = load_project(project_id)
     if p is None:
-        return jsonify({'error': 'not found'}), 404
-
-    objective = (data.get('objective') or _core.get_objective(p) or '').strip()
-    if not objective:
-        return jsonify({'error': 'objective required (the field of responsibility)'}), 400
-    cadence = data.get('cadence_minutes', p.get('steward_cadence_minutes'))
+        return {'error': 'not found'}, 404
 
     # 1. Persist config.
     p['steward_mode'] = 'on'
@@ -118,7 +115,7 @@ def steward_enable(project_id):
     # 2. Seed the charter (pinned backlog item).
     charter = _core.ensure_charter(project_id, objective)
     if charter is None:
-        return jsonify({'error': 'could not create charter'}), 500
+        return {'error': 'could not create charter'}, 500
 
     # 3. Install the reversibility fence into the project's .claude/settings.json.
     project_path = p.get('project_path', '')
@@ -148,12 +145,97 @@ def steward_enable(project_id):
                          f'Cadence: every {cadence_min} min. '
                          f'Fence: {"on" if fenced else "OFF (unfenced!)"}.')
 
-    return jsonify({
-        'ok': True, 'enabled': True, 'objective': objective,
+    return {
+        'ok': True, 'enabled': True, 'project_id': project_id, 'objective': objective,
         'cadence_minutes': cadence_min, 'charter_item_id': charter.get('id'),
         'schedule_id': sched.get('id'), 'next_run': sched.get('next_run'),
         'fenced': fenced,
-    })
+    }, 200
+
+
+@bp.route('/api/project/<project_id>/steward/enable', methods=['POST'])
+def steward_enable(project_id):
+    """Turn a project into an autonomous steward. Idempotent."""
+    data = request.get_json() or {}
+    p = load_project(project_id)
+    if p is None:
+        return jsonify({'error': 'not found'}), 404
+    objective = (data.get('objective') or _core.get_objective(p) or '').strip()
+    if not objective:
+        return jsonify({'error': 'objective required (the field of responsibility)'}), 400
+    resp, status = _do_enable(project_id, objective,
+                              data.get('cadence_minutes', p.get('steward_cadence_minutes')))
+    return jsonify(resp), status
+
+
+# ── Standalone (operator-level) steward — not tied to an existing project ─────
+STEWARD_WORKSPACE_PREFIX = '_steward_'
+
+
+def _slugify(name: str) -> str:
+    s = re.sub(r'[^a-z0-9]+', '_', (name or '').lower()).strip('_')[:40]
+    return s or 'steward'
+
+
+def _ensure_steward_workspace(slug: str, name: str) -> Optional[dict]:
+    """Create-or-return a standalone steward's pseudo-project (mirrors the
+    _incognito pattern): a project record at data/projects/_steward_<slug>.json
+    with its own scratch workspace folder, hidden from the dashboard grid.
+    Returns the project dict, or None on failure."""
+    pid = STEWARD_WORKSPACE_PREFIX + slug
+    existing = load_project(pid)
+    if existing is not None:
+        return existing
+    base = Path(state.CONFIG.get('auto_workspace_base') or str(Path.home() / 'MissionControl'))
+    workspace = base / pid
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        _log(f"[steward] could not create workspace {workspace}: {e}", flush=True)
+        return None
+    rec = {
+        'id': pid,
+        'name': name.strip() or 'Standalone Steward',
+        'emoji': '\U0001F9ED',  # compass — self-directing
+        'description': 'Standalone (operator-level) steward workspace. Not tied '
+                       'to a specific codebase; runs a cross-cutting mandate.',
+        'project_path': str(workspace),
+        'status': 'active',
+        'domain': 'general',
+        'activity_log': [],
+        'backlog': [],
+        'current_task': '',
+        'next_action': '',
+        '_is_steward_workspace': True,
+        'last_updated': now_iso(),
+    }
+    try:
+        save_project(pid, rec)
+    except Exception as e:
+        _log(f"[steward] could not save workspace record {pid}: {e}", flush=True)
+        return None
+    return rec
+
+
+@bp.route('/api/steward/standalone/enable', methods=['POST'])
+def steward_standalone_enable(project_id=None):
+    """Start a standalone steward: provision a dedicated workspace pseudo-project,
+    then run the same enable bootstrap on it. Idempotent per name (slug)."""
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    objective = (data.get('objective') or '').strip()
+    if not name:
+        return jsonify({'error': 'name required (what to call this steward)'}), 400
+    if not objective:
+        return jsonify({'error': 'objective required (the field of responsibility)'}), 400
+    slug = _slugify(name)
+    ws = _ensure_steward_workspace(slug, name)
+    if ws is None:
+        return jsonify({'error': 'could not provision steward workspace'}), 500
+    resp, status = _do_enable(ws['id'], objective, data.get('cadence_minutes'))
+    if isinstance(resp, dict):
+        resp['standalone'] = True
+    return jsonify(resp), status
 
 
 @bp.route('/api/project/<project_id>/steward/disable', methods=['POST'])

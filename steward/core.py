@@ -304,6 +304,7 @@ def loop_health() -> dict:
             'decisions_pending': pend,
             'blocked': blk,
             'last_note_ts': last_ts,
+            'standalone': bool(p.get('_is_steward_workspace')),
         })
         if pend:
             out['alerts'].append(f"{p.get('name') or p.get('id')}: {pend} decision(s) awaiting you")

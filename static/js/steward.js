@@ -37,6 +37,8 @@ async function renderStewards() {
     const blkBadge = blk
       ? `<span class="steward-badge blocked" title="Blocked cycles">${blk} blocked</span>` : '';
     const fenceBadge = `<span class="steward-badge fence" title="Irreversible actions are hard-blocked; the steward must ask first">🛡 fenced</span>`;
+    const scopeBadge = s.standalone
+      ? `<span class="steward-badge" title="Operator-level — not tied to a codebase">🧭 standalone</span>` : '';
     const last = s.last_note_ts ? `last activity ${_stewardAgo(s.last_note_ts)}` : 'no activity yet';
     return `<div class="schedule-card-wrap"><div class="schedule-card${pend ? ' steward-attn' : ''}">
       <div class="schedule-card-body">
@@ -45,7 +47,7 @@ async function renderStewards() {
         <div class="schedule-card-meta">
           <span>${cadence}</span>
           <span>${last}</span>
-          ${fenceBadge}${pendBadge}${blkBadge}
+          ${fenceBadge}${scopeBadge}${pendBadge}${blkBadge}
         </div>
       </div>
       <div class="schedule-card-actions">
@@ -72,19 +74,46 @@ function stewardOpenCharter(pid) {
   if (window.openProjectModal) window.openProjectModal(pid);
 }
 
-function showStewardForm() {
-  if (stewardFormOpen) { hideStewardForm(); return; }
-  stewardFormOpen = true;
-  const area = document.getElementById('steward-form-area');
-  if (!area) return;
+let stewardScope = 'project';  // 'project' | 'standalone'
+
+function _stewardScopeField(scope) {
+  if (scope === 'standalone') {
+    return `<label>Name <span class="memory-hint" style="margin:0;font-weight:normal">(what to call this operator-level steward)</span></label>
+      <input type="text" id="steward-name" placeholder="e.g. Env Health, Weekly Research, Dependency Watch">`;
+  }
   // NOTE: `allProjects` is a top-level `let` in a classic index.html script — a
   // bare-name global, NOT a window property (window.allProjects is undefined).
   // Read it by bare name like scheduler.js does; window.allProjects → empty list.
-  const projects = (typeof allProjects !== 'undefined' ? allProjects : []).filter(p => p.project_path);
-  area.innerHTML = `<div class="schedule-form">
-    <label>Project <span class="memory-hint" style="margin:0;font-weight:normal">(the field of responsibility)</span></label>
+  // Exclude the incognito + standalone-steward pseudo-projects from the picker.
+  const projects = (typeof allProjects !== 'undefined' ? allProjects : [])
+    .filter(p => p.project_path && !p._is_incognito_project && p.id !== '_incognito'
+                 && !p._is_steward_workspace && !String(p.id).startsWith('_steward_'));
+  return `<label>Project <span class="memory-hint" style="margin:0;font-weight:normal">(the field of responsibility)</span></label>
     <select id="steward-project">${projects.map(p =>
-      `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>
+      `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>`;
+}
+
+function setStewardScope(scope) {
+  stewardScope = scope;
+  document.querySelectorAll('#steward-scope-row .sched-type-btn')
+    .forEach(b => b.classList.toggle('active', b.dataset.scope === scope));
+  const f = document.getElementById('steward-scope-field');
+  if (f) f.innerHTML = _stewardScopeField(scope);
+}
+
+function showStewardForm() {
+  if (stewardFormOpen) { hideStewardForm(); return; }
+  stewardFormOpen = true;
+  stewardScope = 'project';
+  const area = document.getElementById('steward-form-area');
+  if (!area) return;
+  area.innerHTML = `<div class="schedule-form">
+    <label>Scope</label>
+    <div class="sched-type-row" id="steward-scope-row">
+      <button class="sched-type-btn active" data-scope="project" onclick="setStewardScope('project')">A project</button>
+      <button class="sched-type-btn" data-scope="standalone" onclick="setStewardScope('standalone')">Standalone</button>
+    </div>
+    <div id="steward-scope-field">${_stewardScopeField('project')}</div>
     <label>Objective <span class="memory-hint" style="margin:0;font-weight:normal">(what the steward is responsible for — its charter)</span></label>
     <textarea id="steward-objective" rows="2" placeholder="e.g. Keep the README and docs in sync with the code; open a decision when a release is warranted."></textarea>
     <label>Cadence (minutes between cycles)</label>
@@ -106,15 +135,26 @@ function hideStewardForm() {
 }
 
 async function createSteward() {
-  const pid = document.getElementById('steward-project')?.value;
   const objective = (document.getElementById('steward-objective')?.value || '').trim();
   const cadence = parseInt(document.getElementById('steward-cadence')?.value) || 180;
-  if (!pid) { alert('Pick a project'); return; }
   if (!objective) { alert('An objective is required — it is the steward’s field of responsibility.'); return; }
+
+  let url, body;
+  if (stewardScope === 'standalone') {
+    const name = (document.getElementById('steward-name')?.value || '').trim();
+    if (!name) { alert('Give the standalone steward a name.'); return; }
+    url = `${API_BASE}/api/steward/standalone/enable`;
+    body = { name, objective, cadence_minutes: cadence };
+  } else {
+    const pid = document.getElementById('steward-project')?.value;
+    if (!pid) { alert('Pick a project'); return; }
+    url = `${API_BASE}/api/project/${encodeURIComponent(pid)}/steward/enable`;
+    body = { objective, cadence_minutes: cadence };
+  }
   try {
-    const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(pid)}/steward/enable`, {
+    const res = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ objective, cadence_minutes: cadence }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) { alert(data.error || 'Failed to start steward'); return; }
@@ -139,6 +179,7 @@ async function stewardDisable(pid) {
 // ── Interop exports (runtime-resolved; matches scheduler.js convention) ──
 window.renderStewards = renderStewards;
 window.showStewardForm = showStewardForm;
+window.setStewardScope = setStewardScope;
 window.hideStewardForm = hideStewardForm;
 window.createSteward = createSteward;
 window.stewardDisable = stewardDisable;
