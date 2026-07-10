@@ -226,6 +226,16 @@
   .sidebar-item.si-advanced:hover, .sidebar-item.si-advanced.active { opacity: 1; }
   /* "New Project" reads as the primary create action. */
   .sidebar-item.si-new .si-icon, .sidebar-item.si-new .si-label { color: var(--accent); }
+  /* Extensions surface (Skills & MCP) tab bar. */
+  .ext-tabs { display: flex; gap: 2px; }
+  .ext-tab {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    color: var(--text-dim); font: 600 13px/1 'Inter', sans-serif;
+    padding: 8px 12px 10px; cursor: pointer; transition: color 0.12s, border-color 0.12s;
+  }
+  .ext-tab:hover { color: var(--text); }
+  .ext-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
   /* Sidebar unread badge (Inbox). */
   .si-icon { position: relative; }
   .si-badge {

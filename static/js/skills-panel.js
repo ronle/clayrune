@@ -15,18 +15,40 @@ function openAllSkillsForProject(projectId) {
   openAllSkills();
 }
 
-async function openAllSkills() {
-  const modalId = '__all_skills';
+// ── Extensions surface — Skills + MCP as one tabbed modal (desktop redesign
+// step 4). Both panels' bodies are extracted into _allSkillsBodyHTML() /
+// _allMcpBodyHTML() and hosted in a shared shell; each panel's render/load
+// functions target their own DOM ids, so they work unchanged inside the tab.
+let _extTab = 'skills';
+
+function _extRenderBody() {
+  const body = document.getElementById('ext-body');
+  if (!body) return;
+  document.querySelectorAll('.ext-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === _extTab));
+  if (_extTab === 'mcp') {
+    body.innerHTML = (typeof _allMcpBodyHTML === 'function') ? _allMcpBodyHTML() : '';
+    if (typeof renderAllMCP === 'function') renderAllMCP();
+    if (typeof loadAllMCP === 'function') loadAllMCP();
+  } else {
+    body.innerHTML = _allSkillsBodyHTML();
+    renderAllSkills();
+    loadAllSkills();
+    if (typeof loadSkillUsage === 'function') loadSkillUsage();
+    if (typeof loadDistillerQueue === 'function') loadDistillerQueue();
+  }
+}
+function switchExtTab(tab) { _extTab = tab; _extRenderBody(); }
+
+function openExtensions(tab) {
+  _extTab = tab || _extTab || 'skills';
+  const modalId = '__extensions';
   if (openModals.has(modalId)) {
     const entry = openModals.get(modalId);
     if (entry.minimized) restoreModal(modalId);
     focusModal(modalId);
-    renderAllSkills();
-    loadAllSkills();
-    loadDistillerQueue();
+    _extRenderBody();
     return;
   }
-
   const win = document.createElement('div');
   win.className = 'modal-window';
   win.dataset.modalId = modalId;
@@ -34,13 +56,34 @@ async function openAllSkills() {
   content.className = 'modal-content';
   _clampModalSize(content, 1000);
   content.innerHTML = `
-    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
-      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x1F9E9; Skills</span>
-      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+    <div class="modal-header" style="display:flex;align-items:center;gap:12px;padding:14px 24px 0 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">Extensions</span>
+      <div class="ext-tabs">
+        <button class="ext-tab" data-tab="skills" onclick="switchExtTab('skills')">&#x1F9E9; Skills</button>
+        <button class="ext-tab" data-tab="mcp" onclick="switchExtTab('mcp')">&#x1F50C; MCP</button>
+      </div>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px;margin-left:auto">
         <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
         <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
       </div>
     </div>
+    <div id="ext-body"></div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+  _extRenderBody();
+}
+
+// Skills entry points now open the merged Extensions surface on the Skills tab.
+function openAllSkills() { openExtensions('skills'); }
+
+// The Skills panel body (extracted so the Extensions shell can host it).
+function _allSkillsBodyHTML() {
+  return `
     <div style="padding:4px 24px 20px 28px">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
         <input type="text" id="as-search" placeholder="Search name / description..." value="${esc(_allSkillsFilter.search)}"
@@ -85,19 +128,6 @@ async function openAllSkills() {
       <div id="as-queue"></div>
       <div id="as-list" style="max-height:65vh;overflow-y:auto"></div>
     </div>`;
-  win.appendChild(content);
-  document.getElementById('modal-layer').appendChild(win);
-
-  const z = nextModalZ++;
-  win.style.zIndex = z;
-  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
-  centerModalElement(win);
-  focusModal(modalId);
-
-  renderAllSkills();
-  loadAllSkills();
-  loadSkillUsage();
-  loadDistillerQueue();
 }
 
 async function loadAllSkills() {
@@ -1372,6 +1402,8 @@ async function _sibInstallHere(modalId, srcScope, srcName, srcProjectId) {
 // (sidebarNav) and static/generated inline event attributes, all of which
 // resolve against the global object, never module scope.
 window.openAllSkills = openAllSkills;                       // interop: sidebarNav('skills') in the inline script
+window.openExtensions = openExtensions;                     // interop: Skills & MCP sidebar entry (inline onclick)
+window.switchExtTab = switchExtTab;                         // interop: generated tab onclick
 window.openAllSkillsForProject = openAllSkillsForProject;   // interop: project-modal three-dot menu (generated onclick)
 window.loadAllSkills = loadAllSkills;                       // interop: generated onchange (project filter select, include-archived checkbox)
 window.renderAllSkills = renderAllSkills;                   // interop: generated oninput/onchange (search box, scope select)

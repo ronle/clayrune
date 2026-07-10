@@ -14,31 +14,12 @@ function openAllMCPForProject(projectId) {
   openAllMCP();
 }
 
-async function openAllMCP() {
-  const modalId = '__all_mcp';
-  if (openModals.has(modalId)) {
-    const entry = openModals.get(modalId);
-    if (entry.minimized) restoreModal(modalId);
-    focusModal(modalId);
-    renderAllMCP();
-    loadAllMCP();
-    return;
-  }
+// MCP entry points now open the merged Extensions surface on the MCP tab.
+function openAllMCP() { openExtensions('mcp'); }
 
-  const win = document.createElement('div');
-  win.className = 'modal-window';
-  win.dataset.modalId = modalId;
-  const content = document.createElement('div');
-  content.className = 'modal-content';
-  _clampModalSize(content, 1000);
-  content.innerHTML = `
-    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
-      <span style="font-size:16px;font-weight:700;color:var(--text)">&#x1F50C; MCP servers</span>
-      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
-        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
-        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
-      </div>
-    </div>
+// The MCP panel body (extracted so the Extensions shell can host it).
+function _allMcpBodyHTML() {
+  return `
     <div style="padding:4px 24px 20px 28px">
       <div style="font-size:11px;color:var(--text-faint);margin-bottom:10px;line-height:1.5">
         Model Context Protocol servers extend Claude Code with extra tools (filesystems, databases, hosted APIs).
@@ -66,17 +47,6 @@ async function openAllMCP() {
       </div>
       <div id="am-list" style="max-height:65vh;overflow-y:auto"></div>
     </div>`;
-  win.appendChild(content);
-  document.getElementById('modal-layer').appendChild(win);
-
-  const z = nextModalZ++;
-  win.style.zIndex = z;
-  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
-  centerModalElement(win);
-  focusModal(modalId);
-
-  renderAllMCP();
-  loadAllMCP();
 }
 
 async function loadAllMCP() {
@@ -1058,6 +1028,7 @@ window.openAllMCPForProject = openAllMCPForProject; // project three-dot menu on
 // region-generated on*= handler targets:
 window.loadAllMCP = loadAllMCP;
 window.renderAllMCP = renderAllMCP;
+window._allMcpBodyHTML = _allMcpBodyHTML;            // interop: Extensions shell (skills-panel.js) hosts the MCP tab body
 window.openMCPEditor = openMCPEditor;
 window._mcpToggleActive = _mcpToggleActive;
 window._mcpResetLoadout = _mcpResetLoadout;
