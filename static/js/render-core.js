@@ -331,7 +331,7 @@ function modalContentHTML(p) {
 
   // Migrate stale tab selections (memory/rules moved to three-dot menu;
   // hivemind moved to global sidebar Hivemind view)
-  const validTabs = ['agent','backlog','agent-log','plans','activity'];
+  const validTabs = ['agent','backlog','agent-log','plans','activity','workflows'];
   let activeTab = modalActiveTab[p.id] || 'agent';
   if (!validTabs.includes(activeTab)) { activeTab = 'agent'; modalActiveTab[p.id] = 'agent'; }
 
