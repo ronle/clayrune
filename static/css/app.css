@@ -1942,7 +1942,7 @@
   .mib-day {
     font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
     color: var(--text-faint); padding: 14px 16px 6px; position: sticky; top: 0;
-    background: var(--bg);
+    background: var(--bg); z-index: 2;  /* paint above rows scrolling under it */
   }
   .mib-project {
     display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
@@ -1993,7 +1993,10 @@
      companion HTML/JS (see CHANGELOG.md). */
   @media (max-width: 960px) {
     .header { display: none; }
-    .schedule-banner { margin-top: 0; }
+    /* Clean mobile dashboard (design mockup): drop the Schedule + Beacon bars.
+       !important beats the inline display JS sets when it populates them. They
+       stay on desktop; still reachable there / via their own surfaces. */
+    .schedule-banner, .beacon-bar { display: none !important; }
     .content-main { padding: 0 0 80px; }
     .toolbar { display: none; }
     .projects-col { padding: 0 16px 16px; gap: 12px; }
