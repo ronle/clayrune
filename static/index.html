@@ -531,6 +531,8 @@
       </div>
       <!-- Mobile filter pill row -->
       <div class="mc-pill-row" id="mobile-filter-pills"></div>
+      <!-- Dashboard "Waiting on you" block (desktop) — filled by renderWaitingOnYou() -->
+      <div id="waiting-on-you"></div>
       <!-- Toolbar -->
       <div class="toolbar">
         <div class="toolbar-left">
@@ -1186,6 +1188,7 @@ function renderProjects() {
   const col = document.getElementById('projects-col');
   if (isMobileChatList()) { col.classList.add('mc-chat-mode'); renderMobileChatList(col); return; }
   col.classList.remove('mc-chat-mode');
+  if (typeof renderWaitingOnYou === 'function') renderWaitingOnYou();  // desktop attention block
   const filtered = filterProjects();
   if (!filtered.length) { col.innerHTML = '<div class="loading">No projects match filter</div>'; return; }
   const filteredIds = new Set(filtered.map(p => p.id));

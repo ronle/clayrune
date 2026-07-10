@@ -190,6 +190,17 @@ function _wireWaitingOnYou(col) {
   });
 }
 
+// Desktop dashboard: fill the #waiting-on-you block above the project grid.
+// (Mobile renders its own copy inside the conversation list via renderMobileChatList.)
+// Empty output → the container is :empty and CSS hides it.
+function renderWaitingOnYou() {
+  const el = document.getElementById('waiting-on-you');
+  if (!el) return;
+  el.innerHTML = _waitingOnYouHTML();
+  _wireWaitingOnYou(el);
+}
+window.renderWaitingOnYou = renderWaitingOnYou;
+
 function renderMobileChatList(col) {
   const waiting = _waitingOnYouHTML();
   const filtered = filterProjects();

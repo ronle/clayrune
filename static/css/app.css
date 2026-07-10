@@ -3863,13 +3863,49 @@
      content-width banner. Either child can hide independently; when both
      hide the row collapses to a thin empty band (rare: no schedules + beacon
      unconfigured). */
+  /* Desktop redesign step 2: the Schedule + Beacon top-strip is removed — its
+     signal moves to the dashboard "Waiting on you" block + Automation + Inbox. */
   .top-strip-row {
     position: relative;
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    display: none;
+    align-items: center; gap: 14px; flex-wrap: wrap;
     padding: 6px 28px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
   }
+  /* Dashboard "Waiting on you" block (desktop). Mobile renders its own copy
+     inside .projects-col via the ≤960 .woy-* rules; this desktop block is scoped
+     to #waiting-on-you so the two never collide. Empty → hidden. */
+  #waiting-on-you { margin: 0 0 18px; }
+  #waiting-on-you:empty { display: none; }
+  #waiting-on-you .woy-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  #waiting-on-you .woy-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    color: var(--amber-text);
+  }
+  #waiting-on-you .woy-count {
+    background: var(--amber); color: #fff; border-radius: 10px;
+    min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
+    font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+  }
+  #waiting-on-you .woy-list { display: flex; flex-direction: column; gap: 8px; }
+  #waiting-on-you .woy-row {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; cursor: pointer; transition: border-color 0.12s, background 0.12s;
+  }
+  #waiting-on-you .woy-row:hover { border-color: var(--border2); background: var(--surface2); }
+  #waiting-on-you .woy-icon { font-size: 20px; flex-shrink: 0; }
+  #waiting-on-you .woy-main { flex: 1; min-width: 0; }
+  #waiting-on-you .woy-project { font-size: 14px; font-weight: 700; color: var(--text); }
+  #waiting-on-you .woy-msg { font-size: 12.5px; color: var(--amber-text); margin-top: 2px; }
+  #waiting-on-you .woy-act {
+    flex-shrink: 0; border-radius: 8px; padding: 8px 18px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--accent); font-family: inherit;
+  }
+  #waiting-on-you .woy-act.woy-primary { background: var(--accent); color: #fff; }
+  #waiting-on-you .woy-act.woy-ghost { background: transparent; color: var(--accent); }
   .top-strip-row .schedule-banner,
   .top-strip-row .beacon-bar {
     position: static;
