@@ -4281,6 +4281,14 @@
   }
   .schedule-empty { color: var(--text-faint); font-size: 13px; text-align: center; padding: 24px; }
 
+  /* ── STEWARD BADGES ─────────────────────────────────────────── */
+  .steward-badge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 10px;
+    font-size: 10px; font-weight: 600; border: 1px solid var(--border); color: var(--text-muted); }
+  .steward-badge.fence { color: var(--accent); border-color: var(--accent); opacity: 0.85; }
+  .steward-badge.decide { color: var(--red-text); border-color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+  .steward-badge.blocked { color: var(--text-muted); }
+  .schedule-card.steward-attn { border-left: 3px solid var(--red); }
+
   /* ── PLAN HISTORY CARDS ─────────────────────────────────────── */
   .plan-history-card {
     padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--accent);

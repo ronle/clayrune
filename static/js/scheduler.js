@@ -27,7 +27,17 @@ async function openScheduler() {
     </div>
     <div class="scheduler-section" style="padding-top:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <span class="memory-hint" style="margin:0">Automatically dispatch agents at scheduled times.</span>
+        <span style="font-size:13px;font-weight:700;color:var(--text)">Autonomous Stewards
+          <span class="memory-hint" style="margin:0;font-weight:normal;display:block">Fire-and-forget agents that set their own next steps and ask before anything irreversible.</span></span>
+        <button class="btn-add" style="padding:6px 14px;font-size:12px;flex-shrink:0" onclick="showStewardForm()">+ New Steward</button>
+      </div>
+      <div id="steward-form-area"></div>
+      <div id="steward-list"><div class="schedule-empty">Loading…</div></div>
+    </div>
+    <div class="scheduler-section" style="padding-top:20px;margin-top:8px;border-top:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <span style="font-size:13px;font-weight:700;color:var(--text)">Scheduled Tasks
+          <span class="memory-hint" style="margin:0;font-weight:normal;display:block">Dispatch an agent with a fixed prompt at set times.</span></span>
         <button class="btn-add" style="padding:6px 14px;font-size:12px;flex-shrink:0" onclick="showScheduleForm()">+ Add Schedule</button>
       </div>
       <div id="schedule-form-area"></div>
@@ -42,6 +52,7 @@ async function openScheduler() {
   centerModalElement(win);
   focusModal(modalId);
 
+  if (window.renderStewards) window.renderStewards();
   await refreshScheduleList();
 }
 
@@ -50,7 +61,10 @@ async function refreshScheduleList() {
   if (!container) return;
   try {
     const res = await fetch(API_BASE + '/api/schedules');
-    const schedules = await res.json();
+    const allSchedules = await res.json();
+    // Steward-managed schedules are surfaced as steward cards above, not as raw
+    // rows here — hide them so the list stays user-authored schedules only.
+    const schedules = allSchedules.filter(s => !s.steward);
     if (!schedules.length) {
       container.innerHTML = '<div class="schedule-empty">No scheduled tasks yet. Click "+ Add Schedule" to create one.</div>';
       return;
