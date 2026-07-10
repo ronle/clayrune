@@ -595,6 +595,9 @@ function openNewProjectForm() {
   const z = nextModalZ++;
   win.style.zIndex = z;
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  // Mobile back-stack: register a surface entry so hardware-back closes the form
+  // (a __-prefixed modal → the popstate surface branch handles it). No-op on desktop.
+  if (typeof mcPushSurfaceHistory === 'function') mcPushSurfaceHistory();
   centerModalElement(win);
   focusModal(modalId);
   folderBrowserOpen = false;

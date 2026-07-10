@@ -505,6 +505,13 @@ function mcPushResumeHistory() {
   try { history.pushState({ mc: 'resume' }, ''); _mcResumeHistoryActive = true; } catch (e) {}
 }
 window.mcPushResumeHistory = mcPushResumeHistory;
+// A global surface modal (New-project form, or any __-modal opened NOT from the
+// drawer where there's no drawer entry to relabel) pushes its own back entry;
+// the popstate _mcSurfaceOpen branch closes it. Mobile-only.
+function mcPushSurfaceHistory() {
+  if (!isMobileChatList() || _mcSurfaceOpen) return;
+  try { history.pushState({ mc: 'surface' }, ''); _mcSurfaceOpen = true; } catch (e) {}
+}
 function mcPushDrawerHistory() {
   if (_mcDrawerHistoryActive) return;
   try { history.pushState({ mc: 'drawer' }, ''); _mcDrawerHistoryActive = true; } catch (e) {}
@@ -592,6 +599,7 @@ window.unreadCount = unreadCount;
 window.renderMobileChatList = renderMobileChatList;
 window.mcPushModalHistory = mcPushModalHistory;
 window.mcPushConvHistory = mcPushConvHistory;
+window.mcPushSurfaceHistory = mcPushSurfaceHistory;
 window.mcPushSettingsHistory = mcPushSettingsHistory;
 window.mcPushSettingsNav = mcPushSettingsNav;
 window._closeMobileDrawerUI = _closeMobileDrawerUI;
