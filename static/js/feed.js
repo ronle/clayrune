@@ -31,15 +31,19 @@ function _buildAttentionList() {
     const live = computeLiveStatus(p.id) || {};
     let icon = '✋';  // ✋ default for asking
     let msg = '';
+    // `kind`/`action` drive the dashboard "Waiting on you" cards (the action
+    // button label). Additive — the desktop feed ignores them.
+    let kind = 'input', action = 'Open';
     if (fs === 'asking') {
       // Sub-state from the consolidated resolver (server-fed via
       // p.live_agent.reason), so a CLOSED project's item is labelled
       // correctly without this client's lazily-refreshed agentStatusCache.
-      if (live.currentTaskClass === 'plan-approval') { icon = '\u{1F4CB}'; msg = 'Plan ready — needs approval'; }       // 📋
-      else if (live.currentTaskClass === 'question') { icon = '❓'; msg = 'Question pending — needs answer'; }    // ❓
-      else { msg = 'Awaiting input to proceed'; }
+      if (live.currentTaskClass === 'plan-approval') { icon = '\u{1F4CB}'; msg = 'Plan ready — needs approval'; kind = 'plan'; action = 'Review'; }       // 📋
+      else if (live.currentTaskClass === 'question') { icon = '❓'; msg = 'Question pending — needs answer'; kind = 'question'; action = 'Answer'; }    // ❓
+      else { msg = 'Awaiting input to proceed'; action = 'Answer'; }
     } else {
       icon = '⚠';  // ⚠
+      kind = 'stuck'; action = 'Unblock';
       if (p.blocked) {
         msg = p.blocked_reason ? `Blocked: ${p.blocked_reason}` : 'Blocked';
       } else if (live.currentTaskClass === 'error') {
@@ -49,6 +53,7 @@ function _buildAttentionList() {
       }
     }
     items.push({ projectId: p.id, project: p.name || p.id, domain: p.domain, msg, icon,
+      kind, action,
       sessionId: live.sessionId || null });  // §1: deep-link target (may be null)
   });
   return items;

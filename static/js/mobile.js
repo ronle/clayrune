@@ -163,9 +163,44 @@ function projectRowHTML(p) {
   </div>`;
 }
 
+// "Waiting on you" — the dashboard's blocking/actionable surface (distinct from
+// the Inbox timeline). Rendered inline at the top of the mobile dashboard from
+// _buildAttentionList; each card carries an Answer / Review / Unblock button that
+// deep-links to the question form / plan card in that chat.
+function _waitingOnYouHTML() {
+  const items = (typeof _buildAttentionList === 'function') ? _buildAttentionList() : [];
+  if (!items.length) return '';
+  const rows = items.map(it => {
+    const filled = it.kind === 'question' || it.kind === 'input';  // Answer = primary
+    return `<div class="woy-row" data-project-id="${esc(it.projectId)}" data-session-id="${esc(it.sessionId || '')}">
+      <span class="woy-icon">${it.icon}</span>
+      <div class="woy-main">
+        <div class="woy-project">${esc(it.project)}</div>
+        <div class="woy-msg">${esc(it.msg)}</div>
+      </div>
+      <button class="woy-act ${filled ? 'woy-primary' : 'woy-ghost'}">${esc(it.action || 'Open')}</button>
+    </div>`;
+  }).join('');
+  return `<div class="woy-section">
+    <div class="woy-head"><span class="woy-title">Waiting on you</span><span class="woy-count">${items.length}</span></div>
+    <div class="woy-list">${rows}</div>
+  </div>`;
+}
+
+function _wireWaitingOnYou(col) {
+  col.querySelectorAll('.woy-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const pid = row.dataset.projectId, sid = row.dataset.sessionId;
+      if (sid && typeof openProjectAtSession === 'function') openProjectAtSession(pid, sid);
+      else if (typeof openProjectModal === 'function') openProjectModal(pid);
+    });
+  });
+}
+
 function renderMobileChatList(col) {
+  const waiting = _waitingOnYouHTML();
   const filtered = filterProjects();
-  if (!filtered.length) { col.innerHTML = '<div class="loading">No projects match filter</div>'; return; }
+  if (!filtered.length) { col.innerHTML = waiting + '<div class="loading">No projects match filter</div>'; _wireWaitingOnYou(col); return; }
   const rank = p => {
     if ((p.pinned_conversations || []).length) return 0;  // has a pinned chat → always top (survives restarts/interfaces)
     const fs = friendlyStatus(p);
@@ -178,7 +213,8 @@ function renderMobileChatList(col) {
     if (r !== 0) return r;
     return (Date.parse(b.last_updated || '') || 0) - (Date.parse(a.last_updated || '') || 0);
   });
-  col.innerHTML = `<div class="mc-chat-list">${sorted.map(projectRowHTML).join('')}</div>`;
+  col.innerHTML = waiting + `<div class="mc-chat-list">${sorted.map(projectRowHTML).join('')}</div>`;
+  _wireWaitingOnYou(col);
   col.querySelectorAll('.mc-chat-row').forEach(row => {
     row.addEventListener('click', () => openProjectModal(row.dataset.id));
   });
