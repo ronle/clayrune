@@ -406,42 +406,51 @@
       <span class="si-icon">&#x25A6;</span>
       <span class="si-label">Dashboard</span>
     </div>
-    <div class="sidebar-item" data-nav="skills" onclick="sidebarNav('skills')">
-      <span class="si-icon">&#x1F9E9;</span>
-      <span class="si-label">Skills</span>
+    <div class="sidebar-item si-new" data-nav="new" onclick="openNewProjectForm()">
+      <span class="si-icon">&#x2795;</span>
+      <span class="si-label">New Project</span>
     </div>
-    <div class="sidebar-item" data-nav="mcp" onclick="sidebarNav('mcp')">
-      <span class="si-icon">&#x1F50C;</span>
-      <span class="si-label">MCP</span>
-    </div>
+
+    <div class="sidebar-section-label">Workspace</div>
     <div class="sidebar-item" data-nav="backlog" onclick="sidebarNav('backlog')">
       <span class="si-icon">&#x1F4CB;</span>
       <span class="si-label">Backlog</span>
     </div>
-    <div class="sidebar-item" data-nav="hivemind" onclick="sidebarNav('hivemind')">
+    <div class="sidebar-item" data-nav="scheduler" onclick="sidebarNav('scheduler')">
+      <span class="si-icon">&#x23F1;</span>
+      <span class="si-label">Automation</span>
+    </div>
+
+    <div class="sidebar-section-label">Advanced</div>
+    <div class="sidebar-item si-advanced" data-nav="hivemind" onclick="sidebarNav('hivemind')">
       <span class="si-icon">&#x1F41D;</span>
       <span class="si-label">Hivemind</span>
     </div>
-    <div class="sidebar-item" data-nav="scheduler" onclick="sidebarNav('scheduler')">
-      <span class="si-icon">&#x23F1;</span>
-      <span class="si-label">Scheduler</span>
+    <div class="sidebar-item si-advanced" data-nav="skills" onclick="sidebarNav('skills')">
+      <span class="si-icon">&#x1F9E9;</span>
+      <span class="si-label">Skills</span>
     </div>
-    <div class="sidebar-item" data-nav="settings" onclick="sidebarNav('settings')">
-      <span class="si-icon">&#x2699;</span>
-      <span class="si-label">Settings</span>
+    <div class="sidebar-item si-advanced" data-nav="mcp" onclick="sidebarNav('mcp')">
+      <span class="si-icon">&#x1F50C;</span>
+      <span class="si-label">MCP</span>
     </div>
-    <div class="sidebar-item" data-nav="shared-rules" onclick="sidebarNav('shared-rules')">
+    <div class="sidebar-item si-advanced" data-nav="shared-rules" onclick="sidebarNav('shared-rules')">
       <span class="si-icon">&#x1F4DC;</span>
       <span class="si-label">Shared Rules</span>
     </div>
-    <div class="sidebar-item" data-nav="processes" onclick="sidebarNav('processes')">
+    <div class="sidebar-item si-advanced" data-nav="processes" onclick="sidebarNav('processes')">
       <span class="si-icon">&#x2630;</span>
       <span class="si-label">Processes</span>
     </div>
-    <div class="sidebar-divider"></div>
-    <div class="sidebar-item" data-nav="incognito" onclick="openIncognito()" title="Ephemeral scratch agent — skips memory and rules">
+    <div class="sidebar-item si-advanced" data-nav="incognito" onclick="openIncognito()" title="Ephemeral scratch agent — skips memory and rules">
       <span class="si-icon">&#x1F576;&#xFE0F;</span>
       <span class="si-label">Incognito</span>
+    </div>
+
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-item" data-nav="settings" onclick="sidebarNav('settings')">
+      <span class="si-icon">&#x2699;</span>
+      <span class="si-label">Settings</span>
     </div>
     <div class="sidebar-item" data-nav="power" onclick="openPowerDialog()" title="Power — restart or shut down Clayrune">
       <span class="si-icon">&#x23FB;</span>

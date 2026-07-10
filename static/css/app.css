@@ -220,6 +220,12 @@
   .sidebar-item:hover { background: var(--surface2); color: var(--text); }
   .sidebar-item.active { background: var(--accent-dim); color: var(--accent); }
   .sidebar-item { position: relative; }
+  /* Desktop redesign (Calm): the ADVANCED tier is present but visually demoted
+     so power surfaces don't compete with the everyday ones. */
+  .sidebar-item.si-advanced { opacity: 0.55; }
+  .sidebar-item.si-advanced:hover, .sidebar-item.si-advanced.active { opacity: 1; }
+  /* "New Project" reads as the primary create action. */
+  .sidebar-item.si-new .si-icon, .sidebar-item.si-new .si-label { color: var(--accent); }
   /* "Update available" badge: small accent-colored dot on the icon. Pulses
      gently to draw attention without being aggressive. Only present on
      items with .has-update (set by checkClayruneUpdateAvailable). */
