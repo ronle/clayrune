@@ -700,11 +700,16 @@ def _write_session_memory(p, session, status, summary_fallback, ts_date):
         else:
             tf = _find_transcript_file(p.get('project_path', ''), csid)
             jsonl_path = str(tf) if tf else None
+            # _UNATTENDED_LOOP_RULE: stamp steward-cycle provenance onto every
+            # artifact this session's evidence produces, so the read-floor can
+            # keep autonomous output from becoming autonomous input.
+            unattended = _distiller.is_unattended_task(task)
             _log(f"[distiller] dispatch FIRE project_id={project_id} sid={sid[:12]} "
-                 f"csid={csid[:8]} jsonl_path={'yes' if jsonl_path else 'no'}")
+                 f"csid={csid[:8]} jsonl_path={'yes' if jsonl_path else 'no'} "
+                 f"origin={'unattended' if unattended else 'interactive'}")
             threading.Thread(
                 target=_distiller._distill_extract_and_aggregate,
-                args=(project_id, sid, jsonl_path),
+                args=(project_id, sid, jsonl_path, unattended),
                 daemon=True,
                 name=f"distiller-{project_id}",
             ).start()

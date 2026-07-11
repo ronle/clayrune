@@ -108,12 +108,18 @@ def test_mark_promoted_suppresses_and_moves(tmp_path):
     assert (tmp_path / 'skills' / '_promoted').exists()
 
 
-def test_global_reject_moves_without_suppression(tmp_path):
+def test_global_reject_is_durably_suppressed(tmp_path):
+    """Rejecting a cross-project artifact used to record NOTHING (no owning
+    project stats file), so the Distiller re-proposed it and it could still be
+    promoted later — preference-1ba8d678 was live in ~/.claude/skills/ while
+    sitting in _rejected/ (2026-07-11). Global rejections now persist to the
+    reserved _global store and bind every project. See tests/test_distiller_
+    safety.py::test_global_rejection_is_durable_across_projects."""
     _setup(tmp_path)
     d = _make_artifact(tmp_path / 'skills', 'global', 'cross-thing')
     res = distiller.reject_proposed(str(d))
     assert res['ok'] is True
-    assert res['suppressed'] is False  # no owning project stats file
+    assert res['suppressed'] is True
     assert not d.exists()
 
 

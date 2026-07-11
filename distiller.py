@@ -746,7 +746,8 @@ _distilling_guard = threading.Lock()
 
 
 def _distill_extract_and_aggregate(project_id: str, sid: str,
-                                   jsonl_path: str | None) -> None:
+                                   jsonl_path: str | None,
+                                   unattended: bool = False) -> None:
     """Daemon-thread entry point. Wrapped in blanket try/except — best-effort.
 
     Dispatched from server._write_session_memory via
@@ -754,6 +755,12 @@ def _distill_extract_and_aggregate(project_id: str, sid: str,
     completion. Per §4.8: signal commits BEFORE proposal-generate
     (Option A); outbox marker writes AFTER successful artifact land
     (D7 — Seat 3 Cond 4 extension).
+
+    `unattended` marks a session no human watched (a steward cycle). It is
+    recorded on every evidence signal this session produces and propagates to
+    the artifact's `origin:` frontmatter, so the read-floor can refuse to feed
+    unattended-authored artifacts back into unattended consumers. See
+    _UNATTENDED_LOOP_RULE.
     """
     _structured_log(f"outer_entered:project_id={project_id}:sid={sid[:12]}:"
                     f"jsonl_path={'set' if jsonl_path else 'none'}")
@@ -768,7 +775,8 @@ def _distill_extract_and_aggregate(project_id: str, sid: str,
                 return
             _distilling_projects.add(project_id)
         try:
-            _distill_extract_and_aggregate_inner(project_id, sid, jsonl_path)
+            _distill_extract_and_aggregate_inner(project_id, sid, jsonl_path,
+                                                 unattended=unattended)
         finally:
             with _distilling_guard:
                 _distilling_projects.discard(project_id)
@@ -780,7 +788,8 @@ def _distill_extract_and_aggregate(project_id: str, sid: str,
 
 
 def _distill_extract_and_aggregate_inner(project_id: str, sid: str,
-                                         jsonl_path: str | None) -> None:
+                                         jsonl_path: str | None,
+                                         unattended: bool = False) -> None:
     """Inner: kill-switch gate → semaphore → extract → aggregate →
     per-kind generate → cross-project pass."""
     _structured_log(f"inner_entered:project_id={project_id}:sid={sid[:12]}")
@@ -805,7 +814,8 @@ def _distill_extract_and_aggregate_inner(project_id: str, sid: str,
             _increment_counter(project_id, TELEM_SEMAPHORE_SKIP)
             return
     try:
-        _do_extract_aggregate(project_id, project, sid, jsonl_path)
+        _do_extract_aggregate(project_id, project, sid, jsonl_path,
+                              unattended=unattended)
     finally:
         if sem is not None:
             try:
@@ -815,7 +825,8 @@ def _distill_extract_and_aggregate_inner(project_id: str, sid: str,
 
 
 def _do_extract_aggregate(project_id: str, project: dict,
-                          sid: str, jsonl_path: str | None) -> None:
+                          sid: str, jsonl_path: str | None,
+                          unattended: bool = False) -> None:
     # Cost cap check — early return if today's budget already blown
     if not _within_cost_cap(project_id, project):
         _structured_log(f"do_skip_cost_cap:project_id={project_id}")
@@ -867,7 +878,8 @@ def _do_extract_aggregate(project_id: str, project: dict,
         _increment_counter(project_id, 'extraction_parse_error')
         return
     # Commit signals first (Option A: signal-before-generate)
-    new_signals = _normalize_signals(project_id, sid, parsed)
+    new_signals = _normalize_signals(project_id, sid, parsed,
+                                     unattended=unattended)
     _commit_signals(project_id, new_signals)
     # Aggregate per-project and emit candidates
     candidates = _aggregate_per_project(project_id, project, new_signals)
@@ -900,7 +912,8 @@ def _normalize_phrase(phrase: str) -> str:
     return s
 
 
-def _normalize_signals(project_id: str, sid: str, parsed: dict) -> list[dict]:
+def _normalize_signals(project_id: str, sid: str, parsed: dict,
+                       unattended: bool = False) -> list[dict]:
     """Apply fingerprint + telemetry. Returns the list of valid signals
     ready to write to _skill_stats.json. OOV phrases are dropped (with
     telemetry). Drops beyond cap counters are recorded too."""
@@ -920,6 +933,7 @@ def _normalize_signals(project_id: str, sid: str, parsed: dict) -> list[dict]:
         exact, coarse = fp
         out.append({
             'sid': sid, 'ts': ts, 'scope_tag': scope_tag,
+            'unattended': bool(unattended),
             'kind': 'topic', 'phrase': phrase,
             'exact': exact, 'coarse': coarse,
             # Procedural content for skill authoring (see _build_evidence_block).
@@ -939,6 +953,7 @@ def _normalize_signals(project_id: str, sid: str, parsed: dict) -> list[dict]:
         exact, coarse = fp
         out.append({
             'sid': sid, 'ts': ts, 'scope_tag': scope_tag,
+            'unattended': bool(unattended),
             'kind': 'preference', 'phrase': phrase,
             'exact': exact, 'coarse': coarse,
             'summary': str(sig.get('summary', '') or '').strip()[:500],
@@ -955,6 +970,7 @@ def _normalize_signals(project_id: str, sid: str, parsed: dict) -> list[dict]:
         exact, coarse = fp
         out.append({
             'sid': sid, 'ts': ts, 'scope_tag': scope_tag,
+            'unattended': bool(unattended),
             'kind': 'exploration', 'phrase': phrase,
             'exact': exact, 'coarse': coarse,
             'question': str(sig.get('question', '') or '').strip()[:500],
@@ -1033,6 +1049,17 @@ def _aggregate_per_project(project_id: str, project: dict,
             kind_exact.setdefault((k, s['exact']), set()).add(s.get('sid', ''))
             kind_coarse.setdefault((k, s['coarse']), set()).add(s.get('sid', ''))
         suppressions = stats.get('suppressions', {}) or {}
+        # Fold in cross-project rejections: a global artifact rejected while
+        # working in another project owns no stats file here, so without this
+        # merge "no" would only bind the project that happened to say it, and
+        # the next project to trip over the pattern would re-propose it.
+        try:
+            with _get_skill_stats_lock(_GLOBAL_SUPPRESSION_PID):
+                gsupp = _read_skill_stats(
+                    _GLOBAL_SUPPRESSION_PID).get('suppressions', {}) or {}
+            suppressions = {**gsupp, **suppressions}  # project decision wins
+        except Exception:
+            pass
         outbox = stats.get('outbox', {}) or {}
         # Rescue stranded preferences. The current-session-only loop would never
         # re-evaluate preferences captured under the old recurrence-3 gate
@@ -1093,6 +1120,7 @@ def _evaluate_candidate(*, kind: str, exact: str, coarse: str,
             'kind': 'exploration', 'exact': exact, 'coarse': coarse,
             'scope_tag': evid[0].get('scope_tag', 'cross-project'),
             'evidence_signals': evid,
+            'unattended': any(s.get('unattended') for s in evid),
             'recurrence_exact': 1, 'recurrence_coarse': 1,
         }
     # Skill / preference: dual-layer recurrence check. Preferences use their own
@@ -1122,6 +1150,10 @@ def _evaluate_candidate(*, kind: str, exact: str, coarse: str,
         'exact': exact, 'coarse': coarse,
         'scope_tag': scope_tag,
         'evidence_signals': evid,
+        # Conservative OR: a single unattended witness taints the candidate.
+        # Evidence accumulates across sessions, so a pattern a steward saw once
+        # and a human saw twice still carries steward provenance.
+        'unattended': any(s.get('unattended') for s in evid),
         'recurrence_exact': exact_count,
         'recurrence_coarse': coarse_count,
     }
@@ -1344,6 +1376,100 @@ def _update_summary_cache(project_id: str) -> None:
         pass
 
 
+# ── Global (cross-project) suppression store ─────────────────────────────────
+# Reserved pseudo-project holding suppressions for cross-project artifacts,
+# which own no project stats file. Ends in `_skill_stats.json`, so it stays
+# inside the DATA_DIR suffix-exclusion that keeps load_projects() from parsing
+# it as a project record (the load-bearing DATA_DIR rule in CLAUDE.md).
+# `_is_valid_project_id` rejects it as a proposal target, so nothing can ever
+# be written *into* it as if it were a real project.
+_GLOBAL_SUPPRESSION_PID = '_global'
+
+
+def _is_suppressed(project_id: str, exact: str, kind: str) -> bool:
+    """True if this (fingerprint, kind) was decided 'no' — by THIS project or
+    globally. Both stores are consulted: a cross-project artifact rejected while
+    working in project A must stay rejected when project B re-encounters it,
+    otherwise "no" only holds until the next project trips over the pattern."""
+    key = f"{exact}:{kind}"
+    for pid in (project_id, _GLOBAL_SUPPRESSION_PID):
+        try:
+            with _get_skill_stats_lock(pid):
+                supp = _read_skill_stats(pid).get('suppressions', {}).get(key)
+            if supp and supp.get('decision') == 'no':
+                return True
+        except Exception:
+            continue
+    return False
+
+
+# ── Unattended-session detection (_UNATTENDED_LOOP_RULE) ─────────────────────
+# A steward cycle's prompt opens with this marker (steward/core.py:95). It is
+# also what steward/fence.py self-gates on — the literal is duplicated here
+# rather than imported because distiller.py is a leaf module (mc/memory.py
+# imports it and must not pull in the steward package). tests/test_distiller_
+# unattended.py asserts the two constants stay identical, so a rename can't
+# silently un-gate the loop rule.
+STEWARD_TASK_MARKER = '[Steward cycle]'
+
+
+def is_unattended_task(task: str | None) -> bool:
+    """True if this task is an autonomous steward cycle (no human watching)."""
+    return (task or '').lstrip().startswith(STEWARD_TASK_MARKER)
+
+
+# ── Authority-class guard (the constitutional bright line) ───────────────────
+# Learning may change HOW the agent works. It must NEVER change WHAT THE AGENT
+# IS ALLOWED TO DO. An artifact that grants autonomy, removes an approval gate,
+# or expands the agent's own capability set is refused at generation time — it
+# never reaches _proposed/, so it can never be promoted, not even by a human
+# clicking through the queue.
+#
+# This is not hypothetical. Before this guard, one sentence in one session
+# ("Full autonomy, no permission/go-ahead needed, by any means necessary" —
+# session c789ed60ace9, 2026-06-22) was distilled into a PREFERENCE, promoted
+# to ~/.claude/skills/, and thereafter loaded into EVERY session in EVERY
+# project as a timeless instruction to stop asking permission — including,
+# once steward mode shipped, into unattended autonomous cycles. Six such
+# artifacts had accumulated (quarantined 2026-07-11). A scoped, momentary
+# grant of trust MUST NOT be laundered into standing global authority.
+#
+# Deliberately deterministic (not a model judgment) and fails CLOSED: a phrase
+# match refuses the artifact. A human can still say the same thing directly to
+# an agent, or hand-write such a rule into CLAUDE.md — the point is that the
+# LEARNING SYSTEM cannot author it on its own. Human intent stays human-typed.
+_AUTHORITY_PATTERNS = [
+    # Autonomy / permission-gate removal
+    r'full autonomy', r'complete autonomy', r'fully autonomous',
+    r'without (?:asking|permission|approval|confirmation|a go-?ahead)',
+    r'(?:skip|bypass|remove|drop|relax|ignore)\w*\s+(?:the\s+)?'
+    r'(?:permission|approval|confirmation|safety)\s*(?:gate|check|prompt|step)',
+    r'permission[- ]gat(?:e|ing)',
+    r'(?:don\'?t|do not|never)\s+ask\s+(?:for\s+)?'
+    r'(?:permission|approval|confirmation|the user)',
+    r'proceed (?:autonomously|without)', r'no (?:permission|approval|go-?ahead)',
+    r'by any means necessary', r'auto-?approve', r'self-?approve',
+    r'act unattended', r'no human (?:review|approval|gate)',
+    # Capability / authority self-expansion. The intervening-word allowance is
+    # load-bearing: the artifact that actually escaped read "acquire new
+    # EXTERNAL skills", and a tighter pattern let it through.
+    r'(?:acquire|install|grant)\w*\s+(?:\w+\s+){0,3}?'
+    r'(?:skills?|tools?|capabilit\w*|permissions?|credentials?)',
+    r'modify (?:your|its) own (?:instructions|rules|guardrails|permissions)',
+    r'(?:expand|widen|escalate)\w*\s+(?:your|its|the)\s+'
+    r'(?:scope|authority|privileges?|blast[- ]radius)',
+]
+_AUTHORITY_RE = re.compile('|'.join(_AUTHORITY_PATTERNS), re.IGNORECASE)
+
+
+def _authority_violation(body: str) -> str:
+    """Return the offending phrase if `body` tries to expand the agent's own
+    authority, else ''. Checked against the FULL rendered artifact (frontmatter
+    description + body), so a benign title can't smuggle a permissive body."""
+    m = _AUTHORITY_RE.search(body or '')
+    return m.group(0) if m else ''
+
+
 # ── Per-kind artifact generation (§4.3, §4.4, §4.5) ──────────────────────────
 
 def _generate_and_write_artifact(project_id: str, project: dict,
@@ -1369,14 +1495,25 @@ def _generate_and_write_artifact(project_id: str, project: dict,
             return
         if not body.strip():
             return
+        # Constitutional guard — an artifact that expands the agent's own
+        # authority is dropped here, BEFORE it can reach the human queue. It is
+        # deliberately not promotable: the queue is where rubber-stamping
+        # happens (80 promoted vs 2 rejected as of 2026-07-11), so a gate that
+        # depends on a human clicking "no" is not a gate. Fails closed.
+        violation = _authority_violation(body)
+        if violation:
+            _increment_counter(project_id, f'render_refuse_authority:{kind}')
+            _structured_log(
+                f'authority_refused:kind={kind}:project_id={project_id}:'
+                f'phrase={violation!r}:fingerprint={candidate["exact"]}'
+            )
+            return
         # TOCTOU re-check under lock before atomic write (D6 extension —
         # Seat 3 Cond 5: suppression marker may have been written during
         # the cheap-model call)
-        with _get_skill_stats_lock(project_id):
-            stats = _read_skill_stats(project_id)
-            supp_key = f"{candidate['exact']}:{kind}"
-            supp = stats.get('suppressions', {}).get(supp_key)
-            suppressed = bool(supp and supp.get('decision') == 'no')
+        # Consults the project store AND the global one, so a cross-project
+        # rejection recorded elsewhere still blocks the write.
+        suppressed = _is_suppressed(project_id, candidate['exact'], kind)
         # Bump the counter OUTSIDE the lock: _increment_counter re-acquires this
         # same per-project lock, which is a plain (non-reentrant) threading.Lock,
         # so calling it while still holding the lock self-deadlocks the thread.
@@ -1670,6 +1807,12 @@ def _wrap_skill_body(model_output: str, project_id: str, candidate: dict,
         'recurrence_count_exact': candidate['recurrence_exact'],
         'recurrence_count_coarse': candidate['recurrence_coarse'],
         'provenance': 'distilled',
+        # Who witnessed the evidence. 'unattended' = at least one steward cycle
+        # (no human in the room). Load-bearing: the read-floor refuses to feed
+        # an unattended-origin artifact back into an unattended consumer, which
+        # is what stops the steward from training itself. See _UNATTENDED_LOOP_RULE.
+        'origin': ('unattended' if candidate.get('unattended')
+                   else 'interactive'),
         'source_session': source_session,
         'created_at': _now_iso() or '',
     }
@@ -1877,7 +2020,8 @@ def _expl_tokens(s: str) -> set[str]:
 
 
 def exploration_read_floor(project_id: str, task: str,
-                           topk: int = 2) -> list[dict]:
+                           topk: int = 2,
+                           consumer_unattended: bool = False) -> list[dict]:
     """Rank past EXPLORATION.md proposals by keyword overlap with `task` and
     return the top-K as {name, path, snippet} for read-floor injection into
     _build_agent_context.
@@ -1886,6 +2030,22 @@ def exploration_read_floor(project_id: str, task: str,
     write-only in _proposed/. Surfacing the relevant ones back into a new
     session's context is what turns the pipeline from a journal into learning
     (the agent reuses prior exploration instead of re-deriving it).
+
+    _UNATTENDED_LOOP_RULE — a human must be on at least ONE side of every
+    learning loop. Explorations reach this read-floor with NO promotion step:
+    nobody approves them, they flow straight from one session's transcript into
+    the next session's context. That is acceptable while a human watches the
+    consumer and can catch a bad one. It is NOT acceptable when both ends are
+    autonomous: a steward cycle distils its own transcript into an exploration,
+    the next steward cycle reads it back as established fact, and the system
+    trains on its own output with no ground truth anywhere in the circuit.
+    Drift becomes self-reinforcing and nobody is there to see it.
+
+    So when the CONSUMER is unattended (`consumer_unattended` — a steward
+    cycle), artifacts whose evidence came from unattended sessions
+    (`origin: unattended`) are filtered out. A steward still reads everything
+    human sessions produced, and human sessions still read everything the
+    steward produced. Only the closed autonomous circuit is cut.
 
     Scope: the project's own explorations PLUS cross-project (global) ones —
     matching the cross-project-default learning philosophy. Best-effort;
@@ -1907,6 +2067,12 @@ def exploration_read_floor(project_id: str, task: str,
             if meta.get('kind') != 'exploration':
                 continue
             if meta.get('scope') not in (project_id, 'cross-project'):
+                continue
+            # _UNATTENDED_LOOP_RULE — no autonomous→autonomous circuit.
+            # Artifacts predating the `origin:` stamp have no provenance; treat
+            # them as unattended (fail closed) when the consumer is a steward.
+            if consumer_unattended and meta.get('origin') != 'interactive':
+                _increment_counter(project_id, 'readback_blocked_unattended')
                 continue
             name = meta.get('name', '') or ''
             score = len(qt & _expl_tokens(name.replace('-', ' ')))
@@ -2194,12 +2360,20 @@ def read_proposed_artifact(directory: str) -> dict | None:
 
 def _suppress_artifact(art: dict, source: str) -> bool:
     """Write a `decision: no` suppression keyed {exact}:{kind} so the Distiller
-    won't re-propose a promoted/rejected artifact. Project-scoped only — a
-    cross-project (global) artifact has no single owning stats file (v1
-    limitation; re-rejecting if it recurs is cheap). Returns True if written."""
-    pid = art.get('project_id')
+    won't re-propose a promoted/rejected artifact.
+
+    A cross-project (global) artifact has no owning project, and the v1 code
+    simply gave up on it (`if not (pid and ...): return False`) — so rejecting
+    a global artifact recorded NOTHING and the Distiller re-proposed it on the
+    next recurrence. Live consequence: `preference-1ba8d678` sat in `_rejected/`
+    AND in `~/.claude/skills/` at the same time (2026-07-11). "No" has to be
+    durable or the human gate is theatre. Global rejections now land in the
+    reserved `_GLOBAL_SUPPRESSION_PID` stats file, which every project consults
+    via `_is_suppressed`.
+    """
+    pid = art.get('project_id') or _GLOBAL_SUPPRESSION_PID
     exact, kind = art.get('exact'), art.get('kind')
-    if not (pid and exact and kind):
+    if not (exact and kind):
         return False
     try:
         key = f"{exact}:{kind}"
@@ -2294,6 +2468,10 @@ def _read_proposed_meta(d: Path, scope: str) -> dict | None:
                 'title': title,
                 'snippet': snippet,
                 'extraction_scope': fm.get('extraction_scope', scope),
+                # 'interactive' | 'unattended' | '' (pre-stamp artifact).
+                # exploration_read_floor fails CLOSED on anything but
+                # 'interactive' when the consumer is a steward cycle.
+                'origin': fm.get('origin', ''),
                 'created_at': fm.get('created_at', ''),
                 'evidence_session_ids': fm.get('evidence_session_ids', ''),
                 'recurrence_count_exact':

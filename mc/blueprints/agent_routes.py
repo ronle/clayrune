@@ -1636,9 +1636,13 @@ def _build_agent_context(project, incognito=False, task='', character_body=''):
     # write side). Skipped for incognito sessions (no memory leakage).
     if task and not incognito and state.CONFIG.get('exploration_readback_enabled', True):
         try:
+            # _UNATTENDED_LOOP_RULE: a steward cycle is an unattended consumer,
+            # so the read-floor withholds unattended-authored artifacts from it
+            # (no autonomous→autonomous circuit). Attended sessions see all.
             expl = _distiller.exploration_read_floor(
                 project['id'], task,
-                int(state.CONFIG.get('exploration_read_floor_topk', 2) or 2))
+                int(state.CONFIG.get('exploration_read_floor_topk', 2) or 2),
+                consumer_unattended=_distiller.is_unattended_task(task))
         except Exception:
             expl = []
         if expl:
