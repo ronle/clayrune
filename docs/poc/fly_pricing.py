@@ -96,7 +96,8 @@ MACHINES = {
     "4x/8GB": (4, 8),
 }
 
-# v2 tiers.  (name, price$, storage_gb_cap, awake_hrs, egress_gb, machine)
+# v2 tiers — SINGLE-TIER storage (everything on the Fly volume).
+# (name, price$, storage_gb_cap, awake_hrs, egress_gb, machine)
 # CHANGED vs v1: Plus 50->40GB, Studio 250->150GB.  v1's "the bundles survive
 # intact" claim was an artifact of the broken model; at $0.17/GB all-in, a
 # 250GB Studio bundle is $42.50 of cost on a $79 price — 54% of revenue.
@@ -105,6 +106,28 @@ TIERS = [
     ("Plus",   19,  40, 100,  40, "4x/4GB"),
     ("Pro",    39, 100, 200,  75, "4x/4GB"),
     ("Studio", 79, 150, 400, 150, "4x/8GB"),
+]
+
+# ── v2.1: TWO-TIER STORAGE (Ron, 2026-07-11) ────────────────────────────────
+# Split the workspace: HOT on the Fly volume ($0.17/GB all-in), BULK on a
+# TigrisFS FUSE mount at ~/workspace/artifacts ($0.02/GB — and it IS the
+# durable copy, so no separate backup line).  Sell the user the TOTAL quota.
+#
+#   /data              Fly volume   git worktrees, node_modules, .claude/,
+#                                   MEMORY.md, source, LIVE DBs, logs
+#   /data/artifacts    TigrisFS     images, video, PDFs, datasets, weights,
+#                                   DB *dumps*, build archives
+#
+# 8.5x cheaper per bulk GB, and it shrinks the hot volume — which also defuses
+# the [C:S3.11] no-shrink ratchet, since the volume no longer has to grow to
+# hold the user's media.
+#
+# (name, price$, hot_gb, bulk_gb, awake_hrs, egress_gb, machine)
+TIERS_2T = [
+    ("Lite",   10,  10,  20,  60,  20, "4x/4GB"),
+    ("Plus",   19,  25,  75, 100,  40, "4x/4GB"),
+    ("Pro",    39,  50, 200, 200,  75, "4x/4GB"),
+    ("Studio", 79, 100, 500, 300, 150, "4x/8GB"),
 ]
 
 TYPICAL_FILL = 0.40      # what a real user actually stores vs. their cap
@@ -207,7 +230,45 @@ def main():
     print("  the mirror wakes them. 'Dormant' must be defined against schedules,")
     print("  and the free-tier economics re-derived on that basis. NOT closed here.")
 
-    print("\n[7] Still open (do not price on these)\n")
+    print("\n[7] TWO-TIER STORAGE (v2.1) — hot volume + TigrisFS bulk mount\n")
+    hdr2 = (f"{'tier':7} {'price':>6} {'hot':>6} {'bulk':>6} {'TOTAL':>7} {'awake':>6} "
+            f"{'stor$':>6} {'cpu$':>6} {'COST':>7} {'margin':>7} | {'1-tier was':>11}")
+    print(hdr2)
+    print("-" * len(hdr2))
+    for (name, price, hot, bulk, awake, egr, mach) in TIERS_2T:
+        # hot = Fly volume + a Tigris backup copy.  bulk = Tigris only; the
+        # object store IS the durable copy, so it carries no backup line.
+        s = hot * (VOLUME_GB_MO + TIGRIS_GB_MO) + bulk * TIGRIS_GB_MO
+        c = compute_cost(mach, awake)
+        cost = s + c + egr * EGRESS_GB + platform_cost() + stripe_fee(price)
+        margin = (price - cost) / price
+        # what the same price bought under the single-tier v2 table
+        old = next(t for t in TIERS if t[0] == name)
+        old_s, old_c = storage_cost(old[2]), compute_cost(old[5], old[3])
+        old_cost = old_s + old_c + old[4] * EGRESS_GB + platform_cost() + stripe_fee(price)
+        old_m = (price - old_cost) / price
+        print(f"{name:7} {'$%d'%price:>6} {str(hot)+'GB':>6} {str(bulk)+'GB':>6} "
+              f"{str(hot+bulk)+'GB':>7} {str(awake)+'h':>6} {'$%.2f'%s:>6} {'$%.2f'%c:>6} "
+              f"{'$%.2f'%cost:>7} {margin:>6.0%} | {str(old[2])+'GB'} {old_m:>4.0%}")
+    print("\n  The user sees a BIGGER quota AND we make MORE margin — because the")
+    print("  bulk slice costs $0.02/GB instead of $0.17/GB (8.5x). It also shrinks")
+    print("  the Fly volume, which defuses the no-shrink ratchet [C:S3.11].")
+    print("\n  !! HARD RULES — the boundary is NOT negotiable:")
+    print("   - NO LIVE DATABASES on the mount. TigrisFS/geesefs has NO FILE LOCKING;")
+    print("     SQLite's own docs call network-fs locking a corruption path, and WAL")
+    print("     needs an mmap'd -shm file. DuckDB refuses non-read-only over S3.")
+    print("     DB *dumps* are ideal cold objects; a live DB file is the opposite.")
+    print("     Live DB stays on the volume; replicate to Tigris with Litestream.")
+    print("   - Also hot: git (no hardlinks, no atomic index.lock), node_modules,")
+    print("     .claude/ state, MEMORY.md, logs (append re-uploads the whole object).")
+    print("   - Keep bulk objects in TIGRIS STANDARD, never IA/Archive. IA retrieval")
+    print("     is $0.01/GB: ONE `grep -r` over 100GB of IA costs $1.00 and wipes out")
+    print("     the $1.00/mo you saved. Archive objects 403 through a FUSE mount.")
+    print("   - Exclude the mount from agent search roots, or a reflexive `grep -r`")
+    print("     drags 50GB across the network. (Ops are ~half a cent — the cost is")
+    print("     wall-clock, not dollars.)")
+
+    print("\n[8] Still open (do not price on these)\n")
     print("  - ROOTFS_GB=3.0 is a guess for an image that does not exist [C:S3.14]")
     print("  - PLATFORM_FIXED_MO=$70 is estimated, not quoted [C:S3.9]")
     print("  - hydrate wall-time sets the dormancy threshold — unmeasured [C:S1.11]")
