@@ -2508,7 +2508,12 @@
      distinct message panel, white agent bubbles, and a bordered composer. */
   .agent-3pane .agent-main .agent-chat { border: none; border-radius: 0; background: transparent; }
   .agent-3pane .agent-main .agent-output { background: var(--surface2); padding: 16px 14px; gap: 10px; }
-  .agent-3pane .agent-main .agent-output .agent-line { background: var(--surface); border-color: var(--border); }
+  /* White bubbles for plain agent narration ONLY — must NOT touch the prompt
+     (blue), tool/status/error/queued/followup (transparent chips) sub-types,
+     or they'd render white-on-white (user text became invisible otherwise). */
+  .agent-3pane .agent-main .agent-output .agent-line:not(.agent-line-prompt):not(.agent-line-tool):not(.agent-line-status):not(.agent-line-error):not(.agent-line-queued):not(.agent-line-followup) {
+    background: var(--surface); border-color: var(--border);
+  }
   .agent-3pane .agent-main .agent-chat-input { background: var(--surface); border-top: 1px solid var(--border); }
   /* Composer as a single rounded pill: attach 📎 + mic sit INSIDE the entry on
      the right (like the mobile composer), with Send tucked in at the end. */
