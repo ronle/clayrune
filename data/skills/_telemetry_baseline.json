@@ -1,0 +1,114 @@
+{
+  "_note": "Post-fix telemetry baseline. The Distiller counters in *_skill_stats.json are LIFETIME and have no reset. Everything before this timestamp was measured while ~41% of extractions were silently failing (the cheap-model call had tools and was role-playing the transcript instead of analysing it — fixed in 93e3bb0) and while authority-granting artifacts could reach the human queue (2674d17). Compare against this snapshot, not zero: delta = post-fix behaviour.",
+  "captured_at": "2026-07-11T18:04:15.593877Z",
+  "fixes_live_as_of": [
+    "49c09cc",
+    "2674d17",
+    "93e3bb0",
+    "3fc69f5"
+  ],
+  "projects": {
+    "apex_trader": {
+      "extraction_truncated": 7,
+      "vocabulary_miss": 12,
+      "proposed:exploration": 4,
+      "extraction_error": 1,
+      "proposed:preference": 2,
+      "readback_query": 7,
+      "readback_hit": 6,
+      "distiller_semaphore_skip": 1,
+      "render_refuse:exploration": 1
+    },
+    "clayrune_website": {
+      "extraction_truncated": 6,
+      "proposed:exploration": 3,
+      "proposed:skill": 1,
+      "readback_query": 3,
+      "vocabulary_miss": 3,
+      "proposed:preference": 2,
+      "render_refuse:skill": 1,
+      "readback_hit": 2
+    },
+    "content_eployeemgmtsystem": {
+      "readback_query": 1,
+      "readback_hit": 1,
+      "vocabulary_miss": 4,
+      "proposed:exploration": 1
+    },
+    "day_trading_engulfing_scanner": {
+      "extraction_truncated": 213,
+      "proposed:exploration": 55,
+      "vocabulary_miss": 248,
+      "readback_query": 32,
+      "readback_hit": 32,
+      "extraction_error": 42,
+      "extraction_parse_error": 9,
+      "render_refuse:skill": 8,
+      "proposed:preference": 29,
+      "proposed:skill": 13,
+      "skipped_reentrant": 18,
+      "distiller_suppressed_after_generate": 21,
+      "render_refuse:preference": 1
+    },
+    "daytrading": {
+      "readback_query": 31,
+      "readback_hit": 30,
+      "vocabulary_miss": 63,
+      "extraction_truncated": 34,
+      "proposed:preference": 1,
+      "proposed:exploration": 16,
+      "extraction_error": 6,
+      "extraction_parse_error": 3,
+      "proposed:skill": 1,
+      "skipped_thin_transcript": 4
+    },
+    "eden_s_math_learning_project": {
+      "skipped_no_jsonl": 1
+    },
+    "engulfing-analyst": {
+      "skipped_gated": 5
+    },
+    "fl3_v2": {
+      "extraction_truncated": 58,
+      "proposed:exploration": 11,
+      "vocabulary_miss": 77,
+      "render_refuse:skill": 1,
+      "proposed:preference": 13,
+      "readback_query": 2,
+      "readback_hit": 2,
+      "extraction_error": 9,
+      "proposed:skill": 1
+    },
+    "mission_control": {
+      "proposed:exploration": 31,
+      "extraction_parse_error": 26,
+      "vocabulary_miss": 104,
+      "skipped_reentrant": 9,
+      "extraction_truncated": 67,
+      "skipped_thin_transcript": 24,
+      "extraction_error": 20,
+      "readback_query": 92,
+      "readback_hit": 81,
+      "proposed:preference": 17,
+      "render_refuse:preference": 20,
+      "render_refuse:skill": 1,
+      "proposed:skill": 3,
+      "render_refuse:exploration": 1,
+      "distiller_suppressed_after_generate": 1,
+      "readback_blocked_unattended": 78
+    },
+    "mobiletest": {
+      "skipped_reentrant": 1,
+      "readback_query": 6,
+      "readback_hit": 6
+    },
+    "stubhub_fight": {
+      "readback_query": 1,
+      "readback_hit": 1,
+      "extraction_parse_error": 2,
+      "vocabulary_miss": 16,
+      "proposed:exploration": 2,
+      "extraction_truncated": 5
+    }
+  }
+}
