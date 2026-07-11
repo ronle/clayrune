@@ -335,6 +335,9 @@ function modalContentHTML(p) {
   let activeTab = modalActiveTab[p.id] || 'agent';
   if (!validTabs.includes(activeTab)) { activeTab = 'agent'; modalActiveTab[p.id] = 'agent'; }
 
+  // ⋮ menu "Advanced" group open-state (persisted, like the sidebar's Advanced).
+  const _advOpen = (() => { try { return localStorage.getItem('mc_modal_menu_advanced_open') === '1'; } catch (_) { return false; } })();
+
   const logHTML = (p.activity_log||[]).slice(0,20).map(e => `
     <div class="log-entry">
       <span class="log-ts">${esc(e.ts_relative||e.ts||'')}</span>
@@ -466,10 +469,6 @@ function modalContentHTML(p) {
             </button>
             <div class="modal-menu-sep"></div>
           </div>
-          <button class="modal-menu-item" onclick="_mcMenuClose();openAllHivemindsForProject('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F41D;</span> Hiveminds
-          </button>
-          <div class="modal-menu-sep"></div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'status-sub-${esc(p.id)}')">
             <span class="menu-icon">&#x25CF;</span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
@@ -540,6 +539,10 @@ function modalContentHTML(p) {
             return '';
           })()}
           <div class="modal-menu-sep"></div>
+          <button class="modal-menu-item modal-menu-adv-toggle${_advOpen ? ' expanded' : ''}" onclick="toggleModalMenuAdvanced(event,'${esc(p.id)}')">
+            <span class="menu-icon">&#x1F527;</span> Advanced <span class="mmadv-chev" style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+          </button>
+          <div class="modal-menu-advanced-group${_advOpen ? ' expanded' : ''}" id="modal-menu-adv-group-${esc(p.id)}">
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'gh-sub-${esc(p.id)}')">
             <span class="menu-icon">&#x1F517;</span> GitHub Sync ${p.github_sync_enabled ? `<span style="margin-left:4px;color:var(--green);font-size:11px">&#x2713; ${esc(p.github_repo)}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
@@ -606,6 +609,10 @@ function modalContentHTML(p) {
           <button class="modal-menu-item" onclick="openAllMCPForProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F50C;</span> MCP servers
           </button>
+          <button class="modal-menu-item" onclick="_mcMenuClose();openAllHivemindsForProject('${esc(p.id)}')">
+            <span class="menu-icon">&#x1F41D;</span> Hiveminds
+          </button>
+          </div>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item danger" onclick="deleteProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F5D1;</span> Delete Project

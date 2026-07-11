@@ -431,6 +431,19 @@ function toggleModalMenuSub(e, subId) {
   sub.classList.toggle('open');
 }
 
+// Collapsible "Advanced" group in the ⋮ menu — mirrors the sidebar's Advanced
+// section (persisted, chevron rotates). Keeps the menu short by default.
+function toggleModalMenuAdvanced(e, projectId) {
+  e.stopPropagation();
+  const grp = document.getElementById(`modal-menu-adv-group-${projectId}`);
+  if (!grp) return;
+  const open = !grp.classList.contains('expanded');
+  grp.classList.toggle('expanded', open);
+  const btn = e.currentTarget;
+  if (btn && btn.classList) btn.classList.toggle('expanded', open);
+  try { localStorage.setItem('mc_modal_menu_advanced_open', open ? '1' : '0'); } catch (_) {}
+}
+
 async function setProjectStatus(projectId, status) {
   document.querySelectorAll('.modal-menu-dropdown.open').forEach(d => d.classList.remove('open'));
   try {
@@ -952,6 +965,7 @@ window.openProjectAtSession = openProjectAtSession;
 window.closeModalById = closeModalById;
 window.toggleModalMenu = toggleModalMenu;
 window.toggleModalMenuSub = toggleModalMenuSub;
+window.toggleModalMenuAdvanced = toggleModalMenuAdvanced;
 window.setProjectStatus = setProjectStatus;
 window.setProjectColor = setProjectColor;
 window.togglePinConversationSession = togglePinConversationSession;

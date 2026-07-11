@@ -1134,6 +1134,11 @@
   .modal-menu-item:hover { background: var(--surface3); }
   .modal-menu-item .menu-icon { width: 16px; text-align: center; color: var(--text-faint); font-size: 14px; }
   .modal-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+  /* Collapsible "Advanced" group — mirrors the sidebar's Advanced section. */
+  .modal-menu-adv-toggle .mmadv-chev { font-size: 9px; transition: transform 0.15s; }
+  .modal-menu-adv-toggle.expanded .mmadv-chev { transform: rotate(90deg); }
+  .modal-menu-advanced-group { display: none; }
+  .modal-menu-advanced-group.expanded { display: block; }
   .modal-menu-item.danger { color: var(--red-text); }
   .modal-menu-item.danger .menu-icon { color: var(--red-text); }
   .modal-menu-item.danger:hover { background: var(--red-dim); }
