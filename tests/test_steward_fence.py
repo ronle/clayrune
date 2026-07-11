@@ -143,3 +143,41 @@ def test_hook_fails_open_on_garbage():
     r = subprocess.run([sys.executable, str(FENCE)], input='not json',
                        capture_output=True, text=True)
     assert r.returncode == 0
+
+
+# ── Self-gating: fence enforces ONLY for steward-cycle sessions ───────────────
+def _transcript(tmp_path, first_user_text):
+    p = tmp_path / 'transcript.jsonl'
+    p.write_text(json.dumps({'type': 'user',
+                             'message': {'role': 'user', 'content': first_user_text}}) + '\n',
+                 encoding='utf-8')
+    return str(p)
+
+
+def test_steward_session_is_fenced(tmp_path):
+    tp = _transcript(tmp_path, '[Steward cycle] You are the steward...')
+    r = _run_hook({'tool_name': 'Bash', 'tool_input': {'command': 'git push'},
+                   'transcript_path': tp})
+    assert r.returncode == 2  # steward cycle → enforced
+
+
+def test_dev_session_is_NOT_fenced(tmp_path):
+    # A normal dev/manual session (no steward marker) must run unfenced.
+    tp = _transcript(tmp_path, 'hey can you push this branch for me')
+    r = _run_hook({'tool_name': 'Bash', 'tool_input': {'command': 'git push --force'},
+                   'transcript_path': tp})
+    assert r.returncode == 0  # confirmed non-steward → allowed
+
+
+def test_steward_session_allows_reversible(tmp_path):
+    tp = _transcript(tmp_path, '[Steward cycle] run one cycle')
+    r = _run_hook({'tool_name': 'Bash', 'tool_input': {'command': 'git status'},
+                   'transcript_path': tp})
+    assert r.returncode == 0
+
+
+def test_unknown_session_fails_closed(tmp_path):
+    # No transcript → can't confirm dev → enforce (fail-closed; fence only lives
+    # in steward-enabled projects anyway).
+    r = _run_hook({'tool_name': 'Bash', 'tool_input': {'command': 'git push'}})
+    assert r.returncode == 2

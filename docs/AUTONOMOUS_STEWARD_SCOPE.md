@@ -12,9 +12,14 @@ master. Decisions locked below.**
 - Step 4 — reversibility FENCE (`steward/fence.py` PreToolUse hook, fail-closed;
   verified it fires even under `--dangerously-skip-permissions`). ✅
 - Step 5 — loop-health (`GET /api/steward/loop-health`). ✅
-- Fence wiring: installed into the project's own `.claude/settings.json` (MVP;
-  fences all sessions in a dedicated steward project). Per-session `--settings`
-  (mixed-use projects) is the reserved refinement — `ensure_fence_settings()`.
+- Fence wiring: installed into the project's own `.claude/settings.json`, but
+  the hook **SELF-GATES** — `fence.py` reads the CC transcript and enforces ONLY
+  when the session's first user message carries the `[Steward cycle]` marker.
+  So manual/dev sessions in the same project run unfenced; only steward cycles
+  are fenced. This makes it safe on a live dev repo (mission_control itself).
+  Gate: confirmed-non-steward → allow all; steward OR unknown → enforce
+  (fail-closed on ambiguity). Runs fresh per tool call → changes are live with
+  no restart.
 - NOT built: a dashboard UI to enable/steward + review the decision queue (curl
   the API for now); merge to master.
 

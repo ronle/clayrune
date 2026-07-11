@@ -144,16 +144,75 @@ def classify_action(tool_name: str, tool_input: dict) -> FenceDecision:
     return FenceDecision(False, '')
 
 
+STEWARD_MARKER = '[Steward cycle]'
+
+
+def _first_user_text(transcript_path: str) -> str:
+    """Return the text of the FIRST user message in a CC transcript jsonl, or ''.
+    A steward session's turn-1 message is the build_cycle_task() prompt, which
+    starts with the STEWARD_MARKER — so this is a reliable session-type signal."""
+    try:
+        with open(transcript_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                msg = entry.get('message', entry)
+                role = entry.get('type') or msg.get('role') or ''
+                if role != 'user':
+                    continue
+                content = msg.get('content', '')
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    for b in content:
+                        if isinstance(b, dict) and b.get('type') == 'text':
+                            return b.get('text', '')
+                        if isinstance(b, str):
+                            return b
+                return ''
+    except Exception:
+        return ''
+    return ''
+
+
+def _session_is_steward(payload: dict):
+    """True/False if we can confirm the session type from the transcript; None if
+    unknown (no/unreadable transcript). Steward cycle → first user msg carries the
+    marker."""
+    tp = payload.get('transcript_path') or payload.get('transcriptPath') or ''
+    if not tp:
+        return None
+    text = _first_user_text(tp)
+    if not text:
+        return None
+    return STEWARD_MARKER in text
+
+
 def main() -> int:
-    """PreToolUse hook entrypoint. Reads the hook JSON on stdin; on a blocked
-    action, emits a deny decision AND exits 2 (stderr reason) so the block lands
-    across CLI versions. Fails OPEN on any parse error — a broken fence must not
-    wedge the steward (best-effort posture); the directive still constrains it."""
+    """PreToolUse hook entrypoint. Reads the hook JSON on stdin.
+
+    SELF-GATING: the fence is installed repo-wide (project .claude/settings.json)
+    but ENFORCES only for steward-cycle sessions — so manual/dev sessions in the
+    same project are unaffected. Gate: `confirmed non-steward → allow all`;
+    `steward OR unknown → enforce` (fail-closed on ambiguity, since the fence is
+    only ever installed in steward-enabled projects).
+
+    On a blocked action, exits 2 (stderr reason) — the fail-closed block contract.
+    Fails OPEN on any parse error — a broken fence must never wedge the agent."""
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
     except Exception:
         return 0  # fail open — never wedge the agent on a malformed hook event
+
+    # Only steward-cycle sessions are fenced; confirmed dev/manual sessions pass.
+    if _session_is_steward(payload) is False:
+        return 0
 
     tool_name = payload.get('tool_name') or payload.get('toolName') or ''
     tool_input = payload.get('tool_input') or payload.get('toolInput') or {}

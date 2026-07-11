@@ -215,8 +215,10 @@ def install_fence_to_project(project_path: str) -> bool:
     """Merge the steward PreToolUse fence hook into <project>/.claude/settings.json,
     preserving every other setting and any user-authored hooks. Idempotent — a
     second call replaces our stale entry rather than duplicating. Returns True on
-    write. Best-effort. Fences ALL sessions in this project (defense-in-depth for
-    a dedicated steward project)."""
+    write. Best-effort. The hook is repo-wide BUT SELF-GATES (fence.py inspects
+    the transcript for the [Steward cycle] marker) so it enforces only for steward
+    cycles — manual/dev sessions in the same project are unaffected. Safe to
+    enable on a live, actively-developed repo (e.g. mission_control itself)."""
     if not project_path:
         return False
     path = _project_settings_path(project_path)
