@@ -13,7 +13,19 @@ from steward._config import configure
 
 @pytest.fixture
 def store(tmp_path):
-    """In-memory project store wired through configure()."""
+    """In-memory project store wired through configure().
+
+    configure() MUTATES the module-global steward.CFG in place, so this fixture
+    must snapshot and RESTORE it — it is not a monkeypatch. Without the restore,
+    CFG keeps pointing at this fixture's dead in-memory dict after the module
+    finishes, and any LATER test that relies on server.py's import-time wiring
+    (test_steward_routes) silently reads/writes that dead dict instead of its
+    own tmp store. This was the whole cause of the 5 order-dependent
+    test_steward_routes failures: they passed alone (first server import
+    re-runs the wiring) and failed in the full suite (server already imported →
+    wiring is a cache hit → poisoned CFG survives).
+    """
+    _cfg_snapshot = dict(vars(core.CFG))
     projects = {}
 
     def load_project(pid):
@@ -53,7 +65,10 @@ def store(tmp_path):
         'steward_cadence_minutes': 120,
         'backlog': [],
     }
-    return {'projects': projects, 'pushes': pushes}
+    yield {'projects': projects, 'pushes': pushes}
+    # Restore CFG exactly as we found it (wired-by-server or never-wired alike).
+    vars(core.CFG).clear()
+    vars(core.CFG).update(_cfg_snapshot)
 
 
 def test_enabled_and_accessors(store):
