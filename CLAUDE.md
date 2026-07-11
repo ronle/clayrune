@@ -1,5 +1,19 @@
 # Clayrune — Claude Code project notes
 
+## Hosted SaaS lives elsewhere now (added 2026-07-11)
+
+The hosted-compute product (Fly + Tigris, pricing/tiers, investor material) was
+split into its own Clayrune project: **`clayrune_cloud`**, at
+`C:\Users\levir\Documents\_claude\clayrune-cloud`. Its docs
+(`HOSTED_CLOUD_*.md`, the `_committee/HOSTED_CLOUD_*` seats, and the `docs/poc/`
+pricing models) moved with it — don't re-create them here.
+
+**The split is by artifact type, not topic.** Any *code* the hosted product needs
+(session resume, dormancy hooks, multi-tenancy, auth) still lands in **this**
+repo; the cloud project files a backlog item here when it needs one. The
+remote-access (Cloudflare tunnel) feature stays here too — it's a shipped local
+feature, not the SaaS.
+
 ## Type checking (added 2026-06-10)
 
 New/moved modules under `mc/` must pass `pyright` basic (scope:
