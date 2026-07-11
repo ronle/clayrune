@@ -402,6 +402,46 @@ into `_build_agent_context`, promotion-time UI flows, `auto` mode
 v2 has cleared committee. Same discipline as parent design v2 and
 Memory System §3.A.MID.
 
+## Learning-system safety rails — LOAD-BEARING (added 2026-07-11)
+
+Steward mode put an autonomous agent on the consuming end of the same artifact
+stream the Distiller produces. Three rules now hold the loop together
+(`distiller.py`, tests in `tests/test_distiller_safety.py`). **Do not weaken any
+of them without a committee review** — each pins a violation that actually
+happened on this machine, not a hypothetical.
+
+1. **The authority guard is the constitutional bright line.** Learning may
+   change *how* the agent works; it must NEVER change *what the agent is allowed
+   to do*. `_authority_violation()` refuses any artifact granting autonomy,
+   removing an approval gate, or expanding the agent's own capability set —
+   refused in `_generate_and_write_artifact` **before** it reaches the human
+   queue, because the queue is where rubber-stamping happens (80 promoted vs 2
+   rejected as of 2026-07-11). Deterministic, fails closed. A human can still
+   type such a rule by hand into CLAUDE.md; the *learning system* cannot author
+   it. **Why:** one sentence in one session ("Full autonomy, no permission/
+   go-ahead needed, by any means necessary") became a global always-loaded
+   PREFERENCE skill telling every agent in every project to stop asking
+   permission. Six such artifacts had accumulated; quarantined to
+   `~/.claude/skills_quarantine_2026-07-11/`.
+2. **A human must be on at least one side of every learning loop**
+   (`_UNATTENDED_LOOP_RULE`). Artifacts carry `origin: interactive|unattended`
+   (conservative OR over evidence signals — one steward witness taints the
+   candidate). `exploration_read_floor(consumer_unattended=True)` withholds
+   unattended-origin artifacts from steward cycles, so autonomous output can
+   never become autonomous input. Unstamped (pre-2026-07-11) artifacts fail
+   closed. `distiller.STEWARD_TASK_MARKER` is pinned to `fence.STEWARD_MARKER`
+   by test — a rename must not silently un-gate this.
+3. **"No" must be durable.** `_suppress_artifact` used to record nothing for a
+   cross-project artifact (no owning project stats file), so the Distiller
+   re-proposed it — `preference-1ba8d678` was live in `~/.claude/skills/` while
+   sitting in `_rejected/`. Global rejections now persist to
+   `_GLOBAL_SUPPRESSION_PID` (`data/projects/_global_skill_stats.json`, covered
+   by `EXCLUDED_SIDECAR_SUFFIXES`) and bind every project via `_is_suppressed`.
+
+**Still true / still watch:** `distiller_mode: auto` is a comment, not code —
+promotion is human-only, and the steward's PreToolUse fence blocks all writes
+under `.claude/`, so it cannot self-install a skill. Keep both properties.
+
 ## Exception-swallowing policy (added 2026-06-09)
 
 When touching any function containing `except Exception: pass`, decide: if the
