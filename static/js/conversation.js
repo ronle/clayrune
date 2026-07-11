@@ -33,13 +33,13 @@ function _ensureCharacters(projectId) {
 }
 
 // Character/persona dropdown for the +New composer. Returns '' (no picker)
-// on resume (persona is fixed at spawn) or when the project has no
-// characters. Default selection = none = today's plain-agent behavior.
+// only on resume (persona is fixed at spawn). Always offered otherwise so the
+// "Create new persona…" entry is reachable even with no characters yet.
+// Default selection = none = today's plain-agent behavior.
 function _composerCharacterPicker(p, resumeId) {
   if (!p || resumeId) return '';
   _ensureCharacters(p.id);
   const list = characterCache[p.id] || [];
-  if (!list.length) return '';
   const cur = pendingDispatchCharacter[p.id] || '';
   const opts = list.map(c => {
     const val = esc((c.scope || 'global') + ':' + c.name);
@@ -50,13 +50,31 @@ function _composerCharacterPicker(p, resumeId) {
     <span class="composer-provider-label">Persona</span>
     <select class="composer-provider-select" onchange="setComposerCharacter('${esc(p.id)}',this.value)">
       <option value="">None</option>${opts}
+      <option value="__create__">&#43; Create new persona&hellip;</option>
     </select>
   </div>`;
 }
 
 function setComposerCharacter(projectId, character) {
+  if (character === '__create__') {
+    // Persona creation happens in the Claydo character flow; revert the select.
+    _createNewPersona(projectId);
+    refreshModalById(projectId);
+    return;
+  }
   pendingDispatchCharacter[projectId] = character;
   refreshModalById(projectId);
+}
+
+// Open the Claydo assistant in "Create an agent character" mode (a fresh
+// persona → saved via /api/characters → appears in this picker). Both helpers
+// live in claydo.js (a module) and are reached via window.* interop.
+function _createNewPersona(projectId) {
+  const toChar = () => { if (typeof window.setClaydoMode === 'function') window.setClaydoMode('character'); };
+  try {
+    if (typeof window.openClaydo === 'function') Promise.resolve(window.openClaydo()).then(toChar).catch(toChar);
+    else toChar();
+  } catch (e) {}
 }
 
 // Cross-module accessors for the per-chat persona state. These vars are

@@ -2468,6 +2468,13 @@
   /* Let flex size the thread — override sizeAgentChat's (skipped) inline height. */
   .agent-3pane .agent-main .agent-chat { height: auto !important; flex: 1 1 auto; min-height: 0; }
   .agent-3pane .agent-main .agent-output { flex: 1 1 auto; min-height: 0; }
+  /* Clearer section separation in the 3-pane thread (closer to the mockup): a
+     distinct message panel, white agent bubbles, and a bordered composer. */
+  .agent-3pane .agent-main .agent-chat { border: none; border-radius: 0; background: transparent; }
+  .agent-3pane .agent-main .agent-output { background: var(--surface2); padding: 16px 14px; gap: 10px; }
+  .agent-3pane .agent-main .agent-output .agent-line { background: var(--surface); border-color: var(--border); }
+  .agent-3pane .agent-main .agent-chat-input { background: var(--surface); border-top: 1px solid var(--border); }
+  .agent-3pane .agent-main .agent-chat-input-row .agent-task-input { background: var(--bg); }
   .agent-panel-header {
     display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
     user-select: none; flex-shrink: 0;

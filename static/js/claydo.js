@@ -844,3 +844,4 @@ function _claydoOpenSavePanel(artifact, suggestedName) {
 // interop: called from inline script/onclick
 window.submitClaydo = submitClaydo;
 window.setClaydoMode = setClaydoMode;
+window.openClaydo = openClaydo;
