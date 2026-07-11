@@ -735,9 +735,16 @@ function agentPanelHTML(p) {
               <button class="btn-fresh" onclick="guardianReset('${esc(p.id)}','${esc(activeSessionId)}','dismiss')">Dismiss</button>
             </div>`
           : '';
-    const _fuAttachBtn = _pcaps.image_input ? `
+    // The hidden file input is shared by both the desktop ＋ and the mobile 📎.
+    const _fuAttachInput = _pcaps.image_input ? `
             <input type="file" multiple id="agent-attach-input-fu_${esc(activeSessionId)}" class="agent-attach-input"
-              onchange="handleAgentAttachPick(event,'fu_${esc(activeSessionId)}')">
+              onchange="handleAgentAttachPick(event,'fu_${esc(activeSessionId)}')">` : '';
+    // Desktop 3-pane: a ＋ on the LEFT opens the picker (matches the PDF composer:
+    // ＋ left, mic right). Mobile keeps its 📎 on the right of the pill.
+    const _fuPlusBtn = _pcaps.image_input ? `
+            <button class="btn-composer-plus" type="button" title="Attach files or take a photo"
+              onclick="triggerAgentAttach('fu_${esc(activeSessionId)}')">&#43;</button>` : '';
+    const _fuAttachBtn = _pcaps.image_input ? `
             <button class="btn-attach" type="button" title="Attach files or take a photo"
               onclick="triggerAgentAttach('fu_${esc(activeSessionId)}')">&#128206;</button>` : '';
     const _fuMicBtn = micBtnHTML(`agent-followup-${esc(activeSessionId)}`);
@@ -749,12 +756,14 @@ function agentPanelHTML(p) {
               ondragenter="handleAgentDragOver(event,this)"
               ondragleave="handleAgentDragLeave(event,this)"
               ondrop="${_pcaps.image_input ? `handleAgentDrop(event,'fu_${esc(activeSessionId)}')` : 'event.preventDefault()'}">
+            ${_fuAttachInput}
+            ${mobileMode ? '' : _fuPlusBtn}
             <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(activeSessionId)}" rows="1"
               placeholder="${st === 'error' ? 'Type to continue from where it stopped...' : st === 'stopped' ? 'Type to resume conversation...' : st === 'running' ? 'Interrupt and redirect agent... (Enter to send)' : 'Send follow-up... (paste or drop files here)'}"
               onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(activeSessionId)}'),'${esc(p.id)}')"
               onpaste="${_pcaps.image_input ? `handleAgentPaste(event,'fu_${esc(activeSessionId)}')` : ''}"
             ></textarea>
-            ${_fuAttachBtn}
+            ${mobileMode ? _fuAttachBtn : ''}
             ${_fuMicBtn}
             ${mobileMode
               ? `<button class="btn-send-arrow" onclick="sendFollowup('${esc(p.id)}','${esc(activeSessionId)}')" title="Send" aria-label="Send">&#8593;</button>`

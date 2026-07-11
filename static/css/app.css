@@ -2528,9 +2528,19 @@
   .agent-3pane .agent-main .agent-chat-input-row {
     background: var(--surface); border: 1px solid var(--border);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-    border-radius: 22px; padding: 5px 6px 5px 14px; gap: 4px; align-items: center;
+    border-radius: 22px; padding: 5px 6px; gap: 4px; align-items: center;
   }
   .agent-3pane .agent-main .agent-chat-input-row.drag-over { border-color: var(--accent); }
+  /* ＋ on the left opens the picker — a soft accent-tinted rounded square, per
+     the PDF composer. */
+  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus {
+    flex-shrink: 0; width: 34px; height: 34px; border: none; border-radius: 9px;
+    background: var(--accent-dim); color: var(--accent);
+    font-size: 22px; line-height: 1; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: filter 0.12s;
+  }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus:hover { filter: brightness(0.96); }
   .agent-3pane .agent-main .agent-chat-input-row .agent-task-input {
     background: transparent !important; border: none !important; outline: none !important;
     padding: 8px 4px;
