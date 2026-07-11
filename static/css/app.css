@@ -2488,7 +2488,10 @@
   .agent-3pane .agent-main .agent-chat-input-row .btn-attach,
   .agent-3pane .agent-main .agent-chat-input-row .btn-mic {
     background: transparent !important; border: none !important; color: var(--text-dim);
+    width: 36px; height: 36px;
   }
+  /* Bump the clip so it reads as a paperclip, not a dot. */
+  .agent-3pane .agent-main .agent-chat-input-row .btn-attach { font-size: 22px; }
   .agent-3pane .agent-main .agent-chat-input-row .btn-attach:hover,
   .agent-3pane .agent-main .agent-chat-input-row .btn-mic:hover { color: var(--text); background: transparent !important; }
   .agent-3pane .agent-main .agent-chat-input-row .btn-dispatch { border-radius: 16px; }
