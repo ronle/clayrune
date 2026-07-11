@@ -1341,6 +1341,7 @@ from mc.blueprints import scheduler_routes as _bp_sched  # noqa: E402
 _bp_sched.wire(
     schedules_path=SCHEDULES_PATH,
     load_project_fn=_bp_projects.load_project,
+    save_project_fn=_bp_projects.save_project,
     load_projects_fn=_bp_projects.load_projects,
     log_agent_activity_fn=_bp_projects._log_agent_activity,
     dispatch_agent_internal_fn=_bp_agent._dispatch_agent_internal,

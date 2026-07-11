@@ -2,9 +2,11 @@
 settings, loop-health. Pure-ish: reads/writes project state through injected
 CFG helpers, no Flask/server import.
 """
+import datetime as _dt
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 from ._config import CFG, now_iso, _log
 
@@ -85,13 +87,69 @@ def ensure_charter(project_id: str, objective: str):
 
 
 # ── The cycle task (what the scheduler dispatches each fire) ───────────────────
-def build_cycle_task(project: dict, charter_item: dict) -> str:
+def new_skills_since(project: dict, since_iso: str) -> list[dict]:
+    """Skills installed (or updated) since `since_iso`, global + project-local.
+
+    Read straight off disk — the CLI discovers skills from these two dirs at
+    PROCESS SPAWN, so a skill promoted between cycles is invisible to a steward
+    thread whose process is still alive from an earlier cycle. Surfacing the
+    delta in the cycle prompt is what makes "aware on next resume" true rather
+    than merely likely. Returns [{name, description, scope}]. Never raises.
+    """
+    out = []
+    if not since_iso:
+        return out
+    roots = [(Path.home() / '.claude' / 'skills', 'global')]
+    pp = (project or {}).get('project_path') or ''
+    if pp:
+        roots.append((Path(pp) / '.claude' / 'skills', 'project'))
+    for root, scope in roots:
+        try:
+            if not root.is_dir():
+                continue
+            for d in root.iterdir():
+                sk = d / 'SKILL.md'
+                if not sk.is_file():
+                    continue
+                try:
+                    mtime = _dt.datetime.fromtimestamp(
+                        sk.stat().st_mtime, _dt.timezone.utc).isoformat()
+                except OSError:
+                    continue
+                if mtime <= since_iso:
+                    continue
+                desc = ''
+                try:
+                    for ln in sk.read_text(encoding='utf-8',
+                                           errors='replace').splitlines()[:12]:
+                        if ln.startswith('description:'):
+                            desc = ln.split(':', 1)[1].strip()
+                            break
+                except OSError:
+                    pass
+                out.append({'name': d.name, 'description': desc, 'scope': scope})
+        except Exception as e:
+            _log(f"[steward] new_skills_since scan failed for {root}: {e}")
+    return out
+
+
+def build_cycle_task(project: dict, charter_item: Optional[dict],
+                     refresh: str = '') -> str:
     """The `[Steward cycle]` prompt. The marker triggers the mc-steward skill;
-    the scheduler prepends its own local-time header on continued runs."""
+    the scheduler prepends its own local-time header on continued runs.
+
+    `refresh` is what the steward has LEARNED since its last cycle (new skills,
+    relevant memory, past explorations). It is rebuilt per fire and carried in
+    the TASK TEXT — deliberately, not in the system prompt: `claude -r` restores
+    a session's ORIGINAL system prompt and ignores `--append-system-prompt`
+    (verified 2026-06-04, see the discovery memory), so anything injected there
+    would silently never reach a resumed steward. The user turn is the only
+    channel that survives a resume, which is why this lives here.
+    """
     objective = get_objective(project) or (
         str(charter_item.get('text', '')).replace(CHARTER_PREFIX, '') if charter_item else '')
     cid = (charter_item or {}).get('id', '')
-    return (
+    task = (
         "[Steward cycle] You are the autonomous STEWARD of this project — run ONE "
         "cycle now, following the mc-steward skill exactly.\n\n"
         f"Charter (your field of responsibility): {objective}\n"
@@ -104,6 +162,9 @@ def build_cycle_task(project: dict, charter_item: dict) -> str:
         "if they must KNOW or DECIDE → ensure your next wake is scheduled. Never "
         "block the loop waiting; if stuck, post BLOCKED and end the cycle."
     )
+    if refresh:
+        task += "\n\n" + refresh
+    return task
 
 
 # ── Notify seam (server-side lifecycle messages; the AGENT uses curl+Push) ─────

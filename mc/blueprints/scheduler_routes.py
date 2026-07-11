@@ -59,6 +59,12 @@ from mc.state import (
 # their register() wiring stays in server.py. Same module object via sys.modules.
 import github_sync as _gh_sync
 import project_sync as _proj_sync
+import distiller as _distiller           # exploration read-floor (steward cycle refresh)
+from mc import memory as _mem            # memory read-floor (steward cycle refresh)
+from steward import core as _steward_core  # cycle-task builder + skills delta
+# NOTE: `steward.core` is a leaf (no Flask, no blueprint imports), so this does
+# NOT create a cycle with mc.blueprints.steward_routes, which imports THIS
+# module. Do not import steward_routes here.
 
 bp = Blueprint('scheduler_routes', __name__)
 
@@ -67,6 +73,7 @@ bp = Blueprint('scheduler_routes', __name__)
 # SESSION_LABELS_PATH pattern). The rest are cross-family call seams.
 SCHEDULES_PATH: Path = None  # type: ignore[assignment]
 load_project: Callable[[str], Optional[dict]] = None  # type: ignore[assignment]
+save_project: Callable[[str, dict], Any] = None  # type: ignore[assignment]
 load_projects: Callable[[], list] = None  # type: ignore[assignment]
 _log_agent_activity: Callable[[str, str], Any] = None  # type: ignore[assignment]
 # agent-dispatch family (re-homed onto _bp_agent at 1.12):
@@ -82,14 +89,15 @@ _revive_from_agent_log: Callable[..., bool] = None  # type: ignore[assignment]
 def wire(*, schedules_path, load_project_fn, load_projects_fn,
          log_agent_activity_fn, dispatch_agent_internal_fn, load_agent_log_fn,
          enrich_run_entries_fn, get_manager_fn, all_managers_fn,
-         pid_is_alive_fn, revive_from_agent_log_fn):
+         pid_is_alive_fn, revive_from_agent_log_fn, save_project_fn=None):
     """Late-bind cross-family deps. Called once by server.py before
     register_blueprint + _start_scheduler()."""
-    global SCHEDULES_PATH, load_project, load_projects, _log_agent_activity
+    global SCHEDULES_PATH, load_project, save_project, load_projects, _log_agent_activity
     global _dispatch_agent_internal, _load_agent_log, _enrich_run_entries
     global get_manager, all_managers, _pid_is_alive, _revive_from_agent_log
     SCHEDULES_PATH = schedules_path
     load_project = load_project_fn
+    save_project = save_project_fn  # type: ignore[assignment]  # optional kwarg (steward cycle stamp)
     load_projects = load_projects_fn
     _log_agent_activity = log_agent_activity_fn
     _dispatch_agent_internal = dispatch_agent_internal_fn
@@ -286,6 +294,106 @@ def _compute_next_run(schedule):
 # _scheduler_stop moved to mc/state.py (Phase 0).
 
 
+def _steward_cycle_running(project_id):
+    """True if a steward cycle is still in flight for this project.
+
+    The stdin-append path (_scheduled_continue) has its own busy check, which
+    is what stops cadence ticks from piling overlapping turns onto one thread.
+    The respawn path skips that function, so it must not skip the guard: a cold
+    respawn while the prior cycle is still working would run two stewards over
+    the same worktree.
+    """
+    for s in agent_sessions.values():
+        if (s.get('project_id') == project_id
+                and s.get('status') == 'running'
+                and not s.get('housekeeping')):
+            return True
+    return False
+
+
+def _steward_cycle_task(project_id):
+    """Rebuild a steward's cycle prompt at fire time. Returns (task, respawn).
+
+    Two things a long-running steward could not see before this:
+
+      1. LEARNING. Its prompt was frozen into the schedule row at enable time,
+         and the `-r` resume path skips _build_agent_context entirely — so the
+         memory/exploration read-floor was fixed at thread birth. The refresh
+         block (below) rides in the TASK TEXT, the only channel that survives a
+         resume (`claude -r` restores the original system prompt and ignores
+         --append-system-prompt — verified 2026-06-04).
+
+      2. SKILLS. The CLI discovers skills from disk at PROCESS SPAWN. The cheap
+         continue path appends the next cycle to a LIVE process's stdin, so a
+         skill promoted between cycles would never load. `respawn=True` tells the
+         caller to take the cold `-r` path instead — same conversation, same
+         thread, fresh process that re-reads the skills dir. We only pay that
+         (a KV-cache miss) when there is genuinely a new skill to pick up.
+
+    _UNATTENDED_LOOP_RULE holds: the exploration read-floor is queried with
+    consumer_unattended=True, so the steward is fed only interactive-origin
+    artifacts. Its OWN output reaches it the long way round — via a human
+    promoting it, which turns it into a skill on disk, which (1) and (2) then
+    deliver. A human stays on one side of the loop.
+    """
+    p = load_project(project_id)
+    if not p:
+        return None
+    charter = _steward_core.find_charter(p)
+    since = (p.get('steward_last_cycle_at') or '').strip()
+    blocks = []
+
+    new_skills = _steward_core.new_skills_since(p, since) if since else []
+    if new_skills:
+        lines = "\n".join(
+            f"  • {s['name']} [{s['scope']}] — {s['description']}"
+            for s in new_skills[:10])
+        blocks.append(
+            "--- NEW SKILLS SINCE YOUR LAST CYCLE (now loaded; use them) ---\n"
+            + lines)
+
+    # Task-relevant memory + prior explorations, recomputed per cycle.
+    objective = _steward_core.get_objective(p) or ''
+    if objective:
+        try:
+            hits = _mem._memory_search(
+                p, objective,
+                int(state.CONFIG.get('read_floor_topk', 3) or 3))
+            if hits:
+                blocks.append(
+                    "--- RELEVANT MEMORY (auto-surfaced for your charter; use "
+                    "the mc-memory-search skill to dig deeper) ---\n"
+                    + "\n".join(f"  • [{h['file']}] {h['snippet']}"
+                                for h in hits))
+        except Exception as e:
+            _log(f"[steward] memory read-floor failed for {project_id}: {e}")
+        try:
+            expl = _distiller.exploration_read_floor(
+                project_id, objective,
+                int(state.CONFIG.get('exploration_read_floor_topk', 2) or 2),
+                consumer_unattended=True)   # _UNATTENDED_LOOP_RULE
+            if expl:
+                blocks.append(
+                    "--- RELEVANT PAST EXPLORATIONS (read the full file before "
+                    "re-deriving) ---\n" + "\n".join(
+                        f"  • [{e['scope']}] {e['snippet']}  (full: {e['path']})"
+                        for e in expl))
+        except Exception as e:
+            _log(f"[steward] exploration read-floor failed for {project_id}: {e}")
+
+    task = _steward_core.build_cycle_task(p, charter, refresh="\n\n".join(blocks))
+    # Stamp the cycle boundary so the NEXT fire's skills delta is computed from
+    # here. Written even when nothing was new — otherwise `since` never advances
+    # and every cycle re-announces the same skills.
+    try:
+        p['steward_last_cycle_at'] = now_iso()
+        save_project(project_id, p)
+    except Exception as e:
+        _log(f"[steward] could not stamp steward_last_cycle_at for "
+             f"{project_id}: {e}")
+    return task, bool(new_skills)
+
+
 def _scheduler_loop():
     """Background daemon: check schedules every 30s and dispatch due tasks."""
     while not _scheduler_stop.is_set():
@@ -316,12 +424,43 @@ def _scheduler_loop():
                     # Time to dispatch
                     pid = sched.get('project_id', '')
                     task = sched.get('task', '')
+                    steward_respawn = False
+                    if sched.get('steward') and pid:
+                        # A steward's task was FROZEN into the schedule row at
+                        # enable time and re-dispatched verbatim forever, so a
+                        # long-running steward could never see anything learned
+                        # after it was switched on. Rebuild the prompt each fire
+                        # with the delta since its last cycle. Must ride in the
+                        # task text: `claude -r` restores the ORIGINAL system
+                        # prompt and ignores --append-system-prompt, so the user
+                        # turn is the only channel that survives a resume.
+                        try:
+                            refreshed = _steward_cycle_task(pid)
+                            if refreshed:
+                                task, steward_respawn = refreshed
+                        except Exception as e:
+                            _log(f"[steward] cycle-task refresh failed for {pid}: "
+                                 f"{e}; falling back to the stored task")
                     if pid and task:
                         sched_id = sched.get('id', '')
                         cont = sched.get('continue_session', True)
                         try:
                             outcome = None
-                            if cont:
+                            # steward_respawn: a new skill landed since the last
+                            # cycle, and a live process only reads the skills dir
+                            # at spawn. Skip the stdin-append path so we take the
+                            # cold `-r` respawn below — same conversation, fresh
+                            # process, skills actually loaded. _scheduled_continue
+                            # is also what guards against overlapping cycles, so
+                            # keep its busy check on this path too.
+                            if steward_respawn and _steward_cycle_running(pid):
+                                _log(f"[steward] Skipped for {pid}: prior cycle "
+                                     f"still running (respawn deferred)")
+                                sched['last_run'] = now_iso()
+                                sched['next_run'] = _compute_next_run(sched)
+                                changed = True
+                                continue
+                            if cont and not steward_respawn:
                                 prev_sid = _latest_session_id_for_schedule(pid, sched_id)
                                 if prev_sid:
                                     pp_ = load_project(pid)
