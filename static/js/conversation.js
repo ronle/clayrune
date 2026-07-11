@@ -529,7 +529,9 @@ function agentPanelHTML(p) {
   // Desktop keeps the inline recents/search on the +New screen; on mobile the
   // recents ARE the Layer-2 list (rendered above), so the compose view is just
   // the composer (+ resume preview / starter chips).
-  const _leadResume = mobileMode ? '' : `${chatSearch}${picker}`;
+  // Desktop is now the 3-pane view — conversations + search live in the RAIL, so
+  // the +New compose no longer carries the inline recents/search or resume picker.
+  const _leadResume = '';
   const _trailControls = mobileMode
     ? _composerPlusStatusLineHTML(p, resumeId)
     : `<div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>`;
@@ -542,7 +544,7 @@ function agentPanelHTML(p) {
   // every past chat and tapping one opens it in the thread. Desktop keeps it.
   const _mobilePreviewAbove = (mobileMode && resumeId) ? _trailSearchPane : '';
   const _mobileResumeSection = '';
-  const _trailSearchPaneBelow = mobileMode ? '' : _trailSearchPane;
+  const _trailSearchPaneBelow = '';  // desktop 3-pane: no inline resume/search pane
   const _composerBlock = `<div class="agent-input-row agent-drop-zone"
     ondragover="handleAgentDragOver(event,this)"
     ondragenter="handleAgentDragOver(event,this)"
@@ -850,9 +852,11 @@ function agentPanelHTML(p) {
   // on the left + the thread/compose on the right. Mobile keeps its Layer-2
   // drill-down (tabBar / convList above). Redesign step 7.
   if (!mobileMode) {
-    // Rail = ALL the project's user conversations (durable, transcript-derived),
-    // same source as the mobile Layer-2 list — not just the open tabs.
+    // Rail = ALL the project's user conversations (durable, transcript-derived,
+    // + agent-log entries for old chats aged out of /conversations) — same source
+    // as the mobile Layer-2 list, not just the open tabs.
     if (!conversationsCache[p.id]) loadConversations(p.id);
+    if (!agentLogCache[p.id]) loadAgentLog(p.id);
     const _railConvos = (typeof _userInitiatedConvos === 'function') ? _userInitiatedConvos(p.id) : [];
     const railRows = _railConvos.length
       ? mobileUserConversationsHTML(p, _railConvos)
@@ -862,6 +866,8 @@ function agentPanelHTML(p) {
     return `<div class="agent-panel agent-3pane">
       <div class="agent-rail"${_railStyle}>
         <button class="conv-newbtn agent-rail-new" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
+        <input type="text" class="agent-rail-search" id="rail-search-${esc(p.id)}" placeholder="Search conversations&hellip;"
+          spellcheck="false" value="${esc(_railQuery[p.id] || '')}" oninput="railSearch('${esc(p.id)}', this.value)">
         <div class="agent-rail-list">${railRows}</div>
       </div>
       <div class="agent-rail-resizer" onmousedown="startRailResize(event)" title="Drag to resize"></div>
@@ -911,6 +917,22 @@ function _railResizeEnd() {
 document.addEventListener('mousemove', _railResizeMove);
 document.addEventListener('mouseup', _railResizeEnd);
 window.startRailResize = startRailResize;
+
+// Rail search — filter the recents rail's conversation rows by name, in place.
+// The query is preserved per-project (the input value + focus survive refreshes
+// via refreshModalById); _applyRailFilter re-hides rows after each rebuild.
+let _railQuery = {};
+function railSearch(projectId, q) { _railQuery[projectId] = q; _applyRailFilter(projectId); }
+function _applyRailFilter(projectId) {
+  const q = (_railQuery[projectId] || '').trim().toLowerCase();
+  const list = document.querySelector('.agent-3pane .agent-rail-list');
+  if (!list) return;
+  list.querySelectorAll('.conv-row').forEach(row => {
+    row.style.display = (!q || (row.textContent || '').toLowerCase().includes(q)) ? '' : 'none';
+  });
+}
+window.railSearch = railSearch;
+window._applyRailFilter = _applyRailFilter;
 
 // WhatsApp-Communities-style conversation list: shown in the Agent panel when
 // a project has >1 active conversation. Each row drills into that
@@ -984,7 +1006,7 @@ function _userInitiatedConvos(projectId) {
   const AGENT_SOURCES = new Set(['agent', 'api', 'cron']);  // programmatic dispatch → side flow
   const hidden = _hiddenConvSet(projectId);
   const showHidden = !!_showHiddenConvos[projectId];
-  return (conversationsCache[projectId] || []).filter(c => {
+  const _keep = (c) => {
     if (AGENT_TRIGGERS.has(c.trigger_type || '')) return false;
     if (AGENT_SOURCES.has(c.source || '')) return false;
     const src = c.source || '';
@@ -998,7 +1020,27 @@ function _userInitiatedConvos(projectId) {
     if (!src && (c.turns || 0) <= 1 && _TRIVIAL_ACK_RE.test(label)) return false;  // trivial 1-turn ack
     if (!showHidden && hidden.has(c.claude_session_id || '')) return false;
     return true;
-  });
+  };
+  const out = (conversationsCache[projectId] || []).filter(_keep);
+  // Merge in agent-log entries whose transcript isn't in conversationsCache —
+  // old chats that aged out of /conversations but are still resumable (this is
+  // what the old resume picker surfaced; without it they'd be unreachable).
+  const seen = new Set(out.map(c => c.claude_session_id).filter(Boolean));
+  for (const e of (agentLogCache[projectId] || [])) {
+    const csid = e.claude_session_id || '';
+    if (!csid || seen.has(csid) || e.hivemind_ws_id) continue;
+    const c = {
+      claude_session_id: csid, mc_session_id: e.session_id || '',
+      label: e.task || '', last_user: e.task || '', first_user: e.task || '',
+      status: e.status || 'completed', turns: e.num_turns || 0,
+      ts_relative: e.ts_relative || e.ts || '', trigger_type: e.trigger_type || '',
+      source: e.source || '', live: false,
+    };
+    if (!_keep(c)) continue;
+    out.push(c);
+    seen.add(csid);
+  }
+  return out;
 }
 
 // Cross-reference the durable conversation rows against LIVE agent state so a

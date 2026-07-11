@@ -1808,6 +1808,9 @@ function refreshModalById(modalId) {
   // Render any mermaid placeholders that came from the outputLines builder
   // (the streaming path renders inline; this catches the rebuild path).
   _renderAllMermaidPlaceholders(content);
+  // Re-apply the 3-pane rail search filter after the rebuild (the input value +
+  // focus are already restored above; this re-hides the non-matching rows).
+  if (typeof _applyRailFilter === 'function') { try { _applyRailFilter(entry.projectId); } catch (_) {} }
   if (sid && curTab === 'agent') {
     sizeAgentChat(entry.element, sid);
     // The rebuild creates a fresh agent-output unless the node was preserved;

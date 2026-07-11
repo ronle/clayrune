@@ -2450,6 +2450,13 @@
     background: var(--accent); color: #fff; border: none; border-radius: 8px;
     font-size: 13px; font-weight: 600; cursor: pointer;
   }
+  .agent-3pane .agent-rail-search {
+    margin: 0 12px 8px; flex-shrink: 0; padding: 7px 11px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font-size: 12.5px; outline: none;
+  }
+  .agent-3pane .agent-rail-search:focus { border-color: var(--accent); }
+  .agent-3pane .agent-rail-search::placeholder { color: var(--text-faint); }
   .agent-3pane .agent-rail-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 10px; }
   .agent-3pane .agent-rail-empty { padding: 22px 16px; color: var(--text-faint); font-size: 12px; text-align: center; }
   .agent-3pane .conv-list { border: none; border-radius: 0; }
