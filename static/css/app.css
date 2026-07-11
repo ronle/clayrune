@@ -2448,6 +2448,9 @@
   .agent-3pane .agent-rail {
     width: 264px; flex-shrink: 0; display: flex; flex-direction: column;
     border-right: 1px solid var(--border); overflow: hidden; min-height: 0;
+    /* Sit the rail on the warm page background so transparent rows share it and
+       only the active conversation reads as a white (--surface) card. */
+    background: var(--bg);
   }
   .agent-3pane .agent-rail-resizer {
     flex-shrink: 0; width: 7px; margin: 0 -4px; cursor: col-resize;
@@ -2457,7 +2460,10 @@
   /* New button + search share the same box (width, height, radius) so they read
      as a matched pair, per the mockup. */
   .agent-3pane .agent-rail-new {
-    margin: 12px 12px 8px; flex-shrink: 0; padding: 10px 12px;
+    /* width:auto overrides .conv-newbtn's width:100% so the button respects the
+       side margins (stretches to rail width − margins) and lines up with the
+       search field below instead of overhanging it. */
+    margin: 12px 12px 8px; width: auto; flex-shrink: 0; padding: 9px 12px;
     background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 10px;
     font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; line-height: 1.2;
   }
