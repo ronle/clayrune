@@ -222,7 +222,7 @@ class TestScribeCallEquivalence:
         assert result.text == 'summarized text'
 
     def test_cmd_structure(self):
-        """Verify argv shape: [binary, '-p', '--model', model, '--max-turns', '1', '--dangerously-skip-permissions']."""
+        """Verify argv shape: [binary, '-p', '--model', model, '--max-turns', '1', <sandbox flags>]."""
         rt = _fresh_claude()
         model = 'claude-haiku-4-5-20251001'
         calls, _ = self._capture_run_calls(rt, model, 'Summarize.', 'content')
@@ -233,7 +233,59 @@ class TestScribeCallEquivalence:
         assert cmd[cmd.index('--model') + 1] == model
         assert '--max-turns' in cmd
         assert cmd[cmd.index('--max-turns') + 1] == '1'
-        assert '--dangerously-skip-permissions' in cmd
+
+    # ── Sandbox (2026-07-11) — LOAD-BEARING, do not relax ────────────────────
+    # oneshot() is a pure text transform (Scribe / condense / Distiller). It used
+    # to run with --dangerously-skip-permissions and the full tool + MCP fleet.
+    # With 80KB of transcript in the payload, the cheap model would CONTINUE the
+    # transcript rather than analyse it — a live repro had the extraction call
+    # execute an MCP mem_save on the user's machine. Removing tools removed both
+    # the hazard and ~41% of Distiller extraction failures (validated: 1/4 → 4/4
+    # parse rate on the same transcripts). If a future caller needs tools, it is
+    # not a oneshot and belongs on the agent path.
+
+    def test_oneshot_never_skips_permissions(self):
+        rt = _fresh_claude()
+        calls, _ = self._capture_run_calls(rt, 'haiku', 'Summarize.', 'content')
+        assert '--dangerously-skip-permissions' not in calls[0]['cmd']
+
+    def test_oneshot_has_no_tools_and_no_mcp(self):
+        rt = _fresh_claude()
+        calls, _ = self._capture_run_calls(rt, 'haiku', 'Summarize.', 'content')
+        cmd = calls[0]['cmd']
+        assert '--allowedTools' in cmd
+        assert cmd[cmd.index('--allowedTools') + 1] == ''       # zero tools
+        assert '--strict-mcp-config' in cmd
+        assert cmd[cmd.index('--mcp-config') + 1] == '{"mcpServers":{}}'
+
+    def test_oneshot_fences_the_transcript_as_data(self):
+        """Recency wins in a long context: without a trailing restatement the
+        model answers the transcript's last turn instead of the instruction."""
+        rt = _fresh_claude()
+        calls, _ = self._capture_run_calls(rt, 'haiku', 'Emit JSON.', 'blah blah')
+        payload = calls[0]['kwargs']['input']
+        assert 'BEGIN SESSION TRANSCRIPT' in payload
+        assert 'END SESSION TRANSCRIPT' in payload
+        # the instruction must be RESTATED after the transcript body
+        assert payload.rindex('emit ONLY') > payload.rindex('blah blah')
+
+    def test_oneshot_records_why_it_failed(self):
+        """A None return used to be indistinguishable between timeout, spawn
+        failure and non-zero exit — 78 extraction errors sat unexplained for
+        six weeks behind a generic RuntimeError."""
+        rt = _fresh_claude()
+
+        def fake_run(cmd, **kwargs):
+            fake = MagicMock()
+            fake.returncode = 1
+            fake.stdout = 'Error: Reached max turns (1)'
+            fake.stderr = ''
+            return fake
+
+        with patch('subprocess.run', side_effect=fake_run):
+            assert rt.oneshot(prompt='p', model='haiku', stdin_text='x') is None
+        assert 'rc=1' in rt.last_error
+        assert 'max turns' in rt.last_error
 
     def test_payload_via_stdin_not_argv(self):
         """The instruction + transcript must flow via stdin (input=), NOT as a
@@ -253,15 +305,22 @@ class TestScribeCallEquivalence:
         assert body in kwargs['input']
 
     def test_stdin_payload_format(self):
-        """Verify the separator between instruction and body."""
+        """Instruction first, then the fenced transcript body.
+
+        The old `---TRANSCRIPT---` separator was replaced (2026-07-11) by an
+        explicit DATA fence plus a trailing restatement — the bare separator was
+        not enough to stop the model continuing the transcript. See
+        test_oneshot_fences_the_transcript_as_data.
+        """
         rt = _fresh_claude()
         instruction = 'Summarize.'
         body = 'log content here'
         calls, _ = self._capture_run_calls(rt, 'claude-haiku-4-5-20251001', instruction, body)
         payload = calls[0]['kwargs']['input']
-        assert '---TRANSCRIPT---' in payload
-        assert payload.index(instruction) < payload.index('---TRANSCRIPT---')
-        assert payload.index('---TRANSCRIPT---') < payload.index(body)
+        assert 'BEGIN SESSION TRANSCRIPT' in payload
+        assert payload.index(instruction) < payload.index('BEGIN SESSION TRANSCRIPT')
+        assert payload.index('BEGIN SESSION TRANSCRIPT') < payload.index(body)
+        assert payload.index(body) < payload.index('END SESSION TRANSCRIPT')
 
     def test_returns_none_on_nonzero_exit(self):
         rt = _fresh_claude()

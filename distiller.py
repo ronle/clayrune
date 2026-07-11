@@ -868,14 +868,25 @@ def _do_extract_aggregate(project_id: str, project: dict,
                            transcript)
     except Exception as e:
         _increment_counter(project_id, 'extraction_error')
+        # Carry the real reason (rc + stderr tail / timeout), not just the
+        # exception class — every one of these used to read `err=RuntimeError`,
+        # which is why 78 of them told us nothing for six weeks.
         _structured_log(
             f"extraction_error:project_id={project_id}:sid={sid}:"
-            f"transcript_chars={len(transcript)}:err={type(e).__name__}"
+            f"transcript_chars={len(transcript)}:err={type(e).__name__}:{e}"
         )
         return
     parsed = _parse_extraction(raw)
     if parsed is None:
         _increment_counter(project_id, 'extraction_parse_error')
+        # Was a bare counter bump — the offending output was dropped on the
+        # floor, so nobody could see that the model was CONTINUING the
+        # transcript instead of analysing it. The head of the reply is the
+        # whole diagnosis; keep it.
+        _structured_log(
+            f"extraction_parse_error:project_id={project_id}:sid={sid}:"
+            f"reply_head={(raw or '')[:200]!r}"
+        )
         return
     # Commit signals first (Option A: signal-before-generate)
     new_signals = _normalize_signals(project_id, sid, parsed,

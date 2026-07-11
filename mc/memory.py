@@ -1063,14 +1063,20 @@ def _scribe_call(model, instruction, body):
     Callers that catch subprocess.TimeoutExpired should also catch RuntimeError
     since oneshot() normalises all failures to a None return which we raise here.
     """
-    result = _agent_runtime.get_runtime('claude').oneshot(
+    rt = _agent_runtime.get_runtime('claude')
+    result = rt.oneshot(
         prompt=instruction,
         model=model,
         stdin_text=body,
         cwd=str(Path.home()),
     )
     if result is None:
-        raise RuntimeError("scribe claude call failed (non-zero exit or timeout)")
+        # oneshot() records WHY on the runtime (rc + stderr tail / timeout /
+        # spawn failure). Carrying it into the exception is what turns an
+        # anonymous counter bump into a diagnosable failure — 78 extraction
+        # errors sat unexplained for six weeks behind a generic RuntimeError.
+        why = getattr(rt, 'last_error', '') or 'non-zero exit or timeout'
+        raise RuntimeError(f"scribe claude call failed ({why})")
     return result.text
 
 
