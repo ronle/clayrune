@@ -2520,11 +2520,14 @@
   .agent-3pane .agent-main .agent-output .agent-line:not(.agent-line-prompt):not(.agent-line-tool):not(.agent-line-status):not(.agent-line-error):not(.agent-line-queued):not(.agent-line-followup) {
     background: var(--surface); border-color: var(--border);
   }
-  .agent-3pane .agent-main .agent-chat-input { background: var(--surface); border-top: 1px solid var(--border); }
+  /* Composer sits on the warm page (--bg); the pill itself is the white card —
+     matching the PDF (white entry floating on cream), not the inverse. */
+  .agent-3pane .agent-main .agent-chat-input { background: var(--bg); border-top: none; }
   /* Composer as a single rounded pill: attach 📎 + mic sit INSIDE the entry on
      the right (like the mobile composer), with Send tucked in at the end. */
   .agent-3pane .agent-main .agent-chat-input-row {
-    background: var(--bg); border: 1px solid var(--border2);
+    background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     border-radius: 22px; padding: 5px 6px 5px 14px; gap: 4px; align-items: center;
   }
   .agent-3pane .agent-main .agent-chat-input-row.drag-over { border-color: var(--accent); }
