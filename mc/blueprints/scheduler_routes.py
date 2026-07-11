@@ -316,12 +316,12 @@ def _steward_cycle_task(project_id):
 
     Two things a long-running steward could not see before this:
 
-      1. LEARNING. Its prompt was frozen into the schedule row at enable time,
-         and the `-r` resume path skips _build_agent_context entirely — so the
-         memory/exploration read-floor was fixed at thread birth. The refresh
-         block (below) rides in the TASK TEXT, the only channel that survives a
-         resume (`claude -r` restores the original system prompt and ignores
-         --append-system-prompt — verified 2026-06-04).
+      1. LEARNING. Its prompt was frozen into the schedule row at enable time.
+         The refresh block (below) rides in the TASK TEXT so it reaches even
+         the cheap stdin-append continue path — a LIVE process whose system
+         prompt cannot change mid-flight. (Historical note: this block predates
+         the 2026-07-11 fix that re-appends context on `-r` respawns; it stays
+         because the no-respawn stdin path still has no other channel.)
 
       2. SKILLS. The CLI discovers skills from disk at PROCESS SPAWN. The cheap
          continue path appends the next cycle to a LIVE process's stdin, so a

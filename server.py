@@ -245,6 +245,7 @@ from mc.core import (  # noqa: E402
     _log,
     file_type,
     now_iso,
+    sweep_orphan_tmpfiles,
     time_ago,
 )
 from mc.state import (  # noqa: E402
@@ -1022,6 +1023,12 @@ def _startup_memory_maintenance():
         memory._gc_stale_watermarks(load_projects())
     except Exception as e:
         _log(f"[wm-gc] bootstrap failed: {e}")
+    try:
+        # Orphaned atomic-write temps (data/ tree) + stale sysprompt spawn
+        # files in the OS temp dir — both leak only on a hard MC kill.
+        sweep_orphan_tmpfiles([_DATA_ROOT / 'data'])
+    except Exception as e:
+        _log(f"[tmp-sweep] bootstrap failed: {e}")
 
 
 # ── Revive-from-agent-log + transcript buffer renderers ── moved to

@@ -6,6 +6,49 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-07-11b] — Resume no longer drops the injected context (9 `-r` paths fixed)
+
+A 2026-07-11 re-test on CLI 2.1.206 reversed the 2026-06-04 canary finding:
+`claude -r` does NOT restore the original system prompt — the prompt is rebuilt
+from flags on **every** invocation, so any resume that omits
+`--append-system-prompt-file` silently drops the whole injected context
+(AGENT_RULES, memory read-floor, CLAYRUNE API reference, character, system
+awareness). MC deliberately omitted it on all resume branches, so every
+respawned conversation ran as a "naked" Claude. Memory:
+`discovery_claude_resume_ignores_append.md` (rewritten with the reversal).
+
+- **All 9 resume paths now re-append the context**: dispatch-resume (B+A),
+  MC-restart revival (B+A), Mode-A auto-followup, Mode-B dead-process respawn
+  (the most frequent — idle-eviction + crashes), sticky-settings respawn,
+  auto-router tier switch, Mode-A per-turn follow-up (incl. `--continue`), and
+  interrupt-resume.
+- **Stash-first, rebuild-fallback** (`_respawn_sysprompt_args`): the spawn
+  context is stashed on the session dict (`_system_prompt`) and re-appended
+  verbatim on respawn — instant (safe under `mgr.lock`, no RC-2 regression)
+  and byte-identical (cache-prefix-friendly). Rebuilt fresh only where that's
+  the point: the sticky-settings respawn (applies changed settings), revival,
+  and dispatch-resume (no session dict). Best-effort: a rebuild failure
+  degrades to the old context-less resume.
+- **Tier-1a/1b split collapsed** (`_RESPAWN_TRIGGER_KEYS`): the split existed
+  only because of the reversed finding. `brief_replies_always_enabled` is now
+  a respawn trigger; the sticky respawn's rebuilt context carries it.
+- **Character personas now survive respawns** via the stash. Known limit: a
+  conversation resumed from the history list (no live session dict) rebuilds
+  context without a character.
+- **Startup temp-file sweep** (`sweep_orphan_tmpfiles`, wired into
+  `_startup_memory_maintenance`): removes crash-stranded atomic-write temps
+  (`.{name}.tmp{pid}`) under `data/` and stale `clayrune-sysprompt-*.txt`
+  files in the OS temp dir, age-gated at 24h.
+- Tests: `tests/test_resume_sysprompt.py` (8 green; affected suites 144 green).
+- Hygiene: `data/reply_archive/`, `data/skills/_promoted|_rejected|
+  _soak_baseline.json` gitignored; `tools/smoke/` scratch previews moved to
+  `tools/smoke/_scratch/` (now ignored).
+
+Side effect worth knowing: the steward's task-text refresh block and the
+non-Claude `_system_prompt` re-injection were both workarounds for this bug on
+their surfaces; they stay (the stdin-append path still needs them) but their
+comments now point at the real rule.
+
 ## [2026-07-11] — Live activity states: thinking vs. writing (experimental, default OFF)
 
 The typing dots (§4, 2026-07-05) meant "process alive, nothing emitted yet" —

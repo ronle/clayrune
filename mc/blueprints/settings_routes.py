@@ -132,24 +132,22 @@ _CONFIG_EDITABLE_KEYS = {
     'distiller_cross_project_walk_debounce_seconds',
 }
 
-# Respawn-trigger ("Tier-1a") settings: passed as CLI FLAGS at process launch and
-# re-applied on a `-r` respawn, so flipping one mid-session and resuming actually
-# changes behavior (this is exactly how the auto-router switches --model live).
-# When `sticky_agent_settings` is on, flipping any of these marks live Mode B
+# Respawn-trigger ("Tier-1") settings: baked into the spawn (CLI flags or the
+# --append-system-prompt-file context) and re-applied on a `-r` respawn. When
+# `sticky_agent_settings` is on, flipping any of these marks live Mode B
 # sessions to resume into a fresh process at the next turn boundary.
 #
-# DELIBERATELY EXCLUDED — system-prompt ("Tier-1b") settings (brief-reply
-# directive `brief_replies_always_enabled`, `read_floor_topk`, rules-file edits):
-# these live in --append-system-prompt-file, and a canary test (2026-06-04, Haiku)
-# proved `claude -r` RESTORES the session's original system prompt and IGNORES a
-# resume-time append (fresh+append → applied; -r+append → ignored, 0/4 trials;
-# continuity probe confirmed -r really resumed). So a respawn can't apply them to
-# a resumed chat — they only take effect on a FRESH spawn. Including them would
-# just burn a re-prefill for no behavior change. See discovery memory
+# System-prompt settings ARE included since 2026-07-11: CLI ≥2.1.206 rebuilds
+# the system prompt from flags on EVERY invocation, so a `-r` respawn that
+# re-appends the context DOES apply them (the sticky respawn rebuilds the
+# context from current CONFIG — see agent_routes' sticky-settings respawn).
+# The old Tier-1a/1b split rested on a 2.1.158-era canary test whose result
+# was reversed by a 2026-07-11 re-test — see discovery memory
 # claude-resume-ignores-append-system-prompt.
 #
-# Also excluded: per-turn settings (brief phone-mode, auto-router,
-# scribe-checkpoint) take effect next turn for free; agent_name/user_name change
+# Still excluded: per-turn settings (brief phone-mode, auto-router,
+# scribe-checkpoint) take effect next turn for free; `read_floor_topk` only
+# matters at the next fresh context build; agent_name/user_name change
 # rarely; MCP set is per-project (not a global key here).
 _RESPAWN_TRIGGER_KEYS = {
     'agent_model', 'agent_effort', 'agent_max_turns', 'agent_permission_mode',
@@ -157,6 +155,8 @@ _RESPAWN_TRIGGER_KEYS = {
     # --include-partial-messages is a launch flag, so a live session only starts
     # (or stops) emitting stream_event after a respawn.
     'activity_states_enabled',
+    # System-prompt directive — rides in the context the sticky respawn rebuilds.
+    'brief_replies_always_enabled',
 }
 
 @bp.route('/api/config')

@@ -32,6 +32,10 @@ data/memory/
 data/beacon/
 /beacon/*.json
 data/logs/
+# Chat-reducer archive of original (pre-summary) replies. The reducer is OFF
+# (decision 2026-06-12) but the archived originals are user data — keep on
+# disk, never publish.
+data/reply_archive/
 # Claydo helper sandbox: server materializes USER_GUIDE.md as CLAUDE.md
 # under this dir on every /api/guide/* call so Claude auto-loads it as
 # project context. Regenerated; not source. (data/playdo/ is the same dir
@@ -225,6 +229,11 @@ data/mc_child_pids.json
 # panel, promoted by hand. Regenerated; never source. (Same posture as
 # data/maintenance_reports/.)
 data/skills/_proposed/
+# Sibling buckets of the learning queue (promote/reject relocations) + the
+# weekly soak-monitor baseline — runtime state, same class as _proposed/.
+data/skills/_promoted/
+data/skills/_rejected/
+data/skills/_soak_baseline.json
 
 # engulfing-diagnostic is a PRIVATE trading-analysis skill that was committed as
 # a builtin by mistake — it embeds proprietary SQL + a personal path and must

@@ -558,6 +558,36 @@ def _sysprompt_file_args(context):
     return ['--append-system-prompt-file', path], path
 
 
+def _respawn_sysprompt_args(session, project, task=''):
+    """Sysprompt args for a `-r` / `--continue` respawn of an existing session.
+
+    CLI ≥2.1.206 rebuilds the system prompt from flags on EVERY invocation:
+    a resume that omits --append-system-prompt-file silently LOSES the whole
+    injected context (rules, memory read-floor, API reference, character).
+    See memory discovery-claude-resume-ignores-append-system-prompt (reversed
+    2026-07-11) — the old "resume restores the original prompt" rule is false.
+
+    Prefers the context stashed on the session at spawn (instant — safe under
+    mgr.lock, and byte-identical content keeps the resumed prefix
+    cache-friendly). Rebuilds only when the stash is missing (sessions
+    predating the stash) and remembers the rebuild for next time. Best-effort:
+    a rebuild failure degrades to a context-less resume, never blocks the
+    respawn itself.
+    """
+    context = (session or {}).get('_system_prompt') or ''
+    if not context:
+        try:
+            context = _build_agent_context(
+                project, incognito=bool((session or {}).get('incognito')),
+                task=task)
+        except Exception as e:
+            _log(f"[respawn] sysprompt rebuild failed: {e}")
+            return [], None
+        if session is not None:
+            session['_system_prompt'] = context
+    return _sysprompt_file_args(context)
+
+
 def _sysprompt_cleanup(path, proc):
     """Schedule deletion of the temp system-prompt file when `proc` exits.
 
@@ -1472,9 +1502,13 @@ def _build_agent_context(project, incognito=False, task='', character_body=''):
 
     character_body, when set, is the markdown body of a per-chat "character"
     (a Claude Code subagent persona the user picked at new-chat time). It is
-    injected ONCE here at spawn beside AGENT_RULES — never on resume (claude
-    -r restores the original system prompt), which is exactly why the
-    character is immutable for the chat's lifetime (Prompt Builder Phase 2).
+    injected here at spawn beside AGENT_RULES and rides along on -r respawns
+    via the session's '_system_prompt' stash (re-appended verbatim — CLI
+    ≥2.1.206 rebuilds the system prompt from flags on every invocation, see
+    _respawn_sysprompt_args). The stash is written once at spawn, which is
+    why the character stays immutable for the chat's lifetime (Prompt
+    Builder Phase 2). Caveat: a conversation resumed from history (no live
+    session dict) rebuilds the context WITHOUT a character.
 
     incognito=True keeps the full project context (rules, memory pointer,
     recent activity, recent conversations, current task) so the agent knows
@@ -2577,6 +2611,15 @@ def _revive_from_agent_log(project_id, session_id, message, p):
                        f"the user's request below.]\n\n{message}")
     else:
         resume_flags = ['-r', claude_sid]
+    if context is None:
+        # A -r revival must re-append the context too — CLI ≥2.1.206 rebuilds
+        # the system prompt from flags on every invocation, so a bare -r drops
+        # rules/read-floor/API reference (see _respawn_sysprompt_args). The
+        # in-memory stash died with the old MC process, so rebuild fresh.
+        try:
+            context = _build_agent_context(p)
+        except Exception as e:
+            _log(f"[revive] {project_id}: context rebuild failed: {e}")
 
     mgr = get_manager(project_id)
     mgr.ensure_guardian()
@@ -2592,7 +2635,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
     if use_streaming:
         cmd = [_resolve_claude(), *resume_flags, *_build_claude_flags(p, streaming=True)]
         _sp_path = None
-        if not resume_flags and context:
+        if context:
             _sp_args, _sp_path = _sysprompt_file_args(context)
             cmd.extend(_sp_args)
         try:
@@ -2639,6 +2682,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
             'usage': entry.get('usage', {}),
             'cost_usd': entry.get('cost_usd', 0),
             'num_turns': entry.get('num_turns', 0),
+            '_system_prompt': context or '',
         }
         with mgr.lock:
             agent_sessions[session_id] = session
@@ -2655,15 +2699,9 @@ def _revive_from_agent_log(project_id, session_id, message, p):
         return session
 
     # Mode A
-    _sp_path = None
-    if resume_flags:
-        cmd = [_resolve_claude(), *resume_flags, '-p', revival_msg, *_build_claude_flags(p)]
-    else:
-        if not context:
-            context = _build_agent_context(p)
-        _sp_args, _sp_path = _sysprompt_file_args(context)
-        cmd = [_resolve_claude(), '-p', revival_msg, *_build_claude_flags(p),
-               *_sp_args]
+    _sp_args, _sp_path = _sysprompt_file_args(context)
+    cmd = [_resolve_claude(), *resume_flags, '-p', revival_msg,
+           *_build_claude_flags(p), *_sp_args]
     try:
         proc = subprocess.Popen(
             cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -2705,6 +2743,7 @@ def _revive_from_agent_log(project_id, session_id, message, p):
         'usage': entry.get('usage', {}),
         'cost_usd': entry.get('cost_usd', 0),
         'num_turns': entry.get('num_turns', 0),
+        '_system_prompt': context or '',
     }
     with mgr.lock:
         agent_sessions[session_id] = session
@@ -2972,7 +3011,9 @@ def _auto_dispatch_followup(session, message):
     else:
         resume_flags = ['--continue']
 
-    cmd = [_resolve_claude(), *resume_flags, '-p', message, *_build_claude_flags(p)]
+    _sp_args, _sp_path = _respawn_sysprompt_args(session, p, message)
+    cmd = [_resolve_claude(), *resume_flags, '-p', message, *_build_claude_flags(p),
+           *_sp_args]
 
     try:
         proc = subprocess.Popen(
@@ -2989,7 +3030,13 @@ def _auto_dispatch_followup(session, message):
         )
     except Exception as e:
         session['log_lines'].append(f'[follow-up failed: {e}]')
+        if _sp_path:
+            try:
+                os.unlink(_sp_path)
+            except OSError:
+                pass
         return
+    _sysprompt_cleanup(_sp_path, proc)
 
     threading.Thread(target=_hide_windows_delayed, args=(proc.pid,), daemon=True).start()
     old_proc = session.get('proc')
@@ -3490,14 +3537,24 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     # ── Auto-router + context build, OUTSIDE mgr.lock ───────────────────────
     # RC-2 constraint (ws_003): the classifier subprocess + context build are
     # both slow (seconds) and must NOT pin mgr.lock — that's how mobile sends /
-    # interrupts wedge the project for hours when claude rate-limits. Resume
-    # paths skip context build (the CC subprocess already has its sysprompt).
+    # interrupts wedge the project for hours when claude rate-limits.
+    #
+    # Resume paths build + re-append the context too: CLI ≥2.1.206 rebuilds
+    # the system prompt from flags on EVERY invocation, so a bare `-r` DROPS
+    # the whole injected context (rules, read-floor, API reference). See
+    # memory discovery-claude-resume-ignores-append-system-prompt (reversed
+    # 2026-07-11) — the old "resume restores the original prompt" rule is false.
     _sp_args = []
     _sp_path = None
     _router_fallback_reason = ''
     if resume_id:
-        routed_model, routed_source, base_flags = _dispatch_with_routing(
-            p, task, streaming=use_streaming)
+        routed_model, routed_source, base_flags, context, _router_fallback_reason = (
+            _dispatch_with_routing_parallel(
+                p, task,
+                context_builder=lambda: _build_agent_context(
+                    p, incognito=incognito, task=task),
+                streaming=use_streaming))
+        _sp_args, _sp_path = _sysprompt_file_args(context)
     elif model_override:
         # Composer "Model" picker: an explicit per-chat choice — user intent
         # beats the classifier, so the auto-router is bypassed entirely.
@@ -3541,7 +3598,7 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
         if use_streaming:
             # Mode B: persistent process with stream-json stdin
             if resume_id:
-                cmd = [_resolve_claude(), '-r', resume_id, *base_flags]
+                cmd = [_resolve_claude(), '-r', resume_id, *base_flags, *_sp_args]
             else:
                 cmd = [_resolve_claude(), *base_flags, *_sp_args]
 
@@ -3612,6 +3669,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 # Per-chat persona (Prompt Builder Phase 2): {name,scope,
                 # display_name} or None. Immutable; drives the header pill.
                 'character': character_meta,
+                # Spawn context stash — re-appended verbatim on every `-r`
+                # respawn (see _respawn_sysprompt_args). Byte-identical
+                # content keeps the resumed prefix cache-friendly.
+                '_system_prompt': context or '',
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -3643,7 +3704,8 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
             # Mode A: spawn-per-turn (existing behavior). base_flags / _sp_args
             # were resolved above the lock (outside RC-2's danger zone).
             if resume_id:
-                cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *base_flags]
+                cmd = [_resolve_claude(), '-r', resume_id, '-p', task, *base_flags,
+                       *_sp_args]
             else:
                 cmd = [_resolve_claude(), '-p', task, *base_flags, *_sp_args]
 
@@ -3696,6 +3758,10 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 # Per-chat persona (Prompt Builder Phase 2): {name,scope,
                 # display_name} or None. Immutable; drives the header pill.
                 'character': character_meta,
+                # Spawn context stash — re-appended verbatim on every `-r`
+                # respawn (see _respawn_sysprompt_args). Byte-identical
+                # content keeps the resumed prefix cache-friendly.
+                '_system_prompt': context or '',
             }
             agent_sessions[session_id] = session
             mgr.session_ids.add(session_id)
@@ -4262,7 +4328,13 @@ def agent_followup(project_id):
                 cmd = [_resolve_claude(), *resume_flags,
                        *_build_claude_flags(p, streaming=True)]
                 _sp_path = None
-                if not resume_flags and context:
+                if resume_flags:
+                    # -r respawn: re-append the spawn context (stash-first —
+                    # instant under mgr.lock; see _respawn_sysprompt_args).
+                    _sp_args, _sp_path = _respawn_sysprompt_args(existing, p, message)
+                    cmd.extend(_sp_args)
+                elif context:
+                    existing['_system_prompt'] = context
                     _sp_args, _sp_path = _sysprompt_file_args(context)
                     cmd.extend(_sp_args)
                 _respawn_b = {
@@ -4299,10 +4371,18 @@ def agent_followup(project_id):
                     _sticky_resume = ['-r', _sticky_sid] if _sticky_sid else []
                     _sticky_cmd = [_resolve_claude(), *_sticky_resume,
                                    *_build_claude_flags(p, streaming=True)]
+                    # Rebuild the context (not the stash): the whole point of
+                    # this respawn is applying changed settings, and since CLI
+                    # ≥2.1.206 the -r re-append DOES take effect — so
+                    # system-prompt (Tier-1b) settings now ride along too.
                     _sticky_sp = None
-                    if not _sticky_resume:
-                        _sargs, _sticky_sp = _sysprompt_file_args(_build_agent_context(p))
+                    try:
+                        _sticky_ctx = _build_agent_context(p)
+                        existing['_system_prompt'] = _sticky_ctx
+                        _sargs, _sticky_sp = _sysprompt_file_args(_sticky_ctx)
                         _sticky_cmd.extend(_sargs)
+                    except Exception as _se:
+                        _log(f"[sticky-respawn] context rebuild failed: {_se}")
                     existing['process_alive'] = False
                     existing['log_lines'].append('[Settings changed — applying via resume]')
                     _sticky_old = existing.get('proc')
@@ -4403,10 +4483,12 @@ def agent_followup(project_id):
             _sp_path = None
             cmd = [_resolve_claude(), *resume_flags,
                    *_build_claude_flags(p, streaming=True, model_override=new_model)]
-            if not resume_flags:
+            if resume_flags:
+                _sp_args, _sp_path = _respawn_sysprompt_args(mrs['existing'], p, message)
+            else:
                 _route_context = _build_agent_context(p)
                 _sp_args, _sp_path = _sysprompt_file_args(_route_context)
-                cmd.extend(_sp_args)
+            cmd.extend(_sp_args)
             with get_manager(project_id).lock:
                 _route_existing = agent_sessions.get(session_id)
                 if _route_existing:
@@ -4541,9 +4623,12 @@ def agent_followup(project_id):
             # unaugmented message; only the claude -p arg gets the directive.
             claude_followup_msg = _apply_mobile_brief(followup_msg, data)
             cmd = [_resolve_claude(), *resume_flags, '-p', claude_followup_msg, *_build_claude_flags(p)]
-            if not resume_flags:
+            if resume_flags:
+                _sp_args, _sp_path = _respawn_sysprompt_args(existing, p, followup_msg)
+            else:
+                existing['_system_prompt'] = context
                 _sp_args, _sp_path = _sysprompt_file_args(context)
-                cmd.extend(_sp_args)
+            cmd.extend(_sp_args)
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
@@ -4777,7 +4862,11 @@ def agent_interrupt(project_id):
             if is_mode_b:
                 cmd = [_resolve_claude(), *resume_flags,
                        *_build_claude_flags(p, streaming=True)]
-                if not resume_flags and context:
+                if resume_flags:
+                    _sp_args, _sp_path = _respawn_sysprompt_args(session, p, respawn_msg)
+                    cmd.extend(_sp_args)
+                elif context:
+                    session['_system_prompt'] = context
                     _sp_args, _sp_path = _sysprompt_file_args(context)
                     cmd.extend(_sp_args)
                 proc = subprocess.Popen(
@@ -4817,11 +4906,13 @@ def agent_interrupt(project_id):
                 # Mode A
                 claude_respawn_msg = _apply_mobile_brief(respawn_msg, data)
                 if resume_flags:
+                    _sp_args, _sp_path = _respawn_sysprompt_args(session, p, respawn_msg)
                     cmd = [_resolve_claude(), *resume_flags, '-p', claude_respawn_msg,
-                           *_build_claude_flags(p)]
+                           *_build_claude_flags(p), *_sp_args]
                 else:
                     if not context:
                         context = _build_agent_context(p)
+                    session['_system_prompt'] = context
                     _sp_args, _sp_path = _sysprompt_file_args(context)
                     cmd = [_resolve_claude(), '-p', claude_respawn_msg, *_build_claude_flags(p),
                            *_sp_args]

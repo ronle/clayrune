@@ -51,6 +51,49 @@ def _atomic_write_text(path, text, encoding='utf-8'):
     os.replace(tmp, path)
 
 
+def sweep_orphan_tmpfiles(roots, max_age_hours=24):
+    """Delete orphaned temp files left behind by crashed writers.
+
+    Two families: same-dir atomic-write temps (`.{name}.tmp{pid}`, see
+    _atomic_write_text — a crash between write and os.replace strands one,
+    e.g. data/.mc_child_pids.json.tmp49260 found 2026-07-11) under each
+    root, and stale `clayrune-sysprompt-*.txt` spawn-context files in the
+    OS temp dir (their normal cleanup rides on proc.wait(), which a hard
+    MC kill skips). Age-gated so a live in-flight write is never swept.
+    Best-effort; returns the number of files removed.
+    """
+    import re
+    import tempfile
+    import time as _t
+    cutoff = _t.time() - max_age_hours * 3600
+    removed = 0
+    pat = re.compile(r'^\..+\.tmp\d+$')
+    candidates = []
+    for root in roots:
+        try:
+            root = Path(root)
+            if root.is_dir():
+                candidates.extend(
+                    p for p in root.rglob('.*.tmp*') if pat.match(p.name))
+        except Exception as e:
+            _log(f"[tmp-sweep] scan of {root} failed: {e}")
+    try:
+        candidates.extend(
+            Path(tempfile.gettempdir()).glob('clayrune-sysprompt-*.txt'))
+    except Exception as e:
+        _log(f"[tmp-sweep] temp-dir scan failed: {e}")
+    for f in candidates:
+        try:
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+        except OSError:
+            continue
+    if removed:
+        _log(f"[tmp-sweep] removed {removed} orphaned temp file(s)")
+    return removed
+
+
 def _harden_secret_perms(path) -> None:
     """Best-effort: restrict a secret file (provider API keys, VAPID/Firebase
     keys, LAN passcode hash, mobile-pairing token) to the owning user only.
