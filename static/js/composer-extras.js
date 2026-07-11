@@ -1,14 +1,21 @@
-// ── Mic / voice transcription (Capacitor native shell only) ────────────────
-// The @capacitor-community/speech-recognition plugin is only present in the
-// Clayrune Android APK build. Browsers (desktop / mobile Chrome) don't have
-// it, so micAvailable() returns false there and the button never renders.
-function micAvailable() {
+// ── Mic / voice transcription ───────────────────────────────────────────────
+// Two backends:
+//  • Native: the @capacitor-community/speech-recognition plugin in the Clayrune
+//    Android APK (the streaming restart-cycle machinery below).
+//  • Browser: the Web Speech API (webkitSpeechRecognition) in Chrome/Edge/
+//    WebView2 — used on desktop, where there's no Capacitor plugin. Requires a
+//    secure context (https or localhost), which the desktop app + tunnel are.
+function _micNativeAvailable() {
   try {
     return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function'
       && window.Capacitor.isNativePlatform()
       && window.Capacitor.Plugins && window.Capacitor.Plugins.SpeechRecognition);
   } catch (_) { return false; }
 }
+function _micBrowserCtor() {
+  try { return window.SpeechRecognition || window.webkitSpeechRecognition || null; } catch (_) { return null; }
+}
+function micAvailable() { return _micNativeAvailable() || !!_micBrowserCtor(); }
 function micBtnHTML(textareaId) {
   if (!micAvailable()) return '';
   return `<button class="btn-mic" type="button" id="btn-mic-${textareaId}"
@@ -27,10 +34,16 @@ function _micUiOff(textareaId) {
 function toggleAgentMic(textareaId) {
   // Synchronous dispatcher — never awaits. Avoids click being "swallowed"
   // by a pending native call (e.g. SR.stop hanging) so the button is always
-  // responsive even if a prior session is in a stuck native state.
+  // responsive even if a prior session is in a stuck native state. Routes to
+  // the native or browser backend depending on the platform.
   const st = _micState[textareaId];
-  if (st && st.active) { _stopAgentMic(textareaId); return; }
-  _startAgentMic(textareaId);
+  if (_micNativeAvailable()) {
+    if (st && st.active) { _stopAgentMic(textareaId); return; }
+    _startAgentMic(textareaId);
+  } else {
+    if (st && st.active) { _stopBrowserMic(textareaId); return; }
+    _startBrowserMic(textareaId);
+  }
 }
 function _micToast(msg) {
   try { showToast('[mic] ' + msg, 3500); } catch (_) {}
@@ -219,6 +232,85 @@ function _hardResetMic(textareaId) {
     try { st.beginTimer && clearTimeout(st.beginTimer); } catch (_) {}
     try { st.watchdog && clearTimeout(st.watchdog); } catch (_) {}
     try { st.forceReset && clearTimeout(st.forceReset); } catch (_) {}
+  }
+  delete _micState[textareaId];
+  _micUiOff(textareaId);
+}
+
+// ── Browser (Web Speech API) mic — desktop path ─────────────────────────────
+// webkitSpeechRecognition stops on a silence gap even with continuous=true, so
+// (like the native cycle machinery) we restart it in onend until the user taps
+// off. Final results accumulate into `finalText`; interim results render live.
+function _startBrowserMic(textareaId) {
+  _hardResetBrowserMic(textareaId);
+  const Ctor = _micBrowserCtor();
+  const ta = document.getElementById(textareaId);
+  if (!Ctor) { _micToast('voice not supported in this browser'); return; }
+  if (!ta) { _micToast('textarea not found: ' + textareaId); return; }
+  let rec;
+  try { rec = new Ctor(); } catch (e) { _micToast('mic init failed'); return; }
+  const gen = ++_micGen;
+  const base0 = ta.value || '';
+  const st = {
+    active: true, gen, browser: true, rec, finalText: '',
+    base: base0, sep: base0 && !/\s$/.test(base0) ? ' ' : '',
+  };
+  _micState[textareaId] = st;
+  const btn = document.getElementById(`btn-mic-${textareaId}`);
+  if (btn) btn.classList.add('recording');
+  rec.continuous = true;
+  rec.interimResults = true;
+  try { rec.lang = navigator.language || 'en-US'; } catch (_) {}
+  rec.onresult = (ev) => {
+    const cur = _micState[textareaId];
+    if (!cur || cur.gen !== gen) return;
+    const live = document.getElementById(textareaId);
+    if (!live) return;
+    let interim = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const res = ev.results[i];
+      const txt = (res[0] && res[0].transcript || '').trim();
+      if (!txt) continue;
+      if (res.isFinal) cur.finalText += (cur.finalText && !/\s$/.test(cur.finalText) ? ' ' : '') + txt;
+      else interim += (interim ? ' ' : '') + txt;
+    }
+    const dictated = (cur.finalText + (interim ? (cur.finalText ? ' ' : '') + interim : '')).trim();
+    live.value = cur.base + cur.sep + dictated;
+    try { live.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+  };
+  rec.onerror = (ev) => {
+    const cur = _micState[textareaId];
+    if (!cur || cur.gen !== gen) return;
+    const err = ev && ev.error;
+    if (err === 'not-allowed' || err === 'service-not-allowed') { _micToast('mic permission denied'); cur.active = false; _hardResetBrowserMic(textareaId); }
+    else if (err === 'no-speech' || err === 'aborted') { /* benign — onend will restart if still active */ }
+    else _micToast('mic error: ' + err);
+  };
+  rec.onend = () => {
+    const cur = _micState[textareaId];
+    if (!cur || cur.gen !== gen) return;
+    if (!cur.active) { _hardResetBrowserMic(textareaId); return; }
+    // Silence gap ended the pass — restart to stay continuous until tap-off.
+    try { rec.start(); }
+    catch (_) { setTimeout(() => { const c = _micState[textareaId]; if (c && c.gen === gen && c.active) { try { rec.start(); } catch (__) {} } }, 300); }
+  };
+  try { rec.start(); _micToast('listening…'); }
+  catch (e) { _micToast('mic start failed: ' + (e && e.message || e)); _hardResetBrowserMic(textareaId); }
+}
+function _stopBrowserMic(textareaId) {
+  const st = _micState[textareaId];
+  if (!st) { _micUiOff(textareaId); return; }
+  st.active = false;              // tells onend not to restart
+  _micUiOff(textareaId);
+  try { st.rec && st.rec.stop(); } catch (_) {}
+  // Backstop in case onend never fires.
+  setTimeout(() => _hardResetBrowserMic(textareaId), 1200);
+}
+function _hardResetBrowserMic(textareaId) {
+  const st = _micState[textareaId];
+  if (st && st.rec) {
+    try { st.rec.onresult = st.rec.onend = st.rec.onerror = null; } catch (_) {}
+    try { st.rec.abort(); } catch (_) {}
   }
   delete _micState[textareaId];
   _micUiOff(textareaId);
