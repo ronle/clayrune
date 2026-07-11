@@ -884,8 +884,11 @@ function agentPanelHTML(p) {
     return `<div class="agent-panel agent-3pane">
       <div class="agent-rail"${_railStyle}>
         <button class="conv-newbtn agent-rail-new" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
-        <input type="text" class="agent-rail-search" id="rail-search-${esc(p.id)}" placeholder="Search conversations&hellip;"
-          spellcheck="false" value="${esc(_railQuery[p.id] || '')}" oninput="railSearch('${esc(p.id)}', this.value)">
+        <div class="agent-rail-search-wrap">
+          <svg class="agent-rail-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input type="text" class="agent-rail-search" id="rail-search-${esc(p.id)}" placeholder="Search conversations&hellip;"
+            spellcheck="false" value="${esc(_railQuery[p.id] || '')}" oninput="railSearch('${esc(p.id)}', this.value)">
+        </div>
         <div class="agent-rail-list">${railRows}</div>
       </div>
       <div class="agent-rail-resizer" onmousedown="startRailResize(event)" title="Drag to resize"></div>
@@ -1094,6 +1097,9 @@ function _convLiveState(live, c) {
 function mobileUserConversationsHTML(p, convos) {
   const hidden = _hiddenConvSet(p.id);
   const live = _liveConvStates(p);
+  // The currently-open conversation (desktop 3-pane rail) gets a white card;
+  // every other row stays transparent (shares the rail background).
+  const activeSid = activeAgentTab[p.id] || null;
   // Bubble chats that need attention (waiting) then working ones to the top so
   // an active/awaiting conversation is never buried under older history.
   const _rank = c => { const s = _convLiveState(live, c); return s === 'waiting' ? 0 : s === 'working' ? 1 : 2; };
@@ -1119,7 +1125,8 @@ function mobileUserConversationsHTML(p, convos) {
     const hideBtn = isHidden
       ? `<button class="conv-hide" onclick="unhideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Move back to the list" aria-label="Unhide">&#8617;</button>`
       : `<button class="conv-hide" onclick="hideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Hide from this list" aria-label="Hide">&#10005;</button>`;
-    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
+    const isActive = mcsid && mcsid === activeSid;
+    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}${isActive ? ' active' : ''}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
       <div class="conv-main">
         <div class="conv-top">
           <span class="conv-name">${dot}${label}</span>
