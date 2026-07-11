@@ -425,6 +425,13 @@ async function _renderSettings() {
         </div>
         ${toggle('sticky_agent_settings', cfg.sticky_agent_settings)}
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Live activity states</div>
+          <div class="settings-hint">Shows what the agent is actually doing right now — a spinner while it thinks, dots while it writes the reply — instead of one generic bubble. Claude only. Experimental; off reverts to the plain dots.</div>
+        </div>
+        ${toggle('activity_states_enabled', cfg.activity_states_enabled)}
+      </div>
     </div>
 
     <div class="settings-section">

@@ -6,6 +6,33 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-07-11] — Live activity states: thinking vs. writing (experimental, default OFF)
+
+The typing dots (§4, 2026-07-05) meant "process alive, nothing emitted yet" —
+which is almost never *typing*. Without `--include-partial-messages` the CLI only
+hands us whole assistant messages, so there was no live signal to differentiate
+"the model is reasoning" from "the model is writing the answer".
+
+New config key **`activity_states_enabled`** (default `false`, Settings → Agent →
+"Live activity states"). When ON:
+
+- `ClaudeRuntime.build_command(partial_messages=True)` adds
+  `--include-partial-messages` (single choke point: `_build_claude_flags`).
+- Both stream readers handle `type: "stream_event"` via `_note_activity_state()`:
+  `content_block_start` / `content_block_delta` map to a transient
+  `session['activity_state']` of `thinking` | `writing` | `tool`. Envelope shape
+  verified live against the CLI (`event.type`, `event.content_block.type`,
+  `event.delta.type`).
+- The SSE loop emits `{'type':'activity','state':…}` on change (running only).
+- FE: `setAgentActivity()` repaints the indicator — dots for `writing`, a spinning
+  ring for `thinking`/`tool` (`.act-spinner`).
+
+**Reversibility (the whole point).** `stream_event` never touches `log_lines`, is
+never persisted, and never reaches Scribe or the transcript. Flag off → no CLI
+flag → no `stream_event` → no `activity` event → the indicator is the same three
+dots as before. It's in `_RESPAWN_TRIGGER_KEYS` (a launch flag, so live sessions
+only pick it up on respawn). Nothing to unwind but the toggle.
+
 ## [2026-06-25] — Workflows tab: live CC Workflow progress in MC
 
 CC's Workflow tool (`/workflow`) never streams per-agent progress to MC's agent

@@ -115,6 +115,7 @@ _CONFIG_EDITABLE_KEYS = {
     'auto_model_enabled', 'auto_model_classifier_model',
     'auto_model_classifier_timeout_secs',
     'sticky_agent_settings',
+    'activity_states_enabled',
     # Phase 4 Distiller (v2.1 §11 global keys).
     'distiller_enabled_global', 'distiller_cross_project_enabled',
     'distiller_model', 'distiller_window_days',
@@ -146,6 +147,9 @@ _CONFIG_EDITABLE_KEYS = {
 _RESPAWN_TRIGGER_KEYS = {
     'agent_model', 'agent_effort', 'agent_max_turns', 'agent_permission_mode',
     'agent_channels', 'agent_remote_control', 'use_streaming_agent',
+    # --include-partial-messages is a launch flag, so a live session only starts
+    # (or stops) emitting stream_event after a respawn.
+    'activity_states_enabled',
 }
 
 @bp.route('/api/config')

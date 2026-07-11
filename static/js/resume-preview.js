@@ -614,6 +614,11 @@ function connectAgentStream(projectId, sessionId) {
         if (msg.text && msg.text.startsWith('[backlog: synced')) {
           refreshProjectBacklog(projectId);
         }
+      } else if (msg.type === 'activity') {
+        // Live activity state (thinking / writing / tool). Only emitted when the
+        // server has `activity_states_enabled` on; otherwise never fires and the
+        // indicator stays the plain dots.
+        setAgentActivity(sessionId, msg.state || '');
       } else if (msg.type === 'question' && msg.questions) {
         if (agentStatusCache[sessionId]) agentStatusCache[sessionId].waitingForQuestion = true;
         const _hQ = agentHistory.find(h => h.sessionId === sessionId);

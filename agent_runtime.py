@@ -741,7 +741,8 @@ class ClaudeRuntime(AgentRuntime):
     def build_command(self, *, model: str = '', max_turns: int = 0,
                       streaming: bool = False, perm_mode: str = '',
                       channels: str = '', remote_control: bool = False,
-                      effort: str = '', mcp_config_json: str = '') -> List[str]:
+                      effort: str = '', mcp_config_json: str = '',
+                      partial_messages: bool = False) -> List[str]:
         """Return [binary, *flags]. Equivalent to _build_claude_flags() in server.py.
 
         Config values are passed explicitly (not read from server.py CONFIG) so
@@ -768,6 +769,14 @@ class ClaudeRuntime(AgentRuntime):
         ])
         if streaming:
             cmd.extend(['--input-format', 'stream-json'])
+        # Opt-in (config `activity_states_enabled`, default off). Adds
+        # `stream_event` envelopes carrying content_block deltas — the ONLY way
+        # to tell "thinking" from "writing" live; without it we see whole
+        # assistant messages after the fact. Readers use these purely for a
+        # transient activity flag and never append them to log_lines, so a
+        # reader that doesn't know the type simply ignores it.
+        if partial_messages:
+            cmd.append('--include-partial-messages')
         if model:
             cmd.extend(['--model', model])
         if effort and str(effort).strip().lower() in self.EFFORT_LEVELS:

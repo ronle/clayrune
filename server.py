@@ -92,6 +92,14 @@ def _load_config():
         # files keep their saved value (the merge below preserves it), so this
         # flip only reaches new installs / configs that predate the key.
         'use_streaming_agent': True,
+        # Live activity states (2026-07-11). ON → claude is spawned with
+        # --include-partial-messages, the readers derive a transient
+        # thinking/writing/tool flag from the content_block deltas, and the chat
+        # shows a spinner vs. dots instead of one undifferentiated bubble.
+        # OFF (default) → no flag, no stream_event, no `activity` SSE event, and
+        # the UI falls back to the plain typing dots. Experimental; flip off to
+        # revert completely (no persisted state, no transcript impact).
+        'activity_states_enabled': False,
         # P2-1/P2-2 upload limits. 0 = unlimited (default → no behavior
         # change; enforcement is opt-in). upload_quota_bytes caps a
         # project's cumulative backlog-attachment storage;

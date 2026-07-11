@@ -3465,6 +3465,23 @@
     30% { opacity: 1; transform: scale(1); }
   }
 
+  /* Activity states (2026-07-11, config `activity_states_enabled`). The dots
+     above mean "writing the reply"; a spinning ring means the agent is thinking
+     or running a tool. data-act is set by _paintTypingIndicator / the cold
+     render; with the flag off it is always "writing", so the dots are unchanged. */
+  .typing-indicator .act-spinner {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: none;
+    border: 2px solid var(--border2);
+    border-top-color: var(--text-dim);
+    animation: act-spin .7s linear infinite;
+  }
+  .typing-indicator[data-act="tool"] .act-spinner { border-top-color: var(--accent, var(--text-dim)); }
+  @keyframes act-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .typing-indicator .act-spinner { animation-duration: 2.4s; }
+  }
+
   /* NOTE (#1, 2026-07-06): the desktop 720px thread cap was REMOVED — it left
      large empty gutters on a wide modal ("trimmed to part of the screen"). The
      thread now fills the modal width; the per-bubble max-width (84%/92%) keeps

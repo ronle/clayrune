@@ -444,6 +444,7 @@ def _build_claude_flags(project=None, streaming=False, model_override=None):
         ),
         effort=effort,  # pyright: ignore[reportCallIssue]  # moved-verbatim typing debt (1.12)
         mcp_config_json=_resolve_project_mcp_config(project) or '',  # pyright: ignore[reportCallIssue]  # moved-verbatim typing debt (1.12)
+        partial_messages=bool(state.CONFIG.get('activity_states_enabled', False)),  # pyright: ignore[reportCallIssue]
     )[1:]  # strip binary — _build_claude_flags() contract is flags-only
 
 
@@ -1865,6 +1866,38 @@ def _sync_todowrite_to_backlog(project_id, session_key, todos):
         return touched
 
 
+def _note_activity_state(session, msg):
+    """Update session['activity_state'] from a `stream_event` envelope.
+
+    Only fires when the CLI was spawned with --include-partial-messages (config
+    `activity_states_enabled`); otherwise no stream_event ever arrives and the
+    key stays absent, which the SSE layer reads as "no activity signal" and the
+    UI falls back to the plain typing dots. Purely transient: never touches
+    log_lines, never persisted, so turning the flag off reverts cleanly.
+
+    States: 'thinking' (extended-thinking deltas) | 'writing' (answer text
+    deltas) | 'tool' (a tool_use block is being assembled).
+    """
+    ev = msg.get('event')
+    if not isinstance(ev, dict):
+        return
+    et = ev.get('type', '')
+    state_ = ''
+    if et == 'content_block_start':
+        bt = (ev.get('content_block') or {}).get('type', '')
+        state_ = {'thinking': 'thinking', 'redacted_thinking': 'thinking',
+                  'text': 'writing', 'tool_use': 'tool'}.get(bt, '')
+    elif et == 'content_block_delta':
+        dt = (ev.get('delta') or {}).get('type', '')
+        state_ = {'thinking_delta': 'thinking', 'signature_delta': 'thinking',
+                  'text_delta': 'writing', 'input_json_delta': 'tool'}.get(dt, '')
+    elif et == 'message_stop':
+        state_ = ''
+    else:
+        return
+    session['activity_state'] = state_
+
+
 def _format_tool_activity(name, inp):
     """Format a tool_use block into a compact activity line."""
     if name in ('Read', 'Edit', 'Write'):
@@ -1957,6 +1990,9 @@ def _read_agent_stream(proc, session):
                 # session emits these). No-op for any other message type.
                 _capture_system_init(msg)
                 _mc_state._LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
+                if msg_type == 'stream_event':
+                    _note_activity_state(session, msg)
+                    continue
                 if msg_type == 'assistant' and isinstance(msg.get('message'), dict):
                     # First assistant output proves a `-r` resume loaded OK (not a
                     # fragile resume that dies instantly), so a LATER process death
@@ -2138,6 +2174,9 @@ def _read_agent_stream_b(proc, session):
                 # See Mode A reader: refresh the system-status cache.
                 _capture_system_init(msg)
                 _mc_state._LAST_SYSTEM_STATUS['provider'] = session.get('provider', 'claude')
+                if msg_type == 'stream_event':
+                    _note_activity_state(session, msg)
+                    continue
                 if msg_type == 'assistant' and isinstance(msg.get('message'), dict):
                     # First assistant output proves a `-r` resume loaded OK (not a
                     # fragile resume that dies instantly), so a LATER process death
@@ -3873,6 +3912,7 @@ def agent_stream(project_id):
         # `turn_start` so the existing `status` handler (which closes on
         # terminal states) is unaffected.
         last_emitted_status = None
+        last_emitted_activity = None  # '' | 'thinking' | 'writing' | 'tool'
         emitted_qids = set()  # per-stream: don't re-emit same question_id
         while True:
             session['_last_sse_poll_time'] = _time.time()
@@ -3922,6 +3962,15 @@ def agent_stream(project_id):
             if status == 'running' and last_emitted_status != 'running':
                 yield f"data: {json.dumps({'type': 'turn_start', 'status': 'running'})}\n\n"
             last_emitted_status = status
+
+            # Activity state (thinking / writing / tool) — only ever populated
+            # when `activity_states_enabled` put --include-partial-messages on
+            # the CLI. Flag off → key absent → no event → the FE keeps its plain
+            # typing dots, exactly as before.
+            act = session.get('activity_state') if status == 'running' else ''
+            if act != last_emitted_activity:
+                yield f"data: {json.dumps({'type': 'activity', 'state': act or ''})}\n\n"
+                last_emitted_activity = act
 
             if is_mode_b:
                 # A session that is idle ONLY because it is blocked on an

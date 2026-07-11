@@ -736,8 +736,12 @@ function agentPanelHTML(p) {
     // refreshModal, but switchAgentTab / modal reopen DO rebuild). Suppressed
     // while parked on a plan/question — those states aren't "generating".
     const showTyping = isRunning && !(activeSession?.waitingForPlanApproval || activeSession?.waitingForQuestion);
+    const _act = agentActivityState[activeSessionId] || '';
+    const _actKind = (_act === 'thinking' || _act === 'tool') ? _act : 'writing';
+    const _actInner = _actKind === 'writing'
+      ? '<span></span><span></span><span></span>' : '<span class="act-spinner"></span>';
     const typingHTML = showTyping
-      ? `<div class="agent-line typing-indicator" id="typing-${esc(activeSessionId)}"><span></span><span></span><span></span></div>` : '';
+      ? `<div class="agent-line typing-indicator" data-act="${_actKind}" id="typing-${esc(activeSessionId)}">${_actInner}</div>` : '';
 
     // Same vocabulary AND same detected-wait distinction as the project
     // badge (see consoleStatusLabel) — activeSession carries the pending
@@ -1452,6 +1456,23 @@ function selectResumeSession(projectId, claudeSessionId) {
 function hideTypingIndicator(sessionId) {
   document.getElementById(`typing-${sessionId}`)?.remove();
 }
+// Live activity per session: '' | 'thinking' | 'writing' | 'tool'. Only ever
+// non-empty when the server's `activity_states_enabled` flag is on and the CLI
+// emits partial-message deltas; otherwise every indicator is the plain dots and
+// the behavior is byte-identical to before the experiment.
+const agentActivityState = {};
+function _paintTypingIndicator(div, state) {
+  const kind = (state === 'thinking' || state === 'tool') ? state : 'writing';
+  div.dataset.act = kind;
+  div.innerHTML = (kind === 'writing')
+    ? '<span></span><span></span><span></span>'
+    : '<span class="act-spinner"></span>';
+}
+function setAgentActivity(sessionId, state) {
+  agentActivityState[sessionId] = state || '';
+  const div = document.getElementById(`typing-${sessionId}`);
+  if (div) _paintTypingIndicator(div, agentActivityState[sessionId]);
+}
 function showTypingIndicator(sessionId) {
   const el = document.getElementById(`agent-output-${sessionId}`);
   if (!el) return;
@@ -1460,7 +1481,7 @@ function showTypingIndicator(sessionId) {
   const div = document.createElement('div');
   div.className = 'agent-line typing-indicator';
   div.id = `typing-${sessionId}`;
-  div.innerHTML = '<span></span><span></span><span></span>';
+  _paintTypingIndicator(div, agentActivityState[sessionId]);
   el.appendChild(div);
   if (wasPinned) _scheduleAgentPinScroll(sessionId, el, false);
 }
@@ -2431,6 +2452,7 @@ window.selectResumeSession = selectResumeSession;
 window.appendAgentLine = appendAgentLine;
 window.showTypingIndicator = showTypingIndicator;
 window.hideTypingIndicator = hideTypingIndicator;
+window.setAgentActivity = setAgentActivity;   // interop: resume-preview.js SSE handler
 window._cachePendingQuestion = _cachePendingQuestion;
 window._rerenderPendingQuestions = _rerenderPendingQuestions;
 window.renderAgentQuestion = renderAgentQuestion;
