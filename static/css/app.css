@@ -3466,10 +3466,16 @@
      2026-07-05). Ephemeral DOM node (id=typing-<sid>) — NOT persisted to
      agentOutputBuffers. Do NOT reuse claydo-dots: it animates a single ::after
      `content` string and can't stagger three independent dots. */
+  /* Fixed height + vertical centering so the bubble does NOT resize when the
+     content swaps between the 6px dots and the 11px spinner — otherwise the
+     5px delta (6 vs 11, + 20 padding + 2 border) nudged the whole thread up and
+     down on every state change. Content box = 33 − 20 − 2 = 11px (border-box),
+     which exactly fits the spinner and centers the dots. */
   .typing-indicator {
-    display: flex; align-self: flex-start; gap: 4px;
+    display: flex; align-items: center; align-self: flex-start; gap: 4px;
     background: var(--surface3); border: 1px solid var(--border2);
     border-radius: 14px 14px 14px 4px; padding: 10px 12px; max-width: 60px;
+    height: 33px;
   }
   .typing-indicator span {
     width: 6px; height: 6px; border-radius: 50%;
