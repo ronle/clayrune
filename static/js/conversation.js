@@ -773,8 +773,7 @@ function agentPanelHTML(p) {
     const showTyping = isRunning && !(activeSession?.waitingForPlanApproval || activeSession?.waitingForQuestion);
     const _act = agentActivityState[activeSessionId] || '';
     const _actKind = (_act === 'thinking' || _act === 'tool') ? _act : 'writing';
-    const _actInner = _actKind === 'writing'
-      ? '<span></span><span></span><span></span>' : '<span class="act-spinner"></span>';
+    const _actInner = _actIndicatorInner(_actKind);
     const typingHTML = showTyping
       ? `<div class="agent-line typing-indicator" data-act="${_actKind}" id="typing-${esc(activeSessionId)}">${_actInner}</div>` : '';
 
@@ -1528,12 +1527,26 @@ function hideTypingIndicator(sessionId) {
 // emits partial-message deltas; otherwise every indicator is the plain dots and
 // the behavior is byte-identical to before the experiment.
 const agentActivityState = {};
+// Inner content of the typing indicator, shared by the cold render
+// (agentPanelHTML) and the live repaint so the two can't drift.
+//   writing  → three pulsing dots ("typing the reply")
+//   thinking → the word "Thinking", letters shimmering in a wave
+//   tool     → the word "Working" (accent-tinted), same wave
+// Dots carry .act-dot: a bare `.typing-indicator span` rule would otherwise
+// also match each LETTER span and render them as 6px circles.
+const _ACT_WORDS = { thinking: 'Thinking', tool: 'Working' };
+function _actIndicatorInner(kind) {
+  const word = _ACT_WORDS[kind];
+  if (!word) return '<span class="act-dot"></span>'.repeat(3);
+  // Per-letter stagger drives the wave; delay scales with position.
+  const letters = word.split('').map((ch, i) =>
+    `<span style="animation-delay:${(i * 0.07).toFixed(2)}s">${esc(ch)}</span>`).join('');
+  return `<span class="act-word">${letters}</span>`;
+}
 function _paintTypingIndicator(div, state) {
   const kind = (state === 'thinking' || state === 'tool') ? state : 'writing';
   div.dataset.act = kind;
-  div.innerHTML = (kind === 'writing')
-    ? '<span></span><span></span><span></span>'
-    : '<span class="act-spinner"></span>';
+  div.innerHTML = _actIndicatorInner(kind);
 }
 // Is this session actively generating (→ the indicator belongs on screen)?
 // agentStatusCache is the primary signal, but it can be stale or absent (the

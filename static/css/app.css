@@ -3477,33 +3477,44 @@
     border-radius: 14px 14px 14px 4px; padding: 10px 12px; max-width: 60px;
     height: 33px;
   }
-  .typing-indicator span {
+  /* .act-dot, NOT a bare `span` — the word states nest one span per LETTER and
+     a bare selector would render each letter as a 6px circle. */
+  .typing-indicator .act-dot {
     width: 6px; height: 6px; border-radius: 50%;
     background: var(--text-dim);
     animation: typing-pulse 1.2s infinite ease-in-out;
   }
-  .typing-indicator span:nth-child(2) { animation-delay: .2s; }
-  .typing-indicator span:nth-child(3) { animation-delay: .4s; }
+  .typing-indicator .act-dot:nth-child(2) { animation-delay: .2s; }
+  .typing-indicator .act-dot:nth-child(3) { animation-delay: .4s; }
   @keyframes typing-pulse {
     0%, 60%, 100% { opacity: .3; transform: scale(.8); }
     30% { opacity: 1; transform: scale(1); }
   }
 
   /* Activity states (2026-07-11, config `activity_states_enabled`). The dots
-     above mean "writing the reply"; a spinning ring means the agent is thinking
-     or running a tool. data-act is set by _paintTypingIndicator / the cold
-     render; with the flag off it is always "writing", so the dots are unchanged. */
-  .typing-indicator .act-spinner {
-    width: 11px; height: 11px; border-radius: 50%;
-    background: none;
-    border: 2px solid var(--border2);
-    border-top-color: var(--text-dim);
-    animation: act-spin .7s linear infinite;
+     above mean "writing the reply"; while the agent is THINKING or running a
+     TOOL we show a word instead, its letters shimmering in a travelling wave
+     (per-letter animation-delay is set inline by _actIndicatorInner). data-act
+     is set by _paintTypingIndicator / the cold render; with the flag off it is
+     always "writing", so the dots are unchanged. */
+  .typing-indicator .act-word {
+    display: inline-flex; white-space: nowrap;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-size: 12.5px; font-weight: 600; letter-spacing: .3px;
+    color: var(--text-dim);
   }
-  .typing-indicator[data-act="tool"] .act-spinner { border-top-color: var(--accent, var(--text-dim)); }
-  @keyframes act-spin { to { transform: rotate(360deg); } }
+  .typing-indicator .act-word span { animation: act-wave 1.3s ease-in-out infinite; }
+  .typing-indicator[data-act="tool"] .act-word { color: var(--accent, var(--text-dim)); }
+  /* The word is wider than the dots and needs no vertical padding — the fixed
+     33px height + centering is what keeps the bubble from jumping on a swap. */
+  .typing-indicator[data-act="thinking"],
+  .typing-indicator[data-act="tool"] { max-width: none; padding: 0 13px; }
+  @keyframes act-wave {
+    0%, 65%, 100% { opacity: .32; }
+    30%           { opacity: 1; }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .typing-indicator .act-spinner { animation-duration: 2.4s; }
+    .typing-indicator .act-word span { animation-duration: 2.6s; }
   }
 
   /* NOTE (#1, 2026-07-06): the desktop 720px thread cap was REMOVED — it left
