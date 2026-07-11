@@ -2448,9 +2448,10 @@
   .agent-3pane .agent-rail {
     width: 264px; flex-shrink: 0; display: flex; flex-direction: column;
     border-right: 1px solid var(--border); overflow: hidden; min-height: 0;
-    /* Sit the rail on the warm page background so transparent rows share it and
-       only the active conversation reads as a white (--surface) card. */
-    background: var(--bg);
+    /* Two cream tones, no white (per the PDF): the rail is the DARKER cream
+       (--surface3) and the thread pane is the lighter cream (--bg). Transparent
+       rows share the rail tone; only the active conversation is a white card. */
+    background: var(--surface3);
   }
   .agent-3pane .agent-rail-resizer {
     flex-shrink: 0; width: 7px; margin: 0 -4px; cursor: col-resize;
@@ -2506,6 +2507,9 @@
   .agent-3pane .agent-main {
     flex: 1; min-width: 0; display: flex; flex-direction: column;
     overflow: hidden; min-height: 0; padding: 16px 18px;
+    /* Lighter cream (the second tone) — the whole thread pane, so no white band
+       shows behind the status header, thread, or composer. */
+    background: var(--bg);
   }
   /* Let flex size the thread — override sizeAgentChat's (skipped) inline height. */
   .agent-3pane .agent-main .agent-chat { height: auto !important; flex: 1 1 auto; min-height: 0; }
@@ -2513,7 +2517,7 @@
   /* Clearer section separation in the 3-pane thread (closer to the mockup): a
      distinct message panel, white agent bubbles, and a bordered composer. */
   .agent-3pane .agent-main .agent-chat { border: none; border-radius: 0; background: transparent; }
-  .agent-3pane .agent-main .agent-output { background: var(--surface2); padding: 16px 14px; gap: 10px; }
+  .agent-3pane .agent-main .agent-output { background: var(--bg); padding: 16px 14px; gap: 10px; }
   /* White bubbles for plain agent narration ONLY — must NOT touch the prompt
      (blue), tool/status/error/queued/followup (transparent chips) sub-types,
      or they'd render white-on-white (user text became invisible otherwise). */
