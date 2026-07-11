@@ -320,6 +320,11 @@ async function dispatchAgent(projectId) {
   // Per-conversation provider — the composer dropdown is authoritative. The
   // project's `provider` field is only the default seed for this picker.
   body.provider = _chosenProvider;
+  // Per-chat model from the composer's Model picker (fresh chats only; ''
+  // means project/global default or the auto-router). Sticky per project.
+  const _chosenModel = (!resumeId && typeof getPendingDispatchModel === 'function')
+    ? getPendingDispatchModel(projectId) : '';
+  if (_chosenModel) body.model = _chosenModel;
   if (_chosenCharacter) body.character = _chosenCharacter;
   _maybeTagMobileClient(body);
 

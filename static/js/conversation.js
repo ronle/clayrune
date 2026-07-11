@@ -134,6 +134,38 @@ function setComposerProvider(projectId, provider) {
   refreshModal();
 }
 
+// Per-chat model for the +New composer (was buried in ⋮ → Agent Settings).
+// Sticky per project for the session, like the provider picker. '' = default:
+// the project/global model, or the auto-router when it's enabled. An explicit
+// pick bypasses the router server-side. Fresh chats only (resume keeps the
+// conversation's model) and claude-only — other runtimes ignore --model ids.
+let pendingDispatchModel = {};
+function _composerModelPicker(p, resumeId) {
+  if (!p || resumeId) return '';
+  if (_composerProvider(p) !== 'claude') return '';
+  const choices = window.MC_MODEL_CHOICES || [];
+  if (!choices.length) return '';
+  const cur = pendingDispatchModel[p.id] || '';
+  const defLabel = (() => {
+    if (_globalConfig && _globalConfig.auto_model_enabled && !p.agent_model) return 'Auto';
+    const m = choices.find(c => c[0] === (p.agent_model || ''));
+    return (p.agent_model && m) ? `Default (${m[1]})` : 'Default';
+  })();
+  const opts = choices
+    .filter(([v]) => v !== '')
+    .map(([v, l]) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  return `<div class="composer-provider-row composer-model-row">
+    <span class="composer-provider-label">Model</span>
+    <select class="composer-provider-select" onchange="setComposerModel('${esc(p.id)}',this.value)">
+      <option value="">${esc(defLabel)}</option>${opts}
+    </select>
+  </div>`;
+}
+function setComposerModel(projectId, model) {
+  pendingDispatchModel[projectId] = model;
+  refreshModalById(projectId);
+}
+
 function getIncognitoFor(projectId) {
   // Global incognito project is always incognito; user can't turn it off.
   if (projectId === '_incognito') return true;
@@ -191,6 +223,7 @@ function _composerPlusStatusLineHTML(p, resumeId) {
 function _composerSheetHTML(p, resumeId) {
   const open = !!composerSheetOpen[p.id];
   const prov = _composerProviderPicker(p);                 // '' when single provider
+  const model = _composerModelPicker(p, resumeId);         // '' on resume / non-claude
   const persona = _composerCharacterPicker(p, resumeId);   // '' on resume / no characters
   const inc = _incognitoChipHTML(p);
   // Spec §8 (2026-07-06): the sheet holds per-message COMPOSE options only —
@@ -202,6 +235,7 @@ function _composerSheetHTML(p, resumeId) {
       <div class="composer-sheet-scroll">
         <div class="composer-sheet-title">Conversation options</div>
         ${prov ? `<div class="composer-sheet-row">${prov}</div>` : ''}
+        ${model ? `<div class="composer-sheet-row">${model}</div>` : ''}
         ${persona ? `<div class="composer-sheet-row">${persona}</div>` : ''}
         <div class="composer-sheet-row">${inc}</div>
       </div>
@@ -580,7 +614,7 @@ function agentPanelHTML(p) {
   const _leadResume = '';
   const _trailControls = mobileMode
     ? _composerPlusStatusLineHTML(p, resumeId)
-    : `<div class="composer-controls-row">${_composerProviderPicker(p)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>`;
+    : `<div class="composer-controls-row">${_composerProviderPicker(p)}${_composerModelPicker(p, resumeId)}${_composerCharacterPicker(p, resumeId)}${incognitoChip}</div>`;
   const _trailSearchPane = `<div class="agent-search-pane" id="agent-search-pane-${esc(p.id)}">${searchPane}</div>`;
   const _mobileSheet = mobileMode ? _composerSheetHTML(p, resumeId) : '';
   // Item 1 (prev batch): on mobile the resume PREVIEW goes ABOVE the composer
@@ -2503,6 +2537,8 @@ window.mcBackFromConv = mcBackFromConv;
 window.newAgentTab = newAgentTab;
 window.fillStarterChip = fillStarterChip;
 window.setComposerProvider = setComposerProvider;
+window.setComposerModel = setComposerModel;
+window.getPendingDispatchModel = (projectId) => pendingDispatchModel[projectId] || '';
 window.showHmWorkerPopover = showHmWorkerPopover;
 window.submitQuestionAnswer = submitQuestionAnswer;
 window.submitQuestionChip = submitQuestionChip;

@@ -3375,7 +3375,8 @@ def _resolve_character(pp, character):
 def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                              trigger_type='manual', trigger_id='',
                              reuse_session_id='', provider_override='',
-                             display_task=None, character='', source=''):
+                             display_task=None, character='', source='',
+                             model_override=''):
     """Core dispatch logic shared by HTTP endpoint and scheduler.
 
     Returns session_id on success, raises ValueError on error.
@@ -3497,6 +3498,15 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     if resume_id:
         routed_model, routed_source, base_flags = _dispatch_with_routing(
             p, task, streaming=use_streaming)
+    elif model_override:
+        # Composer "Model" picker: an explicit per-chat choice — user intent
+        # beats the classifier, so the auto-router is bypassed entirely.
+        routed_model, routed_source = model_override, 'manual'
+        base_flags = _build_claude_flags(p, streaming=use_streaming,
+                                         model_override=model_override)
+        context = _build_agent_context(p, incognito=incognito, task=task,
+                                       character_body=character_body)
+        _sp_args, _sp_path = _sysprompt_file_args(context)
     else:
         routed_model, routed_source, base_flags, context, _router_fallback_reason = (
             _dispatch_with_routing_parallel(
@@ -3511,7 +3521,8 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
     # (post-router). See docs/DISPATCH_AND_ROUTING_ANALYSIS.md §B.5.
     _router_stat(
         project_id,
-        requested_model=(p.get('agent_model', '') or state.CONFIG.get('agent_model', '') or 'sonnet'),
+        requested_model=(model_override or p.get('agent_model', '')
+                         or state.CONFIG.get('agent_model', '') or 'sonnet'),
         chosen_model=routed_model,
         source=routed_source,
         reason=_router_fallback_reason,
@@ -3727,6 +3738,9 @@ def agent_dispatch(project_id):
     resume_id = data.get('resume_conversation_id', '').strip()
     incognito = bool(data.get('incognito'))
     provider_override = (data.get('provider') or '').strip().lower()
+    # Per-chat model (composer "Model" picker). Fresh chats only — a resume
+    # keeps the conversation's existing model; the picker is hidden there.
+    model_override = (data.get('model') or '').strip() if not resume_id else ''
     # Per-chat character/persona ("scope:name", e.g. "project:code-reviewer").
     # Only meaningful on a FRESH chat — a resume keeps the original spawn's
     # persona (claude -r can't change the system prompt), so ignore it there.
@@ -3747,7 +3761,8 @@ def agent_dispatch(project_id):
                                               incognito=incognito,
                                               provider_override=provider_override,
                                               display_task=task, character=character,
-                                              source=source)
+                                              source=source,
+                                              model_override=model_override)
     except ValueError as e:
         code = 404 if 'not found' in str(e) else 400
         return jsonify({'error': str(e)}), code

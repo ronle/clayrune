@@ -707,6 +707,9 @@ function _modelShortLabel(id) {
   const m = MC_MODEL_CHOICES.find(c => c[0] === id);
   return m ? m[1] : id;
 }
+// Cross-module: the composer's Model picker (conversation.js) reuses this list —
+// single source of truth for the model ids/labels.
+window.MC_MODEL_CHOICES = MC_MODEL_CHOICES;
 
 let _agentSettingsProjectId = null;
 
