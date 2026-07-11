@@ -1098,8 +1098,11 @@ function mobileUserConversationsHTML(p, convos) {
   const hidden = _hiddenConvSet(p.id);
   const live = _liveConvStates(p);
   // The currently-open conversation (desktop 3-pane rail) gets a white card;
-  // every other row stays transparent (shares the rail background).
+  // every other row stays transparent (shares the rail background). Match on
+  // BOTH the mc session id and the (more stable across transcript/log sources)
+  // claude session id, so the highlight sticks even after a session completes.
   const activeSid = activeAgentTab[p.id] || null;
+  const activeCsid = (activeSid && agentStatusCache[activeSid] && agentStatusCache[activeSid].claudeSessionId) || null;
   // Bubble chats that need attention (waiting) then working ones to the top so
   // an active/awaiting conversation is never buried under older history.
   const _rank = c => { const s = _convLiveState(live, c); return s === 'waiting' ? 0 : s === 'working' ? 1 : 2; };
@@ -1125,7 +1128,7 @@ function mobileUserConversationsHTML(p, convos) {
     const hideBtn = isHidden
       ? `<button class="conv-hide" onclick="unhideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Move back to the list" aria-label="Unhide">&#8617;</button>`
       : `<button class="conv-hide" onclick="hideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Hide from this list" aria-label="Hide">&#10005;</button>`;
-    const isActive = mcsid && mcsid === activeSid;
+    const isActive = (mcsid && mcsid === activeSid) || (csid && activeCsid && csid === activeCsid);
     return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}${isActive ? ' active' : ''}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
       <div class="conv-main">
         <div class="conv-top">

@@ -2489,7 +2489,10 @@
   .agent-3pane .agent-rail-list .conv-row.conv-live-working:hover { background: var(--surface3); }
   .agent-3pane .agent-rail-list .conv-row.active,
   .agent-3pane .agent-rail-list .conv-row.active:hover {
-    background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    /* Border adds 2px — pull padding in 1px so the row height doesn't jump. */
+    padding: 8px 10px;
   }
   .agent-3pane .agent-rail-empty { padding: 22px 16px; color: var(--text-faint); font-size: 12px; text-align: center; }
   .agent-3pane .conv-list { border: none; border-radius: 0; }
