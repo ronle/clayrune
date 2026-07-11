@@ -3859,6 +3859,20 @@ def agent_send(project_id):
             if revived:
                 return jsonify({'ok': True, 'session_id': session_id,
                                 'revived': True, 'route': 'revive'})
+        # Last resort before starting over: the client may address a chat by its
+        # CLAUDE session id (the transcript-reconstruct thread keys its tab on the
+        # csid, since no MC session id exists for a transcript-only conversation).
+        # That id is in neither agent_sessions nor agent_log, so both routes above
+        # miss — and dispatching fresh here silently drops the whole conversation
+        # and answers in an empty chat. If the id resolves to a real transcript,
+        # resume it instead.
+        resume_from = ''
+        if session_id and not session_id.startswith('_pending_'):
+            try:
+                if _find_transcript_file(pp, session_id):
+                    resume_from = session_id
+            except Exception as e:
+                _log_agent_activity(project_id, f"csid transcript probe failed in /send: {e}")
         # Otherwise dispatch a fresh session. Augmented message goes to claude;
         # the original is preserved for the chat bubble (the frontend echo +
         # any log_lines pre-persist above — currently none on this path since
@@ -3866,7 +3880,7 @@ def agent_send(project_id):
         try:
             claude_message = _apply_mobile_brief(message, data)
             new_session_id = _dispatch_agent_internal(
-                project_id, claude_message, incognito=incognito,
+                project_id, claude_message, resume_id=resume_from, incognito=incognito,
                 provider_override=(data.get('provider') or '').strip().lower())
         except ValueError as e:
             code = 404 if 'not found' in str(e) else 400
@@ -3875,7 +3889,8 @@ def agent_send(project_id):
             return jsonify({'error': 'Claude CLI not found.'}), 500
         except Exception as e:
             return jsonify({'error': f'dispatch failed: {e}'}), 500
-        return jsonify({'ok': True, 'session_id': new_session_id, 'route': 'dispatch'})
+        return jsonify({'ok': True, 'session_id': new_session_id,
+                        'route': 'resume' if resume_from else 'dispatch'})
 
     # Tag the upstream response with the route we took. Flask Response objects
     # support get_json(); we rebuild and return.

@@ -1216,9 +1216,39 @@ async function openConversation(projectId, csid, mcSessionId, isLive) {
     switchAgentTab(projectId, mcSessionId);
     return;
   }
+  // SERVER-AUTHORITATIVE LIVE ROUTE. `live` comes from /conversations (the row's
+  // claude_session_id matched an in-memory agent_session), so the chat IS alive
+  // even when our client cache doesn't know it yet — the common case being a page
+  // reload / cold modal open where fetchAgentStatus hasn't landed. Gating this on
+  // the local cache alone sent a live chat down the DEAD-session path:
+  // /session/<id>/reconstruct 409s ("session is live"), we fell through to the
+  // transcript reconstruct, and the user got a read-only "send a message to
+  // resume" thread keyed by the CSID — whose follow-up POST carried a session_id
+  // the server had never issued, so /agent/send dispatched a brand-new chat with
+  // no history. Seed the cache from the row and open the real session instead.
+  if (isLive && mcSessionId) {
+    const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
+    // _liveSeeded: optimistic, from a possibly-stale rail row. Marked so the
+    // detach pass can still retire it if the server doesn't list it (otherwise
+    // a stale live:true row would leave a tab stuck on "Working…" forever).
+    // Cleared implicitly — the server poll rebuilds the cache entry wholesale.
+    agentStatusCache[mcSessionId] = { status: 'running', task: '', projectId,
+      startedAt: '', claudeSessionId: csid || '', _liveSeeded: true };
+    if (!agentHistory.find(h => h.sessionId === mcSessionId)) {
+      agentHistory.unshift({ projectId, sessionId: mcSessionId, projectName: pName,
+        task: '', status: 'running', startedAt: '' });
+    }
+    switchAgentTab(projectId, mcSessionId);  // fetchAgentStatus inside fills the real state
+    return;
+  }
   if (mcSessionId) {
     try {
       const rr = await fetch(API_BASE + `/api/project/${projectId}/session/${encodeURIComponent(mcSessionId)}/reconstruct`);
+      if (rr.status === 409) {
+        // Raced a session that just went live (rail row was stale). Same route.
+        switchAgentTab(projectId, mcSessionId);
+        return;
+      }
       if (rr.ok) {
         const rd = await rr.json();
         agentStatusCache[mcSessionId] = {
@@ -2386,7 +2416,10 @@ async function fetchAgentStatus(projectId) {
     // real session ID (not _pending_ any more) and cause a BLOCKED flash.
     const _isInjectedRO = sid => !!(agentStatusCache[sid] || {})._readOnlyRevived;
     const _isPending = sid => (sid || '').startsWith('_pending_');
-    const _isLocallyRunning = sid => (agentStatusCache[sid] || {}).status === 'running';
+    const _isLocallyRunning = sid => {
+      const c = agentStatusCache[sid] || {};
+      return c.status === 'running' && !c._liveSeeded;  // seeded-optimistic ≠ confirmed
+    };
     const _isDetached = h => h.projectId === projectId && !serverSids.has(h.sessionId) && !_isInjectedRO(h.sessionId) && !_isPending(h.sessionId) && !_isLocallyRunning(h.sessionId);
     const detachedEntries = agentHistory.filter(_isDetached);
     for (const det of detachedEntries) {
