@@ -325,6 +325,33 @@ function fillStarterChip(projectId, text) {
   }
 }
 
+// Ultrawide-only right-side "Surfaces" panel (shown via container query at wide
+// pane widths). Preview cards for the project's content tabs; clicking opens the
+// full tab in the center area (switchModalTab). Lightweight previews for now.
+function _agentSurfacesHTML(p) {
+  const backlog = p.backlog || [];
+  const open = backlog.filter(i => i.status === 'open');
+  const topItems = open.slice(0, 3)
+    .map(i => `<div class="surface-line">&#8226; ${esc((i.text || '').slice(0, 52))}</div>`).join('')
+    || '<div class="surface-line surface-empty">No open items</div>';
+  const cards = [
+    { tab: 'backlog',   ic: '&#9776;',   name: 'Backlog',   sub: open.length ? `${open.length} open` : 'empty', body: topItems },
+    { tab: 'plans',     ic: '&#128203;', name: 'Plans',     sub: 'plan viewer', body: '<div class="surface-line surface-empty">Open to view plans</div>' },
+    { tab: 'workflows', ic: '&#9939;',   name: 'Workflows', sub: 'runs',        body: '<div class="surface-line surface-empty">Open to view workflows</div>' },
+    { tab: 'activity',  ic: '&#9201;',   name: 'Activity',  sub: 'timeline',    body: '<div class="surface-line surface-empty">Open to view activity</div>' },
+    { tab: 'agent-log', ic: '&#128220;', name: 'Agent Log', sub: 'history',     body: '<div class="surface-line surface-empty">Open to view the log</div>' },
+  ];
+  const cardHTML = cards.map(c => `
+    <button class="surface-card" onclick="switchModalTab('${esc(p.id)}','${c.tab}')" title="Open ${c.name}">
+      <div class="surface-card-head"><span class="surface-ic">${c.ic}</span><span class="surface-name">${c.name}</span><span class="surface-sub">${esc(c.sub)}</span></div>
+      <div class="surface-card-body">${c.body}</div>
+    </button>`).join('');
+  return `<div class="agent-surfaces">
+    <div class="agent-surfaces-title">Surfaces</div>
+    ${cardHTML}
+  </div>`;
+}
+
 function agentPanelHTML(p) {
   const pp = p.project_path || '';
   if (!pp) {
@@ -905,6 +932,7 @@ function agentPanelHTML(p) {
         ${tabContent}
         ${dispatchRow}
       </div>
+      ${_agentSurfacesHTML(p)}
     </div>`;
   }
 

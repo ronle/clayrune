@@ -2487,6 +2487,37 @@
     .agent-panel.agent-3pane .agent-rail { width: 380px; }
     .agent-panel.agent-3pane .agent-main .agent-chat { max-width: 1040px; }
   }
+  /* Ultrawide: a right-side "Surfaces" panel appears with preview cards for the
+     content tabs. The thread stops centering (the panel fills the right instead
+     of empty margin) and the cards open the full tab in the center on click. */
+  .agent-surfaces { display: none; }
+  @container convpane (min-width: 1900px) {
+    .agent-panel.agent-3pane .agent-main .agent-chat { max-width: none; align-self: stretch; }
+    .agent-surfaces {
+      display: flex; flex-direction: column; gap: 10px; flex-shrink: 0;
+      width: 320px; min-height: 0; overflow-y: auto;
+      padding: 16px 14px; background: var(--surface3);
+      border-left: 1px solid var(--border);
+    }
+  }
+  .agent-surfaces-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 2px; flex-shrink: 0;
+  }
+  .surface-card {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 11px 13px; font-family: inherit; color: var(--text);
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .surface-card:hover { border-color: var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  .surface-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .surface-card-head .surface-ic { font-size: 14px; }
+  .surface-card-head .surface-name { font-size: 13px; font-weight: 600; }
+  .surface-card-head .surface-sub { margin-left: auto; font-size: 11px; color: var(--text-faint); font-weight: 600; }
+  .surface-card-body { display: flex; flex-direction: column; gap: 3px; }
+  .surface-line { font-size: 11.5px; color: var(--text-dim); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .surface-line.surface-empty { color: var(--text-faint); font-style: italic; }
   .agent-3pane .agent-rail {
     width: 264px; flex-shrink: 0; display: flex; flex-direction: column;
     border-right: 1px solid var(--border); overflow: hidden; min-height: 0;
