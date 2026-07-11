@@ -2474,7 +2474,24 @@
   .agent-3pane .agent-main .agent-output { background: var(--surface2); padding: 16px 14px; gap: 10px; }
   .agent-3pane .agent-main .agent-output .agent-line { background: var(--surface); border-color: var(--border); }
   .agent-3pane .agent-main .agent-chat-input { background: var(--surface); border-top: 1px solid var(--border); }
-  .agent-3pane .agent-main .agent-chat-input-row .agent-task-input { background: var(--bg); }
+  /* Composer as a single rounded pill: attach 📎 + mic sit INSIDE the entry on
+     the right (like the mobile composer), with Send tucked in at the end. */
+  .agent-3pane .agent-main .agent-chat-input-row {
+    background: var(--bg); border: 1px solid var(--border2);
+    border-radius: 22px; padding: 5px 6px 5px 14px; gap: 4px; align-items: center;
+  }
+  .agent-3pane .agent-main .agent-chat-input-row.drag-over { border-color: var(--accent); }
+  .agent-3pane .agent-main .agent-chat-input-row .agent-task-input {
+    background: transparent !important; border: none !important; outline: none !important;
+    padding: 8px 4px;
+  }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-attach,
+  .agent-3pane .agent-main .agent-chat-input-row .btn-mic {
+    background: transparent !important; border: none !important; color: var(--text-dim);
+  }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-attach:hover,
+  .agent-3pane .agent-main .agent-chat-input-row .btn-mic:hover { color: var(--text); background: transparent !important; }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-dispatch { border-radius: 16px; }
   .agent-panel-header {
     display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
     user-select: none; flex-shrink: 0;
