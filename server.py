@@ -1016,6 +1016,12 @@ def _startup_memory_maintenance():
         _backfill_token_telemetry()
     except Exception as e:
         _log(f"[telemetry-backfill] failed: {e}")
+    try:
+        # AFTER reconcile: reconcile's own writes remove the markers of the
+        # orphans it scribes, so sweeping last keeps the pruned count honest.
+        memory._gc_stale_watermarks(load_projects())
+    except Exception as e:
+        _log(f"[wm-gc] bootstrap failed: {e}")
 
 
 # ── Revive-from-agent-log + transcript buffer renderers ── moved to

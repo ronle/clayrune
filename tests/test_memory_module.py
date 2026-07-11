@@ -139,3 +139,55 @@ def test_commit_managed_entry_wm_remove_on_teardown(tmp_data_dir):
     _c, ents, gotwm = m._mem_split_full(mp.read_text(encoding="utf-8"))
     assert ents == ["- [2026-06-10] **done** — finished"]
     assert gotwm == []  # marker dropped on teardown
+
+
+# ── _gc_stale_watermarks: the leak _wm_remove can't reach ────────────────────
+# Hard MC kills skip teardown, so those markers stay forever and the index grows
+# past the harness read cap (67 of them / 37.8KB by 2026-07-11). The sweep drops
+# markers for dead sessions ONLY — a live session's marker is load-bearing.
+
+def _seed_wm(sid, summary="x"):
+    return ('<!-- clayrune:wm:%s {"session_id":"%s","byte_offset":42,'
+            '"running_summary":"%s"} -->' % (sid, sid, summary))
+
+
+def test_gc_stale_watermarks_prunes_dead_keeps_live(tmp_data_dir):
+    m = _mem(tmp_data_dir)
+    p = {"id": "gcproj"}
+    mp = m._get_memory_path(p)
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    curated = "# Idx\n\n## Notes\n- [k](k.md) — hook"
+    entries = ["- [2026-07-11] **kept** — a managed entry"]
+    wm = [_seed_wm("sidLIVE", "in flight"), _seed_wm("sidDEAD1"),
+          _seed_wm("sidDEAD2")]
+    mp.write_text(m._mem_compose(curated, entries, wm), encoding="utf-8")
+
+    m.agent_sessions.clear()
+    m.agent_sessions["sidLIVE"] = {"session_id": "sidLIVE", "status": "running"}
+    try:
+        assert m._gc_stale_watermarks([p]) == 2
+    finally:
+        m.agent_sessions.clear()
+
+    cur, ents, gotwm = m._mem_split_full(mp.read_text(encoding="utf-8"))
+    assert gotwm == [_seed_wm("sidLIVE", "in flight")]  # live marker survives
+    assert cur == curated and ents == entries  # nothing else touched
+
+
+def test_gc_stale_watermarks_noop_when_all_live(tmp_data_dir):
+    """No live-marker collateral, and an unchanged file is not rewritten."""
+    m = _mem(tmp_data_dir)
+    p = {"id": "gcproj2"}
+    mp = m._get_memory_path(p)
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    mp.write_text(m._mem_compose("# Idx", [], [_seed_wm("sidA")]),
+                  encoding="utf-8")
+    before = mp.read_text(encoding="utf-8")
+
+    m.agent_sessions.clear()
+    m.agent_sessions["sidA"] = {"session_id": "sidA", "status": "idle"}
+    try:
+        assert m._gc_stale_watermarks([p]) == 0
+    finally:
+        m.agent_sessions.clear()
+    assert mp.read_text(encoding="utf-8") == before

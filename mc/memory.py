@@ -610,6 +610,57 @@ def _commit_managed_entry(p, mem_entry=None, wm_upsert=None, wm_remove_sid=None)
         return _should_condense(p, include_claude_md=True)
 
 
+def _gc_stale_watermarks(projects):
+    """Drop `<!-- clayrune:wm:<sid> -->` markers whose session is no longer live.
+
+    A watermark is removed by `_wm_remove` on clean teardown only. A hard MC kill
+    (or a startup reconcile that baseline-stamps history without scribing it)
+    leaves the marker behind forever, so they accumulate across restarts: 67 of
+    them (37.8KB) had piled up in this repo's own MEMORY.md by 2026-07-11 and
+    pushed the curated index past the harness's read cap — everything below the
+    cut was silently dropped from the agent's context.
+
+    LIVE markers are load-bearing (Step-6 checkpointing reads `byte_offset` to
+    render only the transcript delta), so a session still in `agent_sessions` is
+    NEVER pruned — the membership test is re-done inside the lock so a session
+    revived concurrently with this sweep can't lose its marker. A pruned dead
+    marker costs nothing: its session can never checkpoint again.
+
+    Same discipline as every other MEMORY.md writer: per-project leaf lock,
+    atomic write, curated + entry lines byte-preserved. Best-effort — never
+    raises, never blocks startup.
+    """
+    total = 0
+    for p in projects or []:
+        project_id = p.get('id', '')
+        if not project_id:
+            continue
+        try:
+            mem_path = _get_memory_path(p)
+            if not mem_path.exists():
+                continue
+            with _get_mem_write_lock(project_id):
+                existing = mem_path.read_text(encoding='utf-8')
+                curated, mem_entries, wm_markers = _mem_split_full(existing)
+                if not wm_markers:
+                    continue
+                live = {s.get('session_id') or s.get('id')
+                        for s in agent_sessions.values()}
+                kept = [ln for ln in wm_markers
+                        if (_wm_parse(ln) or {}).get('session_id') in live]
+                dropped = len(wm_markers) - len(kept)
+                if not dropped:
+                    continue
+                _atomic_write_text(mem_path,
+                                   _mem_compose(curated, mem_entries, kept))
+                total += dropped
+                _log(f"[wm-gc] {project_id}: pruned {dropped} stale watermark(s), "
+                     f"kept {len(kept)} live")
+        except Exception as e:
+            _log(f"[wm-gc] {project_id}: sweep failed: {e}")
+    return total
+
+
 def _write_session_memory(p, session, status, summary_fallback, ts_date):
     """Shared Leg A/0/C memory write — completion path & startup reconciler.
     Scribe over the full .jsonl → brief (fallback to summary, then a
