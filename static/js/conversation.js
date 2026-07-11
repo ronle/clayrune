@@ -416,6 +416,11 @@ function agentPanelHTML(p) {
       // bottom edge. Resume is reachable by tapping a conversation row (it opens
       // in the thread, ready to continue), so the button is New-only.
       convListHTML = `<div class="mobile-conv-list-view">
+        <div class="mconv-search-wrap">
+          <svg class="mconv-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input type="text" class="mconv-search" id="mconv-search-${esc(p.id)}" placeholder="Search conversations&hellip;"
+            spellcheck="false" value="${esc(_railQuery[p.id] || '')}" oninput="railSearch('${esc(p.id)}', this.value)">
+        </div>
         <div class="conv-list-scroll">${mobileUserConversationsHTML(p, _mobileUserConvos)}</div>
         <div class="conv-newbtn-bar">
           <button class="conv-newbtn" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
@@ -424,14 +429,10 @@ function agentPanelHTML(p) {
     } else {
       convListHTML = '';
     }
-    // "← All conversations" back bar lives on Layer 3 (compose/thread) only —
-    // it returns to the list. On the list itself, the header ✕ goes to Dashboard.
-    const showBackBar = !_mobileListMode && (activeSession || wantNew || _resumeArmed);
-    convBackBar = showBackBar
-      ? `<div class="conv-back-bar">
-          <button class="conv-back-btn" onclick="mcBackFromConv('${esc(p.id)}')">&#8592; All conversations</button>
-        </div>`
-      : '';
+    // The on-screen "← All conversations" bar was removed: the device back button
+    // already returns to the conversations list (same mcBackFromConv route, via
+    // history), so the bar was redundant chrome eating vertical space on a phone.
+    convBackBar = '';
   } else {
     // Desktop tab strip: oldest conversation on the left, newest on the right
     // (append-on-right). `sessions` stays newest-first for auto-select + mobile
@@ -987,10 +988,12 @@ let _railQuery = {};
 function railSearch(projectId, q) { _railQuery[projectId] = q; _applyRailFilter(projectId); }
 function _applyRailFilter(projectId) {
   const q = (_railQuery[projectId] || '').trim().toLowerCase();
-  const list = document.querySelector('.agent-3pane .agent-rail-list');
-  if (!list) return;
-  list.querySelectorAll('.conv-row').forEach(row => {
-    row.style.display = (!q || (row.textContent || '').toLowerCase().includes(q)) ? '' : 'none';
+  // Same per-project query drives BOTH the desktop 3-pane rail and the mobile
+  // Layer-2 conversations list (only one is mounted at a time).
+  document.querySelectorAll('.agent-3pane .agent-rail-list, .mobile-conv-list-view .conv-list-scroll').forEach(list => {
+    list.querySelectorAll('.conv-row').forEach(row => {
+      row.style.display = (!q || (row.textContent || '').toLowerCase().includes(q)) ? '' : 'none';
+    });
   });
 }
 window.railSearch = railSearch;

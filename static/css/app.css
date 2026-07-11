@@ -3025,6 +3025,24 @@
      surface bubble. Fixes the white-on-white "chats and background same colour"
      look and stays consistent in every theme (both tokens are theme-defined). */
   .mobile-conv-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+  /* Search over the mobile Layer-2 conversations list — same field as the
+     desktop rail's (white, magnifier inside), driving the same _railQuery. */
+  .mconv-search-wrap {
+    position: relative; display: flex; align-items: center;
+    flex-shrink: 0; margin: 0 0 10px;
+  }
+  .mconv-search-icon {
+    position: absolute; left: 11px; display: flex; color: var(--text-faint); pointer-events: none;
+  }
+  .mconv-search {
+    flex: 1; width: 100%; box-sizing: border-box;
+    padding: 10px 11px 10px 34px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); font-size: 13px; outline: none; font-family: inherit;
+  }
+  .mconv-search:focus { border-color: var(--accent); }
+  .mconv-search-wrap:focus-within .mconv-search-icon { color: var(--accent); }
+  .mconv-search::placeholder { color: var(--text-faint); }
   .conv-list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
   .mobile-conv-list-view .conv-list { background: var(--surface); }
   .conv-newbtn-bar { flex-shrink: 0; background: var(--bg); padding: 8px 0 4px; }
