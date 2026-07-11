@@ -1892,9 +1892,18 @@
     .modal-content { resize: none !important; }
     .modal-content::after { display: none !important; }
   }
-  /* Modal three-dot menu: tab section is mobile-only */
+  /* Desktop (5f cleanup): conversation-first project modal. Quiet the header —
+     drop the path row, italic summary, description, and the Current task / Next
+     up cards (all reachable elsewhere: path via Edit Profile, status in the
+     conversation panel) — and move the content tabs into the three-dot menu,
+     matching the mobile treatment. The visible tab bar is hidden; the in-menu
+     tab section (mc-tabs-in-menu) now carries them on desktop too. */
   @media (min-width: 961px) {
-    .mc-tabs-in-menu { display: none !important; }
+    .modal-header .path-row { display: none !important; }
+    .modal-header .description { display: none !important; }
+    .modal-header .project-summary { display: none !important; }
+    .modal-content > .card-summary { display: none !important; }
+    .modal-tab-bar { display: none !important; }
   }
   /* Settings modal fills the height — a tall panel on desktop, a full-screen
      takeover on mobile (WhatsApp-style) so it reaches the bottom edge instead of
