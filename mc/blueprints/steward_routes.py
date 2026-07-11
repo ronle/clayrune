@@ -268,4 +268,23 @@ def steward_disable(project_id):
 
 @bp.route('/api/steward/loop-health', methods=['GET'])
 def steward_loop_health():
-    return jsonify(_core.loop_health())
+    health = _core.loop_health()
+    # Enrich each steward with its latest conversation session id + schedule id so
+    # the Automation card can deep-link straight into the steward's chat thread
+    # (which the conversation tab's user-initiated filter would otherwise hide).
+    try:
+        schedules = _sched._load_schedules()
+        for entry in health.get('enabled', []):
+            pid = entry.get('project_id')
+            sched = _find_steward_schedule(pid, schedules)
+            if not sched:
+                continue
+            entry['schedule_id'] = sched.get('id')
+            try:
+                entry['claude_session_id'] = _sched._latest_claude_sid_for_schedule(
+                    pid, sched.get('id')) or ''
+            except Exception:
+                entry['claude_session_id'] = ''
+    except Exception as e:
+        _log(f"[steward] loop-health enrichment failed: {e}", flush=True)
+    return jsonify(health)

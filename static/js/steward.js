@@ -52,7 +52,9 @@ async function renderStewards() {
       </div>
       <div class="schedule-card-actions">
         <button class="btn-header-action" style="padding:3px 8px;font-size:11px;color:var(--accent);border-color:var(--accent)"
-          onclick="stewardOpenCharter('${pid}')" title="Open the project to review the charter + decisions">Review</button>
+          onclick="stewardOpenChat('${pid}','${esc(s.claude_session_id || '')}')" title="Open the steward's conversation to read its work and reply">Open chat</button>
+        <button class="btn-header-action" style="padding:3px 8px;font-size:11px"
+          onclick="stewardOpenCharter('${pid}')" title="Open the project backlog to review the charter + decisions">Charter</button>
         <button class="btn-header-action" style="padding:3px 8px;font-size:11px;color:var(--red-text);border-color:var(--red)"
           onclick="stewardDisable('${pid}')" title="Stop this steward (kill switch)">Stop</button>
       </div>
@@ -72,6 +74,30 @@ function _stewardAgo(iso) {
 
 function stewardOpenCharter(pid) {
   if (window.openProjectModal) window.openProjectModal(pid);
+}
+
+// Open the steward's own conversation thread directly. The steward runs with
+// trigger_type='schedule', so its chat is hidden from the conversation tab's
+// user-initiated filter — but openConversation reconstructs by csid regardless,
+// so this deep-links straight into the thread where you can read + reply.
+async function stewardOpenChat(pid, csid) {
+  if (window.openProjectModal) window.openProjectModal(pid);
+  // Resolve the csid on demand if the card didn't carry one (e.g. no run yet).
+  if (!csid) {
+    try {
+      const st = await fetch(`${API_BASE}/api/project/${encodeURIComponent(pid)}/steward`).then(r => r.json());
+      if (st.schedule_id) {
+        const runs = await fetch(`${API_BASE}/api/schedule/${encodeURIComponent(st.schedule_id)}/runs?limit=1`).then(r => r.json());
+        csid = runs.runs && runs.runs[0] && runs.runs[0].claude_session_id;
+      }
+    } catch (e) { /* fall through */ }
+  }
+  if (!csid) {
+    if (window.showToast) showToast('No steward conversation yet — it runs on its next cycle.', 4000);
+    return;
+  }
+  // Let the project modal mount before opening the thread inside it.
+  setTimeout(() => { if (window.openConversation) window.openConversation(pid, csid, '', false); }, 500);
 }
 
 let stewardScope = 'project';  // 'project' | 'standalone'
@@ -184,3 +210,4 @@ window.hideStewardForm = hideStewardForm;
 window.createSteward = createSteward;
 window.stewardDisable = stewardDisable;
 window.stewardOpenCharter = stewardOpenCharter;
+window.stewardOpenChat = stewardOpenChat;

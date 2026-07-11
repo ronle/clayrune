@@ -5661,6 +5661,13 @@ def get_project_conversations(project_id):
         label = c['last_user'] or c['first_user'] or '(empty)'
         label = ' '.join(label.split())
 
+        # A steward-cycle session's turn-1 message is the build_cycle_task prompt,
+        # which always starts with the [Steward cycle] marker. It's dispatched with
+        # trigger_type='schedule' → the conversation-tab's user-initiated filter
+        # would hide it. Tag it so the list can make an exception + label it, and
+        # so the Automation steward card can deep-link straight into its thread.
+        is_steward = str(c.get('first_user') or '').lstrip().startswith('[Steward cycle]')
+
         try:
             ts_iso = datetime.fromtimestamp(c['mtime'], tz=timezone.utc).isoformat()
         except Exception:
@@ -5683,6 +5690,8 @@ def get_project_conversations(project_id):
             # Empty (transcript-only / manual, no 'agent' source) = user-initiated.
             'trigger_type': (log_entry.get('trigger_type') or '') if log_entry else '',
             'source': (log_entry.get('source') or '') if log_entry else '',
+            'steward': is_steward,
+            'steward_objective': (p.get('steward_objective') or '') if is_steward else '',
         })
     return jsonify(out)
 

@@ -1059,12 +1059,24 @@ const _AGENT_LABEL_RE = /^\s*(\[scheduled run|\[task-notification|<task-notifica
 // not conversations worth surfacing. Whole-label match, source-less rows only.
 const _NOISE_RESUME_RE = /^continue (?:where we|from where you) left off\.?$/i;
 const _TRIVIAL_ACK_RE = /^(ok(ay)?|kk?|yes|yep|yeah|ya|no|nope|nvm|sure|thanks|thank you|ty|thx|continue|go|go on|go ahead|proceed|done|got it)[.!]?$/i;
+// A steward is a persistent conversational agent you WANT in your chat list —
+// unlike a fire-once scheduled/agent run. So it's the one exception to the
+// user-initiated gate. Recognised by the backend `steward` flag OR (for
+// agent-log-merged rows that lack it) the [Steward cycle] marker on the task.
+function _isStewardConvo(c) {
+  return !!(c && (c.steward || /^\s*\[Steward cycle\]/.test(c.first_user || c.label || '')));
+}
+window._isStewardConvo = _isStewardConvo;
+
 function _userInitiatedConvos(projectId) {
   const AGENT_TRIGGERS = new Set(['schedule', 'hivemind_worker', 'hivemind_orchestrator', 'hivemind', 'auto', 'housekeeping']);
   const AGENT_SOURCES = new Set(['agent', 'api', 'cron']);  // programmatic dispatch → side flow
   const hidden = _hiddenConvSet(projectId);
   const showHidden = !!_showHiddenConvos[projectId];
   const _keep = (c) => {
+    // Stewards are the one automated-trigger exception — always surfaced (unless
+    // the user explicitly hid this one).
+    if (_isStewardConvo(c)) return showHidden || !hidden.has(c.claude_session_id || '');
     if (AGENT_TRIGGERS.has(c.trigger_type || '')) return false;
     if (AGENT_SOURCES.has(c.source || '')) return false;
     const src = c.source || '';
@@ -1148,7 +1160,11 @@ function mobileUserConversationsHTML(p, convos) {
     const csid = c.claude_session_id || '';
     const mcsid = c.mc_session_id || '';
     const isHidden = hidden.has(csid);
-    const label = esc((stripSysPreamble(c.label || '') || '(empty conversation)').substring(0, 90));
+    // Steward threads carry the raw "[Steward cycle] …" task as their label — ugly
+    // and unrecognisable. Render a clean, identifiable name instead.
+    const label = _isStewardConvo(c)
+      ? esc('🧭 Steward' + (c.steward_objective ? ' — ' + String(c.steward_objective).split('\n')[0].slice(0, 60) : ''))
+      : esc((stripSysPreamble(c.label || '') || '(empty conversation)').substring(0, 90));
     const liveSt = _convLiveState(live, c);
     let dot, badge = '';
     if (liveSt === 'waiting') {
