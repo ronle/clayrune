@@ -1181,24 +1181,34 @@ def _scribe_summarize_text(text, model):
             if cur:
                 chunks.append('\n'.join(cur))
             partials = []
-            for ch in chunks:
+            for i, ch in enumerate(chunks):
                 try:
                     partials.append(_scribe_call(model, _SCRIBE_MAP_PROMPT, ch))
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log(f"[scribe] map chunk {i + 1}/{len(chunks)} failed "
+                         f"(model={model}, {len(ch)}c): {e}")
             if not partials:
+                _log(f"[scribe] model_error: all {len(chunks)} map chunks failed "
+                     f"(model={model})")
                 return None, 'model_error'
             out = _scribe_call(
                 model, _SCRIBE_REDUCE_PROMPT,
                 '\n'.join(f"- {p}" for p in partials if p))
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
+        _log(f"[scribe] model_error: timeout (model={model}, "
+             f"{len(_stripped)}c in): {e}")
         return None, 'model_error'
-    except Exception:
+    except Exception as e:
+        _log(f"[scribe] model_error: call failed (model={model}, "
+             f"{len(_stripped)}c in): {e}")
         return None, 'model_error'
     out = (out or '').strip().replace('\n', ' ').strip()
     if not out:
+        _log(f"[scribe] model_error: empty reply (model={model}, "
+             f"{len(_stripped)}c in)")
         return None, 'model_error'
     if any(mk in out.lower() for mk in _SCRIBE_REFUSAL_MARKERS):
+        _log(f"[scribe] model_refused (model={model}): {out[:120]}")
         return None, 'model_refused'
     return out[:300], 'extracted'
 
@@ -1419,19 +1429,28 @@ def _condense_plan(project):
         # was corrected). Users who want sonnet can still set condense_model
         # explicitly in Settings.
         model = state.CONFIG.get('condense_model', '') or 'haiku'
+        pid = project.get('id', '')
         try:
             raw = _scribe_call(model, _CONDENSE_PLAN_PROMPT, body)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
+            _log(f"[condense] {pid}: model_timeout (model={model}, "
+                 f"{len(body)}c in, {len(entries)} entries): {e}")
             return None, 'model_timeout', int((_time.time() - t0) * 1000)
-        except Exception:
+        except Exception as e:
+            _log(f"[condense] {pid}: model_error (model={model}, "
+                 f"{len(body)}c in, {len(entries)} entries): {e}")
             return None, 'model_error', int((_time.time() - t0) * 1000)
         ms = int((_time.time() - t0) * 1000)
         payload = _condense_parse_json(raw)
         if payload is None:
+            _log(f"[condense] {pid}: parse_error after {ms}ms (model={model}) "
+                 f"— reply head: {(raw or '')[:160]!r}")
             return None, 'parse_error', ms
         ok, why = _validate_condense_payload(
             payload, valid_ids, set(valid_headings))
         if not ok:
+            _log(f"[condense] {pid}: rejected '{why}' after {ms}ms "
+                 f"(model={model})")
             return None, why, ms
         return payload, 'ok', ms
     except Exception as e:
