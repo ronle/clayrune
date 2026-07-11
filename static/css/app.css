@@ -2483,7 +2483,12 @@
   .agent-3pane .agent-rail-search:focus + .agent-rail-search-icon,
   .agent-3pane .agent-rail-search-wrap:focus-within .agent-rail-search-icon { color: var(--accent); }
   .agent-3pane .agent-rail-search::placeholder { color: var(--text-faint); }
-  .agent-3pane .agent-rail-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 10px; }
+  .agent-3pane .agent-rail-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 10px; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+  /* Scrollbar track shows the cream rail (not a white default track). */
+  .agent-3pane .agent-rail-list::-webkit-scrollbar { width: 8px; }
+  .agent-3pane .agent-rail-list::-webkit-scrollbar-track { background: transparent; }
+  .agent-3pane .agent-rail-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+  .agent-3pane .agent-rail-list::-webkit-scrollbar-thumb:hover { background: var(--text-faint); background-clip: content-box; }
   /* Rail rows: transparent by default (share the rail background), no dividers —
      spacing separates them; only the OPEN conversation gets a white card. */
   .agent-3pane .agent-rail-list .conv-row {
@@ -2491,9 +2496,14 @@
   }
   .agent-3pane .agent-rail-list .conv-row.conv-live-waiting,
   .agent-3pane .agent-rail-list .conv-row.conv-live-working { background: transparent; }
+  /* Hover feedback: a lighter tint + an inset frame (inset shadow avoids the
+     layout shift a real border would cause). Rail bg is --surface3 now, so the
+     old surface3 hover was invisible — use the lighter --bg tone instead. */
   .agent-3pane .agent-rail-list .conv-row:hover,
   .agent-3pane .agent-rail-list .conv-row.conv-live-waiting:hover,
-  .agent-3pane .agent-rail-list .conv-row.conv-live-working:hover { background: var(--surface3); }
+  .agent-3pane .agent-rail-list .conv-row.conv-live-working:hover {
+    background: var(--bg); box-shadow: inset 0 0 0 1px var(--border2);
+  }
   .agent-3pane .agent-rail-list .conv-row.active,
   .agent-3pane .agent-rail-list .conv-row.active:hover {
     background: var(--surface); border: 1px solid var(--border);
