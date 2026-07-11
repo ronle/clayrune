@@ -595,12 +595,11 @@ function connectAgentStream(projectId, sessionId) {
         // message]", or between streamed lines), re-add it so it trails the
         // latest line and "thinking" stays visible — not only at turn_start.
         // Guarded like the cold-render so it never shows during a plan/question wait.
-        {
-          const _rc = agentStatusCache[sessionId] || {};
-          if (_rc.status === 'running' && !_rc.waitingForPlanApproval && !_rc.waitingForQuestion) {
-            showTypingIndicator(sessionId);
-          }
-        }
+        // _isGenerating (not a raw status check): the status cache can be stale
+        // or absent mid-turn, and skipping the re-add here used to lose the
+        // indicator for the rest of the turn — the server only re-emits
+        // `activity` on change, so nothing brought it back.
+        if (_isGenerating(sessionId)) showTypingIndicator(sessionId);
         updateConsoleOutput(sessionId);
         // Update live activity ticker for tool lines
         if (msg.text && msg.text.startsWith('[tool:')) {
@@ -700,6 +699,10 @@ function connectAgentStream(projectId, sessionId) {
         // §4: after the blocked-on-user guard so a turn_complete masking a
         // pending question doesn't wrongly hide (that path hides via
         // renderAgentQuestion). Genuine completion → dots gone.
+        // Clear the activity state too: _isGenerating treats a non-empty state
+        // as proof of running, so a leftover value could resurrect the
+        // indicator on a trailing output line after the turn ended.
+        setAgentActivity(sessionId, '');
         hideTypingIndicator(sessionId);
         if (followupTimeouts[sessionId]) { clearTimeout(followupTimeouts[sessionId].timerId); delete followupTimeouts[sessionId]; }
         // Mode B: turn finished, process still alive. We close the SSE here to free

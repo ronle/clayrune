@@ -1535,10 +1535,29 @@ function _paintTypingIndicator(div, state) {
     ? '<span></span><span></span><span></span>'
     : '<span class="act-spinner"></span>';
 }
+// Is this session actively generating (→ the indicator belongs on screen)?
+// agentStatusCache is the primary signal, but it can be stale or absent (the
+// turn_start handler only writes `status` when an entry already exists), so a
+// non-empty activity state is accepted as authoritative too: the server only
+// reports activity while status == 'running' (see the SSE loop's
+// `act = session['activity_state'] if status == 'running' else ''`).
+function _isGenerating(sessionId) {
+  const rc = agentStatusCache[sessionId] || {};
+  if (rc.waitingForPlanApproval || rc.waitingForQuestion) return false;  // parked on user
+  return rc.status === 'running' || !!agentActivityState[sessionId];
+}
 function setAgentActivity(sessionId, state) {
   agentActivityState[sessionId] = state || '';
   const div = document.getElementById(`typing-${sessionId}`);
-  if (div) _paintTypingIndicator(div, agentActivityState[sessionId]);
+  if (div) { _paintTypingIndicator(div, agentActivityState[sessionId]); return; }
+  // No node on screen, but the agent just told us it's working. Re-create it
+  // rather than dropping the signal: appendAgentLine removes the node on every
+  // streamed line, and the server only re-emits `activity` on CHANGE — so a
+  // single missed re-add (stale status cache) used to leave the icon gone for
+  // the rest of the turn (e.g. a long tool run emits no further activity).
+  if (!agentActivityState[sessionId]) return;   // '' = not generating
+  if (!_isGenerating(sessionId)) return;
+  showTypingIndicator(sessionId);               // paints with the state just stored
 }
 function showTypingIndicator(sessionId) {
   const el = document.getElementById(`agent-output-${sessionId}`);
@@ -2523,6 +2542,7 @@ window.appendAgentLine = appendAgentLine;
 window.showTypingIndicator = showTypingIndicator;
 window.hideTypingIndicator = hideTypingIndicator;
 window.setAgentActivity = setAgentActivity;   // interop: resume-preview.js SSE handler
+window._isGenerating = _isGenerating;         // interop: resume-preview.js SSE handler
 window._cachePendingQuestion = _cachePendingQuestion;
 window._rerenderPendingQuestions = _rerenderPendingQuestions;
 window.renderAgentQuestion = renderAgentQuestion;
