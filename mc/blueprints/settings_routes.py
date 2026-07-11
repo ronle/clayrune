@@ -116,6 +116,13 @@ _CONFIG_EDITABLE_KEYS = {
     'auto_model_classifier_timeout_secs',
     'sticky_agent_settings',
     'activity_states_enabled',
+    # The loop-closer's kill switch. Exploration readback is the ONE learned
+    # artifact that reaches an agent with no promotion step — it goes from one
+    # session's transcript straight into the next session's context. Everything
+    # else waits for a human to click promote. So it is exactly the thing you
+    # want to be able to switch off from a phone, without a config edit and a
+    # restart. Per-turn (read at dispatch) → no respawn needed.
+    'exploration_readback_enabled', 'exploration_read_floor_topk',
     # Phase 4 Distiller (v2.1 §11 global keys).
     'distiller_enabled_global', 'distiller_cross_project_enabled',
     'distiller_model', 'distiller_window_days',

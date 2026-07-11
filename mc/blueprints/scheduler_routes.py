@@ -367,11 +367,14 @@ def _steward_cycle_task(project_id):
                                 for h in hits))
         except Exception as e:
             _log(f"[steward] memory read-floor failed for {project_id}: {e}")
+        # Honour the readback kill switch here too — a switch that the agent
+        # path obeys but the steward path ignores is not a kill switch.
         try:
             expl = _distiller.exploration_read_floor(
                 project_id, objective,
                 int(state.CONFIG.get('exploration_read_floor_topk', 2) or 2),
-                consumer_unattended=True)   # _UNATTENDED_LOOP_RULE
+                consumer_unattended=True,   # _UNATTENDED_LOOP_RULE
+            ) if state.CONFIG.get('exploration_readback_enabled', True) else []
             if expl:
                 blocks.append(
                     "--- RELEVANT PAST EXPLORATIONS (read the full file before "

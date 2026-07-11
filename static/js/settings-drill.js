@@ -479,6 +479,21 @@ async function _renderSettings() {
         <select class="settings-select" onchange="saveSetting('condense_mode',this.value)">${condenseModeSel}</select>
       </div>
     </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Learning</div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Exploration readback</div>
+          <div class="settings-hint">Feeds past investigations back into new sessions so the agent doesn't re-derive what it already worked out. This is the one learned artifact that reaches an agent WITHOUT you promoting it — turn it off to stop the learning loop feeding itself. Takes effect on the next message; no restart.</div>
+        </div>
+        ${toggle('exploration_readback_enabled', cfg.exploration_readback_enabled)}
+      </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Explorations per session</div><div class="settings-hint">How many past investigations to surface (default 2).</div></div>
+        ${numInput('exploration_read_floor_topk', cfg.exploration_read_floor_topk)}
+      </div>
+    </div>
       </div>
 
       <div class="settings-detail-pane settings-hidden" data-cat="appearance">
