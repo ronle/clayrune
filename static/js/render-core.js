@@ -662,6 +662,7 @@ function modalContentHTML(p) {
       </div>` : ''}
     </div>
     <div class="modal-scroll-body${activeTab==='agent'?' agent-active':''}">
+      <button type="button" class="modal-back-to-chat" onclick="switchModalTab('${esc(p.id)}','agent')" title="Back to the conversation">&#8592; Back to conversation</button>
       <div class="modal-tab-content ${activeTab==='backlog'?'active':''}" data-tab="backlog">
         <div class="card-section">
           <div class="section-title">

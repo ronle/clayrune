@@ -1869,6 +1869,7 @@
     .modal-content > .card-summary { display: none !important; }
     /* Modal tabs move into the three-dot menu on mobile */
     .modal-tab-bar { display: none !important; }
+    .modal-back-to-chat { display: none !important; }
     .agent-panel { padding: 6px 10px 6px 12px !important; }
     .agent-panel-header { margin-bottom: 4px !important; }
     .agent-panel-header .section-title { display: none !important; }
@@ -1904,7 +1905,19 @@
     .modal-header .project-summary { display: none !important; }
     .modal-content > .card-summary { display: none !important; }
     .modal-tab-bar { display: none !important; }
+    /* With the tab bar gone, a non-Agent tab (Backlog/Plans/…) needs an easy way
+       back to the conversation — surface a return bar at the top of those tabs.
+       Hidden on the Agent tab (agent-active) and reachable only on desktop. */
+    .modal-scroll-body:not(.agent-active) > .modal-back-to-chat { display: inline-flex; }
   }
+  .modal-back-to-chat {
+    display: none; align-items: center; gap: 6px; align-self: flex-start;
+    margin: 14px 16px 4px; padding: 6px 12px; cursor: pointer;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text-dim); font-size: 12px; font-weight: 600;
+    font-family: inherit; transition: color .15s, border-color .15s, background .15s;
+  }
+  .modal-back-to-chat:hover { color: var(--accent); border-color: var(--accent); background: var(--surface); }
   /* Settings modal fills the height — a tall panel on desktop, a full-screen
      takeover on mobile (WhatsApp-style) so it reaches the bottom edge instead of
      floating short. Placed after the generic mobile .modal-content rules so it
