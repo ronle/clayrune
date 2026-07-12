@@ -220,11 +220,45 @@ def _save_notifications(items: list) -> None:
     os.replace(tmp, PUSH_NOTIF_PATH)
 
 
+def _collapse_by_thread(items: list) -> list:
+    """One Inbox row per conversation: keep only the LATEST event per
+    (project_id, session_id).
+
+    An agent can post many updates inside a single chat; listing each one buries
+    the Inbox, and the older ones are stale the moment a newer update for the
+    same thread lands. This mirrors how a mail client collapses a thread to its
+    most recent message.
+
+    Events with no session_id aren't conversation-scoped (system/global) and are
+    never collapsed together. `items` MUST already be newest-first.
+    """
+    seen = set()
+    out = []
+    for n in items:
+        sid = n.get('session_id') or ''
+        if not sid:
+            out.append(n)
+            continue
+        key = (n.get('project_id') or '', sid)
+        if key in seen:
+            continue          # a newer event for this thread is already kept
+        seen.add(key)
+        out.append(n)
+    return out
+
+
+def _notifications_view(items: list) -> list:
+    """The canonical Inbox view of the store: newest-first, one row per thread."""
+    ordered = sorted(items, key=lambda n: n.get('ts') or 0, reverse=True)
+    return _collapse_by_thread(ordered)
+
+
 def _prune_notifications(items: list) -> list:
-    """Drop items older than the age window, then cap to the newest N."""
+    """Drop items older than the age window, collapse each conversation to its
+    latest event, then cap to the newest N."""
     cutoff = int(_time.time()) - _NOTIF_MAX_AGE_SEC
     kept = [n for n in items if (n.get('ts') or 0) >= cutoff]
-    kept.sort(key=lambda n: n.get('ts') or 0, reverse=True)  # newest first
+    kept = _notifications_view(kept)      # sorts newest-first + collapses
     return kept[:_NOTIF_MAX_ITEMS]
 
 
@@ -731,14 +765,19 @@ def push_test():
 def api_notifications():
     """The Inbox feed: newest-first, optional text search + unread filter,
     paginated. `unread` (count) is over the WHOLE store, not just this page."""
-    items = _load_notifications()
+    # Collapse to one row per conversation HERE too (not just on save), so rows
+    # already in the store from before this change fold away immediately instead
+    # of lingering until the next write. Unread is counted over this same
+    # collapsed view, or the badge would count rows the user can't see.
+    store = _notifications_view(_load_notifications())
+    items = store
     q = (request.args.get('q') or '').strip().lower()
     if q:
         def _hit(n):
             return q in (n.get('title', '') + ' ' + n.get('body', '')
                          + ' ' + n.get('project_name', '')).lower()
         items = [n for n in items if _hit(n)]
-    unread = sum(1 for n in _load_notifications() if not n.get('read'))
+    unread = sum(1 for n in store if not n.get('read'))
     if request.args.get('unread') in ('1', 'true'):
         items = [n for n in items if not n.get('read')]
     try:
