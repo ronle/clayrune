@@ -368,6 +368,21 @@ function closeModalById(modalId) {
   // in project-context (with buttons pointing at a closed modal) until the next
   // poll tick. Guarded + idempotent (no-op on desktop / when context unchanged).
   if (typeof _syncBottomBarContext === 'function') _syncBottomBarContext();
+  // A __-surface (Claydo / Skills / MCP / …) closed via its X while a PROJECT
+  // modal is still open never reaches the size===0 unwind below, so its
+  // sentinel would leak and swallow the NEXT back press. Unwind it here once no
+  // other surface remains. On the hardware-back path popstate already cleared
+  // the flag, so this is a no-op — no double-unwind.
+  if (modalId.startsWith('__') && modalId !== '__settings'
+      && openModals.size > 0
+      && typeof _mcSurfaceOpen !== 'undefined' && _mcSurfaceOpen) {
+    const anotherSurfaceOpen = Array.from(openModals.keys())
+      .some(id => String(id).startsWith('__') && id !== '__settings');
+    if (!anotherSurfaceOpen) {
+      _mcSurfaceOpen = false;
+      _mcUnwindHistory(1);
+    }
+  }
   // Closed via UI (X / Esc / Home), not via hardware back: unwind every MC
   // sentinel we pushed (L1 + L2 if drilled in) so a later back press isn't
   // swallowed by now-dead entries. On the hardware-back path the relevant

@@ -200,6 +200,11 @@ async function openClaydo() {
   const z = nextModalZ++;
   win.style.zIndex = z;
   openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  // Register with the mobile back stack (same mechanism the other __-surfaces
+  // use). Without this, hardware back did nothing while Claydo was open — it
+  // fell through to whatever entry was underneath. The popstate _mcSurfaceOpen
+  // branch closes __-modals; mcPushSurfaceHistory is mobile-only + idempotent.
+  if (typeof mcPushSurfaceHistory === 'function') mcPushSurfaceHistory();
   centerModalElement(win);
   focusModal(modalId);
   _claydoResetConversation('ask');
