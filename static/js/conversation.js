@@ -1025,8 +1025,33 @@ function _applyRailFilter(projectId) {
   // Layer-2 conversations list (only one is mounted at a time).
   document.querySelectorAll('.agent-3pane .agent-rail-list, .mobile-conv-list-view .conv-list-scroll').forEach(list => {
     list.querySelectorAll('.conv-row').forEach(row => {
-      row.style.display = (!q || (row.textContent || '').toLowerCase().includes(q)) ? '' : 'none';
+      // data-search (_convSearchText) — the SAME text the hidden-count uses, so
+      // the "Show N hidden" toggle can't promise rows this filter then hides.
+      const hay = row.dataset.search || (row.textContent || '').toLowerCase();
+      row.style.display = (!q || hay.includes(q)) ? '' : 'none';
     });
+  });
+  // The toggle is rendered once, but search runs on EVERY keystroke with no
+  // re-render — so its count/visibility must be refreshed here or it goes stale
+  // and advertises hidden rows this filter would immediately hide.
+  _syncHiddenToggle(projectId, q);
+}
+
+// How many HIDDEN chats match `q` ('' = all of them).
+function _hiddenMatchCount(projectId, q) {
+  const hidden = _hiddenConvSet(projectId);
+  if (!hidden.size) return 0;
+  return _userInitiatedConvos(projectId, true)
+    .filter(c => hidden.has(c.claude_session_id || ''))
+    .filter(c => !q || _convSearchText(c).includes(q))
+    .length;
+}
+
+function _syncHiddenToggle(projectId, q) {
+  document.querySelectorAll('.conv-hidden-toggle').forEach(btn => {
+    const n = _hiddenMatchCount(projectId, q);
+    btn.style.display = n ? '' : 'none';
+    btn.textContent = `${_showHiddenConvos[projectId] ? 'Hide' : 'Show'} ${n} hidden`;
   });
 }
 window.railSearch = railSearch;
@@ -1108,11 +1133,14 @@ function _isStewardConvo(c) {
 }
 window._isStewardConvo = _isStewardConvo;
 
-function _userInitiatedConvos(projectId) {
+// `includeHidden` forces hidden chats into the result regardless of the
+// per-project reveal toggle — used to count how many HIDDEN chats match the
+// current search (see mobileUserConversationsHTML).
+function _userInitiatedConvos(projectId, includeHidden) {
   const AGENT_TRIGGERS = new Set(['schedule', 'hivemind_worker', 'hivemind_orchestrator', 'hivemind', 'auto', 'housekeeping']);
   const AGENT_SOURCES = new Set(['agent', 'api', 'cron']);  // programmatic dispatch → side flow
   const hidden = _hiddenConvSet(projectId);
-  const showHidden = !!_showHiddenConvos[projectId];
+  const showHidden = !!includeHidden || !!_showHiddenConvos[projectId];
   const _keep = (c) => {
     // Stewards are the one automated-trigger exception — always surfaced (unless
     // the user explicitly hid this one).
@@ -1183,6 +1211,18 @@ function _convLiveState(live, c) {
 // Layer-2 list rows for the user's conversations. Tapping opens it in chat mode
 // (openConversation): live → its thread; past → reconstructed thread ready to
 // continue.
+// The text a conversation row is searched against. SINGLE SOURCE OF TRUTH: it
+// is stamped onto the row as data-search (what _applyRailFilter matches) AND
+// used to count hidden matches for the toggle — so the count can never promise
+// rows the filter would then hide.
+function _convSearchText(c) {
+  const label = _isStewardConvo(c)
+    ? '🧭 Steward' + (c.steward_objective ? ' — ' + String(c.steward_objective).split('\n')[0].slice(0, 60) : '')
+    : (stripSysPreamble(c.label || '') || '(empty conversation)').substring(0, 90);
+  const meta = [c.ts_relative || '', c.turns ? `${c.turns} turn${c.turns !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+  return `${label} ${meta}`.toLowerCase();
+}
+
 function mobileUserConversationsHTML(p, convos) {
   const hidden = _hiddenConvSet(p.id);
   const live = _liveConvStates(p);
@@ -1222,7 +1262,7 @@ function mobileUserConversationsHTML(p, convos) {
       ? `<button class="conv-hide" onclick="unhideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Move back to the list" aria-label="Unhide">&#8617;</button>`
       : `<button class="conv-hide" onclick="hideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Hide from this list" aria-label="Hide">&#10005;</button>`;
     const isActive = (mcsid && mcsid === activeSid) || (csid && activeCsid && csid === activeCsid);
-    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}${isActive ? ' active' : ''}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
+    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}${isActive ? ' active' : ''}" data-search="${esc(_convSearchText(c))}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
       <div class="conv-main">
         <div class="conv-top">
           <span class="conv-name">${dot}${label}</span>
@@ -1233,9 +1273,17 @@ function mobileUserConversationsHTML(p, convos) {
       ${hideBtn}
     </div>`;
   }).join('');
-  const hiddenCount = hidden.size;
-  const toggle = hiddenCount > 0
-    ? `<button class="conv-hidden-toggle" onclick="toggleShowHiddenConvos('${esc(p.id)}')">${_showHiddenConvos[p.id] ? 'Hide' : 'Show'} ${hiddenCount} hidden</button>`
+  // The toggle counts only the hidden chats MATCHING the current search. Using
+  // hidden.size (the project-wide total) meant a search with no hidden matches
+  // still advertised "Show N hidden" — and revealing them showed nothing,
+  // because the search filter hid them again immediately.
+  // The element is rendered whenever the project has ANY hidden chat (and
+  // display-toggled by _syncHiddenToggle) so clearing the query can bring it
+  // back — if we omitted it entirely there'd be no node left to restore.
+  const _q = (_railQuery[p.id] || '').trim().toLowerCase();
+  const hiddenCount = _hiddenMatchCount(p.id, _q);
+  const toggle = hidden.size > 0
+    ? `<button class="conv-hidden-toggle" style="${hiddenCount ? '' : 'display:none'}" onclick="toggleShowHiddenConvos('${esc(p.id)}')">${_showHiddenConvos[p.id] ? 'Hide' : 'Show'} ${hiddenCount} hidden</button>`
     : '';
   return `<div class="conv-list-header"><span class="conv-list-title">Conversations</span><span class="conv-list-count">${convos.length}</span></div>
     <div class="conv-list">${rows}</div>
