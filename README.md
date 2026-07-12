@@ -1,10 +1,40 @@
 # Clayrune
 
-A multi-project management dashboard for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents. Manage, dispatch, and monitor AI coding agents across all your projects from a single interface.
+**Mission control for your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents.**
+Run, schedule, and babysit many agents across every project — from one console, or from your phone.
 
-## What It Does
+<!-- ASSET TODO (docs/MARKETING_ASSETS_SPEC.md, A1): drop the demo GIF at docs/assets/demo.gif and uncomment:
+![Clayrune demo](docs/assets/demo.gif)
+-->
 
-Clayrune gives you a centralized dashboard to:
+Claude Code is a brilliant agent — but it's one agent, in one terminal, on one repo,
+and it stops when you close the lid. Clayrune is the layer on top: a dashboard where
+every project is a tile, every agent is running, and none of it needs you at the desk.
+
+- **A fleet, not one agent** — every project on one grid, agents dispatched and monitored side by side.
+- **Control it from your phone** — dispatch a task, watch it stream, restart the server, from anywhere.
+- **It runs without you** — schedule agents, or hand one a standing charter and let it work unattended.
+- **It remembers** — cross-session memory, so your agents don't start every task cold.
+- **It's yours** — local-first, bring your own key, all of it open. The cloud is optional.
+
+**[⬇ Download for Windows](https://clayrune.io)** · macOS + Linux + [from source](#running-from-source) below.
+
+---
+
+### "Isn't this just Claude Code?"
+
+Clayrune doesn't replace Claude Code — it *runs* it. Claude Code is the engine; Clayrune
+is the cockpit. You reach for it the moment you have more than one project, more than one
+agent, or work you'd rather not sit and watch.
+
+| Bare Claude Code | Clayrune |
+|---|---|
+| One repo, one terminal | Every project, one dashboard |
+| You're at the keyboard | Scheduled + autonomous agents |
+| Session ends, context dies | Cross-session memory |
+| Desk-bound | Full control from your phone |
+
+## Everything It Does
 
 - **Manage multiple projects** with status tracking, descriptions, and domains
 - **Dispatch Claude Code agents** to work on tasks across any project
