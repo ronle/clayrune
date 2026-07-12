@@ -376,6 +376,7 @@ function applySnap(modalId, zoneId) {
     });
   }
   _saveOpenModalsSnapshot();
+  _syncMaximizeBtn(modalId);
 }
 
 // Toggle the modal "pin" state. Pinned (default) shows the full data sheet;
@@ -416,6 +417,44 @@ function unSnap(modalId) {
     _setModalPref(entry.projectId, { snap: null, preSnap: null });
   }
   _saveOpenModalsSnapshot();
+  _syncMaximizeBtn(modalId);
+}
+
+// ── Maximize / restore button (Windows-style) ───────────────────────────────
+// Rides the existing snap machinery: maximize == the 'full' zone (which already
+// captures preSnap and persists), restore == unSnap. So a window maximized by
+// the button and one dragged to the top edge are the same state, and both
+// restore to the same pre-maximize geometry.
+function _maxBtnInner(isFull) {
+  return isFull
+    // Restore: two offset squares.
+    ? `<svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+         <rect x="1.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+         <path d="M4.7 4.3V2.8a1.3 1.3 0 0 1 1.3-1.3h5.2a1.3 1.3 0 0 1 1.3 1.3V8a1.3 1.3 0 0 1-1.3 1.3H9.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+       </svg>`
+    // Maximize: one square.
+    : `<svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+         <rect x="2" y="2" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+       </svg>`;
+}
+// Keep the button's icon/tooltip in step with the actual snap state — it can
+// change without the button being clicked (drag-to-top-edge, restore-on-reload).
+function _syncMaximizeBtn(modalId) {
+  const entry = openModals.get(modalId);
+  if (!entry) return;
+  const btn = entry.element.querySelector('.modal-maximize');
+  if (!btn) return;
+  const isFull = entry.snap === 'full';
+  btn.innerHTML = _maxBtnInner(isFull);
+  btn.title = isFull ? 'Restore down' : 'Maximize';
+  btn.setAttribute('aria-label', btn.title);
+}
+function toggleModalMaximize(modalId) {
+  if (!_snapEnabled()) return;             // desktop-only, like the snap system
+  const entry = openModals.get(modalId);
+  if (!entry) return;
+  if (entry.snap === 'full') unSnap(modalId);
+  else applySnap(modalId, 'full');         // syncs the button itself
 }
 
 // ── Multi-modal tile templates (header "Tile" button) ──────────────────────
@@ -903,6 +942,9 @@ window.persistGridOrder = persistGridOrder;
 window._snapEnabled = _snapEnabled;
 window._zoneRect = _zoneRect;
 window.toggleModalPin = toggleModalPin;
+window.toggleModalMaximize = toggleModalMaximize;
+window._syncMaximizeBtn = _syncMaximizeBtn;
+window._maxBtnInner = _maxBtnInner;
 window.toggleTileModalsPopover = toggleTileModalsPopover;
 window.applyModalZoom = applyModalZoom;
 window.tileAllModals = tileAllModals;

@@ -1080,7 +1080,7 @@
     position: absolute; top: 8px; right: 8px; z-index: 11;
     display: flex; gap: 4px;
   }
-  .modal-minimize, .modal-close, .modal-pin {
+  .modal-minimize, .modal-close, .modal-pin, .modal-maximize {
     width: 32px; height: 32px; border-radius: 6px;
     background: var(--surface3); border: 1px solid var(--border);
     color: var(--text-dim); font-size: 18px; cursor: pointer;
@@ -1091,7 +1091,10 @@
   .modal-minimize:hover { background: var(--amber-dim); color: var(--amber-text); border-color: var(--amber); }
   .modal-close:hover { background: var(--red-dim); color: var(--red-text); border-color: var(--red); }
   .modal-pin:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
-  .modal-pin svg { display: block; }
+  .modal-maximize:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+  .modal-pin svg, .modal-maximize svg { display: block; }
+  /* Snapping (and therefore maximize) is desktop-only — see _snapEnabled(). */
+  @media (max-width: 960px) { .modal-maximize { display: none !important; } }
   /* When the modal is "unpinned", hide ONLY the data-sheet middle section
      (path, summary, description, current task / next up). The name row, tab
      bar, and tab content all stay — you get more vertical room for the

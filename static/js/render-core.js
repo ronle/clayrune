@@ -446,6 +446,18 @@ function modalContentHTML(p) {
         </button>
         <button class="modal-menu-btn" onclick="toggleModalMenu(event,'${esc(p.id)}')" title="Menu">&#x22EE;</button>
         <button class="modal-minimize" onclick="minimizeModal('${esc(p.id)}')" title="Minimize">&#x2015;</button>
+        ${(() => {
+          // Maximize / restore — rides the snap system's 'full' zone, so the
+          // button and drag-to-top-edge are the same state. Desktop only
+          // (snapping is disabled on mobile / ≤960px).
+          const _e = openModals.get(p.id);
+          const _full = !!(_e && _e.snap === 'full');
+          const _inner = (typeof _maxBtnInner === 'function')
+            ? _maxBtnInner(_full)
+            : '<svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.3"/></svg>';
+          const _t = _full ? 'Restore down' : 'Maximize';
+          return `<button class="modal-maximize" onclick="toggleModalMaximize('${esc(p.id)}')" title="${_t}" aria-label="${_t}">${_inner}</button>`;
+        })()}
         <button class="modal-close" onclick="closeModalById('${esc(p.id)}')" title="Close">&#10005;</button>
         <div class="modal-menu-dropdown" id="modal-menu-${esc(p.id)}">
           <div class="mc-tabs-in-menu">
