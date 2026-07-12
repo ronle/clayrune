@@ -5,11 +5,11 @@ switched on. Two independent causes, both fixed here:
 
   1. Its prompt was FROZEN into the schedule row at enable time and
      re-dispatched verbatim forever.
-  2. The `-r` resume path skips _build_agent_context, and `claude -r` restores
-     the session's ORIGINAL system prompt and ignores --append-system-prompt
-     (verified 2026-06-04) — so the read-floor could never be refreshed through
-     the system prompt at all. The refresh therefore rides in the TASK TEXT,
-     the only channel that survives a resume.
+  2. The refresh rides in the TASK TEXT so it reaches even the cheap
+     stdin-append continue path — a LIVE process whose system prompt cannot
+     change mid-flight. (Historical note: this predates the 2026-07-11 fix
+     that re-appends context on `-r` respawns; the task-text channel stays
+     because the no-respawn stdin path still has no other channel.)
   3. The CLI reads the skills dir at PROCESS SPAWN, but the cheap continue path
      appends to a LIVE process's stdin — so a skill promoted between cycles
      never loaded. A new skill now forces a cold `-r` respawn.
