@@ -167,7 +167,12 @@ async function openClaydo() {
   win.dataset.modalId = modalId;
   const content = document.createElement('div');
   content.className = 'modal-content';
-  _clampModalSize(content, 520, 600);
+  // Desktop: a fixed 520x600 dialog. Mobile (≤960px): DON'T set an inline size —
+  // the mobile .modal-content rule sizes the sheet from --mc-app-vh (kept in step
+  // with the soft keyboard by mcViewportHeightSync). An inline px height, fixed
+  // at open time, would beat that rule and leave the sheet stuck at its
+  // keyboard-open height, unable to expand back when the keyboard is dismissed.
+  if (window.innerWidth > 960) _clampModalSize(content, 520, 600);
   content.innerHTML = `
     <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 22px 12px 24px">
       <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
