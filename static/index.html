@@ -645,15 +645,20 @@
 <!-- Bottom Tab Bar (mobile, Layer-1 Dashboard ONLY per spec §1) — 5 slots:
      Home · Inbox · ＋ New Project · Search · You. Backlog / Scheduler / Hivemind
      moved to the hamburger drawer (still one tap away). -->
+<!-- 5 slots so "+ New" lands on the true CENTER one. Claydo lives here rather
+     than as a floating FAB (which covered content and forced + off-centre). -->
 <div class="bottom-tab-bar" id="bottom-tab-bar">
   <div class="bottom-tab-item" data-nav="inbox" onclick="openInbox()">
     <span class="bti-icon">&#x1F514;<span class="bti-badge" id="inbox-badge" hidden></span></span>Inbox
   </div>
+  <div class="bottom-tab-item" data-nav="search" onclick="openGlobalSearch()">
+    <span class="bti-icon">&#x1F50D;</span>Search
+  </div>
   <div class="bottom-tab-item" data-nav="new" onclick="openNewProjectForm()" title="New project">
     <span class="bti-icon">&#x2795;</span>New
   </div>
-  <div class="bottom-tab-item" data-nav="search" onclick="openGlobalSearch()">
-    <span class="bti-icon">&#x1F50D;</span>Search
+  <div class="bottom-tab-item" data-nav="claydo" onclick="openClaydo()" title="Ask Claydo">
+    <span class="bti-icon bti-claydo"><img src="/assets/claydo-idle.webp" alt="" draggable="false"></span>Claydo
   </div>
   <div class="bottom-tab-item" data-nav="you" onclick="sidebarNav('settings')">
     <span class="bti-icon">&#x1F464;</span>You

@@ -2096,9 +2096,13 @@
     z-index: 400; padding: 4px 0;
     justify-content: space-around;
   }
+  /* flex:1 on every slot → 5 equal columns, so the middle one ("+ New") sits on
+     the bar's exact centre. With space-around + intrinsic widths the differing
+     label lengths (Inbox / Search / New / Claydo / You) pushed it off-centre. */
   .bottom-tab-item {
+    flex: 1 1 0; min-width: 0;
     display: flex; flex-direction: column; align-items: center;
-    padding: 6px 12px; color: var(--text-faint); font-size: 10px;
+    padding: 6px 4px; color: var(--text-faint); font-size: 10px;
     cursor: pointer; transition: color 0.12s;
   }
   .bottom-tab-item.active { color: var(--accent); }
@@ -2321,9 +2325,11 @@
     .mc-chat-row.cr-unread .cr-sub { color: var(--text); font-weight: 600; }
     .mc-chat-row.cr-unread .cr-time { color: var(--accent); font-weight: 700; }
 
-    /* Bottom tab bar — 5 slots, FAB centered. Compact (~52px tall incl. FAB lift) */
+    /* Bottom tab bar — 5 equal slots (Inbox · Search · + New · Claydo · You) so
+       "+ New" lands on the exact centre column. Was repeat(4, …), which wrapped
+       the 5th slot onto a second row once Claydo moved in from the floating FAB. */
     .bottom-tab-bar {
-      display: grid !important; grid-template-columns: repeat(4, 1fr);
+      display: grid !important; grid-template-columns: repeat(5, 1fr);
       padding: 4px 8px 6px;
       border-top: 1.5px solid var(--border);
     }
@@ -5358,12 +5364,20 @@
     70%  { box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 0 14px transparent; }
     100% { box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 0 0 transparent; }
   }
-  /* On mobile, lift above the bottom tab bar */
+  /* On mobile Claydo lives in the bottom tab bar (see #bottom-tab-bar), so the
+     floating FAB is retired there — it covered content and pushed "+ New" off
+     the bar's centre slot. Desktop (no bottom bar) keeps the FAB. */
   @media (max-width: 960px) {
-    .claydo-fab {
-      bottom: 70px; right: 14px;
-      width: 50px; height: 50px;
-    }
+    .claydo-fab { display: none !important; }
+  }
+  /* Claydo's bar slot renders the mascot instead of a glyph — size it to match
+     the emoji icons in the sibling slots. */
+  .bti-icon.bti-claydo {
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .bti-icon.bti-claydo img {
+    width: 22px; height: 22px; object-fit: contain; pointer-events: none;
+    border-radius: 50%;
   }
 
   /* The Ask Claydo modal — chat-style: scroll history + input pinned bottom */
