@@ -18,25 +18,46 @@
 #   1. Apple Developer Program membership ($99/yr).
 #   2. A "Developer ID Application" certificate in your login keychain
 #      (Keychain Access CSR -> developer.apple.com -> download -> double-click).
-#   3. Store a notarytool credential profile named "clayrune-notary":
-#        xcrun notarytool store-credentials "clayrune-notary" \
+#   3. Store a notarytool credential profile (name it whatever you like):
+#        xcrun notarytool store-credentials "my-notary-profile" \
 #          --apple-id "you@example.com" \
-#          --team-id "ZN4RFW9K5T" \
+#          --team-id "YOURTEAMID" \
 #          --password "<app-specific-password from appleid.apple.com>"
+#   4. Tell this script who you are. Your signing identity is specific to YOUR
+#      Apple account, so it is not hardcoded here — put it in tools/signing.env
+#      (gitignored), which this script sources automatically:
+#        CLAYRUNE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+#        CLAYRUNE_NOTARY_PROFILE="my-notary-profile"
+#      Or export the same vars in your shell.
 #
-# Nothing secret lives in this script. The app-specific password is stored in
-# your login keychain by store-credentials, not here. The Team ID and identity
-# name below are public — they're embedded in every signed app's metadata.
+# Nothing secret lives in this script or in signing.env. The app-specific
+# password is stored in your login keychain by store-credentials, not here.
 #
 # Usage:  tools/notarize-macos.sh [path/to/Clayrune.app]   (default: dist/Clayrune.app)
 
 set -euo pipefail
 
-# ── Config (override via env vars if you ever need to) ──────────────────────
+# ── Config ──────────────────────────────────────────────────────────────────
+# Per-developer settings come from tools/signing.env (gitignored) or the env.
+_SIGNING_ENV="$(dirname "$0")/signing.env"
+# shellcheck source=/dev/null
+[ -f "$_SIGNING_ENV" ] && . "$_SIGNING_ENV"
+
 APP="${1:-dist/Clayrune.app}"
-IDENTITY="${CLAYRUNE_SIGN_IDENTITY:-Developer ID Application: Ron Levy (ZN4RFW9K5T)}"
+IDENTITY="${CLAYRUNE_SIGN_IDENTITY:-}"
 PROFILE="${CLAYRUNE_NOTARY_PROFILE:-clayrune-notary}"
 OUT_ZIP="${CLAYRUNE_OUT_ZIP:-Clayrune-macOS.zip}"
+
+# Note: die() is defined below, so this preflight prints its own error.
+if [ -z "$IDENTITY" ]; then
+  printf '\n\033[1;31mERROR:\033[0m %s\n' "No signing identity configured.
+Set CLAYRUNE_SIGN_IDENTITY in tools/signing.env or your environment, e.g.
+  CLAYRUNE_SIGN_IDENTITY=\"Developer ID Application: Your Name (TEAMID)\"
+List the identities in your keychain with:
+  security find-identity -v -p codesigning
+See docs/MACOS_NOTARIZATION.md." >&2
+  exit 1
+fi
 
 say() { printf '\n\033[1;36m==>\033[0m %s\n' "$1"; }
 die() { printf '\n\033[1;31mERROR:\033[0m %s\n' "$1" >&2; exit 1; }

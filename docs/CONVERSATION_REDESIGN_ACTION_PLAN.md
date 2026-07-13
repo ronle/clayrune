@@ -2,7 +2,7 @@
 
 **What this is.** An executable, per-task implementation plan synthesized from a
 7-agent code investigation of the "Calmer dashboard" brief
-(`C:\Users\levir\Documents\_claude\CLAYRUNE_CONVERSATION_REDESIGN.md`). Every
+(`<local design brief>`). Every
 claim below is grounded in a verified `file:line + symbol` anchor from that
 investigation. A coding agent should be able to implement each section without
 re-deriving anything. Where the original brief was wrong, the correction is
@@ -113,7 +113,7 @@ retained below.
 | 7 | Primary/accent chip | **All chips equal** — no data field justifies a primary |
 | 8 | Multi-question fallback | **>1 sub-question → full radio/checkbox form always** |
 
-**Visual reference (confirms all of the above):** `C:\Users\levir\Documents\_claude\Simplified Dashboard.pdf`
+**Visual reference (confirms all of the above):** `<local design refs> Dashboard.pdf`
 (single tall board, Turns 1–7). Readable crops rendered to `_scratch/redesign_pdf/`
 (gitignored). Turn-5 states `b_turn5_phones.png` (5a Start / 5b Working / 5c Needs
 you / 5d Resume / 5e ＋sheet), desktop `c_turn5_desktop.png` (recents rail + thread),

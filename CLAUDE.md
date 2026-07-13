@@ -4,7 +4,7 @@
 
 The hosted-compute product (Fly + Tigris, pricing/tiers, investor material) was
 split into its own Clayrune project: **`clayrune_cloud`**, at
-`C:\Users\levir\Documents\_claude\clayrune-cloud`. Its docs
+`<clayrune-cloud checkout>`. Its docs
 (`HOSTED_CLOUD_*.md`, the `_committee/HOSTED_CLOUD_*` seats, and the `docs/poc/`
 pricing models) moved with it — don't re-create them here.
 
@@ -41,6 +41,61 @@ runtime (`data/mc_child_pids.json`, `data/skills/_proposed/`), `_scratch/`,
 `tools/_*` scratch, served build artifacts, and mobile-app assets are all
 untracked so they never reach a commit candidate.
 
+## BINDING — `master` is the release channel: keep it pushed (added 2026-07-12)
+
+`/api/system/update` is `git pull --ff-only` on the user's **current branch** —
+for everyone who isn't us, that's `master`. So **an unpushed `master` means every
+other user is frozen on old code**, silently. There is no other release channel.
+
+On 2026-07-12 `origin/master` was found **138 commits behind local `master`** and
+the working branch was 33 commits beyond that. Months of shipped work — the
+conversation redesign, Inbox, mobile fixes, safety rails — had reached nobody.
+Nothing warned us; "it works on this machine" is exactly what that failure looks
+like.
+
+**The rule:** when a feature branch is done and green, land it on `master` and
+**push `master`** in the same breath. Do not let the local `master` accumulate
+commits that `origin/master` doesn't have. Merging locally is not shipping;
+pushing is.
+
+**Check it costs one command** — run it at the end of any session that landed
+work, and whenever the user asks whether something "is out there":
+
+```bash
+git rev-list --left-right --count origin/master...master   # want: 0  0
+```
+
+Left number > 0 = we're behind the remote. **Right number > 0 = users are behind
+us, and won't know it.** That second case is the dangerous one.
+
+## BINDING — nothing operator-specific goes in the repo (added 2026-07-12)
+
+This repo is public and its files are consumed by other people's machines *and
+other people's agents*. Anything true only of **this** install is user data, not
+source. Before committing, ask: "would this be wrong on a stranger's machine?"
+
+The three that actually bit us (all fixed 2026-07-12, commit `3a1fd04`):
+
+- **Rules files are the sharpest edge.** `data/SHARED_RULES.md` is read verbatim
+  into the system prompt of **every agent on every project**, and a project's
+  `AGENT_RULES.md` does the same for that project. Committing them injected one
+  operator's personal working preferences — and their email — into every other
+  install's agents. Both are now gitignored. A fresh install starting with no
+  rules is the **correct** default; the Rules editor writes them.
+- **Gitignoring is not enough if a build bundles the file.** `build-macos.spec`
+  packaged `data/SHARED_RULES.md` *"if present"* — and it is still present on
+  the builder's disk after being ignored, so it got baked into the shipped
+  `.app` anyway. When you untrack something, **also check the build specs and
+  installer for it.**
+- **Personal identity/paths belong in the environment.** Signing identity →
+  `tools/signing.env` (gitignored). Machine paths → derived, or `MC_DIR` /
+  `JAVA_HOME` / `ANDROID_HOME` / `CLAYRUNE_MOBILE_REPO`. Recipients → config,
+  never a hardcoded default. Private ops tooling that audits *our* accounts
+  (`tools/gcp-cost-review/`, its billing-account ID) stays untracked.
+
+Legitimately public and intentionally kept: the `LICENSE` copyright line, and
+the Play Store `PRIVACY_POLICY.md` / `LISTING_COPY.md` contact address.
+
 ## macOS code-signing & notarization (added 2026-06-04)
 
 The Mac `.app` is now **signed (Developer ID) + notarized + stapled** so fresh
@@ -54,9 +109,9 @@ Program 2026-06-03; first signed build done 2026-06-04.
 - **CRITICAL:** `build-macos.yml` auto-attaches an *unsigned* zip to every
   release. You MUST replace it with the script's output or users still hit the
   warning. (CI signing is a deferred follow-up.)
-- Identity: `Developer ID Application: Ron Levy (ZN4RFW9K5T)`; Team ID
-  `ZN4RFW9K5T`; notarytool keychain profile `clayrune-notary`. Bundle id
-  `io.clayrune.app`.
+- Identity/Team ID are per-developer and are NOT in the repo: put them in
+  `tools/signing.env` (gitignored) as `CLAYRUNE_SIGN_IDENTITY` +
+  `CLAYRUNE_NOTARY_PROFILE`. Bundle id `io.clayrune.app`.
 - Full playbook + gotchas: `docs/MACOS_NOTARIZATION.md`. Gotcha headline:
   `codesign --verify` passes on PyInstaller's ad-hoc sig (false "valid") — only
   the `Authority=` line from `codesign -dvv` proves Developer ID signing took.
@@ -130,7 +185,7 @@ no daemon, no Docker).
 
 **At task start** (especially for non-trivial work in this repo): use the
 plugin's memory-recall skill / query memsearch for the topic *before*
-starting. Memory files at `~/.claude/projects/C--Users-levir-Documents--claude-mission-control/memory/`
+starting. Memory files at `<project memory dir>/`
 are still the curated stable index ([[feedback-grep-memory-dir]]); memsearch
 holds the fluid auto-captured context (decisions, debugging notes,
 what-was-tried). The two are complementary, not redundant.
@@ -330,7 +385,7 @@ restart, agents still see the old hard rules.**
 After Phase 4 v1.1 committee returned RATIFY-WITH-CONDITIONS (no blockers,
 14 must-fix-in-design), Ron pushed back on the framing ("we're not
 defining the right things here"). A working definition of "learning" was
-then locked in conversation. See `~/.claude/projects/C--Users-levir-Documents--claude-mission-control/memory/decision_learning_definition.md`
+then locked in conversation. See `<project memory dir>/decision_learning_definition.md`
 for the full text. Headline:
 
 > **Learning is when the agent's effective behavior changes over time,
@@ -476,5 +531,5 @@ only when already editing the function. There are ~178 such blocks (104 in
 - `docs/SKILLS_CURATION_PHASE4_SPEC_V2.md` — CURRENT authoritative spec
 - `docs/SKILLS_CURATION_PHASE4_SPEC.md` — v1.1, reference-only
 - `docs/SKILLS_CURATION_DESIGN.md` — parent design + Conditions 1–11
-- `~/.claude/projects/.../memory/decision_learning_definition.md` — locked def
+- `<project memory dir>/decision_learning_definition.md` — locked def
 - `docs/_committee/SKILLS_CURATION_PHASE4_seat<N>_*.md` — v1.1 committee assessments

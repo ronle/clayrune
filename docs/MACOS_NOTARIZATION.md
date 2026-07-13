@@ -31,7 +31,7 @@ warning.
 
 1. **Apple Developer Program membership** — $99/yr at
    [developer.apple.com](https://developer.apple.com). Enrollment is usually
-   approved within 24–48h. This gives you a **Team ID** (`ZN4RFW9K5T`).
+   approved within 24–48h. This gives you a **Team ID** (`<TEAMID>`).
 
 2. **Xcode Command Line Tools** (you do *not* need the full ~15 GB Xcode app):
    ```bash
@@ -49,7 +49,7 @@ warning.
    - Confirm:
      ```bash
      security find-identity -v -p codesigning
-     # want: "Developer ID Application: Ron Levy (ZN4RFW9K5T)"
+     # want: "Developer ID Application: <Your Name> (<TEAMID>)"
      ```
 
 4. **Store a notarytool credential profile** named `clayrune-notary`. First make
@@ -59,7 +59,7 @@ warning.
    ```bash
    xcrun notarytool store-credentials "clayrune-notary" \
      --apple-id "you@example.com" \
-     --team-id "ZN4RFW9K5T" \
+     --team-id "<TEAMID>" \
      --password "xxxx-xxxx-xxxx-xxxx"
    ```
    The password lives in your login keychain after this — never in the repo.
@@ -113,5 +113,5 @@ notarized automatically, `build-macos.yml` would need to, on a macОS runner:
    as `APPLE_ID` / `TEAM_ID` / `APP_SPECIFIC_PASSWORD` secrets).
 
 Secrets needed: `MACOS_CERT_P12_BASE64`, `MACOS_CERT_PASSWORD`,
-`MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_TEAM_ID` (`ZN4RFW9K5T`),
+`MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_TEAM_ID` (`<TEAMID>`),
 `MACOS_NOTARY_PASSWORD`. Tracked as a follow-up; not yet wired.

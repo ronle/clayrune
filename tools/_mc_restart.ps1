@@ -1,4 +1,4 @@
-# MC full-restart helper — invoked as a one-shot Scheduled Task so it runs
+# MC full-restart helper -- invoked as a one-shot Scheduled Task so it runs
 # OUTSIDE the old server's process tree. That isolation matters: the script
 # hard-kills the wedged server (and its whole child tree, which includes the
 # agent that scheduled this), then relaunches a fresh MC.

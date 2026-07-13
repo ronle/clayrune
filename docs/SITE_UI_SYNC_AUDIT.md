@@ -1,7 +1,7 @@
 # clayrune.io — UI sync audit
 
 **Owner:** Steward (charter `2375e16b`). **2026-07-11.**
-Site project: `clayrune_website` → `C:\Users\levir\MissionControl\clayrune_website`
+Site project: `clayrune_website` → `<clayrune_website checkout>`
 (not a git repo; deployed to Cloudflare via `_build_deploy.sh` / wrangler).
 
 The app's conversation UI was redesigned (3-pane rail | thread | Surfaces, cream

@@ -1,22 +1,30 @@
 <#
-  boot-emulator.ps1 — create (if missing) and boot a headless Android emulator
+  boot-emulator.ps1 -- create (if missing) and boot a headless Android emulator
   for the mobile chat-switching release test. Idempotent.
 
-  Requires the Android cmdline-tools + an accepted system image. On this machine
-  ANDROID_HOME = E:\Android and WHPX acceleration is available. If the emulator/
-  system image aren't installed yet, run once:
-    $sdk = "E:\Android\cmdline-tools\latest\bin\sdkmanager.bat"
+  Requires the Android cmdline-tools + an accepted system image, plus hardware
+  acceleration (WHPX on Windows). SDK/JDK locations are per-machine and come
+  from ANDROID_HOME / JAVA_HOME (or pass -AndroidHome / -JavaHome).
+
+  If the emulator/system image aren't installed yet, run once:
+    $sdk = Join-Path $env:ANDROID_HOME 'cmdline-tools\latest\bin\sdkmanager.bat'
     & $sdk --licenses
     & $sdk "emulator" "system-images;android-34;google_apis;x86_64" "platforms;android-34"
 #>
 param(
-  [string]$AndroidHome = 'E:\Android',
-  [string]$JavaHome    = 'E:\JDK\jdk-21',
+  [string]$AndroidHome = $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { '' }),
+  [string]$JavaHome    = $(if ($env:JAVA_HOME) { $env:JAVA_HOME } else { '' }),
   [string]$Avd         = 'clayrune_test',
   [string]$Image       = 'system-images;android-34;google_apis;x86_64',
   [int]$Port           = 5554
 )
 $ErrorActionPreference = 'Stop'
+if (-not $AndroidHome) {
+  throw "Android SDK path not set. Set ANDROID_HOME or pass -AndroidHome <path>."
+}
+if (-not $JavaHome) {
+  throw "JDK path not set. Set JAVA_HOME or pass -JavaHome <path>."
+}
 $env:JAVA_HOME = $JavaHome
 $env:ANDROID_AVD_HOME = "$env:USERPROFILE\.android\avd"
 $adb = Join-Path $AndroidHome 'platform-tools\adb.exe'

@@ -28,7 +28,7 @@ they just note "email not sent" at the top of the report.
 1. Create an App Password: <https://myaccount.google.com/apppasswords>
    (pick "Mail" / "Other"). Google shows a 16-char code like `abcd efgh ijkl mnop`.
 2. Create `~/.clayrune/night-mail.json` (on this box:
-   `C:\Users\levir\.clayrune\night-mail.json`) — **never commit it**:
+   `~/.clayrune/night-mail.json`) — **never commit it**:
 
    ```json
    {

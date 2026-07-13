@@ -2,7 +2,7 @@
 
 **What this is.** The plan for bringing the "Simplified Dashboard" design language
 to the **desktop** app (>960px), after the mobile redesign shipped. Design
-reference: `C:\Users\levir\Documents\_claude\Simplified Dashboard.pdf` — frames
+reference: `<local design refs> Dashboard.pdf` — frames
 **5f** (desktop conversation view) and the two whole-app directions at the bottom
 of the board (**"Calm — keep the sidebar, tier it"** and **"Focus — one column,
 palette-driven"**). Board crops rendered to `_scratch/redesign_pdf/` (gitignored).

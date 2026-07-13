@@ -1,9 +1,9 @@
 <#
-  build-dev-apk.ps1 — build + install a HERMETIC debug Clayrune APK on the
+  build-dev-apk.ps1 -- build + install a HERMETIC debug Clayrune APK on the
   emulator for the mobile chat-switching release test.
 
   The shipping app loads the SPA from the Cloudflare tunnel and gates on stored
-  CF-Access credentials (MainActivity → SetupActivity). For an automated,
+  CF-Access credentials (MainActivity -> SetupActivity). For an automated,
   credential-free emulator test we build a throwaway debug APK that:
     - loads the SPA from http://10.0.2.2:5199 (the emulator's alias for this
       host's Mission Control server) over cleartext, no Cloudflare, and
@@ -11,18 +11,29 @@
 
   The three edits are applied to a CLEAN checkout, the APK is built + installed,
   then the edits are reverted with `git checkout` so the mobile repo stays clean.
-  NEVER ship the resulting APK — it is debug-only and bypasses auth.
+  NEVER ship the resulting APK -- it is debug-only and bypasses auth.
 
-  Prereqria: JDK + Android SDK (see paths below), the mobile repo at $MobileRepo,
-  a booted emulator (see boot-emulator.ps1), and MC running on :5199.
+  Prereqs: JDK + Android SDK, the mobile repo (a separate checkout -- see
+  CLAUDE.md), a booted emulator (see boot-emulator.ps1), and MC running on :5199.
+
+  Paths are per-machine, so they come from the environment rather than being
+  hardcoded. Set CLAYRUNE_MOBILE_REPO, JAVA_HOME, and ANDROID_HOME (or pass
+  -MobileRepo / -JavaHome / -Adb explicitly).
 #>
 param(
-  [string]$MobileRepo = 'E:\clayrune-mobile',
-  [string]$JavaHome   = 'E:\JDK\jdk-21',
-  [string]$Adb        = 'E:\Android\platform-tools\adb.exe',
+  [string]$MobileRepo = $(if ($env:CLAYRUNE_MOBILE_REPO) { $env:CLAYRUNE_MOBILE_REPO } else { '' }),
+  [string]$JavaHome   = $(if ($env:JAVA_HOME) { $env:JAVA_HOME } else { '' }),
+  [string]$Adb        = $(if ($env:ANDROID_HOME) { Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe' } else { 'adb' }),
   [string]$Serial     = 'emulator-5554',
   [string]$DevUrl     = 'http://10.0.2.2:5199'
 )
+
+if (-not $MobileRepo) {
+  throw "Mobile repo path not set. Set CLAYRUNE_MOBILE_REPO or pass -MobileRepo <path>."
+}
+if (-not $JavaHome) {
+  throw "JDK path not set. Set JAVA_HOME or pass -JavaHome <path>."
+}
 $ErrorActionPreference = 'Stop'
 $env:JAVA_HOME = $JavaHome
 
@@ -32,8 +43,8 @@ $mainAct  = Join-Path $MobileRepo 'android\app\src\main\java\io\clayrune\app\Mai
 
 Write-Host "== 1/5 applying dev edits (transient) =="
 
-# capacitor.config.json — point at the host server, allow cleartext, keep the
-# WebView debuggable (captureInput must stay false — Gboard IME gotcha).
+# capacitor.config.json -- point at the host server, allow cleartext, keep the
+# WebView debuggable (captureInput must stay false -- Gboard IME gotcha).
 @"
 {
   "appId": "io.clayrune.app",
@@ -52,7 +63,7 @@ Write-Host "== 1/5 applying dev edits (transient) =="
 }
 "@ | Set-Content -Path $cfg -Encoding utf8
 
-# AndroidManifest — permit cleartext to 10.0.2.2.
+# AndroidManifest -- permit cleartext to 10.0.2.2.
 $m = Get-Content $manifest -Raw
 if ($m -notmatch 'usesCleartextTraffic') {
   $m = $m.Replace(
@@ -61,11 +72,11 @@ if ($m -notmatch 'usesCleartextTraffic') {
   Set-Content -Path $manifest -Value $m -Encoding utf8
 }
 
-# MainActivity — load server.url natively + skip the CF credential gate.
+# MainActivity -- load server.url natively + skip the CF credential gate.
 $j = Get-Content $mainAct -Raw
 $needle = "    public void onCreate(Bundle savedInstanceState) {`r`n        CredentialStore.Creds creds = CredentialStore.load(this);"
 $repl   = "    public void onCreate(Bundle savedInstanceState) {`r`n" +
-          "        // [DEV BUILD ONLY — reverted after build] Hermetic emulator testing.`r`n" +
+          "        // [DEV BUILD ONLY -- reverted after build] Hermetic emulator testing.`r`n" +
           "        super.onCreate(savedInstanceState);`r`n" +
           "        if (Boolean.TRUE) { return; }`r`n`r`n" +
           "        CredentialStore.Creds creds = CredentialStore.load(this);"
@@ -96,4 +107,4 @@ Write-Host "== 5/5 install + launch =="
 $apk = Join-Path $MobileRepo 'android\app\build\outputs\apk\debug\app-debug.apk'
 & $Adb -s $Serial install -r -t $apk
 & $Adb -s $Serial shell monkey -p io.clayrune.app -c android.intent.category.LAUNCHER 1 | Out-Null
-Write-Host "DONE — dev APK installed. SPA loads from $DevUrl ; mobile repo restored to clean."
+Write-Host "DONE -- dev APK installed. SPA loads from $DevUrl ; mobile repo restored to clean."

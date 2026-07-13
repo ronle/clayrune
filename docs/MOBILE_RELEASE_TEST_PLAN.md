@@ -58,9 +58,9 @@ dispatch into a throwaway scratch project; the oracle is content-agnostic
 ## Prerequisites / one-time setup
 
 - [ ] **MC running** on `http://localhost:5199` (the emulator reaches it at `http://10.0.2.2:5199`).
-- [ ] **Android SDK** with the emulator + an `android-34 google_apis x86_64` system image, and a JDK. On this machine: `ANDROID_HOME=E:\Android`, `JAVA_HOME=E:\JDK\jdk-21`, WHPX acceleration available. First-time SDK install:
+- [ ] **Android SDK** with the emulator + an `android-34 google_apis x86_64` system image, and a JDK. On this machine: `ANDROID_HOME=$env:ANDROID_HOME`, `JAVA_HOME=$env:JAVA_HOME`, WHPX acceleration available. First-time SDK install:
   ```
-  $sdk = "E:\Android\cmdline-tools\latest\bin\sdkmanager.bat"
+  $sdk = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
   & $sdk --licenses
   & $sdk "emulator" "system-images;android-34;google_apis;x86_64" "platforms;android-34"
   ```

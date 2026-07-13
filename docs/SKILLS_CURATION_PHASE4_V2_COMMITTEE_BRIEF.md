@@ -245,7 +245,7 @@ exclusion isn't tested.
 - **Each seat reads `docs/SKILLS_CURATION_PHASE4_SPEC_V2.md` end to end.**
   Don't review based on this brief alone.
 - **Each seat reads the locked learning definition**
-  (`~/.claude/projects/C--Users-levir-Documents--claude-mission-control/memory/decision_learning_definition.md`).
+  (`<project memory dir>/decision_learning_definition.md`).
   v2's design is judged against this definition.
 - **Each seat skims their corresponding v1.1 seat assessment**
   (`docs/_committee/SKILLS_CURATION_PHASE4_seat<N>_*.md`) to verify v2

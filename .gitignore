@@ -68,6 +68,11 @@ nul
 # Session / personal
 .claude_session_context.md
 
+# Per-developer macOS signing config (identity + notary profile name). Sourced
+# by tools/notarize-macos.sh. No secrets (the app-specific password lives in the
+# login keychain) but it names YOUR Apple identity — never commit.
+tools/signing.env
+
 # ── Agent rules files are USER DATA, not source (untracked 2026-07-12) ──────
 # Both are read verbatim into the agent's system prompt (_build_agent_context):
 # SHARED_RULES.md on EVERY project, AGENT_RULES.md on the project it sits in.

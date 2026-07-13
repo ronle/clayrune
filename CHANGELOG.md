@@ -1238,7 +1238,7 @@ the recognized text drops into the textarea. You still hit Send.
 ### How it works
 
 - **Plugin**: `@capacitor-community/speech-recognition@^7.0.1` added to
-  `E:\clayrune-mobile\package.json`. Wraps Android's built-in
+  `<mobile repo>\package.json`. Wraps Android's built-in
   `SpeechRecognizer` (Google's cloud recognizer when available — accurate,
   sub-second). No API key, no extra service.
 - **Permission**: `android.permission.RECORD_AUDIO` + the
@@ -1262,7 +1262,7 @@ the recognized text drops into the textarea. You still hit Send.
 
 ### Where the APK is
 
-`E:\clayrune-mobile\android\app\build\outputs\apk\debug\app-debug.apk`
+`<mobile repo>\android\app\build\outputs\apk\debug\app-debug.apk`
 (5.9 MB). Install via `adb install -r <path>` or sideload.
 
 ### Rollback
@@ -2708,7 +2708,7 @@ killed app via the OS push channel.
   service-account JSON is missing, FCM delivery silently no-ops and
   the web push path still works.
 
-**Mobile (`E:\clayrune-mobile`, separate repo):**
+**Mobile (`<mobile repo>`, separate repo):**
 - `android/app/google-services.json` (gitignored) drops in to wire
   the existing `apply plugin: com.google.gms.google-services` line
   that Capacitor's template already had.
@@ -4527,7 +4527,7 @@ in place, branding is unified.
 
 - **Operator dashboard** at `https://api.clayrune.io/v1/admin` (`routes_admin.py`):
   - Self-contained HTML page; Firebase Google signin gated by email allowlist
-    in `MC_CP_ADMIN_EMAILS` env (default `leviran1@gmail.com`)
+    in `MC_CP_ADMIN_EMAILS` env
   - Aggregates Firestore `users/` + `devices/` in a single scan
   - Summary cards (users / devices / online now / as-of) + per-user expandable
     section with device tables, online/offline pills, tier + bandwidth use
@@ -5946,7 +5946,7 @@ Fresh sessions don't have a `claude_session_id` locally until the next status-fe
 ## [2026-03-13] — Open-source release preparation
 
 ### Done
-- Replaced hardcoded user paths (`C:\Users\levir\...`) with `config.json` configuration system
+- Replaced hardcoded user paths (`<install dir>`) with `config.json` configuration system
 - `config.json` auto-created on first run with sensible defaults (gitignored)
 - Server port configurable via `config.json` or `MC_PORT` environment variable (default 5199)
 - Set Flask `debug=False` for production
