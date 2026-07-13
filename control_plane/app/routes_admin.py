@@ -4,8 +4,10 @@ PROPRIETARY AND CONFIDENTIAL.
 Copyright (c) 2026 Clayrune. All rights reserved.
 
 Routes:
-  GET  /v1/admin            — HTML operator dashboard (Firebase signin + tables)
-  GET  /v1/admin/data       — JSON: users + devices aggregate (admin-only)
+  GET  /v1/admin                          — HTML operator dashboard
+  GET  /v1/admin/data                     — JSON: users + devices aggregate
+  POST /v1/admin/users/{id}/suspend       — abuse / chargeback kill switch
+  POST /v1/admin/users/{id}/unsuspend
 
 Admin allowlist: comma-separated emails in `MC_CP_ADMIN_EMAILS` env var
 (no default — set it to grant operator access; when unset, NOBODY is an
@@ -69,6 +71,96 @@ def _require_admin(authorization: Optional[str]) -> dict:
             "request_id": "x",
         })
     return user
+
+
+# ─── Suspension — the immediate kill switch ──────────────────────────────────
+#
+# Suspension is NOT a billing state and does not wait for one. Fraud, chargeback,
+# abuse: cut them off now. Three things happen together, in this order:
+#
+#   1. `users/{id}.suspended = true` — Firestore is the truth. `is_entitled()`
+#      returns False for a suspended user regardless of subscription state, and
+#      regardless of whether billing enforcement is even switched on.
+#   2. KV denylist write — the edge Worker reads `u:{user_id}` on every request
+#      and 403s in ~1ms. This is what makes it *immediate*; without it the user
+#      keeps their dashboard until their current JWT expires (≤30 min).
+#   3. Revoke every session — so nothing renews once the current JWT dies.
+#
+# If the KV write fails, the suspension still holds (Firestore + no renewal), but
+# the cutoff degrades to one JWT TTL. The response says so; do not ignore it.
+
+
+@router.post("/users/{user_id}/suspend", tags=["admin"])
+async def suspend_user(
+    user_id: str,
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    from . import denylist, sessions
+
+    _require_admin(authorization)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = (body.get("reason") if isinstance(body, dict) else "") or "unspecified"
+
+    snap = fs.db().collection(fs.COL_USERS).document(user_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail={
+            "code": "unknown_user", "message": "No such user.", "request_id": "x",
+        })
+
+    fs.db().collection(fs.COL_USERS).document(user_id).set({
+        "suspended": True,
+        "suspended_at": _dt.datetime.now(_dt.timezone.utc),
+        "suspended_reason": str(reason)[:200],
+    }, merge=True)
+
+    edge_cutoff = await denylist.add(user_id)
+    revoked = sessions.revoke_all(user_id)
+
+    log.warning("[admin] suspended user %s (reason=%s, edge_cutoff=%s, sessions_revoked=%d)",
+                user_id, reason, edge_cutoff, revoked)
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "edge_cutoff_immediate": edge_cutoff,
+        "sessions_revoked": revoked,
+        "max_lag_seconds": 0 if edge_cutoff else sessions.access_ttl_seconds(),
+    }
+
+
+@router.post("/users/{user_id}/unsuspend", tags=["admin"])
+async def unsuspend_user(
+    user_id: str,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    """Lift a suspension. The user must sign in again — their sessions were
+    revoked on the way in, and we do not resurrect revoked sessions."""
+    from . import denylist
+
+    _require_admin(authorization)
+
+    snap = fs.db().collection(fs.COL_USERS).document(user_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail={
+            "code": "unknown_user", "message": "No such user.", "request_id": "x",
+        })
+
+    fs.db().collection(fs.COL_USERS).document(user_id).set({
+        "suspended": False,
+        "unsuspended_at": _dt.datetime.now(_dt.timezone.utc),
+    }, merge=True)
+
+    removed = await denylist.remove(user_id)
+    if not removed:
+        # Failing here leaves them blocked at the edge — the SAFE direction, but
+        # the un-suspension silently won't take effect. Say so loudly.
+        log.error("[admin] unsuspended %s in Firestore but FAILED to clear the KV "
+                  "denylist — they are still blocked at the edge. Retry.", user_id)
+    return {"ok": True, "user_id": user_id, "edge_denylist_cleared": removed}
 
 
 @router.get("/data", tags=["admin"])

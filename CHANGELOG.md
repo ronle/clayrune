@@ -6,6 +6,71 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-07-13] — Control plane: session JWT at the edge, Cloudflare Access removed
+
+Enrollment provisioned a **Cloudflare Access application + email policy per user**.
+Access is priced **per seat** — free to 50 users, then **$7/user/month for every
+user** — and caps the account at **500 applications**. Against our $6.99/mo price,
+user #51 turned the whole book **negative margin** ($0 → $357/mo overnight) and put
+a 500-user ceiling under a 1,000-tunnel design. This blocked the paid launch. It is
+an economics *correctness* bug, not an optimization.
+
+Replaced by **one Cloudflare Worker** on a single wildcard route
+(`*.clayrune.io/*`, **$5/mo flat, account-wide**) that verifies our own ES256
+session JWT in CPU at the edge. Worker source lives in the `clayrune-cloud` repo;
+this is the control-plane half of that contract.
+
+**⚠️ Access was doing TWO jobs, and the money was the boring one.** Its email policy
+was also the **authorization** check — it is what stopped `alice` reaching
+`bob.clayrune.io`. Removing Access without replacing that would not have saved
+$7/user; it would have published every customer's dev machine to the internet. The
+replacement is the `u` claim: minted from the enrolled username in Firestore, never
+client-supplied, compared by the Worker against the requested subdomain
+(`claims.u !== want → 403`).
+
+- **`app/jwt_es256.py`** — ES256 keyring (kid-addressed, rotatable), sign, JWKS.
+  Raw `r||s` signatures, not DER — WebCrypto silently rejects DER. Verified
+  end-to-end against the Worker's actual `crypto.subtle.verify()` code path.
+- **`app/entitlement.py`** — `is_entitled()`, the ONE predicate, enforced at exactly
+  two chokepoints (JWT mint/refresh, `/v1/attest`). Fail **open** on billing (7-day
+  `past_due` grace — never kill a paying customer because our webhook broke); fail
+  **closed** on identity (the Worker 503s if it can't reach the JWKS). Ships behind
+  `CLAYRUNE_BILLING_ENFORCED=0` because billing doesn't exist yet and enforcing the
+  predicate literally today would lock out every enrolled user.
+- **`app/sessions.py`** — session = revocable hashed refresh token (Firestore) +
+  30-min access JWT. `GET /v1/jwks`, `GET /v1/signin`, `POST /v1/session/{start,refresh,logout}`.
+  **Refresh is the live-entitlement chokepoint** — it re-reads the user row every
+  time, so a cancellation takes effect within one TTL.
+- **`app/denylist.py`** — the TTL is a deliberate lag for *billing* and useless
+  against *fraud*. Suspension writes `u:{user_id}` to the Worker's KV namespace →
+  ~1 ms edge cutoff. `POST /v1/admin/users/{id}/suspend` now does all three: flag +
+  KV + revoke-all, and reports `edge_cutoff_immediate: false` if the KV write failed.
+- **`/v1/sessions*` rebased.** These were a *proxy over Cloudflare Access's session
+  API* — not our sessions at all. CF's per-session revoke was unreliable enough that
+  the old code tried four URL shapes and fell back to nuking *every* session the user
+  had. Now a session is a Firestore doc and revoking one revokes one.
+- **Mobile pairing rebased.** It was built entirely on CF Access **service tokens +
+  a policy on the user's Access app** — deleting Access deleted the phone's whole
+  credential. A paired phone is now a `kind: mobile` session (1-yr refresh token →
+  same 30-min cookie), which means it now passes the entitlement check the CF service
+  token (valid 8760h, checked nothing) never did.
+- **`teardown_access.py`** — dry-run by default; deletes the legacy Access apps +
+  service tokens. **Run only after the Worker is deployed and verified** — until
+  then those apps are the only authorization in front of enrolled machines.
+- Docs: `03-control-plane-api.md` §3.5 / §3.15 (new) / §4.1a / §5.1, `error_codes.md`.
+- 25 new tests. `test_enroll` now asserts enrollment touches **no** `/access/` endpoint.
+
+**Three things that must land before this ships — see §3.15:**
+1. **The Worker's own route matches the control plane.** `*.clayrune.io/*` includes
+   `api.clayrune.io`, so the Worker would gate its own sign-in page and its own JWKS
+   — infinite redirect. Needs a reserved-subdomain bypass (patch in §3.15.4).
+2. **Every paired phone stops working.** The shipped APK sends CF-Access headers that
+   now authorize nothing. `E:\clayrune-mobile` + MC's pairing surface need the
+   refresh-token flow; existing pairs must re-pair.
+3. **SSE/WebSocket authorize once, at setup** — a user who cancels mid-stream holds
+   the socket indefinitely. Must be capped in the Worker (§3.15.7). Not fixed here;
+   written down, not papered over.
+
 ## [2026-07-11b] — Resume no longer drops the injected context (9 `-r` paths fixed)
 
 A 2026-07-11 re-test on CLI 2.1.206 reversed the 2026-06-04 canary finding:

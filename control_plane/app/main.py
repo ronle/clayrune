@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 
 from . import build_info
 from .routes_public import router as public_router
+from .routes_auth import router as auth_router
 from .routes_attest import router as attest_router
 from .routes_account import router as account_router
 from .routes_admin import router as admin_router
@@ -48,6 +49,7 @@ app.add_middleware(
 )
 
 app.include_router(public_router, prefix="/v1")
+app.include_router(auth_router, prefix="/v1")
 app.include_router(attest_router, prefix="/v1")
 app.include_router(account_router, prefix="/v1")
 app.include_router(admin_router, prefix="/v1/admin")

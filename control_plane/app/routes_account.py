@@ -4,8 +4,16 @@ PROPRIETARY AND CONFIDENTIAL.
 Copyright (c) 2026 Clayrune. All rights reserved.
 
 Implemented:
-  POST /v1/enroll                   — provisions a CF tunnel + DNS + Access app,
-                                      persists user + device, returns enrollment_token
+  POST /v1/enroll                   — provisions a CF tunnel + DNS, persists user +
+                                      device, returns enrollment_token
+  GET/POST /v1/sessions*            — our sessions (app/sessions.py), NOT CF Access's
+  */devices/{id}/mobile-tokens      — phone pairing, now a long-lived mobile session
+
+**No Cloudflare Access anywhere in this file's provisioning paths.** Access was
+per-seat priced ($7/user/mo above 50 users, 500-app account cap) against a $6.99
+product. It is replaced by the edge Worker + our session JWT. The Access-deleting
+calls that remain exist only to tear down what we already created for existing
+users — see `control_plane/teardown_access.py`.
 
 Pending:
   GET    /v1/account
@@ -31,9 +39,9 @@ import secrets
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 
-from . import cloudflare, firestore as fs
+from . import cloudflare, firestore as fs, sessions as _sessions
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -134,7 +142,17 @@ async def list_devices(
     }
 
 
-# ─── /v1/sessions (Cloudflare Access sessions for the user) ──────────────────
+# ─── /v1/sessions (OUR sessions — see app/sessions.py) ───────────────────────
+#
+# These used to be a proxy over Cloudflare Access's session API: they listed CF's
+# sessions and asked CF to revoke them. With Access gone there is nothing on the
+# other end of those calls, so the session concept is now ours.
+#
+# The replacement is strictly better. CF's per-session revoke was unreliable
+# enough that the old code tried four different URL shapes and, when they all
+# failed, fell back to revoking EVERY session the user had — and told the UI it
+# had done so via `fallback: true`. Here a session is a Firestore document;
+# revoking one revokes one.
 
 
 @router.get("/sessions", tags=["account"])
@@ -144,12 +162,11 @@ async def list_sessions(
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
     x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
 ):
-    """List active Cloudflare Access sign-in sessions for the user's email.
+    """List the user's active sign-in sessions (browsers + paired phones).
 
-    These are browser/phone sessions created by CF Access OTP signin. They are
-    DIFFERENT from `/v1/devices` which lists enrolled MC installations.
-    Anyone hitting `<username>.clayrune.io` who completes the email OTP
-    creates a session row visible here.
+    DIFFERENT from `/v1/devices`, which lists enrolled MC installations. A
+    session is "someone is signed in and can open the dashboard"; a device is
+    "a machine is running MC behind a tunnel".
     """
     rid = _request_id(request)
     try:
@@ -160,85 +177,9 @@ async def list_sessions(
         d["request_id"] = rid
         raise HTTPException(status_code=e.status_code, detail=d)
 
-    cf = _get_cf_client()
-    acc = await cf.get_account_id()
-    email = user["email"]
-
-    # Find the CF Access user for this email
-    try:
-        users = await cf._call("GET", f"/accounts/{acc}/access/users", params={"email": email})
-    except cloudflare.CloudflareAPIError as e:
-        log.warning("rid=%s could not list CF Access users: %s", rid, e)
-        return {"sessions": [], "cf_user_id": None, "error": "list_users_failed"}
-
-    if not users:
-        # User has never signed in — no sessions yet
-        return {"sessions": [], "cf_user_id": None}
-
-    cf_user = users[0]
-    cf_user_id = cf_user.get("id")
-
-    try:
-        sessions_raw = await cf._call(
-            "GET", f"/accounts/{acc}/access/users/{cf_user_id}/active_sessions",
-        ) or []
-    except cloudflare.CloudflareAPIError as e:
-        log.warning("rid=%s could not list sessions for CF user %s: %s", rid, cf_user_id, e)
-        return {"sessions": [], "cf_user_id": cf_user_id, "error": "list_sessions_failed"}
-
-    # CF's active_sessions response shape (verified empirically against real
-    # account 2026-04-29):
-    #   {
-    #     "result": [
-    #       {
-    #         "expiration": <unix-ts>,
-    #         "name": "<account_id>_<user_id>_sessions_<nonce>",
-    #         "metadata": {
-    #           "apps": { "<app_uid_hash>": { "hostname":..., "name":..., "type":..., "uid":... }, ... },
-    #           "expires": <unix-ts>,
-    #           "iat": <unix-ts>,
-    #           "nonce": "<short id>",
-    #           "ttl": 86400
-    #         }
-    #       }
-    #     ]
-    #   }
-    #
-    # NOT in the response: user_agent, IP, country, identity provider used.
-    # CF Access doesn't expose those via this API — they're surfaced only in
-    # Access audit logs (different endpoint).
-    def _flatten(s: dict) -> dict:
-        meta = s.get("metadata") or {}
-        apps_dict = meta.get("apps") or {}
-        # Apps the session has been used to access — useful as a freshness
-        # signal (a session that has touched many app UIDs has been around;
-        # one that touched only the current app is fresher / single-use).
-        apps_seen = []
-        for _hash, info in apps_dict.items():
-            host = info.get("hostname", "")
-            if host:
-                apps_seen.append(host)
-        nonce = meta.get("nonce") or ""
-        # Session id used for revocation: the full `name` field is what CF
-        # accepts. The nonce is a friendlier display short-id.
-        full_name = s.get("name") or ""
-        return {
-            "session_id": full_name,                  # for revoke
-            "nonce": nonce,                            # for joining with MC-side labels
-            "short_id": nonce[-6:] if nonce else "",  # for display
-            "issued_at": meta.get("iat"),              # Unix seconds
-            "expires_at": s.get("expiration") or meta.get("expires"),
-            "ttl_seconds": meta.get("ttl"),
-            "apps_seen_count": len(apps_seen),
-            "apps_seen": list(set(apps_seen))[:5],
-        }
-
-    sessions = [_flatten(s) for s in sessions_raw]
-
     return {
-        "sessions": sessions,
-        "cf_user_id": cf_user_id,
-        "email": email,
+        "sessions": _sessions.list_for_user(user["user_id"]),
+        "email": user.get("email", ""),
     }
 
 
@@ -246,20 +187,17 @@ async def list_sessions(
 async def revoke_session(
     session_id: str,
     request: Request,
-    strict: bool = Query(False, description="If true, do not fall back to revoke-all"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
     x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
 ):
-    """Revoke one CF Access session.
+    """Revoke one session. Ownership is enforced in the store, not here.
 
-    Tries multiple known CF API shapes for per-session revoke (the public API
-    has been inconsistent across account configurations). If all fail and
-    `strict=false` (default), falls back to revoking ALL sessions for the
-    user — the frontend surfaces this via `fallback=true` so the user knows.
-
-    With `strict=true` (used by automated cleanup loops), returns 503 on
-    failure instead of nuking unrelated named sessions.
+    The session's current access JWT stays cryptographically valid until it
+    expires (≤ 30 min) — that is inherent to verifying at the edge with no origin
+    call. What is guaranteed is that it is never renewed. To cut someone off
+    *now*, suspend them: that writes the KV denylist the Worker reads on every
+    request.
     """
     rid = _request_id(request)
     try:
@@ -270,55 +208,11 @@ async def revoke_session(
         d["request_id"] = rid
         raise HTTPException(status_code=e.status_code, detail=d)
 
-    cf = _get_cf_client()
-    acc = await cf.get_account_id()
-    email = user["email"]
-
-    users = await cf._call("GET", f"/accounts/{acc}/access/users", params={"email": email})
-    if not users:
-        return _err_response(404, "no_sessions", "No CF Access user record for this email.", rid)
-    cf_user_id = users[0].get("id")
-
-    # Try per-session revoke. CF's API for this is poorly documented and the
-    # accepted shape varies by account; try the most likely variants in order.
-    # The session_id we received is the full canonical name from CF's listing
-    # (`<account>_<user>_sessions_<nonce>`). Some endpoints want that whole
-    # string; others want just the trailing nonce.
-    nonce_only = session_id.rsplit("_sessions_", 1)[-1] if "_sessions_" in session_id else session_id
-    attempts = [
-        ("POST",   f"/accounts/{acc}/access/users/{cf_user_id}/active_sessions/{session_id}/revoke"),
-        ("POST",   f"/accounts/{acc}/access/users/{cf_user_id}/active_sessions/{nonce_only}/revoke"),
-        ("DELETE", f"/accounts/{acc}/access/users/{cf_user_id}/active_sessions/{session_id}"),
-        ("DELETE", f"/accounts/{acc}/access/users/{cf_user_id}/active_sessions/{nonce_only}"),
-    ]
-    last_err: Optional[Exception] = None
-    for method, path in attempts:
-        try:
-            await cf._call(method, path)
-            return {"ok": True, "scope": "session", "method": method}
-        except cloudflare.CloudflareAPIError as e:
-            last_err = e
-            continue
-
-    log.info("rid=%s all per-session revoke variants failed (last=%s); strict=%s",
-             rid, last_err, strict)
-    if strict:
-        return _err_response(503, "per_session_unsupported",
-                             f"Per-session revoke not supported by CF for this token/account. "
-                             f"Use revoke-all or expand token scope. Last error: {last_err}",
-                             rid)
-
-    # Fallback: revoke ALL sessions for the email
-    try:
-        await cf._call(
-            "POST",
-            f"/accounts/{acc}/access/organizations/revoke_user",
-            json={"email": email},
-        )
-        return {"ok": True, "scope": "all_sessions", "fallback": True}
-    except cloudflare.CloudflareAPIError as e:
-        return _err_response(503, "revoke_failed",
-                             f"Could not revoke session: {e}", rid)
+    if not _sessions.revoke(session_id, user_id=user["user_id"]):
+        return _err_response(404, "unknown_session",
+                             "No such session for this account.", rid)
+    return {"ok": True, "scope": "session",
+            "max_lag_seconds": _sessions.access_ttl_seconds()}
 
 
 @router.post("/sessions/revoke-all", tags=["account"])
@@ -328,11 +222,10 @@ async def revoke_all_sessions(
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
     x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
 ):
-    """Revoke ALL CF Access sessions for the user's email.
+    """Sign out everywhere: revoke every session, browsers and paired phones.
 
-    Forces every signed-in browser/phone to re-authenticate via OTP before
-    accessing the dashboard. The MC supervisor's tunnel attestation is
-    unaffected — this only kicks browser sessions, not the tunnel itself.
+    Does not touch the tunnel — an enrolled device keeps attesting. This kicks
+    people out of the dashboard, it does not unenroll a machine.
     """
     rid = _request_id(request)
     try:
@@ -343,20 +236,9 @@ async def revoke_all_sessions(
         d["request_id"] = rid
         raise HTTPException(status_code=e.status_code, detail=d)
 
-    cf = _get_cf_client()
-    acc = await cf.get_account_id()
-    email = user["email"]
-
-    try:
-        await cf._call(
-            "POST",
-            f"/accounts/{acc}/access/organizations/revoke_user",
-            json={"email": email},
-        )
-    except cloudflare.CloudflareAPIError as e:
-        return _err_response(503, "revoke_failed",
-                             f"Could not revoke all sessions: {e}", rid)
-    return {"ok": True, "email": email}
+    n = _sessions.revoke_all(user["user_id"])
+    return {"ok": True, "revoked": n, "email": user.get("email", ""),
+            "max_lag_seconds": _sessions.access_ttl_seconds()}
 
 
 # ─── /v1/devices/{device_id}/revoke ───────────────────────────────────────────
@@ -464,23 +346,32 @@ async def revoke_device(
 
 # ─── Mobile pairing tokens ───────────────────────────────────────────────────
 #
-# Per-device CF Access service tokens used by the Android shell. Each phone
-# pairs to a specific MC device (the "host" device) and gets its own service
-# token attached to that device's Access app via a dedicated Service Auth
-# policy. Per-device = revocable per-phone with no blast radius on other
-# devices/phones.
+# ⚠️ REBASED OFF CLOUDFLARE ACCESS (2026-07-13). Pairing used to mint a CF Access
+# **service token** and attach a Service Auth **policy to the user's Access app**.
+# Removing Access therefore removed the thing pairing was built on — this was not
+# a cost cleanup, it deleted the phone's entire credential.
+#
+# A paired phone is now just a SESSION of kind "mobile" (`app/sessions.py`): a
+# long-lived (1y) opaque refresh token which the phone exchanges at
+# /v1/session/refresh for the same 30-minute `cr_session` cookie the browser
+# uses. Same credential, same edge check, same entitlement chokepoint — a phone
+# whose owner cancels stops working within one TTL, which the CF service token
+# (duration 8760h, no entitlement check anywhere) never did.
 #
 # Flow:
 #   1. Dashboard on the host MC instance calls
 #      POST /v1/devices/{this_device_id}/mobile-tokens with {label}
-#   2. CP creates a CF service token, adds a Service Auth policy to the host's
-#      Access app including that token, stores the linkage in
-#      devices/{device_id}/mobile_tokens/{doc_id}
-#   3. Response includes client_id + client_secret (ONCE — CF won't reveal the
-#      secret again); host MC turns it into a clayrune://pair?... URI for the
-#      QR code
-#   4. APK scans → uses those CF Access headers on every request → CF Access
-#      authorizes → tunnel → MC
+#   2. CP opens a mobile session and returns `pair_token` ONCE (it is stored
+#      hashed; we cannot show it again)
+#   3. Host MC turns it into a clayrune://pair?... URI for the QR code
+#   4. APK POSTs {refresh_token: <pair_token>} to /v1/session/refresh, stores the
+#      returned `cr_session` cookie, and renews it before expiry
+#
+# ⚠️ THE SHIPPED APK STILL SENDS CF-Access-Client-Id / CF-Access-Client-Secret
+# HEADERS. Those headers now authorize nothing. The Android shell
+# (E:\clayrune-mobile, MainActivity) must be updated to the refresh-token flow
+# before phones work again. Backlog item filed; see §3.15.6 of
+# `docs/remote-access/03-control-plane-api.md`.
 #
 # Auth: device-self or the owning Firebase user. The caller MUST be authorized
 # as the device's owner; cross-user pairing is rejected.
@@ -490,7 +381,14 @@ _MOBILE_TOKEN_NAME_RE = re.compile(r"^[A-Za-z0-9 _.\-]{1,48}$")
 
 
 def _mobile_tokens_col(device_id: str):
-    """Subcollection holding per-device mobile-token rows."""
+    """Subcollection holding per-device mobile-token rows.
+
+    Kept as a per-device subcollection (rather than folding straight into
+    `sessions/`) because pairing is scoped to a *host machine*: the QR code is
+    shown by one MC instance, and "which phones are paired to this box" is the
+    question the dashboard asks. The row is a pointer to the session that holds
+    the actual credential.
+    """
     return fs.db().collection(fs.COL_DEVICES).document(device_id) \
         .collection("mobile_tokens")
 
@@ -513,21 +411,26 @@ async def create_mobile_token(
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
     x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
 ):
-    """Mint a new mobile-pairing service token for a phone.
+    """Pair a phone: open a long-lived mobile session and hand back its token.
 
     Body: {"label": "Ron's Pixel"} — free-form, shown in the dashboard list.
 
-    Response (ONE TIME — store immediately, secret is unrecoverable):
+    Response (ONE TIME — the token is stored hashed and cannot be shown again):
       {
         "ok": true,
         "token_id": "<firestore doc id>",
-        "cf_token_id": "<CF Access service-token id>",
-        "client_id": "<CF Access Client ID>",
-        "client_secret": "<CF Access Client Secret>",
+        "session_id": "sess_...",
+        "pair_token": "<opaque refresh token>",
+        "refresh_url": "https://api.<zone>/v1/session/refresh",
         "hostname": "<username>.clayrune.io",
         "label": "Ron's Pixel",
         "created_at": "<iso8601>"
       }
+
+    The phone POSTs `{"refresh_token": pair_token}` to `refresh_url`, gets a
+    30-minute `cr_session` cookie, and renews it before expiry. That renewal is
+    the entitlement chokepoint — unlike the CF service token this replaces, which
+    was valid for a year and checked nobody's subscription, ever.
     """
     rid = _request_id(request)
     user = _resolve_user(authorization, x_dev_user_email, x_mc_device_auth)
@@ -555,75 +458,29 @@ async def create_mobile_token(
         })
     _authorized_for_device(user, device_row, rid=rid)
 
-    app_id = device_row.get("cf_access_app_id", "")
     hostname = device_row.get("hostname_claim", "")
-    if not app_id or not hostname:
+    if not hostname:
         raise HTTPException(status_code=409, detail={
             "code": "device_unprovisioned",
-            "message": "Device has no CF Access app — re-enroll the host before pairing phones.",
+            "message": "Device has no hostname — re-enroll the host before pairing phones.",
             "request_id": rid,
         })
+    username = hostname.split(".")[0]
 
-    cf = _get_cf_client()
-    # CF service-token names must be unique per account; namespace by username
-    # + a short random suffix so concurrent pairs don't collide and so deleted
-    # tokens don't shadow new ones.
-    suffix = secrets.token_hex(3)
-    cf_token_name = f"clayrune-{hostname}-{suffix}"
-    try:
-        token = await cf.create_service_token(name=cf_token_name)
-    except cloudflare.CloudflareAPIError as e:
-        log.error("[mobile-pair] create_service_token failed: %s", e)
-        raise HTTPException(status_code=502, detail={
-            "code": "cf_create_token_failed",
-            "message": f"Cloudflare rejected token creation: {e}",
-            "request_id": rid,
-        })
+    session_id, pair_token, expires_at = _sessions.create(
+        user_id=user["user_id"], username=username,
+        kind=_sessions.KIND_MOBILE, label=label,
+    )
 
-    cf_token_id = token.get("id") or ""
-    client_id = token.get("client_id") or ""
-    client_secret = token.get("client_secret") or ""
-    if not (cf_token_id and client_id and client_secret):
-        # CF returned 2xx but body is malformed — best-effort cleanup so we
-        # don't leak an orphan token.
-        try: await cf.delete_service_token(cf_token_id)
-        except Exception: pass
-        raise HTTPException(status_code=502, detail={
-            "code": "cf_create_token_malformed",
-            "message": "Cloudflare returned an incomplete token response.",
-            "request_id": rid,
-        })
-
-    try:
-        policy = await cf.add_service_token_policy(
-            app_id=app_id, token_id=cf_token_id,
-            name=f"Mobile · {label}",
-        )
-    except cloudflare.CloudflareAPIError as e:
-        # Roll back the orphan token if we can't attach it to the policy.
-        try: await cf.delete_service_token(cf_token_id)
-        except Exception: pass
-        log.error("[mobile-pair] add_service_token_policy failed: %s", e)
-        raise HTTPException(status_code=502, detail={
-            "code": "cf_attach_policy_failed",
-            "message": f"Cloudflare rejected policy attach: {e}",
-            "request_id": rid,
-        })
-
-    cf_policy_id = policy.get("id") or ""
     now = _dt.datetime.now(_dt.timezone.utc).isoformat()
-
     doc_ref = _mobile_tokens_col(device_id).document()
     doc_ref.set({
         "label": label,
-        "cf_token_id": cf_token_id,
-        "cf_token_name": cf_token_name,
-        "cf_policy_id": cf_policy_id,
-        "client_id": client_id,
-        # NOTE: we DO NOT persist client_secret. CF will not reveal it again,
-        # but that's the caller's problem (they got it in the response). If
-        # they lose it, they re-pair (delete + create new).
+        "session_id": session_id,
+        # The token itself is NOT persisted here — `sessions/{id}.refresh_hash`
+        # is the only copy, and it is a hash. If the user loses it they re-pair.
         "created_at": now,
+        "expires_at": expires_at.isoformat(),
         "last_used_at": None,
         "revoked_at": None,
     })
@@ -631,9 +488,10 @@ async def create_mobile_token(
     return {
         "ok": True,
         "token_id": doc_ref.id,
-        "cf_token_id": cf_token_id,
-        "client_id": client_id,
-        "client_secret": client_secret,
+        "session_id": session_id,
+        "pair_token": pair_token,
+        "refresh_url": f"https://api.{os.environ.get('CLAYRUNE_PRIMARY_ZONE', 'clayrune.io')}"
+                       f"/v1/session/refresh",
         "hostname": hostname,
         "label": label,
         "created_at": now,
@@ -666,9 +524,15 @@ async def list_mobile_tokens(
         out.append({
             "token_id": snap.id,
             "label": row.get("label", ""),
-            "client_id": row.get("client_id", ""),  # public half is fine to surface
+            "session_id": row.get("session_id", ""),
             "created_at": row.get("created_at"),
+            "expires_at": row.get("expires_at"),
             "last_used_at": row.get("last_used_at"),
+            # Legacy CF Access pairs (pre-2026-07-13) still carry a client_id and
+            # no session_id. They no longer authorize anything — surface the flag
+            # so the dashboard can tell the user to re-pair rather than silently
+            # listing a dead phone as live.
+            "legacy_cf_access": bool(row.get("client_id")) and not row.get("session_id"),
         })
     out.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"tokens": out}
@@ -683,10 +547,15 @@ async def delete_mobile_token(
     x_dev_user_email: Optional[str] = Header(None, alias="X-Dev-User-Email"),
     x_mc_device_auth: Optional[str] = Header(None, alias="X-MC-Device-Auth"),
 ):
-    """Revoke a paired phone: delete CF policy + CF service token + Firestore row.
+    """Unpair a phone: revoke its session (and tear down any legacy CF Access
+    service token / policy, for pairs created before 2026-07-13).
 
-    Idempotent. Best-effort on CF — Firestore row is deleted even if CF API
-    fails, so the dashboard list stays accurate.
+    Idempotent. Best-effort on CF — the Firestore row is deleted even if the CF
+    API fails, so the dashboard list stays accurate.
+
+    The phone keeps working until its current 30-minute `cr_session` cookie
+    expires; the next refresh fails. If you lost the phone and 30 minutes is too
+    long, suspend the account — the KV denylist cuts the edge off immediately.
     """
     rid = _request_id(request)
     user = _resolve_user(authorization, x_dev_user_email, x_mc_device_auth)
@@ -700,31 +569,38 @@ async def delete_mobile_token(
     if not snap.exists:
         return {"ok": True, "already_revoked": True, "reason": "token_not_found"}
     row = snap.to_dict() or {}
+
+    deleted = {"session": False, "legacy_cf_policy": False, "legacy_cf_token": False}
+
+    if session_id := row.get("session_id"):
+        deleted["session"] = _sessions.revoke(session_id, user_id=user["user_id"])
+
+    # Legacy teardown: pairs created while CF Access was still in the path.
     app_id = device_row.get("cf_access_app_id", "")
     cf_token_id = row.get("cf_token_id", "")
     cf_policy_id = row.get("cf_policy_id", "")
-
-    cf = _get_cf_client()
-    deleted = {"policy": False, "token": False}
-    if app_id and cf_policy_id:
-        try:
-            await cf.delete_access_policy(app_id=app_id, policy_id=cf_policy_id)
-            deleted["policy"] = True
-        except Exception as e:
-            log.warning("[mobile-pair] delete policy %s failed: %s", cf_policy_id, e)
-    if cf_token_id:
-        try:
-            await cf.delete_service_token(cf_token_id)
-            deleted["token"] = True
-        except Exception as e:
-            log.warning("[mobile-pair] delete token %s failed: %s", cf_token_id, e)
+    if cf_token_id or cf_policy_id:
+        cf = _get_cf_client()
+        if app_id and cf_policy_id:
+            try:
+                await cf.delete_access_policy(app_id=app_id, policy_id=cf_policy_id)
+                deleted["legacy_cf_policy"] = True
+            except Exception as e:
+                log.warning("[mobile-pair] delete legacy policy %s failed: %s", cf_policy_id, e)
+        if cf_token_id:
+            try:
+                await cf.delete_service_token(cf_token_id)
+                deleted["legacy_cf_token"] = True
+            except Exception as e:
+                log.warning("[mobile-pair] delete legacy token %s failed: %s", cf_token_id, e)
 
     try:
         doc_ref.delete()
     except Exception as e:
         log.warning("[mobile-pair] firestore delete failed: %s", e)
 
-    return {"ok": True, "deleted": deleted}
+    return {"ok": True, "deleted": deleted,
+            "max_lag_seconds": _sessions.access_ttl_seconds()}
 
 
 # ─── Username policy (matches `03-` §3.5) ────────────────────────────────────
@@ -1029,23 +905,16 @@ async def _do_enroll_after_auth(
             dns_record = await cf.create_dns_cname(name=username, target_uuid=tunnel["id"])
         cf_resources["dns_record_id"] = dns_record["id"]
 
-        try:
-            access_app = await cf.create_access_app(
-                hostname=hostname, allowed_email=user["email"],
-            )
-        except cloudflare.CloudflareAPIError as e:
-            if not _is_cf_error_code(e, 11010):
-                raise
-            log.info("Access app collided with stale app; running force_cleanup + retry")
-            await _force_cleanup_for_hostname(
-                hostname=hostname, username=username,
-                exclude_tunnel_id=cf_resources["tunnel_id"],
-                exclude_dns_record_id=cf_resources["dns_record_id"],
-            )
-            access_app = await cf.create_access_app(
-                hostname=hostname, allowed_email=user["email"],
-            )
-        cf_resources["access_app_id"] = access_app["id"]
+        # NO CLOUDFLARE ACCESS APP. This used to create a self-hosted Access app
+        # gating `hostname` with an email policy — $7/user/mo above 50 seats, and
+        # a hard 500-application ceiling on the account, against a $6.99 price.
+        #
+        # Access was doing two jobs and the money was the boring one. The other
+        # was AUTHORIZATION: its email policy is what stopped alice reaching
+        # bob.clayrune.io. That job now belongs to the edge Worker's
+        # `claims.u !== subdomain → 403` check, fed by the `u` claim we mint in
+        # `app/sessions.py`. Tunnel + DNS below/above are untouched — those are
+        # free and unmetered; only Access was the trap.
 
     except Exception as e:
         log.exception("CF provisioning failed mid-flight; rolling back: %s", e)
@@ -1099,7 +968,9 @@ async def _do_enroll_after_auth(
         "cf_tunnel_uuid": cf_resources["tunnel_id"],
         "cf_tunnel_token": cf_resources["tunnel_token"],
         "cf_dns_record_id": cf_resources["dns_record_id"],
-        "cf_access_app_id": cf_resources["access_app_id"],
+        # `cf_access_app_id` is deliberately NOT written any more. Rows enrolled
+        # before 2026-07-13 still carry one, and the teardown/revoke paths still
+        # honour it so those apps get cleaned up.
         "enrolled_at": now,
         "revoked_at": None,
         "last_seen": None,
