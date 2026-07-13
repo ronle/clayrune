@@ -124,6 +124,15 @@ def _load_config():
         'scribe_reconcile_cap': 5,     # max reconciled sessions/project/boot
         'scribe_checkpoint_enabled': False,  # SPEC §3.A.MID Step 6 — default OFF
         'scribe_checkpoint_kb': 0,     # mid-session cadence (KB new transcript); 0=disabled
+
+        # Offline question channel (mc/question_channel.py). When an agent asks a
+        # question and NOBODY is watching the session (a schedule, a steward cycle,
+        # or just a closed tab), the interactive form renders to an empty room and
+        # the run hangs. These route it somewhere the user will actually see it.
+        'question_channel': 'email',      # 'email' | 'off'
+        'question_channel_to': '',        # '' -> the night-mail default recipient
+        'question_channel_grace_s': 45,   # wait this long for a viewer before sending
+        'question_channel_poll_s': 120,   # how often to scan the inbox for replies
         'long_session_advisory_enabled': False,  # soft "restart long Mode-B session" nudge
         'long_session_advisory_turns': 25,      # num_turns threshold for that nudge
         # Idle-session eviction — reclaim a warm Mode B fleet (claude.exe + its
@@ -2196,5 +2205,15 @@ if __name__ == '__main__':
     # firing a 12s git operation on every page load. Frontend polls
     # /api/system/update/cached.
     threading.Thread(target=_update_check_loop, daemon=True, name='update-check').start()
+    # Offline question channel: picks up emailed answers to questions raised by
+    # unattended runs and resumes the agent through the normal follow-up path.
+    # Self-disabling — the poller no-ops when nothing is outstanding or no mail
+    # credentials are configured. Roll back: question_channel=off.
+    if str(CONFIG.get('question_channel', 'email')).lower() != 'off':
+        try:
+            from mc import question_channel as _qchan
+            _qchan.start_poller(int(CONFIG.get('question_channel_poll_s', 120)))
+        except Exception as e:
+            _log(f"[question-channel] poller not started: {e}")
     _log(f"Clayrune running at http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

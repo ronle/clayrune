@@ -1384,10 +1384,33 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         "them in the project's PLAN tab with a link in the chat — there is no "
         "approval step, just keep working after you write the file.",
 
-        # Clayrune intercepts AskUserQuestion and renders it as an interactive form.
-        "Questions: When you need to ask the user, use the AskUserQuestion "
-        "tool. Clayrune intercepts it and presents an interactive form; "
-        "answers come back as a follow-up message.",
+        # Questions — the MC Tool Protocol fence, NOT the native tool.
+        #
+        # This used to say "use the AskUserQuestion tool". That tool is a Claude
+        # Code *interactive-mode* built-in; Clayrune runs agents HEADLESS, where
+        # it is absent from the toolset entirely. So the instruction was a
+        # promise the harness could not keep: every agent that tried to ask a
+        # question found no such tool and fell back to burying the question in
+        # prose — worst of all on unattended runs, where nobody is reading.
+        #
+        # `mc:question` is the text-protocol emulation that actually works, and
+        # it is provider-agnostic (Gemini has used it since multi-provider).
+        # The runtime parses the fence out of the finished turn into the SAME
+        # session state the native tool produced, so the interactive form, the
+        # SSE event, and the follow-up resume are all unchanged.
+        "Questions: when you need the user to CHOOSE between concrete options, "
+        "emit a fenced ```mc:question``` block and STOP (end your turn). Body:\n"
+        "  {\"questions\": [{\"header\": \"Topic\", \"question\": \"Which one?\", "
+        "\"options\": [{\"label\": \"A\", \"description\": \"what it means\"}, "
+        "{\"label\": \"B\", \"description\": \"what it means\"}], "
+        "\"multiSelect\": false}]}\n"
+        "Clayrune renders it as an interactive form and sends the answer back as "
+        "your next message. If the user is watching, they answer in the chat; if "
+        "the run is UNATTENDED (scheduled, steward, night-review), Clayrune "
+        "delivers the question over their configured channel (email) so they can "
+        "reply offline — so it is safe to ask even when nobody is at the screen. "
+        "Do NOT call an `AskUserQuestion` tool: it does not exist headless. For "
+        "open-ended input, just ask in plain text.",
 
         # Mermaid blocks render inline in the chat panel.
         "Diagrams: Clayrune renders ```mermaid fenced blocks INLINE in your "
@@ -1774,6 +1797,48 @@ def _agent_todo_ref(session_key, content):
 # with its only caller (the backlog note route).
 
 
+def _apply_mc_tool_blocks_for_turn(session):
+    """Turn boundary: scan the finished turn for MC Tool Protocol fences.
+
+    Claude Code's native `AskUserQuestion` exists only in INTERACTIVE mode. MC
+    runs agents headless, where it is absent from the toolset — so for years the
+    system prompt promised a tool that was not there and every question an agent
+    tried to ask quietly died in prose. `mc:question` is the text-protocol
+    emulation (already used by Gemini); this is where Claude's turns get scanned
+    for it. The parsed result lands in the SAME session state the native tool
+    produced, so the SSE event, the interactive form, and the follow-up resume
+    are all unchanged.
+
+    Best-effort: a failure here must never break the run.
+    """
+    try:
+        buf = session.pop('_mc_turn_buf', None)
+        if not buf:
+            return
+        res = _agent_runtime.apply_mc_tool_blocks(session, '\n'.join(buf))
+        if res.get('paused'):
+            # A question was raised. If nobody is watching this run, hand it to
+            # the user's configured channel so it can be answered offline
+            # instead of hanging until the guardian notices.
+            _question_channel_notify(session)
+    except Exception as e:
+        _log(f"[mc-tool] turn scan failed: {e}", flush=True)
+
+
+def _question_channel_notify(session):
+    """Route a freshly-raised question to the offline channel if unattended.
+
+    Deliberately thin: the decision (attended? which channel? already sent?) and
+    the delivery all live in `mc.question_channel`, which is best-effort and
+    fully self-disabling. Never let it break a turn.
+    """
+    try:
+        from mc import question_channel
+        question_channel.on_question_raised(session)
+    except Exception as e:
+        _log(f"[question-channel] notify failed: {e}", flush=True)
+
+
 def _auto_snapshot_notes_on_turn(session):
     """At a turn boundary, append the last substantive assistant text as a note
     on every in_progress agent-sourced backlog item owned by this session."""
@@ -2061,6 +2126,11 @@ def _read_agent_stream(proc, session):
                             continue
                         if block.get('type') == 'text':
                             session['log_lines'].append(block['text'])
+                            # Buffer the turn's prose so the MC Tool Protocol
+                            # scanner can find an ```mc:question``` fence at the
+                            # turn boundary. Claude has no native AskUserQuestion
+                            # when run headless (see _agent_capability_lines).
+                            session.setdefault('_mc_turn_buf', []).append(block['text'])
                             session['last_output_time'] = _time.time()
                         elif block.get('type') == 'tool_use':
                             tool_name = block.get('name', '')
@@ -2129,6 +2199,7 @@ def _read_agent_stream(proc, session):
                         session['cost_usd'] = (session.get('cost_usd') or 0.0) + (msg['cost_usd'] or 0.0)
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
+                    _apply_mc_tool_blocks_for_turn(session)
                     _auto_snapshot_notes_on_turn(session)
                     _scan_result_event_for_auth(msg)
                 # Web push hook: intercept PushNotification tool_use + turn results.
@@ -2245,6 +2316,11 @@ def _read_agent_stream_b(proc, session):
                             continue
                         if block.get('type') == 'text':
                             session['log_lines'].append(block['text'])
+                            # Buffer the turn's prose so the MC Tool Protocol
+                            # scanner can find an ```mc:question``` fence at the
+                            # turn boundary. Claude has no native AskUserQuestion
+                            # when run headless (see _agent_capability_lines).
+                            session.setdefault('_mc_turn_buf', []).append(block['text'])
                             session['last_output_time'] = _time.time()
                         elif block.get('type') == 'tool_use':
                             tool_name = block.get('name', '')
@@ -2306,6 +2382,7 @@ def _read_agent_stream_b(proc, session):
                         session['cost_usd'] = (session.get('cost_usd') or 0.0) + (msg['cost_usd'] or 0.0)
                     if 'num_turns' in msg:
                         session['num_turns'] = msg['num_turns']
+                    _apply_mc_tool_blocks_for_turn(session)
                     _auto_snapshot_notes_on_turn(session)
                     _scan_result_event_for_auth(msg)
                     # Turn boundary — process stays alive
