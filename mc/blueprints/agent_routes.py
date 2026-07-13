@@ -1936,27 +1936,44 @@ def _note_activity_state(session, msg):
     session['activity_state'] = state_
 
 
+def _tool_preview(text, limit):
+    """Single-line, length-capped preview of a tool argument.
+
+    Collapses ALL whitespace FIRST, then truncates. Both halves matter:
+
+    - A Bash command is frequently multi-line (a heredoc — `python - <<'PY'`…).
+      Slicing the raw string kept the newlines, and the frontend splits a
+      multi-line log entry into separate lines: only the first stayed a
+      `[tool: …]` chip while the rest ("COGS = 0.52", "p") rendered as ordinary
+      agent bubbles — stray script fragments littering the chat.
+    - Cutting mid-token gave no signal it was truncated, so a fragment read like
+      real (broken) output. Mark it with an ellipsis instead.
+    """
+    s = ' '.join((text or '').split())
+    return s if len(s) <= limit else s[:limit].rstrip() + '…'
+
+
 def _format_tool_activity(name, inp):
-    """Format a tool_use block into a compact activity line."""
+    """Format a tool_use block into a compact, single-line activity line."""
     if name in ('Read', 'Edit', 'Write'):
         fp = inp.get('file_path', '')
         short = Path(fp).name if fp else '?'
         return f'[tool: {name}] {short}'
     if name == 'Bash':
-        cmd = (inp.get('command', '') or inp.get('description', '') or '')[:80]
+        cmd = _tool_preview(inp.get('command', '') or inp.get('description', ''), 80)
         return f'[tool: Bash] {cmd}'
     if name in ('Grep', 'Glob'):
-        pat = inp.get('pattern', '')
+        pat = _tool_preview(inp.get('pattern', ''), 80)
         return f'[tool: {name}] {pat}'
     if name == 'Task':
-        desc = (inp.get('description', '') or '')[:50]
+        desc = _tool_preview(inp.get('description', ''), 50)
         return f'[tool: Task] {desc}'
     if name == 'WebSearch':
-        q = (inp.get('query', '') or '')[:60]
+        q = _tool_preview(inp.get('query', ''), 60)
         return f'[tool: WebSearch] {q}'
     if name == 'AskUserQuestion':
         qs = inp.get('questions', [])
-        preview = qs[0].get('question', '')[:60] if qs else ''
+        preview = _tool_preview(qs[0].get('question', ''), 60) if qs else ''
         return f'[tool: AskUserQuestion] {preview}'
     if name == 'TodoWrite':
         todos = inp.get('todos', []) or []
@@ -1966,7 +1983,7 @@ def _format_tool_activity(name, inp):
                         if isinstance(t, dict) and t.get('status') == 'in_progress'), '')
         summary = f'{done}/{total}'
         if in_prog:
-            summary += f' — now: {in_prog[:60]}'
+            summary += f' — now: {_tool_preview(in_prog, 60)}'
         return f'[tool: TodoWrite] {summary}'
     return f'[tool: {name}]'
 
