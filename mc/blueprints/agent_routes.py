@@ -2125,12 +2125,17 @@ def _read_agent_stream(proc, session):
                         if not isinstance(block, dict):
                             continue
                         if block.get('type') == 'text':
-                            session['log_lines'].append(block['text'])
-                            # Buffer the turn's prose so the MC Tool Protocol
-                            # scanner can find an ```mc:question``` fence at the
-                            # turn boundary. Claude has no native AskUserQuestion
-                            # when run headless (see _agent_capability_lines).
+                            # The RAW text feeds the MC Tool Protocol scanner at the
+                            # turn boundary (Claude has no native AskUserQuestion when
+                            # run headless — see _agent_capability_lines).
                             session.setdefault('_mc_turn_buf', []).append(block['text'])
+                            # The CHAT gets it with the fence removed. Without this the
+                            # user watches raw ```mc:question``` JSON scroll past and
+                            # THEN gets the rendered form — confirmed against a live
+                            # agent. The fence is a tool call, not prose.
+                            _visible = _agent_runtime.strip_mc_tool_blocks(block['text'])
+                            if _visible.strip():
+                                session['log_lines'].append(_visible)
                             session['last_output_time'] = _time.time()
                         elif block.get('type') == 'tool_use':
                             tool_name = block.get('name', '')
@@ -2315,12 +2320,17 @@ def _read_agent_stream_b(proc, session):
                         if not isinstance(block, dict):
                             continue
                         if block.get('type') == 'text':
-                            session['log_lines'].append(block['text'])
-                            # Buffer the turn's prose so the MC Tool Protocol
-                            # scanner can find an ```mc:question``` fence at the
-                            # turn boundary. Claude has no native AskUserQuestion
-                            # when run headless (see _agent_capability_lines).
+                            # The RAW text feeds the MC Tool Protocol scanner at the
+                            # turn boundary (Claude has no native AskUserQuestion when
+                            # run headless — see _agent_capability_lines).
                             session.setdefault('_mc_turn_buf', []).append(block['text'])
+                            # The CHAT gets it with the fence removed. Without this the
+                            # user watches raw ```mc:question``` JSON scroll past and
+                            # THEN gets the rendered form — confirmed against a live
+                            # agent. The fence is a tool call, not prose.
+                            _visible = _agent_runtime.strip_mc_tool_blocks(block['text'])
+                            if _visible.strip():
+                                session['log_lines'].append(_visible)
                             session['last_output_time'] = _time.time()
                         elif block.get('type') == 'tool_use':
                             tool_name = block.get('name', '')

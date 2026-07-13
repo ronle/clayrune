@@ -318,6 +318,31 @@ def test_the_turn_boundary_hook_is_a_no_op_on_a_normal_turn():
     assert fired == []
 
 
+def test_the_fence_is_stripped_from_the_chat():
+    """Caught against a LIVE agent, not in a unit test: the raw ```mc:question```
+    JSON was scrolling past in the chat, and THEN the rendered form appeared. The
+    fence is a tool call, not prose — the user must never see it.
+
+    The scanner still needs the raw text, so the two paths diverge: raw into
+    `_mc_turn_buf`, stripped into `log_lines`.
+    """
+    visible = agent_runtime.strip_mc_tool_blocks(QUESTION_TURN)
+    assert 'mc:question' not in visible
+    assert '"options"' not in visible
+    assert "Here's what I found" in visible, "the agent's actual prose must survive"
+
+    # And the scanner still sees it.
+    s = _session()
+    assert agent_runtime.apply_mc_tool_blocks(s, QUESTION_TURN)['paused'] is True
+
+
+def test_a_fence_only_turn_leaves_no_empty_chat_line():
+    """A turn that is nothing but the fence must not emit a blank bubble."""
+    only_fence = '```mc:question\n{"questions": [{"question": "A or B?", "options": ' \
+                 '[{"label": "A"}, {"label": "B"}]}]}\n```'
+    assert agent_runtime.strip_mc_tool_blocks(only_fence).strip() == ''
+
+
 def test_the_turn_boundary_hook_never_raises():
     """Best-effort: this runs inside the stream reader. A throw here would kill
     the turn — the one thing a notification feature must never do."""
