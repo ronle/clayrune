@@ -251,6 +251,17 @@ function _openMermaidViewer(source, svg) {
 // Lightbox for inline agent-output images. Reuses the mermaid-viewer
 // overlay chrome (backdrop, toolbar, Esc/click-out close) for visual
 // consistency; click the image or +/- to zoom.
+// Background modes for the viewer canvas. White first — it's the sane default
+// for reading artwork; the checkerboard (transparency indicator) is opt-in.
+const _IV_BGS = ['white', 'checker', 'dark'];
+const _IV_BG_KEY = 'mc_img_viewer_bg';
+function _ivBgGet() {
+  try {
+    const v = localStorage.getItem(_IV_BG_KEY);
+    return _IV_BGS.includes(v) ? v : 'white';
+  } catch (_) { return 'white'; }
+}
+
 function _openImageViewer(src) {
   const overlay = document.createElement('div');
   overlay.className = 'mermaid-viewer-overlay';
@@ -261,6 +272,7 @@ function _openImageViewer(src) {
         <span class="mermaid-viewer-zoom-label">100%</span>
         <button class="mermaid-viewer-btn _iv-zi" title="Zoom in">+</button>
         <button class="mermaid-viewer-btn _iv-zr" title="Fit to view">&#8634;</button>
+        <button class="mermaid-viewer-btn _iv-bg" title="Background (white / checker / dark)">&#9673; bg</button>
         <a class="mermaid-viewer-btn _iv-open" href="${src}" target="_blank" rel="noopener" title="Open original">open ↗</a>
         <button class="mermaid-viewer-btn _iv-close" title="Close (Esc)">&times;</button>
       </div>
@@ -271,6 +283,43 @@ function _openImageViewer(src) {
   document.body.appendChild(overlay);
   const wrap = overlay.querySelector('.mermaid-viewer-svg');
   const zoomLabel = overlay.querySelector('.mermaid-viewer-zoom-label');
+  const content = overlay.querySelector('.mermaid-viewer-content');
+  const scrollEl = overlay.querySelector('.mermaid-viewer-scroll');
+  const imgEl = overlay.querySelector('.mermaid-viewer-svg img');
+
+  // ── Background mode (persisted) ──
+  let bg = _ivBgGet();
+  const applyBg = () => {
+    scrollEl.classList.remove('vbg-checker', 'vbg-dark');
+    if (bg !== 'white') scrollEl.classList.add('vbg-' + bg);
+    try { localStorage.setItem(_IV_BG_KEY, bg); } catch (_) {}
+  };
+  applyBg();
+  overlay.querySelector('._iv-bg').addEventListener('click', e => {
+    e.stopPropagation();
+    bg = _IV_BGS[(_IV_BGS.indexOf(bg) + 1) % _IV_BGS.length];
+    applyBg();
+  });
+
+  // ── Open at the image's NATURAL size, not a hard-coded 95vw x 92vh ──
+  // The CSS default filled the screen for a thumbnail-sized picture. Size the
+  // window to the picture (plus the toolbar + canvas padding), clamped to the
+  // viewport and to the CSS min-size; the user can still drag-resize from the
+  // corner (`resize: both`).
+  const sizeToImage = () => {
+    const nw = imgEl.naturalWidth, nh = imgEl.naturalHeight;
+    if (!nw || !nh) return;                       // decode failed — keep CSS default
+    const CHROME_H = 45 + 48;                     // toolbar + 24px canvas padding x2
+    const CHROME_W = 48;
+    const maxW = Math.round(window.innerWidth * 0.95);
+    const maxH = Math.round(window.innerHeight * 0.92);
+    const w = Math.max(320, Math.min(nw + CHROME_W, maxW));
+    const h = Math.max(220, Math.min(nh + CHROME_H, maxH));
+    content.style.width = w + 'px';
+    content.style.height = h + 'px';
+  };
+  if (imgEl.complete) sizeToImage();
+  else imgEl.addEventListener('load', sizeToImage, { once: true });
   let scale = 1;
   const applyScale = () => {
     wrap.style.transform = `scale(${scale})`;

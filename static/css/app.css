@@ -1681,16 +1681,30 @@
     font-size: 8px; color: var(--text); background: rgba(0,0,0,0.7);
     padding: 1px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  /* Remove-attachment button. Was a dark glyph (var(--text) — near-black in the
+     light themes) on a 70%-black circle: dark-on-dark, so it read as an
+     unexplained black blob rather than a close control. Now a light chip with a
+     clear ✕ and a red hover. */
   .create-preview-remove {
-    position: absolute; top: 2px; right: 2px;
-    width: 16px; height: 16px; border-radius: 50%;
-    background: rgba(0,0,0,0.7); border: none; color: var(--text);
-    cursor: pointer; font-size: 10px; line-height: 1;
+    position: absolute; top: 3px; right: 3px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.28);
+    cursor: pointer; font-size: 11px; font-weight: 700; line-height: 1;
     display: flex; align-items: center; justify-content: center;
-    opacity: 0; transition: opacity 0.15s;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .create-preview-remove:hover {
+    background: var(--red-dim); color: var(--red-text); border-color: var(--red);
   }
   .create-preview-item:hover .create-preview-remove,
   .agent-image-preview:hover .create-preview-remove { opacity: 1; }
+  /* Touch devices never hover — without this the control is unreachable. */
+  @media (hover: none), (pointer: coarse) {
+    .create-preview-item .create-preview-remove,
+    .agent-image-preview .create-preview-remove { opacity: 1; }
+  }
   .priority-select {
     background: var(--bg); border: 1px solid var(--border);
     color: var(--text-dim); font-family: 'Inter', sans-serif;
@@ -3728,6 +3742,13 @@
     display: flex; flex-direction: column;
     position: relative; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
     overflow: hidden;
+    /* Drag-resizable from the bottom-right. The image viewer overrides the
+       width/height above with the picture's natural size (see _openImageViewer),
+       so it opens fitted rather than filling the screen; these bounds keep a
+       resize sane. `resize` needs overflow != visible — `hidden` above qualifies. */
+    resize: both;
+    min-width: 320px; min-height: 220px;
+    max-width: 95vw; max-height: 92vh;
   }
   .mermaid-viewer-toolbar {
     display: flex; align-items: center; gap: 6px;
@@ -3746,8 +3767,16 @@
     text-align: center; font-family: var(--mono, Consolas, monospace);
   }
   .mermaid-viewer-close { margin-left: auto; font-size: 18px; padding: 5px 10px; }
+  /* Canvas behind the image/diagram. WHITE by default — the checkerboard (the
+     conventional "this pixel is transparent" indicator) was the default, and it
+     fought with the artwork badly enough that images were hard to read. It's now
+     one of three opt-in modes, cycled from the toolbar and remembered. */
   .mermaid-viewer-scroll {
     flex: 1; overflow: auto; padding: 24px;
+    background: #fff;
+  }
+  .mermaid-viewer-scroll.vbg-checker {
+    background-color: #fff;
     background-image:
       linear-gradient(45deg, #f8f4ed 25%, transparent 25%),
       linear-gradient(-45deg, #f8f4ed 25%, transparent 25%),
@@ -3756,6 +3785,7 @@
     background-size: 16px 16px;
     background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   }
+  .mermaid-viewer-scroll.vbg-dark { background: #23272f; }
   .mermaid-viewer-svg {
     /* width:100% means fill the scroll container at scale=1; transform:scale
        grows it beyond, with overflow-scroll on the parent kicking in. */
