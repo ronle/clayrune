@@ -196,6 +196,7 @@ function _openMermaidViewer(source, svg) {
         <button class="mermaid-viewer-btn mermaid-viewer-zoom-in" title="Zoom in">+</button>
         <button class="mermaid-viewer-btn mermaid-viewer-zoom-reset" title="Fit to view">&#8634;</button>
         <button class="mermaid-viewer-btn mermaid-viewer-source-toggle" title="Toggle source">&lt;/&gt; source</button>
+        <button class="mermaid-viewer-btn mermaid-viewer-dl" title="Download as PNG">&#8681; save</button>
         <button class="mermaid-viewer-btn mermaid-viewer-close" title="Close (Esc)">&times;</button>
       </div>
       <div class="mermaid-viewer-scroll">
@@ -221,6 +222,10 @@ function _openMermaidViewer(source, svg) {
     e.stopPropagation();
     const pre = overlay.querySelector('.mermaid-source');
     pre.style.display = pre.style.display === 'none' ? 'block' : 'none';
+  });
+  overlay.querySelector('.mermaid-viewer-dl').addEventListener('click', e => {
+    e.stopPropagation();
+    _downloadMermaid(overlay);
   });
   overlay.querySelector('.mermaid-viewer-zoom-in').addEventListener('click', e => {
     e.stopPropagation(); scale = Math.min(scale * 1.25, 5); applyScale();
@@ -251,6 +256,94 @@ function _openMermaidViewer(source, svg) {
 // Lightbox for inline agent-output images. Reuses the mermaid-viewer
 // overlay chrome (backdrop, toolbar, Esc/click-out close) for visual
 // consistency; click the image or +/- to zoom.
+// ── Download helpers (shared by the image + mermaid viewers) ────────────────
+function _dlBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function _dlStamp() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+// Prefer the real file's name — /api/serve-image carries it in ?path= — so a
+// saved attachment keeps its original name instead of a generic stamp.
+function _imgFilename(src, mime) {
+  try {
+    const u = new URL(src, location.href);
+    const p = u.searchParams.get('path') || u.pathname;
+    const base = decodeURIComponent(p).split(/[/\\]/).pop() || '';
+    if (base && /\.[a-z0-9]{2,5}$/i.test(base)) return base;
+  } catch (_) { /* data: URL or unparseable — fall through to the stamp */ }
+  const ext = ((mime || '').split('/')[1] || 'png').replace('svg+xml', 'svg');
+  return `image-${_dlStamp()}.${ext}`;
+}
+async function _downloadImage(src) {
+  try {
+    // Fetch → blob so the download is forced even when the server serves the
+    // image inline (Content-Disposition), and so we can read the real MIME.
+    const res = await fetch(src);
+    const blob = await res.blob();
+    _dlBlob(blob, _imgFilename(src, blob.type));
+  } catch (_) {
+    // Same-origin and data: URLs still save fine via a plain anchor.
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = _imgFilename(src, '');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+}
+
+// Export a rendered mermaid diagram as a PNG (3x, flattened onto white so the
+// transparent SVG background doesn't come out black in other apps).
+//
+// mermaid emits <foreignObject> labels (htmlLabels: true). Chrome rasterises
+// those correctly through an <img> — verified, text and all — but that is an
+// engine-dependent behaviour, and a SILENTLY BLANK png would be worse than no
+// png. So any failure falls back to saving the SVG, which always works and is
+// vector anyway.
+function _downloadMermaid(overlay) {
+  const svgEl = overlay.querySelector('.mermaid-viewer-svg svg');
+  if (!svgEl) return;
+  const clone = svgEl.cloneNode(true);
+  const vb = (svgEl.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+  const rect = svgEl.getBoundingClientRect();
+  const w = Math.ceil((vb.length === 4 && vb[2]) ? vb[2] : (rect.width || 800));
+  const h = Math.ceil((vb.length === 4 && vb[3]) ? vb[3] : (rect.height || 600));
+  clone.removeAttribute('style');          // the viewer forces width:100% — drop it
+  clone.setAttribute('width', w);
+  clone.setAttribute('height', h);
+  if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  const svgStr = new XMLSerializer().serializeToString(clone);
+  const saveSvg = () => _dlBlob(
+    new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }),
+    `diagram-${_dlStamp()}.svg`);
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const S = 3;                          // 3x so the text stays crisp
+      const c = document.createElement('canvas');
+      c.width = w * S;
+      c.height = h * S;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(blob => (blob ? _dlBlob(blob, `diagram-${_dlStamp()}.png`) : saveSvg()), 'image/png');
+    } catch (_) { saveSvg(); }
+  };
+  img.onerror = saveSvg;
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+}
+
 // Background modes for the viewer canvas. White first — it's the sane default
 // for reading artwork; the checkerboard (transparency indicator) is opt-in.
 const _IV_BGS = ['white', 'checker', 'dark'];
@@ -273,6 +366,7 @@ function _openImageViewer(src) {
         <button class="mermaid-viewer-btn _iv-zi" title="Zoom in">+</button>
         <button class="mermaid-viewer-btn _iv-zr" title="Fit to view">&#8634;</button>
         <button class="mermaid-viewer-btn _iv-bg" title="Background (white / checker / dark)">&#9673; bg</button>
+        <button class="mermaid-viewer-btn _iv-dl" title="Download image">&#8681; save</button>
         <a class="mermaid-viewer-btn _iv-open" href="${src}" target="_blank" rel="noopener" title="Open original">open ↗</a>
         <button class="mermaid-viewer-btn _iv-close" title="Close (Esc)">&times;</button>
       </div>
@@ -299,6 +393,10 @@ function _openImageViewer(src) {
     e.stopPropagation();
     bg = _IV_BGS[(_IV_BGS.indexOf(bg) + 1) % _IV_BGS.length];
     applyBg();
+  });
+  overlay.querySelector('._iv-dl').addEventListener('click', e => {
+    e.stopPropagation();
+    _downloadImage(src);
   });
 
   // ── Open at the image's NATURAL size, not a hard-coded 95vw x 92vh ──
