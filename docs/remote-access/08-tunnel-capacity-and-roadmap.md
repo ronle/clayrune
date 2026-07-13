@@ -76,6 +76,16 @@ the business first looks like a business. There is no way to trick this with a
 wildcard CNAME: each user's `cloudflared` is a distinct connector and needs its own
 route.
 
+⚠️ **The Worker does not remove this cap, and CF's escape hatch is not one.** The
+Worker replaces the **auth gate**, not the tunnel — every user still runs
+`cloudflared` on their own PC, because that outbound connection is the only thing that
+reaches a machine behind their home NAT. A Worker at the edge has nothing to connect
+*to* until that tunnel exists. So: one Worker, **still one tunnel per user.** And
+CF's limits page offers an increase only on **Enterprise accounts** ("contact your
+account team") — 5–6 figures/yr against a $6.99 product. **Treat 1,000 as hard.**
+Do not let relief about the $7/seat fee (§2 — the genuinely dangerous half, now dead)
+talk you into designing as though the cap died with it.
+
 ### 3.1 Do this now — the quota alarm at 800 (an afternoon)
 
 Turns a cliff into a **scheduled decision**. Cron job → CF API:
