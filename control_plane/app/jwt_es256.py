@@ -91,6 +91,14 @@ class SigningKey:
 _keys: Optional[list[SigningKey]] = None
 
 
+def _allow_ephemeral_key() -> bool:
+    """Opt-in to an in-memory signing key. Local dev / tests ONLY — never a deploy.
+
+    Read at call time, not import time, so tests and the dev runner can flip it.
+    """
+    return os.environ.get("CLAYRUNE_ALLOW_EPHEMERAL_KEY", "0") == "1"
+
+
 def _parse_pem(pem: str) -> ec.EllipticCurvePrivateKey:
     key = serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
     if not isinstance(key, ec.EllipticCurvePrivateKey):
@@ -130,16 +138,32 @@ def _load_keys() -> list[SigningKey]:
         kid = os.environ.get("CLAYRUNE_JWT_KID", "cp-1").strip() or "cp-1"
         return [SigningKey(kid=kid, private_key=_parse_pem(pem), active=True)]
 
-    if os.environ.get("K_SERVICE"):
+    # FAIL CLOSED. This guard used to fire only when K_SERVICE was set — i.e. on
+    # Cloud Run and nowhere else. Anywhere else that runs more than one process
+    # (gunicorn --workers 2, a plain VM, Fly — where the hosted product is
+    # heading) EVERY WORKER would generate its own private key and publish them
+    # all under the same kid. /v1/jwks returns whichever worker happened to
+    # answer, the edge Worker caches that for 10 minutes, and every JWT signed by
+    # a different worker fails verification.
+    #
+    # The symptom is ~50% of requests 403-ing at the edge, at random, looking for
+    # all the world like a network flake. That is a day of someone's life.
+    #
+    # So: an ephemeral key is now opt-IN, not opt-out. Local dev sets the flag
+    # (conftest and the dev runner do); no deployment ever should.
+    if not _allow_ephemeral_key():
         raise RuntimeError(
             "No JWT signing key configured (CLAYRUNE_JWT_SIGNING_KEYS / "
-            "CLAYRUNE_JWT_SIGNING_KEY_PEM) in a Cloud Run environment. Refusing to "
-            "generate an ephemeral key in production — every restart would silently "
-            "invalidate every session and break the Worker's cached JWKS."
+            "CLAYRUNE_JWT_SIGNING_KEY_PEM). Refusing to generate an ephemeral key: "
+            "with more than one process each would sign with a DIFFERENT key under "
+            "the SAME kid, and the edge would reject a random ~half of all tokens. "
+            "Set a real key, or set CLAYRUNE_ALLOW_EPHEMERAL_KEY=1 for local dev "
+            "(single process only — sessions will not survive a restart)."
         )
 
-    log.warning("jwt: no signing key configured — generating an EPHEMERAL dev key. "
-                "Sessions will not survive a restart.")
+    log.warning("jwt: no signing key configured — generating an EPHEMERAL dev key "
+                "(CLAYRUNE_ALLOW_EPHEMERAL_KEY=1). Sessions will not survive a "
+                "restart, and this is UNSAFE with more than one worker process.")
     return [SigningKey(kid="dev-ephemeral",
                        private_key=ec.generate_private_key(ec.SECP256R1()),
                        active=True)]

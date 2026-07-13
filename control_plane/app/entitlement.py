@@ -41,8 +41,11 @@ Flip `CLAYRUNE_BILLING_ENFORCED=1` when the billing webhook is populating
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 import os
 from typing import Any, Optional
+
+log = logging.getLogger(__name__)
 
 
 def billing_enforced() -> bool:
@@ -92,7 +95,24 @@ def is_entitled(user_row: dict, now: Optional[_dt.datetime] = None) -> bool:
     status = u.get("sub_status") or "none"
     if status in ("trialing", "active"):
         period_end = _as_datetime(u.get("current_period_end"))
-        return period_end is not None and now < period_end
+        if period_end is None:
+            # FAIL OPEN. The subscription says active/trialing but the period end
+            # is missing or unparseable — that is a broken *billing pipeline* (a
+            # dead webhook, a bad write), not a customer who stopped paying. The
+            # module contract above is explicit: a broken billing pipeline must
+            # never kill a paying customer. Returning False here would lock out
+            # exactly the person the grace machinery exists to protect.
+            #
+            # Loud on purpose: this is silent data corruption on a paying row and
+            # nothing else will surface it.
+            log.error(
+                "[entitlement] user_id=%s sub_status=%s but current_period_end is "
+                "missing/unparseable (%r) — FAILING OPEN. The billing pipeline is "
+                "not writing this field; fix it or this user is entitled forever.",
+                u.get("user_id"), status, u.get("current_period_end"),
+            )
+            return True
+        return now < period_end
     if status == "past_due":
         # Fail OPEN through dunning — never kill a paying customer because a
         # payment retry is in flight.

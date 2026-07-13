@@ -41,6 +41,10 @@ os.environ.setdefault("CLAYRUNE_PRIMARY_ZONE", "clayrune.io")
 os.environ.setdefault("CLOUDFLARE_API_TOKEN", "test-token")
 os.environ.setdefault("CLOUDFLARE_ACCOUNT_ID", "acc-test")
 os.environ.setdefault("CLOUDFLARE_ZONE_ID", "zone-test")
+# jwt_es256 now REFUSES to invent an ephemeral signing key unless told to (it
+# would sign with a different key per worker process under one kid — see
+# _allow_ephemeral_key). Tests are single-process and want the throwaway key.
+os.environ.setdefault("CLAYRUNE_ALLOW_EPHEMERAL_KEY", "1")
 
 
 # ─── In-memory Firestore stub ────────────────────────────────────────────────
@@ -148,6 +152,34 @@ class _MemTxn:
         self.store[(ref.name, ref.id)] = dict(data)
 
 
+class _MemBatch:
+    """Mirrors google.cloud.firestore's WriteBatch: buffer writes, apply on commit.
+
+    Buffering (rather than writing through) is the point — `sessions.revoke_all`
+    relies on the batch being all-or-nothing, and a stub that applied each write
+    immediately would pass a test that the real Firestore would fail.
+    """
+
+    def __init__(self, store):
+        self.store = store
+        self._ops: list[tuple[tuple[str, str], dict, bool]] = []
+        self.committed = False
+
+    def set(self, ref, data: dict, merge: bool = False):
+        self._ops.append(((ref.name, ref.id), dict(data), merge))
+
+    def delete(self, ref):
+        self._ops.append(((ref.name, ref.id), {}, False))
+
+    def commit(self):
+        for key, data, merge in self._ops:
+            cur = self.store.get(key, {}) if merge else {}
+            cur.update(data)
+            self.store[key] = cur
+        self.committed = True
+        self._ops = []
+
+
 class MemoryFirestore:
     """Drop-in replacement for the google.cloud.firestore.Client we need."""
 
@@ -159,6 +191,9 @@ class MemoryFirestore:
 
     def transaction(self) -> _MemTxn:
         return _MemTxn(self._store)
+
+    def batch(self) -> _MemBatch:
+        return _MemBatch(self._store)
 
     # Convenience for tests
     def dump(self) -> dict:

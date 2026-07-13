@@ -6,6 +6,74 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-07-13b] — Control plane: session-auth hardening (night-review findings)
+
+The session-JWT code below shipped unreviewed. The 2026-07-13 night review found
+**ten** issues in it; all ten are fixed here, each with a regression test that was
+**verified to fail against the shipped code** (a test that passes both ways proves
+nothing). 25 new tests; `control_plane` 32 → 57, all green. No behaviour change for
+a healthy session.
+
+Nothing here was exploitable *today* — billing enforcement is off and the Worker is
+not live. Every one of them becomes real the day either of those flips.
+
+**Would have locked out or broken paying users**
+- `entitlement.py` **failed CLOSED on a broken billing row.** An `active` sub whose
+  `current_period_end` was missing or unparseable returned `False` — locking out the
+  paying customer in exactly the "our webhook died" case the module's own docstring
+  says must never happen. Now fails **open** and logs loudly. A period end that is
+  present and *past* still denies: failing open on missing data must not become
+  failing open on bad news. Suspension still outranks everything.
+- `jwt_es256.py` **would have failed ~50% of logins at random, off Cloud Run.** The
+  "don't invent an ephemeral signing key in production" guard only fired on
+  `K_SERVICE`. On gunicorn/a VM/**Fly** (where the hosted product is heading) every
+  worker generates its *own* key under the *same* `kid`; `/v1/jwks` returns whichever
+  worker answered, the edge caches it 10 minutes, and tokens from the other workers
+  fail. Reads as a network flake; costs a day. Ephemeral keys are now **opt-in**
+  (`CLAYRUNE_ALLOW_EPHEMERAL_KEY=1`, dev only) and the guard fails closed.
+
+**Security**
+- `sessions.py` **refresh tokens now rotate, with reuse detection.** The same secret
+  was replayed for a whole session (30d browser, **365d phone**): a stolen token was
+  a full-lifetime bearer credential that produced *zero* signal — thief and victim
+  refreshing side by side forever. Now the secret is retired on every use; presenting
+  a superseded one outside a 60s race window is proof two parties hold it, and the
+  session is revoked. **Mobile is deliberately excluded** (`sessions.rotates()`): the
+  shipped APK replays its `pair_token` forever, so rotating would revoke every paired
+  phone on its second renewal — and it would look exactly like the attack. Mobile
+  rotation lands **with** the APK rework (backlog `ee94a17e`); the refresh response
+  already returns the new token, so that stays a client-side change.
+- `sessions.py` an **unparseable `expires_at` was treated as NON-EXPIRING** — one bad
+  write and the refresh token was immortal. Now treated as expired. Cost of failing
+  closed: one sign-in. Cost of failing open: unbounded.
+- `routes_auth.py` the **sign-in page now ships a CSP** with a per-response nonce. It
+  is where the Google ID token is obtained and the `Domain=.clayrune.io` cookie is
+  minted — the highest-value injection target in the product. The Firebase SDK is an
+  ES module, so SRI is impossible; the CSP pins the origin instead.
+- `main.py` **CORS tightened on what is now the auth boundary**: `allow_headers=["*"]`
+  with `allow_credentials=True` → pinned to `Content-Type`/`Authorization`, and the
+  origin list is stripped (`"a, b"` silently never matched any `Origin`).
+- `sessions.py` a **malformed `cr_refresh` cookie returned HTTP 500, not 401.** The
+  session id went unvalidated into Firestore's `.document()`, so `"a/b.secret"` raised
+  `ValueError`. `resolve_refresh` is documented to give one undifferentiated failure so
+  a probe cannot learn *why* it failed — a 500 among 401s is exactly that signal. Ids
+  are now shape-checked before any Firestore call.
+
+**Correctness / ops**
+- `sessions.py` `revoke_all` is **one atomic batch**, not a write-per-session loop. It
+  runs on the *abuse* path: a partial failure left some of a suspended abuser's sessions
+  alive while returning a count claiming they were all gone.
+- `routes_auth.py` every error envelope hardcoded `"request_id": "x"` (7 sites). The one
+  field whose job is to be unique was a constant, so "I can't sign in" handed you an id
+  matching every failure ever. Now uses the real `_request_id(request)`.
+- `routes_auth.py` the `cr_refresh` cookie max-age hardcoded the browser's 30d while
+  `sessions.create()` picks 365d for mobile. Latent (the phone gets its token in the
+  body) but a loaded gun for whoever wires the phone up. Now derived from the session's
+  actual expiry.
+
+Unchanged and still blocking the Worker deploy: the reserved-subdomain bypass, the APK's
+dead CF-Access headers, and the SSE/WebSocket cap.
+
 ## [2026-07-13] — Control plane: session JWT at the edge, Cloudflare Access removed
 
 Enrollment provisioned a **Cloudflare Access application + email policy per user**.

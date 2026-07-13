@@ -32,9 +32,11 @@ ships. See `docs/remote-access/03-control-plane-api.md` §3.15.4 for the patch.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json as _json
 import logging
 import os
+import secrets
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -42,6 +44,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from . import auth, entitlement, firestore as fs, jwt_es256, sessions
+from .routes_account import _request_id
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -81,8 +84,25 @@ async def jwks() -> Response:
 # ─── Cookies ─────────────────────────────────────────────────────────────────
 
 
+def _refresh_cookie_max_age(expires_at: Optional[_dt.datetime] = None) -> int:
+    """Seconds to live for the `cr_refresh` cookie — derived, never hardcoded.
+
+    This used to hardcode BROWSER_REFRESH_DAYS while `sessions.create()` picks
+    365d for a mobile session and hands the real `expires_at` straight back to a
+    caller that threw it away. Nothing broke only because the mobile path returns
+    its token in the body and never sets this cookie. That is a loaded gun for
+    whoever wires the phone up next: the obvious code would silently give it 30
+    days instead of a year. Derive from the session's actual expiry.
+    """
+    if expires_at is None:
+        return sessions.BROWSER_REFRESH_DAYS * 86400
+    remaining = int((expires_at - _dt.datetime.now(_dt.timezone.utc)).total_seconds())
+    return max(0, remaining)
+
+
 def _set_session_cookies(resp: Response, *, access_jwt: str, ttl: int,
-                         refresh_token: Optional[str] = None) -> None:
+                         refresh_token: Optional[str] = None,
+                         refresh_expires_at: Optional[_dt.datetime] = None) -> None:
     resp.set_cookie(
         sessions.COOKIE_NAME, access_jwt,
         max_age=ttl, domain=sessions.cookie_domain(), path="/",
@@ -94,7 +114,7 @@ def _set_session_cookies(resp: Response, *, access_jwt: str, ttl: int,
         # the Worker strips `Cookie` before proxying to the user's tunnel.
         resp.set_cookie(
             sessions.REFRESH_COOKIE_NAME, refresh_token,
-            max_age=sessions.BROWSER_REFRESH_DAYS * 86400,
+            max_age=_refresh_cookie_max_age(refresh_expires_at),
             domain=sessions.cookie_domain(), path="/v1/session",
             secure=_secure_cookies(), httponly=True, samesite="lax",
         )
@@ -126,7 +146,7 @@ async def session_start(request: Request, body: dict = Body(...)) -> Response:
     id_token = (body.get("id_token") or "").strip()
     if not id_token:
         raise HTTPException(status_code=400, detail={
-            "code": "bad_envelope", "message": "id_token is required.", "request_id": "x",
+            "code": "bad_envelope", "message": "id_token is required.", "request_id": _request_id(request),
         })
 
     try:
@@ -134,13 +154,13 @@ async def session_start(request: Request, body: dict = Body(...)) -> Response:
     except Exception as e:
         log.info("session_start: firebase verify failed: %s", e)
         raise HTTPException(status_code=401, detail={
-            "code": "unauthorized", "message": f"Sign-in token invalid: {e}", "request_id": "x",
+            "code": "unauthorized", "message": f"Sign-in token invalid: {e}", "request_id": _request_id(request),
         })
     if not fb.get("email_verified", False):
         raise HTTPException(status_code=403, detail={
             "code": "email_unverified",
             "message": "Verify your email with the provider, then try again.",
-            "request_id": "x",
+            "request_id": _request_id(request),
         })
 
     user_row = fs.user_get(fb["user_id"])
@@ -149,12 +169,12 @@ async def session_start(request: Request, body: dict = Body(...)) -> Response:
             "code": "not_enrolled",
             "message": "This account has no Clayrune subdomain yet. "
                        "Enable Remote Access from Clayrune on your machine first.",
-            "request_id": "x",
+            "request_id": _request_id(request),
         })
 
     username = user_row["username"]
     ip = auth.ip_hash(request)
-    session_id, refresh_token, _ = sessions.create(
+    session_id, refresh_token, refresh_expires_at = sessions.create(
         user_id=user_row["user_id"], username=username,
         kind=sessions.KIND_BROWSER, label=_client_label(request), ip_hash=ip,
     )
@@ -169,7 +189,8 @@ async def session_start(request: Request, body: dict = Body(...)) -> Response:
         "expires_in": ttl,
         "paywall_url": None if entitled else _paywall_url(),
     })
-    _set_session_cookies(resp, access_jwt=access_jwt, ttl=ttl, refresh_token=refresh_token)
+    _set_session_cookies(resp, access_jwt=access_jwt, ttl=ttl, refresh_token=refresh_token,
+                         refresh_expires_at=refresh_expires_at)
     return resp
 
 
@@ -206,7 +227,7 @@ async def session_refresh(request: Request) -> Response:
         resp = JSONResponse(status_code=401, content={
             "code": "session_invalid",
             "message": "Session expired or revoked. Sign in again.",
-            "request_id": "x",
+            "request_id": _request_id(request),
         })
         _clear_session_cookies(resp)
         return resp
@@ -218,7 +239,7 @@ async def session_refresh(request: Request) -> Response:
         resp = JSONResponse(status_code=401, content={
             "code": "session_invalid",
             "message": "Account no longer has a Clayrune subdomain.",
-            "request_id": "x",
+            "request_id": _request_id(request),
         })
         _clear_session_cookies(resp)
         return resp
@@ -231,7 +252,7 @@ async def session_refresh(request: Request) -> Response:
             "code": "not_entitled",
             "message": "This subscription is not active.",
             "paywall_url": _paywall_url(),
-            "request_id": "x",
+            "request_id": _request_id(request),
         })
         _clear_session_cookies(resp, refresh=False)
         return resp
@@ -242,13 +263,32 @@ async def session_refresh(request: Request) -> Response:
     access_jwt, ttl = sessions.mint_access_jwt(user_row, session_id=row["_id"])
     sessions.touch(row["_id"], ip_hash=auth.ip_hash(request))
 
-    resp = JSONResponse({
+    # Rotation: `resolve_refresh` retired the secret we were just handed and minted
+    # a successor. It MUST reach the client — a rotated server plus a client still
+    # holding the old secret is a session that dies on its next renewal.
+    #
+    # Browser clients get it back in the cookie. The phone gets it in the BODY,
+    # because it has no cookie jar we control — but today `rotates()` returns False
+    # for mobile, so `_new_refresh_token` is absent there and the phone keeps
+    # replaying its pair_token. Returning the field unconditionally is what makes
+    # the mobile-pairing rework (ee94a17e) a client-side change only.
+    new_refresh = row.get("_new_refresh_token")
+
+    payload = {
         "ok": True,
         "username": user_row["username"],
         "entitled": True,
         "expires_in": ttl,
-    })
-    _set_session_cookies(resp, access_jwt=access_jwt, ttl=ttl)
+    }
+    if new_refresh:
+        payload["refresh_token"] = new_refresh
+
+    resp = JSONResponse(payload)
+    _set_session_cookies(
+        resp, access_jwt=access_jwt, ttl=ttl,
+        refresh_token=new_refresh,
+        refresh_expires_at=row.get("expires_at"),
+    )
     return resp
 
 
@@ -311,7 +351,12 @@ async def signin_page(
     set a `Domain=.clayrune.io` cookie without a cross-origin dance.
     """
     dest = _safe_return_to(return_to) or ""
-    html = _SIGNIN_HTML \
+    # Per-response nonce. The page's own logic is an INLINE <script type="module">
+    # (it has to be — it is templated with the Firebase config), so a CSP without
+    # a nonce for it would block the very code that signs the user in. The nonce
+    # is what lets us refuse 'unsafe-inline' and still run our own script.
+    nonce = secrets.token_urlsafe(16)
+    html = _SIGNIN_HTML.replace("__NONCE__", nonce) \
         .replace("__FB_CFG__", _json.dumps({
             "apiKey": os.environ.get("FB_API_KEY", ""),
             "authDomain": os.environ.get("FB_AUTH_DOMAIN", "clayrune.firebaseapp.com"),
@@ -319,7 +364,29 @@ async def signin_page(
         })) \
         .replace("__RETURN_TO__", _json.dumps(dest)) \
         .replace("__ZONE__", _json.dumps(_zone()))
-    return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
+    return HTMLResponse(content=html, headers={
+        "Cache-Control": "no-store",
+        # This page obtains the Google ID token and mints the Domain=.clayrune.io
+        # session cookie — the highest-value injection target in the product. The
+        # Firebase SDK is an ES module loaded from gstatic, and ES-module imports
+        # cannot carry an SRI hash, so integrity pinning is not available to us.
+        # A CSP is: it pins where script may come from at all, so an injected
+        # inline script or a third-party origin simply does not execute.
+        "Content-Security-Policy": "; ".join([
+            "default-src 'none'",
+            f"script-src 'nonce-{nonce}' https://www.gstatic.com",
+            "connect-src https://identitytoolkit.googleapis.com "
+            "https://securetoken.googleapis.com https://*.googleapis.com",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data:",
+            "frame-src https://*.firebaseapp.com",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+        ]),
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 def _client_label(request: Request) -> str:
@@ -381,7 +448,7 @@ _SIGNIN_HTML = r"""<!doctype html>
     </div>
     <div class="footer">Clayrune</div>
   </div>
-<script type="module">
+<script type="module" nonce="__NONCE__">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup }
   from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
