@@ -34,7 +34,7 @@ they just note "email not sent" at the top of the report.
    {
      "user": "youraddress@gmail.com",
      "app_password": "abcd efgh ijkl mnop",
-     "to": "leviran1@gmail.com"
+     "to": "you@example.com"
    }
    ```
 

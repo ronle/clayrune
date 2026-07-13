@@ -11,7 +11,7 @@ Credentials (never committed) are read from, in order of precedence:
        {
          "user": "you@gmail.com",
          "app_password": "abcd efgh ijkl mnop",   # Gmail App Password (2FA req'd)
-         "to": "leviran1@gmail.com",
+         "to": "you@example.com",
          "host": "smtp.gmail.com",   # optional, defaults to smtp.gmail.com
          "port": 587                  # optional, defaults to 587
        }
@@ -33,7 +33,10 @@ from email.message import EmailMessage
 from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".clayrune" / "night-mail.json"
-DEFAULT_TO = "leviran1@gmail.com"
+# No default recipient: the address is this operator's, not the project's.
+# Set "to" in ~/.clayrune/night-mail.json (or NIGHT_MAIL_TO), else we fall back
+# to "user" (mail yourself), else --to is required.
+DEFAULT_TO = ""
 DEFAULT_HOST = "smtp.gmail.com"
 DEFAULT_PORT = 587
 
@@ -91,7 +94,9 @@ def main() -> int:
     user = (cfg.get("user") or "").strip()
     # Gmail shows App Passwords as "abcd efgh ijkl mnop"; SMTP wants no spaces.
     app_password = (cfg.get("app_password") or "").replace(" ", "").strip()
-    to_addr = (args.to or cfg.get("to") or DEFAULT_TO).strip()
+    # Fall back to the sending account (mail yourself) rather than to any
+    # hardcoded address — see DEFAULT_TO.
+    to_addr = (args.to or cfg.get("to") or DEFAULT_TO or user).strip()
     host = (cfg.get("host") or DEFAULT_HOST).strip()
     try:
         port = int(cfg.get("port") or DEFAULT_PORT)

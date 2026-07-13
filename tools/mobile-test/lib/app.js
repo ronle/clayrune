@@ -8,7 +8,8 @@ const fs = require('fs');
 const { evalIn } = require('./cdp');
 
 const HOST_API = process.env.MC_HOST_API || 'http://localhost:5199';
-const TEST_DIR = process.env.MC_TEST_DIR || 'C:/Users/levir/AppData/Local/Temp/mc-mobiletest';
+const TEST_DIR = process.env.MC_TEST_DIR
+  || require('path').join(require('os').tmpdir(), 'mc-mobiletest');
 
 function httpJson(url) {
   return new Promise((resolve, reject) => {

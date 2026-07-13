@@ -68,6 +68,16 @@ nul
 # Session / personal
 .claude_session_context.md
 
+# ── Agent rules files are USER DATA, not source (untracked 2026-07-12) ──────
+# Both are read verbatim into the agent's system prompt (_build_agent_context):
+# SHARED_RULES.md on EVERY project, AGENT_RULES.md on the project it sits in.
+# Publishing this machine's copies would inject one user's personal working
+# preferences (and their email / mailer paths) into every other install's
+# agents. The Rules editor in the UI writes them; a fresh install starts empty,
+# which is the correct default. Keep local, never commit.
+data/SHARED_RULES.md
+/AGENT_RULES.md
+
 # Logs
 *.log
 
@@ -234,6 +244,11 @@ data/skills/_proposed/
 data/skills/_promoted/
 data/skills/_rejected/
 data/skills/_soak_baseline.json
+
+# gcp-cost-review is a PRIVATE ops automation: it surveys THIS operator's GCP
+# deployment and its PROMPT.md embeds a personal billing-account ID. Not product
+# code. Untracked 2026-07-12; kept local so the weekly schedule still runs here.
+tools/gcp-cost-review/
 
 # engulfing-diagnostic is a PRIVATE trading-analysis skill that was committed as
 # a builtin by mistake — it embeds proprietary SQL + a personal path and must

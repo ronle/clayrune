@@ -41,11 +41,12 @@ datas = [
     ('installer/clayrune.png', 'installer'),
 ]
 
-# Add SHARED_RULES.md only if present (it's user data; ships as a seed file
-# on the Windows side via app.py first-run logic).
-import os
-if os.path.exists('data/SHARED_RULES.md'):
-    datas.append(('data/SHARED_RULES.md', 'data'))
+# SHARED_RULES.md is deliberately NOT bundled. It is user data — read verbatim
+# into every agent's system prompt on every project — and it stays on disk in
+# the builder's checkout even though it is gitignored. Bundling it "if present"
+# baked the builder's personal working preferences into the shipped .app for
+# every downstream user. A fresh install starts with no shared rules; the user
+# writes their own via the Rules editor.
 
 # Claydo reads these from _SERVER_DIR at runtime: USER_GUIDE + CHANGELOG feed
 # ask-mode context; docs/claydo/ holds the builder-mode briefs

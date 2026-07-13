@@ -262,7 +262,7 @@ Per-step crash-recovery log (MODERNIZATION_TRACKS.md). One entry per merged step
   not 403** (403 exists only inside the passcode login flow). Verified BOTH
   ways: unit test with `environ_base={'REMOTE_ADDR':'192.168.1.50'}` (401 +
   Popen-recorder proves no spawn, no session) AND live smoke POST from the
-  real LAN interface 192.168.86.4 → 401 `{"error":"auth_required"}`. The
+  real LAN interface <LAN-IP> → 401 `{"error":"auth_required"}`. The
   plan's "403" is a misremembered status code; behavior unchanged.
 - **Phase 5:** new `tests/test_terminal_routes.py` (16 tests): launch happy
   path with FakeProc-on-a-real-pipe (verbatim `_read_terminal_stream`
