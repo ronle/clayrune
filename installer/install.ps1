@@ -31,6 +31,137 @@ function Refresh-Path {
                 [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
+# LOAD-BEARING. In PowerShell a native command's stdout goes to the PIPELINE,
+# so calling `winget ...` inside a function silently appends winget's output
+# lines to that function's RETURN VALUE. `return $false` then yields
+# @('...winget line...', $false) - an Object[] - and `if (-not (Setup-Node))`
+# evaluates `-not <non-empty array>` = $false, so the failure guard NEVER FIRES.
+# That is exactly how a fresh-VM install fell through a failed Node install and
+# looped forever. Route every native call through here: Write-Host goes to the
+# console only, never the pipeline, and we return the real exit code (a native
+# non-zero exit is NOT a terminating error, so try/catch cannot see it).
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+    )
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'   # stderr must not become a terminating error
+    try {
+        & $Exe @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
+        return $LASTEXITCODE
+    } catch {
+        Write-Host "  ($Exe could not be launched: $_)" -ForegroundColor DarkGray
+        return -1
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+# Belt-and-braces at every call site: take the LAST value a function emitted.
+# Even if some future edit re-introduces pipeline pollution, the `return $true`
+# / `return $false` is always the final element, so the guard still works.
+function Get-BoolResult {
+    param($Value)
+    $items = @($Value)
+    if ($items.Count -eq 0) { return $false }
+    return [bool]$items[-1]
+}
+
+# Node dirs Node can legitimately land in (winget MSI, non-admin installer, our
+# own zip drop). winget writes the MSI's dir to the *Machine* PATH, which a
+# non-elevated Refresh-Path may not see until the next logon - so probe the
+# filesystem directly rather than trusting PATH.
+function Add-NodeToPathIfPresent {
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Clayrune\node'),
+        (Join-Path $env:ProgramFiles 'nodejs'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\nodejs')
+    )
+    if (${env:ProgramFiles(x86)}) {
+        $candidates += (Join-Path ${env:ProgramFiles(x86)} 'nodejs')
+    }
+    foreach ($dir in $candidates) {
+        if (-not $dir) { continue }
+        if (Test-Path (Join-Path $dir 'node.exe')) {
+            if (-not (";$env:Path;".ToLower().Contains(";$($dir.ToLower());"))) {
+                $env:Path = "$dir;$env:Path"
+            }
+            return $true
+        }
+    }
+    return $false
+}
+
+# winget-free, admin-free Node install: the official Windows .zip from
+# nodejs.org (which bundles npm) unpacked into %LOCALAPPDATA%\Clayrune\node.
+# The winget package installs an MSI that wants elevation and writes a Machine
+# PATH entry - both of which fail or go unseen on a locked-down / fresh box.
+# This path needs neither.
+function Install-NodeZip {
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+    Write-Host "  Fetching Node.js LTS ($arch) direct from nodejs.org (no admin needed)..."
+
+    try {
+        $index = Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json' -UseBasicParsing -TimeoutSec 60
+    } catch {
+        Write-Host "  Could not reach nodejs.org: $_" -ForegroundColor Red
+        return $false
+    }
+    $lts = $index | Where-Object { $_.lts -is [string] } | Select-Object -First 1
+    if (-not $lts) {
+        Write-Host '  nodejs.org returned no LTS release.' -ForegroundColor Red
+        return $false
+    }
+
+    $ver     = $lts.version                       # e.g. v22.20.0
+    $name    = "node-$ver-win-$arch"
+    $url     = "https://nodejs.org/dist/$ver/$name.zip"
+    $zipPath = Join-Path $env:TEMP "clayrune-$name.zip"
+    $root    = Join-Path $env:LOCALAPPDATA 'Clayrune'
+    $target  = Join-Path $root 'node'
+
+    Write-Host "  Downloading $name.zip ..."
+    try {
+        $progressPreference = 'SilentlyContinue'   # the progress UI makes iwr ~10x slower
+        Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 600
+    } catch {
+        Write-Host "  Download failed: $_" -ForegroundColor Red
+        return $false
+    }
+
+    try {
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+        $staging = Join-Path $root $name
+        if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
+        Expand-Archive -Path $zipPath -DestinationPath $root -Force
+        Rename-Item -Path $staging -NewName 'node'
+    } catch {
+        Write-Host "  Unpack failed: $_" -ForegroundColor Red
+        return $false
+    } finally {
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Test-Path (Join-Path $target 'node.exe'))) {
+        Write-Host '  Unpacked archive has no node.exe.' -ForegroundColor Red
+        return $false
+    }
+
+    # Persist to the USER PATH so the Clayrune app (and every later shell) sees
+    # node/npm too - not just this process.
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (-not $userPath) { $userPath = '' }
+    if (-not (";$userPath;".ToLower().Contains(";$($target.ToLower());"))) {
+        [Environment]::SetEnvironmentVariable('Path', "$target;$userPath", 'User')
+    }
+    $env:Path = "$target;$env:Path"
+
+    Write-Host "  Node installed to $target" -ForegroundColor Green
+    return $true
+}
+
 # Returns Node major version on PATH, or 0 if missing/invalid.
 function Get-NodeMajor {
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) { return 0 }
@@ -53,36 +184,60 @@ function Setup-Node {
         return $true
     }
 
+    # Node may be installed already but invisible to us: winget's MSI writes its
+    # dir to the *Machine* PATH, which this process won't pick up until the next
+    # logon. Look on disk before concluding it's missing.
+    if (Add-NodeToPathIfPresent) {
+        $major = Get-NodeMajor
+        if ($major -ge 18) {
+            Write-Host "OK Node $(& node --version 2>&1) (found on disk, added to PATH)" -ForegroundColor Green
+            Write-Host ''
+            return $true
+        }
+    }
+
     if ($major -eq 0) {
         Write-Host 'Node.js not found. Need 18+ for Claude CLI.' -ForegroundColor Yellow
     } else {
         Write-Host "Node.js v$major found - too old for Claude CLI (need 18+)." -ForegroundColor Yellow
     }
 
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host 'winget not available; cannot auto-install Node.' -ForegroundColor Red
-        Write-Host 'Install Node 20+ manually from https://nodejs.org/ and re-run.'
-        return $false
-    }
-
-    Write-Host 'Installing Node.js LTS via winget (no admin needed for current user)...'
-    try {
-        winget install --id OpenJS.NodeJS.LTS -e --silent `
+    # Attempt 1: winget. Best-effort only - on a fresh box it commonly fails
+    # (needs elevation for the machine-wide MSI, or its sources aren't
+    # initialised yet) and it fails by EXIT CODE, not by throwing.
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host 'Installing Node.js LTS via winget...'
+        $rc = Invoke-Native winget install --id OpenJS.NodeJS.LTS -e --silent `
             --accept-source-agreements --accept-package-agreements
-    } catch {
-        Write-Host "winget install Node.js failed: $_" -ForegroundColor Red
-        return $false
+        if ($rc -ne 0) {
+            Write-Host "  winget exited $rc - falling back to a direct download." -ForegroundColor Yellow
+        }
+        Refresh-Path
+        [void](Add-NodeToPathIfPresent)
+        $major = Get-NodeMajor
+        if ($major -ge 18) {
+            Write-Host "OK Node $(& node --version 2>&1)" -ForegroundColor Green
+            Write-Host ''
+            return $true
+        }
+        Write-Host '  winget did not yield a usable Node. Falling back.' -ForegroundColor Yellow
+    } else {
+        Write-Host 'winget not available - using a direct download instead.' -ForegroundColor Yellow
     }
-    Refresh-Path
 
-    $major = Get-NodeMajor
-    if ($major -ge 18) {
-        Write-Host "OK Node $((& node --version 2>&1))" -ForegroundColor Green
-        Write-Host ''
-        return $true
+    # Attempt 2: the official nodejs.org zip. No winget, no admin, no reboot.
+    if (Install-NodeZip) {
+        $major = Get-NodeMajor
+        if ($major -ge 18) {
+            Write-Host "OK Node $(& node --version 2>&1)" -ForegroundColor Green
+            Write-Host ''
+            return $true
+        }
+        Write-Host "Node unpacked but 'node --version' still reports v$major." -ForegroundColor Red
     }
-    Write-Host "Node install completed but 'node --version' still reports v$major." -ForegroundColor Red
-    Write-Host 'Open a new PowerShell window and re-run.'
+
+    Write-Host 'Could not get a working Node 18+ runtime.' -ForegroundColor Red
+    Write-Host 'Install Node 20+ manually from https://nodejs.org/ and re-run.'
     return $false
 }
 
@@ -115,31 +270,85 @@ function Test-ClaudeRuntimeShell {
 # CLI errors with "Claude Code on Windows requires either Git for Windows or
 # PowerShell" the moment we hand off - this preflight catches that BEFORE we
 # spawn the install-prompt subprocess.
+# winget-free, admin-free Git: the official Git for Windows installer is an Inno
+# Setup .exe, and when it is NOT elevated it installs per-user into
+# %LOCALAPPDATA%\Programs\Git. Same reasoning as Install-NodeZip - a box where
+# winget can't land the Node MSI can't land the Git one either.
+function Install-GitForWindows {
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { '64-bit' }
+    Write-Host '  Fetching Git for Windows direct from git-scm.com (no admin needed)...'
+
+    try {
+        $rel = Invoke-RestMethod -UseBasicParsing -TimeoutSec 60 `
+            -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' `
+            -Headers @{ 'User-Agent' = 'clayrune-installer' }
+    } catch {
+        Write-Host "  Could not reach the Git for Windows release feed: $_" -ForegroundColor Red
+        return $false
+    }
+
+    $asset = $rel.assets | Where-Object { $_.name -like "Git-*-$arch.exe" } | Select-Object -First 1
+    if (-not $asset) {
+        Write-Host "  No Git installer asset for $arch in the latest release." -ForegroundColor Red
+        return $false
+    }
+
+    $exePath = Join-Path $env:TEMP $asset.name
+    Write-Host "  Downloading $($asset.name) ..."
+    try {
+        $progressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $exePath -UseBasicParsing -TimeoutSec 600
+    } catch {
+        Write-Host "  Download failed: $_" -ForegroundColor Red
+        return $false
+    }
+
+    Write-Host '  Installing (silent, per-user)...'
+    $rc = Invoke-Native $exePath /VERYSILENT /NORESTART /SUPPRESSMSGBOXES /NOCANCEL `
+        /SP- /COMPONENTS="gitlfs" /o:PathOption=Cmd
+    Remove-Item $exePath -Force -ErrorAction SilentlyContinue
+    if ($rc -ne 0) {
+        Write-Host "  Git installer exited $rc." -ForegroundColor Red
+        return $false
+    }
+    Refresh-Path
+    return $true
+}
+
 function Setup-ClaudeRuntimeShell {
     if (Test-ClaudeRuntimeShell) { return $true }
 
     Write-Host 'Claude Code needs bash.exe (Git for Windows) or PowerShell 7+ to run.' -ForegroundColor Yellow
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host 'winget not available - cannot auto-install Git for Windows.' -ForegroundColor Red
-        Write-Host 'Install Git for Windows manually from https://git-scm.com/downloads/win and re-run.'
-        return $false
+
+    # Attempt 1: winget. Fails by exit code, not by throwing - so check it.
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host 'Installing Git for Windows via winget (also gives Claude its bash runtime)...'
+        $rc = Invoke-Native winget install --id Git.Git -e --silent `
+            --accept-source-agreements --accept-package-agreements
+        if ($rc -ne 0) {
+            Write-Host "  winget exited $rc - falling back to a direct download." -ForegroundColor Yellow
+        }
+        Refresh-Path
+        if (Test-ClaudeRuntimeShell) {
+            Write-Host 'OK Git for Windows / bash available' -ForegroundColor Green
+            Write-Host ''
+            return $true
+        }
+    } else {
+        Write-Host 'winget not available - using a direct download instead.' -ForegroundColor Yellow
     }
-    Write-Host 'Installing Git for Windows via winget (also gives Claude its bash runtime)...'
-    try {
-        winget install --id Git.Git -e --silent --accept-source-agreements --accept-package-agreements
-    } catch {
-        Write-Host "winget install Git failed: $_" -ForegroundColor Red
-        Write-Host 'Install Git for Windows manually from https://git-scm.com/downloads/win and re-run.'
-        return $false
+
+    # Attempt 2: the official installer, per-user.
+    if (Install-GitForWindows) {
+        if (Test-ClaudeRuntimeShell) {
+            Write-Host 'OK Git for Windows / bash available' -ForegroundColor Green
+            Write-Host ''
+            return $true
+        }
     }
-    Refresh-Path
-    if (Test-ClaudeRuntimeShell) {
-        Write-Host 'OK Git for Windows / bash available' -ForegroundColor Green
-        Write-Host ''
-        return $true
-    }
-    Write-Host 'Git installed but bash.exe still not on PATH.' -ForegroundColor Red
-    Write-Host 'Open a new PowerShell window and re-run this installer.'
+
+    Write-Host 'Could not provide bash.exe for Claude Code.' -ForegroundColor Red
+    Write-Host 'Install Git for Windows manually from https://git-scm.com/downloads/win and re-run.'
     return $false
 }
 
@@ -214,11 +423,14 @@ function Install-ClaudeNpm {
     Stop-ClaudeProcesses          # always: a live claude.exe is what causes EPERM
     if ($Clean) {
         Write-Host '  Clearing the locked/partial global package first...'
-        try { npm uninstall -g '@anthropic-ai/claude-code' 2>$null } catch {}
+        [void](Invoke-Native npm uninstall -g '@anthropic-ai/claude-code')
         Clear-ClaudeNpmLeftovers
-        try { npm cache clean --force 2>$null } catch {}
+        [void](Invoke-Native npm cache clean --force)
     }
-    npm install -g '@anthropic-ai/claude-code'
+    # Invoke-Native, not a bare `npm ...`: npm's stdout would otherwise land in
+    # this function's return value and then in Invoke-ClaudeNpmInstall's, making
+    # `if (Invoke-ClaudeNpmInstall ...)` truthy even when the install failed.
+    [void](Invoke-Native npm install -g '@anthropic-ai/claude-code')
     Refresh-Path
 }
 
@@ -269,10 +481,13 @@ Write-Host ''
 
 # -- Step 0: Ensure Node 18+ is available -----------------------------------
 
-if (-not (Setup-Node)) {
+if (-not (Get-BoolResult (Setup-Node))) {
     Write-Host ''
     Write-Host 'Could not set up a working Node 18+ runtime automatically.' -ForegroundColor Red
     Write-Host 'Please install Node 20+ from https://nodejs.org/ and re-run.'
+    Write-Host ''
+    Write-Host 'Retrying the installer will NOT help until Node is present -' -ForegroundColor Yellow
+    Write-Host 'install it first, then re-run.' -ForegroundColor Yellow
     exit 1
 }
 
@@ -294,43 +509,28 @@ if (Test-ClaudeWorks) {
 
     $installed = $false
 
-    # Method 1: npm (preferred on Windows - ships natively with Node).
+    # Method 1: npm (preferred on Windows - ships natively with Node). Step 0
+    # already guarantees Node 18+ and therefore npm; if npm is still missing,
+    # Node came from somewhere unusual, so re-probe the PATH before giving up.
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        [void](Add-NodeToPathIfPresent)
+    }
     if (-not $installed -and (Get-Command npm -ErrorAction SilentlyContinue)) {
         Write-Host 'Trying npm install -g @anthropic-ai/claude-code...'
         try {
-            if (Invoke-ClaudeNpmInstall -Label 'npm install succeeded') {
+            if (Get-BoolResult (Invoke-ClaudeNpmInstall -Label 'npm install succeeded')) {
                 $installed = $true
             } else {
-                Write-Host '  trying next method...' -ForegroundColor Yellow
+                Write-Host '  npm install did not produce a working claude.' -ForegroundColor Yellow
                 Write-Host ''
             }
         } catch {
             Write-Host "- npm install failed: $_" -ForegroundColor Yellow
             Write-Host ''
         }
-    }
-
-    # Method 2: winget Node.js LTS, then npm install.
-    if (-not $installed -and (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host 'Installing Node.js LTS via winget, then Claude CLI...'
-        try {
-            winget install --id OpenJS.NodeJS.LTS -e --silent `
-                --accept-source-agreements --accept-package-agreements
-        } catch {
-            Write-Host "- winget install Node.js failed: $_" -ForegroundColor Yellow
-            Write-Host ''
-        }
-        Refresh-Path
-        if (Get-Command npm -ErrorAction SilentlyContinue) {
-            try {
-                if (Invoke-ClaudeNpmInstall -Label 'winget Node + npm install succeeded') {
-                    $installed = $true
-                }
-            } catch {
-                Write-Host "- npm install (post-winget) failed: $_" -ForegroundColor Yellow
-                Write-Host ''
-            }
-        }
+    } elseif (-not $installed) {
+        Write-Host 'npm is not on PATH even though Node is - cannot install the Claude CLI.' -ForegroundColor Red
+        Write-Host ''
     }
 
     if (-not $installed) {
@@ -367,7 +567,7 @@ if (Test-ClaudeWorks) {
 # -- Step 1.4: Verify Claude Code can run (bash.exe / PowerShell 7) ---------
 
 # Skip on non-Windows (the .ps1 only runs on Windows but be defensive).
-if (-not (Setup-ClaudeRuntimeShell)) {
+if (-not (Get-BoolResult (Setup-ClaudeRuntimeShell))) {
     Write-Host ''
     Write-Host 'Could not provide a runtime shell for Claude Code. Aborting.' -ForegroundColor Red
     exit 1
@@ -517,12 +717,52 @@ function Find-Python311 {
     }
     return $null
 }
+# Official python.org installer, per-user (InstallAllUsers=0) so it needs no
+# admin - the winget-free path, mirroring Install-NodeZip / Install-GitForWindows.
+function Install-PythonOrg {
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+    $ver  = '3.12.8'
+    $url  = "https://www.python.org/ftp/python/$ver/python-$ver-$arch.exe"
+    $exe  = Join-Path $env:TEMP "python-$ver-$arch.exe"
+
+    Write-Host "  Downloading Python $ver ($arch) from python.org (no admin needed)..."
+    try {
+        $progressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing -TimeoutSec 600
+    } catch {
+        Write-Host "  Download failed: $_" -ForegroundColor Red
+        return $false
+    }
+
+    Write-Host '  Installing (silent, per-user)...'
+    $rc = Invoke-Native $exe /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_launcher=1
+    Remove-Item $exe -Force -ErrorAction SilentlyContinue
+    if ($rc -ne 0) {
+        Write-Host "  Python installer exited $rc." -ForegroundColor Red
+        return $false
+    }
+    Refresh-Path
+    return $true
+}
+
 $pythonExe = Find-Python311
 if (-not $pythonExe) {
-    Write-Host '  Python 3.11+ not found. Installing via winget...' -ForegroundColor Yellow
-    & winget install --id Python.Python.3.11 -e --silent --accept-source-agreements --accept-package-agreements
-    Refresh-Path
-    $pythonExe = Find-Python311
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host '  Python 3.11+ not found. Installing via winget...' -ForegroundColor Yellow
+        $rc = Invoke-Native winget install --id Python.Python.3.12 -e --silent `
+            --accept-source-agreements --accept-package-agreements
+        if ($rc -ne 0) {
+            Write-Host "  winget exited $rc - falling back to a direct download." -ForegroundColor Yellow
+        }
+        Refresh-Path
+        $pythonExe = Find-Python311
+    }
+}
+if (-not $pythonExe) {
+    Write-Host '  Python 3.11+ still not found. Installing from python.org...' -ForegroundColor Yellow
+    if (Get-BoolResult (Install-PythonOrg)) {
+        $pythonExe = Find-Python311
+    }
 }
 if (-not $pythonExe) {
     Write-Host '[STEP 2/5] FAIL could not find or install Python 3.11+' -ForegroundColor Red
