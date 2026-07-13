@@ -7,8 +7,15 @@
 # failed to replace PID 53860 (stale process kept holding port 5199).
 
 $ErrorActionPreference = 'Continue'
-$dir = 'C:\Users\levir\Documents\_claude\mission-control'
-$py  = 'C:\Users\levir\AppData\Local\Python\bin\python.exe'
+
+# Derive the install dir from this script's own location (tools/ -> repo root)
+# rather than hardcoding one machine's path. Override either with env vars when
+# invoking the Scheduled Task: MC_DIR / MC_PYTHON.
+$dir = if ($env:MC_DIR) { $env:MC_DIR }
+       else { Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }
+$py  = if ($env:MC_PYTHON) { $env:MC_PYTHON }
+       else { (Get-Command python.exe -ErrorAction SilentlyContinue).Source }
+if (-not $py) { $py = 'python' }
 $log = Join-Path $dir 'data\_mc_restart.log'
 
 function Log($m) {
