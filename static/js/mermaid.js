@@ -214,8 +214,15 @@ function _openMermaidViewer(source, svg) {
     zoomLabel.textContent = Math.round(scale * 100) + '%';
   };
   const closeIt = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  // Close on backdrop click — but ONLY when the gesture also STARTED on the
+  // backdrop. A `click` fires on the nearest common ancestor of mousedown and
+  // mouseup, so dragging the resize corner (inside the content) and releasing
+  // over the backdrop reported e.target === overlay and slammed the viewer shut
+  // mid-resize. Same for a text selection dragged past the edge.
+  let _downOnBackdrop = false;
+  overlay.addEventListener('mousedown', e => { _downOnBackdrop = (e.target === overlay); });
   overlay.addEventListener('click', e => {
-    if (e.target === overlay) closeIt();
+    if (e.target === overlay && _downOnBackdrop) closeIt();
   });
   overlay.querySelector('.mermaid-viewer-close').addEventListener('click', closeIt);
   overlay.querySelector('.mermaid-viewer-source-toggle').addEventListener('click', e => {
@@ -425,7 +432,15 @@ function _openImageViewer(src) {
     zoomLabel.textContent = Math.round(scale * 100) + '%';
   };
   const closeIt = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
-  overlay.addEventListener('click', e => { if (e.target === overlay) closeIt(); });
+  // Close on backdrop click — but ONLY when the gesture also STARTED there. A
+  // `click` fires on the nearest common ancestor of mousedown and mouseup, so
+  // dragging the resize corner (inside the content) and releasing over the
+  // backdrop reported e.target === overlay and made the image vanish mid-resize.
+  let _downOnBackdrop = false;
+  overlay.addEventListener('mousedown', e => { _downOnBackdrop = (e.target === overlay); });
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay && _downOnBackdrop) closeIt();
+  });
   overlay.querySelector('._iv-close').addEventListener('click', closeIt);
   overlay.querySelector('._iv-zi').addEventListener('click', e => {
     e.stopPropagation(); scale = Math.min(scale * 1.25, 5); applyScale();
