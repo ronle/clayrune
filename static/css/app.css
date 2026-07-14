@@ -2635,36 +2635,49 @@
   .agent-3pane .agent-main .agent-chat-input { background: var(--bg); border-top: none; }
   /* Composer as a single rounded pill: attach 📎 + mic sit INSIDE the entry on
      the right (like the mobile composer), with Send tucked in at the end. */
-  .agent-3pane .agent-main .agent-chat-input-row {
+  /* The +New dispatch row (.agent-input-row) wears the SAME pill as the in-chat
+     follow-up row — ＋ left, mic inside on the right. */
+  .agent-3pane .agent-main .agent-chat-input-row,
+  .agent-3pane .agent-main .agent-input-row {
     background: var(--surface); border: 1px solid var(--border);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     border-radius: 22px; padding: 5px 6px; gap: 4px; align-items: center;
   }
-  .agent-3pane .agent-main .agent-chat-input-row.drag-over { border-color: var(--accent); }
+  .agent-3pane .agent-main .agent-chat-input-row.drag-over,
+  .agent-3pane .agent-main .agent-input-row.drag-over { border-color: var(--accent); }
   /* ＋ on the left opens the picker — a soft accent-tinted rounded square, per
      the PDF composer. */
-  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus {
+  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus,
+  .agent-3pane .agent-main .agent-input-row .btn-composer-plus {
     flex-shrink: 0; width: 34px; height: 34px; border: none; border-radius: 9px;
     background: var(--accent-dim); color: var(--accent);
     font-size: 22px; line-height: 1; cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
     transition: filter 0.12s;
   }
-  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus:hover { filter: brightness(0.96); }
-  .agent-3pane .agent-main .agent-chat-input-row .agent-task-input {
+  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus:hover,
+  .agent-3pane .agent-main .agent-input-row .btn-composer-plus:hover { filter: brightness(0.96); }
+  .agent-3pane .agent-main .agent-chat-input-row .agent-task-input,
+  .agent-3pane .agent-main .agent-input-row .agent-task-input {
     background: transparent !important; border: none !important; outline: none !important;
     padding: 8px 4px;
   }
   .agent-3pane .agent-main .agent-chat-input-row .btn-attach,
-  .agent-3pane .agent-main .agent-chat-input-row .btn-mic {
+  .agent-3pane .agent-main .agent-chat-input-row .btn-mic,
+  .agent-3pane .agent-main .agent-input-row .btn-attach,
+  .agent-3pane .agent-main .agent-input-row .btn-mic {
     background: transparent !important; border: none !important; color: var(--text-dim);
     width: 36px; height: 36px;
   }
   /* Bump the clip so it reads as a paperclip, not a dot. */
-  .agent-3pane .agent-main .agent-chat-input-row .btn-attach { font-size: 22px; }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-attach,
+  .agent-3pane .agent-main .agent-input-row .btn-attach { font-size: 22px; }
   .agent-3pane .agent-main .agent-chat-input-row .btn-attach:hover,
-  .agent-3pane .agent-main .agent-chat-input-row .btn-mic:hover { color: var(--text); background: transparent !important; }
-  .agent-3pane .agent-main .agent-chat-input-row .btn-dispatch { border-radius: 16px; }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-mic:hover,
+  .agent-3pane .agent-main .agent-input-row .btn-attach:hover,
+  .agent-3pane .agent-main .agent-input-row .btn-mic:hover { color: var(--text); background: transparent !important; }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-dispatch,
+  .agent-3pane .agent-main .agent-input-row .btn-dispatch { border-radius: 16px; }
   .agent-panel-header {
     display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
     user-select: none; flex-shrink: 0;

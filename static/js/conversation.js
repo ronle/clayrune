@@ -572,10 +572,16 @@ function agentPanelHTML(p) {
   const incOn = getIncognitoFor(p.id);
   const incForced = isIncognitoProject(p);
   const incognitoChip = noActiveTab ? _incognitoChipHTML(p) : '';  // shared with the §8 sheet
-  const _dispatchPlaceholder = incOn ? 'Incognito — ephemeral, not saved to project memory...' : 'Describe a task for the agent... (paste or drop files here)';
-  const _attachBtn = _pcaps.image_input ? `
+  const _dispatchPlaceholder = incOn ? 'Incognito — not saved to memory...' : 'Describe a task for the agent...';
+  const _attachInput = _pcaps.image_input ? `
     <input type="file" multiple id="agent-attach-input-${esc(p.id)}" class="agent-attach-input"
-      onchange="handleAgentAttachPick(event,'${esc(p.id)}')">
+      onchange="handleAgentAttachPick(event,'${esc(p.id)}')">` : '';
+  // Desktop: ＋ on the LEFT opens the picker (mirrors the in-chat composer).
+  // Mobile: keeps its 📎 to the right of the pill.
+  const _dispatchPlusBtn = _pcaps.image_input ? `
+    <button class="btn-composer-plus" type="button" title="Attach files or take a photo"
+      onclick="triggerAgentAttach('${esc(p.id)}')">&#43;</button>` : '';
+  const _attachBtn = _pcaps.image_input ? `
     <button class="btn-attach" type="button" title="Attach files or take a photo"
       onclick="triggerAgentAttach('${esc(p.id)}')">&#128206;</button>` : '';
   const _dispatchMicBtn = micBtnHTML(`agent-task-${esc(p.id)}`);
@@ -630,12 +636,14 @@ function agentPanelHTML(p) {
     ondragenter="handleAgentDragOver(event,this)"
     ondragleave="handleAgentDragLeave(event,this)"
     ondrop="${_pcaps.image_input ? `handleAgentDrop(event,'${esc(p.id)}')` : 'event.preventDefault()'}">
+    ${_attachInput}
+    ${mobileMode ? '' : _dispatchPlusBtn}
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
       placeholder="${_dispatchPlaceholder}"
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'),'${esc(p.id)}')"
       onpaste="${_pcaps.image_input ? `handleAgentPaste(event,'${esc(p.id)}')` : ''}"
     ></textarea>
-    ${_attachBtn}
+    ${mobileMode ? _attachBtn : ''}
     ${_dispatchMicBtn}
     ${_dispatchBtn}
   </div>`;
