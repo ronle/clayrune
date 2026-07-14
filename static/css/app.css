@@ -5633,13 +5633,25 @@
     position: fixed; inset: 0; z-index: 1200;
     border-radius: 0;
   }
-  .persona-editor-inner { width: min(560px, 92%); }
+  /* Resizable: drag the bottom-right corner. The dialog is a fixed-height flex
+     column with the textarea as the only flex:1 child, so growing the window
+     grows the INSTRUCTIONS box — which is the whole point of resizing here.
+     (overflow:hidden rather than auto: `resize` needs a non-visible overflow to
+     show the grabber at all, but auto would let the panel scroll internally
+     instead of handing the space to the textarea.) */
+  .persona-editor-inner {
+    width: min(560px, 92vw); height: min(560px, 86vh);
+    min-width: 340px; min-height: 300px;
+    max-width: 96vw; max-height: 92vh;
+    resize: both; overflow: hidden;
+  }
   .persona-editor-inner textarea {
     background: var(--bg); border: 1px solid var(--border);
     color: var(--text); font-family: var(--mono, ui-monospace, monospace);
     font-size: 12.5px; line-height: 1.5;
     padding: 8px 10px; border-radius: 5px; outline: none;
-    resize: vertical; min-height: 140px;
+    resize: none;              /* the WINDOW resizes; the textarea follows it */
+    flex: 1; min-height: 120px;
   }
   .persona-editor-inner textarea:focus { border-color: var(--accent); }
   .persona-editor-inner input:disabled {
@@ -5652,6 +5664,15 @@
   .persona-editor-meta .over { color: #fca5a5; font-weight: 600; }
   .claydo-ready-btn.danger { color: #fca5a5; border-color: #ef444460; }
   .claydo-ready-btn.danger:hover { background: #ef444420; border-color: #ef4444; }
+
+  /* Personas panel (Extensions → Personas) — one row per persona. */
+  .persona-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; margin-bottom: 6px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .persona-row:hover { border-color: var(--border2); }
 
   /* Pencil beside the persona picker — quiet until hovered, like the composer's
      other inline affordances. */

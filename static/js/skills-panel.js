@@ -25,7 +25,11 @@ function _extRenderBody() {
   const body = document.getElementById('ext-body');
   if (!body) return;
   document.querySelectorAll('.ext-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === _extTab));
-  if (_extTab === 'mcp') {
+  if (_extTab === 'personas') {
+    body.innerHTML = _allPersonasBodyHTML();
+    renderAllPersonas();
+    loadAllPersonas();
+  } else if (_extTab === 'mcp') {
     body.innerHTML = (typeof _allMcpBodyHTML === 'function') ? _allMcpBodyHTML() : '';
     if (typeof renderAllMCP === 'function') renderAllMCP();
     if (typeof loadAllMCP === 'function') loadAllMCP();
@@ -61,6 +65,7 @@ function openExtensions(tab) {
       <div class="ext-tabs">
         <button class="ext-tab" data-tab="skills" onclick="switchExtTab('skills')">&#x1F9E9; Skills</button>
         <button class="ext-tab" data-tab="mcp" onclick="switchExtTab('mcp')">&#x1F50C; MCP</button>
+        <button class="ext-tab" data-tab="personas" onclick="switchExtTab('personas')">&#x1F3AD; Personas</button>
       </div>
       <div class="modal-window-controls" style="position:static;display:flex;gap:4px;margin-left:auto">
         <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
@@ -80,6 +85,182 @@ function openExtensions(tab) {
 
 // Skills entry points now open the merged Extensions surface on the Skills tab.
 function openAllSkills() { openExtensions('skills'); }
+
+// ── Personas (characters) ───────────────────────────────────────────────────
+// The standalone manager. Before this the ONLY persona surface was the +New
+// composer's picker, which meant a persona you couldn't select somewhere — a
+// global one you don't use, or a project-local one belonging to another project
+// — was unreachable from the UI entirely. Backend: mc/blueprints/character_routes.py
+// (full CRUD). Files: ~/.claude/agents/<name>.md, <project>/.claude/agents/<name>.md.
+let _allPersonasCache = { items: [], loaded: false, loading: false };
+let _allPersonasFilter = { scope: 'all', project: 'all', search: '' };
+
+function openAllPersonas() { openExtensions('personas'); }
+function openAllPersonasForProject(projectId) {
+  _allPersonasFilter.project = projectId || 'all';
+  _allPersonasFilter.scope = 'all';
+  _allPersonasCache.loaded = false;
+  openExtensions('personas');
+}
+
+function _allPersonasBodyHTML() {
+  return `
+    <div style="padding:4px 24px 20px 28px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <input type="text" id="ap-search" placeholder="Search name / description..." value="${esc(_allPersonasFilter.search)}"
+          style="flex:1;min-width:180px;padding:6px 10px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+          oninput="_allPersonasFilter.search=this.value;renderAllPersonas()">
+        <select id="ap-scope" style="padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)"
+          onchange="_allPersonasFilter.scope=this.value;renderAllPersonas()">
+          <option value="all"${_allPersonasFilter.scope==='all'?' selected':''}>All scopes</option>
+          <option value="global"${_allPersonasFilter.scope==='global'?' selected':''}>Global only</option>
+          <option value="project"${_allPersonasFilter.scope==='project'?' selected':''}>Project only</option>
+        </select>
+        <select id="ap-project" style="padding:6px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);max-width:200px"
+          onchange="_allPersonasFilter.project=this.value;_allPersonasCache.loaded=false;loadAllPersonas()">
+          <option value="all">All projects</option>
+        </select>
+        <span id="ap-count" style="font-size:11px;color:var(--text-faint)"></span>
+        <div style="margin-left:auto">
+          <button class="btn-add" onclick="_personasCreateNew()">&#43; New persona</button>
+        </div>
+      </div>
+      <div id="ap-list"></div>
+    </div>`;
+}
+
+// Creating still runs through Claydo's character workshop — that interview IS
+// the create flow (there is no standalone create form), so the panel hands off
+// rather than duplicating it.
+function _personasCreateNew() {
+  if (typeof window.openClaydo === 'function') {
+    Promise.resolve(window.openClaydo())
+      .then(() => window.setClaydoMode && window.setClaydoMode('character'))
+      .catch(() => {});
+  }
+}
+
+async function loadAllPersonas() {
+  if (_allPersonasCache.loading) return;
+  _allPersonasCache.loading = true;
+  try {
+    const pid = _allPersonasFilter.project !== 'all' ? _allPersonasFilter.project : '';
+    const url = API_BASE + '/api/characters' + (pid ? '?project_id=' + encodeURIComponent(pid) : '');
+    const res = await fetch(url);
+    const items = await res.json();
+
+    // /api/characters returns globals + ONE project's locals. To show "All
+    // projects" we have to ask each project in turn — same fan-out loadAllSkills
+    // does, and for the same reason.
+    let extra = [];
+    if (_allPersonasFilter.project === 'all') {
+      const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p) && p.project_path);
+      await Promise.all(realProjects.map(async p => {
+        try {
+          const r = await fetch(API_BASE + '/api/characters?project_id=' + encodeURIComponent(p.id));
+          const arr = await r.json();
+          for (const c of (Array.isArray(arr) ? arr : [])) if (c.scope === 'project') extra.push(c);
+        } catch (e) {}
+      }));
+    }
+    _allPersonasCache = { items: (Array.isArray(items) ? items : []).concat(extra), loaded: true, loading: false };
+  } catch (e) {
+    _allPersonasCache = { items: [], loaded: true, loading: false };
+  }
+  renderAllPersonas();
+}
+
+// Rows reference personas BY INDEX into this array — a persona's identity is
+// (scope, name, project_id) and stuffing those into an onclick string literal
+// is exactly the quoting hazard the Distiller queue hit with Windows paths.
+let _personaRows = [];
+
+function renderAllPersonas() {
+  const container = document.getElementById('ap-list');
+  const countEl = document.getElementById('ap-count');
+  const projectSel = document.getElementById('ap-project');
+  if (!container) return;
+
+  if (projectSel) {
+    const realProjects = (allProjects || []).filter(p => !isIncognitoProject(p));
+    const cur = _allPersonasFilter.project;
+    const opts = ['<option value="all">All projects</option>',
+      ...realProjects.map(p => `<option value="${esc(p.id)}"${cur===p.id?' selected':''}>${esc(p.name||p.id)}</option>`)];
+    if (projectSel.innerHTML !== opts.join('')) {
+      projectSel.innerHTML = opts.join('');
+      projectSel.value = cur;
+    }
+  }
+
+  if (!_allPersonasCache.loaded) {
+    container.innerHTML = '<div style="padding:40px 12px;text-align:center;color:var(--text-faint);font-size:12px">Loading personas...</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+
+  const f = _allPersonasFilter;
+  const q = (f.search || '').trim().toLowerCase();
+  let rows = _allPersonasCache.items.filter(c => {
+    if (f.scope !== 'all' && (c.scope || 'global') !== f.scope) return false;
+    if (f.project !== 'all' && c.scope === 'project' && c.project_id !== f.project) return false;
+    if (q && !((c.name || '') + ' ' + (c.description || '')).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const seen = new Set();
+  rows = rows.filter(c => {
+    const key = (c.scope || 'global') + ':' + c.name + ':' + (c.project_id || '');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  _personaRows = rows;
+
+  if (countEl) countEl.textContent = rows.length ? `${rows.length} persona${rows.length === 1 ? '' : 's'}` : '';
+
+  if (!rows.length) {
+    container.innerHTML = `<div style="padding:36px 12px;text-align:center;color:var(--text-faint);font-size:12px">
+      ${_allPersonasCache.items.length ? 'No personas match that filter.'
+        : 'No personas yet. A persona is a reusable system prompt you can attach to a new chat.'}
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = rows.map((c, i) => {
+    const isGlobal = (c.scope || 'global') === 'global';
+    const proj = !isGlobal
+      ? ((allProjects || []).find(p => p.id === c.project_id)?.name || c.project_id || 'project')
+      : '';
+    const scopeBadge = isGlobal
+      ? `<span style="font-size:10px;font-weight:700;color:var(--accent);border:1px solid var(--accent);border-radius:3px;padding:1px 5px;white-space:nowrap">GLOBAL</span>`
+      : `<span style="font-size:10px;font-weight:700;color:var(--text-dim);border:1px solid var(--border2);border-radius:3px;padding:1px 5px;white-space:nowrap">${esc(proj)}</span>`;
+    // A project persona with the same name as a global one wins for that
+    // project — the server flags it, and a user staring at two same-named rows
+    // deserves to know which one actually loads.
+    const shadow = c.shadowed_by_project
+      ? `<span title="A project persona with this name overrides this global one" style="font-size:10px;color:#d0a24c">&#9888; shadowed</span>` : '';
+    return `<div class="persona-row">
+      <div style="min-width:0;flex:1">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:600;font-size:13px;color:var(--text)">${esc(c.display_name || c.name)}</span>
+          ${scopeBadge}${shadow}
+        </div>
+        <div style="font-size:12px;color:var(--text-dim);margin-top:3px;overflow-wrap:anywhere">${esc(c.description || 'No description')}</div>
+      </div>
+      <button class="btn-secondary" onclick="_personaEditRow(${i})">Edit</button>
+    </div>`;
+  }).join('');
+}
+
+function _personaEditRow(i) {
+  const c = _personaRows[i];
+  if (!c || typeof window.openPersonaEditor !== 'function') return;
+  // Delete lives inside the editor, so the panel needs no separate delete path.
+  window.openPersonaEditor(c.project_id || null, c.scope || 'global', c.name, () => {
+    _allPersonasCache.loaded = false;
+    loadAllPersonas();
+  });
+}
 
 // The Skills panel body (extracted so the Extensions shell can host it).
 function _allSkillsBodyHTML() {
@@ -1434,6 +1615,28 @@ window._siToggleProject = _siToggleProject;                 // interop: import-c
 window._doSkillImportBrowseSearch = _doSkillImportBrowseSearch; // interop: browse source select (onchange) + debounced query (oninput)
 window._sibReadBody = _sibReadBody;                         // interop: browse-row "Read body" (generated onclick)
 window._sibInstallHere = _sibInstallHere;                   // interop: browse-row "Install →" (generated onclick)
+// Personas tab — every one of these is reached from a generated onclick/oninput
+// or from sidebarNav()/the project menu in the inline script, so they must be
+// bridged across the ES-module boundary or the handlers throw ReferenceError.
+window.openAllPersonas = openAllPersonas;
+window.openAllPersonasForProject = openAllPersonasForProject;
+window.loadAllPersonas = loadAllPersonas;
+window.renderAllPersonas = renderAllPersonas;
+window._personaEditRow = _personaEditRow;
+window._personasCreateNew = _personasCreateNew;
+// ACCESSORS, not copies — same reason as _allSkillsFilter below: the filter
+// bar's generated handlers property-write through the binding
+// (`_allPersonasFilter.search=this.value`, `_allPersonasCache.loaded=false`),
+// and loadAllPersonas REASSIGNS the cache object. A plain `window.x = x` would
+// pin the stale object and the "reload me" flag would write into the void.
+Object.defineProperty(window, '_allPersonasFilter', {
+  get() { return _allPersonasFilter; },
+  set(v) { _allPersonasFilter = v; },
+});
+Object.defineProperty(window, '_allPersonasCache', {
+  get() { return _allPersonasCache; },
+  set(v) { _allPersonasCache = v; },
+});
 // interop: the Learning-queue and Health-diagnostics disclosure headers write
 // `_distillerQueueOpen=!_distillerQueueOpen` / `_distillerDiagOpen=!_distillerDiagOpen`
 // from generated onclick attributes. Inline handlers resolve against the global

@@ -621,6 +621,9 @@ function modalContentHTML(p) {
           <button class="modal-menu-item" onclick="openAllMCPForProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F50C;</span> MCP servers
           </button>
+          <button class="modal-menu-item" onclick="openAllPersonasForProject('${esc(p.id)}')">
+            <span class="menu-icon">&#x1F3AD;</span> Personas
+          </button>
           <button class="modal-menu-item" onclick="_mcMenuClose();openAllHivemindsForProject('${esc(p.id)}')">
             <span class="menu-icon">&#x1F41D;</span> Hiveminds
           </button>

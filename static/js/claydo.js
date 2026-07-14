@@ -880,7 +880,10 @@ function _claydoOpenSavePanel(artifact, suggestedName) {
 // the URL identity — PUT can't rename) and the SCOPE (global vs project = which
 // directory the file lives in). Changing either means save-as-new + delete-old;
 // the dialog says so rather than pretending the fields are live.
-async function openPersonaEditor(projectId, scope, name) {
+// onDone (optional) fires after a successful save or delete, so whichever
+// surface opened the editor can refresh itself — the composer picker and the
+// Personas panel both need this and neither knows about the other.
+async function openPersonaEditor(projectId, scope, name, onDone) {
   document.querySelector('.persona-editor')?.remove();
 
   const qs = scope === 'project' && projectId
@@ -961,6 +964,7 @@ async function openPersonaEditor(projectId, scope, name) {
       if (!res.ok) { btn.disabled = false; return showErr(data.error || `Save failed (${res.status})`); }
       close();
       if (typeof window.reloadCharacters === 'function') window.reloadCharacters(projectId);
+      if (typeof onDone === 'function') onDone();
     } catch (e) {
       btn.disabled = false;
       showErr('Network error: ' + (e.message || e));
@@ -983,6 +987,7 @@ async function openPersonaEditor(projectId, scope, name) {
         window.clearCharacterIfSelected(projectId, scope + ':' + name);
       }
       if (typeof window.reloadCharacters === 'function') window.reloadCharacters(projectId);
+      if (typeof onDone === 'function') onDone();
     } catch (e) {
       btn.disabled = false;
       showErr('Network error: ' + (e.message || e));
