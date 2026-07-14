@@ -2125,6 +2125,9 @@ function _applyAppearanceOnInit() {
   const accent = localStorage.getItem('mc_accent');
   if (accent) document.body.setAttribute('data-accent', accent);
   if ((localStorage.getItem('mc_surface_mode') || 'windows') === 'pages') document.body.classList.add('surface-pages');
+  // Read localStorage directly (not the _chatStyle let) — same TDZ discipline
+  // as surface_mode above: this runs before the let block below.
+  if ((localStorage.getItem('mc_chat_style') || 'bubbles') === 'flow') document.body.classList.add('chat-flow');
   // Apply voice to the header breadcrumb label after DOM is parsed
   const applyVoiceLabel = () => {
     const bc = document.getElementById('header-breadcrumb-label');
@@ -2167,6 +2170,17 @@ function setSurfaceMode(m) {
   _surfaceMode = (m === 'pages') ? 'pages' : 'windows';
   try { localStorage.setItem('mc_surface_mode', _surfaceMode); } catch (e) {}
   document.body.classList.toggle('surface-pages', _surfaceMode === 'pages');
+  if (document.getElementById('settings-body')) _renderSettings();
+}
+// Chat style (per-browser): 'bubbles' = one bubble per streamed paragraph
+// (default); 'flow' = agent narration runs together as one continuous block.
+// Pure CSS (body.chat-flow) — the render path is identical either way, so this
+// applies to already-rendered transcripts with no re-render.
+let _chatStyle = localStorage.getItem('mc_chat_style') || 'bubbles';
+function setChatStyle(m) {
+  _chatStyle = (m === 'flow') ? 'flow' : 'bubbles';
+  try { localStorage.setItem('mc_chat_style', _chatStyle); } catch (e) {}
+  document.body.classList.toggle('chat-flow', _chatStyle === 'flow');
   if (document.getElementById('settings-body')) _renderSettings();
 }
 

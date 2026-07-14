@@ -487,6 +487,10 @@ Major sections:
     the same framing works on desktop and phone.
   - **Writing style** — Casual or Professional. Tunes the voice of
     in-app copy (greetings, empty-state hints, toasts).
+  - **Agent replies** — Bubbles or Flow. The agent streams one paragraph
+    at a time, so by default each paragraph lands as its own bubble. Flow
+    runs them together as one continuous block of text. Your own messages
+    stay right-hand bubbles either way, so you can still see who said what.
 - **Advanced features** — show/hide the token counter, `[tool: …]` lines,
   GitHub badges, Agent Log tab, Memory & Rules menu entries. All off by
   default — turn on the ones that fit your level.

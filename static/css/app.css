@@ -3497,6 +3497,37 @@
     display: block; overflow-x: auto;
   }
 
+  /* ── Flow mode (Settings → Appearance → Interface → "Agent replies") ────
+     The agent streams one .agent-line per paragraph, so a multi-paragraph
+     reply renders as a stack of separate bubbles. In flow mode the plain
+     NARRATION lines shed their card (bg / border / radius / max-width) and
+     butt up against each other, so a reply reads as one continuous document.
+     User prompts stay right-aligned accent bubbles and tool/status stay quiet
+     chips — those two distinctions are what keep the transcript scannable, and
+     removing them would make it impossible to see who said what.
+     Body class is set by setChatStyle() in index.html (localStorage
+     mc_chat_style); no JS in the render path changed. */
+  body.chat-flow .agent-output { gap: 0; }
+  body.chat-flow .agent-output .agent-line:not(.agent-line-prompt):not(.agent-line-tool):not(.agent-line-status):not(.agent-line-error):not(.agent-line-queued):not(.agent-line-followup) {
+    align-self: stretch !important;
+    max-width: 100% !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 3px 2px !important;
+  }
+  /* Restore breathing room around the things that are still bubbles/chips —
+     .agent-output's gap is 0 in flow mode, so they'd otherwise touch. */
+  body.chat-flow .agent-output .agent-line-prompt,
+  body.chat-flow .agent-output .agent-line-tool,
+  body.chat-flow .agent-output .agent-line-status,
+  body.chat-flow .agent-output .agent-line-error,
+  body.chat-flow .agent-output .agent-line-queued,
+  body.chat-flow .agent-output .agent-line-followup {
+    margin: 8px 0 !important;
+  }
+
   /* Typing indicator — a left bubble with three staggered pulsing dots, shown
      as the last child of .agent-output while the agent is generating (§4,
      2026-07-05). Ephemeral DOM node (id=typing-<sid>) — NOT persisted to
