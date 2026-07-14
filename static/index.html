@@ -441,6 +441,10 @@
         <span class="si-icon">&#x1F9E9;</span>
         <span class="si-label">Skills &amp; MCP</span>
       </div>
+      <div class="sidebar-item si-advanced" data-nav="personas" onclick="sidebarNav('personas')" title="Reusable system prompts you can attach to a new chat">
+        <span class="si-icon">&#x1F3AD;</span>
+        <span class="si-label">Personas</span>
+      </div>
       <div class="sidebar-item si-advanced" data-nav="shared-rules" onclick="sidebarNav('shared-rules')">
         <span class="si-icon">&#x1F4DC;</span>
         <span class="si-label">Shared Rules</span>
@@ -1334,6 +1338,7 @@ function sidebarNav(target) {
   else if (target === 'hivemind') openAllHiveminds();
   else if (target === 'skills') openAllSkills();
   else if (target === 'mcp') openAllMCP();
+  else if (target === 'personas') openAllPersonas();
   // Update active state in sidebar
   document.querySelectorAll('.sidebar-item').forEach(i =>
     i.classList.toggle('active', i.dataset.nav === target)
