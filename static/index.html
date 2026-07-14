@@ -445,6 +445,10 @@
         <span class="si-icon">&#x1F3AD;</span>
         <span class="si-label">Personas</span>
       </div>
+      <div class="sidebar-item si-advanced" data-nav="media" onclick="sidebarNav('media')" title="Diagrams and images the agent produced">
+        <span class="si-icon">&#x1F5BC;</span>
+        <span class="si-label">Media</span>
+      </div>
       <div class="sidebar-item si-advanced" data-nav="shared-rules" onclick="sidebarNav('shared-rules')">
         <span class="si-icon">&#x1F4DC;</span>
         <span class="si-label">Shared Rules</span>
@@ -1339,6 +1343,7 @@ function sidebarNav(target) {
   else if (target === 'skills') openAllSkills();
   else if (target === 'mcp') openAllMCP();
   else if (target === 'personas') openAllPersonas();
+  else if (target === 'media') openMediaSurface(null);
   // Update active state in sidebar
   document.querySelectorAll('.sidebar-item').forEach(i =>
     i.classList.toggle('active', i.dataset.nav === target)
@@ -1880,8 +1885,15 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); const action = window._cmdActions?.[cmdSelectedIndex]; if (action) action(); return; }
     return; // Don't process other keys when palette is open
   }
-  // Escape closes focused modal
-  if (e.key === 'Escape' && focusedModalId) closeModalById(focusedModalId);
+  // Escape closes focused modal — UNLESS an image/diagram viewer is open on top
+  // of it. Both Esc handlers live on `document`, and this one is registered at
+  // boot so it fires FIRST: without this guard, Esc inside the viewer closed the
+  // viewer AND the modal underneath it in the same keystroke (open an image from
+  // a chat, hit Esc, lose the chat). The viewer is topmost, so Esc is its key;
+  // a second Esc then closes the modal, which is what people expect.
+  if (e.key === 'Escape' && focusedModalId && !document.querySelector('.mermaid-viewer-overlay')) {
+    closeModalById(focusedModalId);
+  }
 });
 
 // Click on any modal window to bring it to front
@@ -3173,6 +3185,7 @@ window.addEventListener('beforeunload', () => {
 <script type="module" src="/static/js/mobile-pairing.js"></script>
 <script type="module" src="/static/js/walkthrough.js"></script>
 <script type="module" src="/static/js/skills-panel.js"></script>
+<script type="module" src="/static/js/media.js"></script>
 <script type="module" src="/static/js/settings-drill.js"></script>
 <script type="module" src="/static/js/settings-sections.js"></script>
 <script type="module" src="/static/js/terminal.js"></script>

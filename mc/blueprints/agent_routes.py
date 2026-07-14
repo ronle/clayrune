@@ -64,6 +64,7 @@ from typing import Any, Callable, Dict, Optional
 
 from flask import Blueprint, Response, jsonify, request
 
+from mc import media as _media
 from mc import obs, state
 from mc import state as _mc_state  # readers write _mc_state._LAST_SYSTEM_STATUS verbatim
 from mc.core import _harden_secret_perms, _log, now_iso, time_ago
@@ -2136,6 +2137,19 @@ def _read_agent_stream(proc, session):
                             _visible = _agent_runtime.strip_mc_tool_blocks(block['text'])
                             if _visible.strip():
                                 session['log_lines'].append(_visible)
+                                # Media gallery: index diagrams/images off the
+                                # VISIBLE text — the same string the chat
+                                # renders. Feeding it the raw transcript instead
+                                # would drag in every image path sitting inside
+                                # source code and tool output (measured: ~90% of
+                                # such "paths" were never images). Best-effort
+                                # by contract; it cannot break the turn.
+                                _media.record_from_text(
+                                    session.get('project_id', ''),
+                                    session.get('session_id', ''),
+                                    _visible,
+                                    session.get('task', '') or '',
+                                )
                             session['last_output_time'] = _time.time()
                         elif block.get('type') == 'tool_use':
                             tool_name = block.get('name', '')
@@ -2331,6 +2345,19 @@ def _read_agent_stream_b(proc, session):
                             _visible = _agent_runtime.strip_mc_tool_blocks(block['text'])
                             if _visible.strip():
                                 session['log_lines'].append(_visible)
+                                # Media gallery: index diagrams/images off the
+                                # VISIBLE text — the same string the chat
+                                # renders. Feeding it the raw transcript instead
+                                # would drag in every image path sitting inside
+                                # source code and tool output (measured: ~90% of
+                                # such "paths" were never images). Best-effort
+                                # by contract; it cannot break the turn.
+                                _media.record_from_text(
+                                    session.get('project_id', ''),
+                                    session.get('session_id', ''),
+                                    _visible,
+                                    session.get('task', '') or '',
+                                )
                             session['last_output_time'] = _time.time()
                         elif block.get('type') == 'tool_use':
                             tool_name = block.get('name', '')

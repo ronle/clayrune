@@ -5665,6 +5665,47 @@
   .claydo-ready-btn.danger { color: #fca5a5; border-color: #ef444460; }
   .claydo-ready-btn.danger:hover { background: #ef444420; border-color: #ef4444; }
 
+  /* ── Media gallery ─────────────────────────────────────────────────────── */
+  .media-grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  }
+  .media-tile {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden; cursor: pointer;
+    display: flex; flex-direction: column;
+    transition: border-color .12s;
+  }
+  .media-tile:hover { border-color: var(--accent); }
+  .media-tile-diagram { cursor: default; }   /* the diagram itself handles the click */
+  .media-thumb {
+    height: 130px; background: var(--bg);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .media-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  .media-thumb-diagram { padding: 6px; }
+  .media-thumb-diagram .mermaid-block { max-width: 100%; max-height: 100%; overflow: hidden; }
+  .media-thumb-diagram svg { max-width: 100%; max-height: 118px; height: auto; }
+  /* An image whose file vanished (moved/deleted since it was indexed) — keep
+     the tile, mark it dead. Silently dropping it would look like data loss. */
+  .media-tile.media-dead .media-thumb::after {
+    content: 'file missing'; font-size: 11px; color: var(--text-faint);
+  }
+  .media-meta {
+    display: flex; justify-content: space-between; gap: 6px; align-items: baseline;
+    padding: 7px 9px 0; font-size: 11px; min-width: 0;
+  }
+  .media-name {
+    color: var(--text); font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .media-when { color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
+  .media-task {
+    padding: 2px 9px 8px; font-size: 10.5px; color: var(--text-dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .media-seg { flex-shrink: 0; }
+
   /* Personas panel (Extensions → Personas) — one row per persona. */
   .persona-row {
     display: flex; align-items: center; gap: 12px;

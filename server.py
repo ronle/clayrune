@@ -615,6 +615,17 @@ _bp_characters.wire(load_project_fn=_bp_projects.load_project)
 app.register_blueprint(_bp_characters.bp)
 
 
+# ── Media gallery ── diagrams + images the agent produced, indexed as they
+# stream (a live scan is impossible: 155 MB of transcripts per project). The
+# index lives in data/media/, NOT data/projects/ — see the DATA_DIR pollution
+# rule in mc/media.py.
+from mc import media as _media  # noqa: E402
+from mc.blueprints import media_routes as _bp_media  # noqa: E402
+
+_media.wire(_DATA_ROOT)
+app.register_blueprint(_bp_media.bp)
+
+
 # ── Project endpoints ── moved to mc/blueprints/project_routes.py (1.11).
 
 
