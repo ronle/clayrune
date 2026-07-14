@@ -416,18 +416,28 @@ function _agentSurfacesHTML(p) {
   const topItems = open.slice(0, 3)
     .map(i => `<div class="surface-line">&#8226; ${esc((i.text || '').slice(0, 52))}</div>`).join('')
     || '<div class="surface-line surface-empty">No open items</div>';
+  // `tab` cards swap a pane INSIDE the modal; `action` cards open their own
+  // surface window. Media is the latter: the gallery is already a full surface
+  // (filters, project switcher, viewers), and re-hosting it as a modal tab would
+  // mean a second copy of it to keep in sync.
   const cards = [
     { tab: 'backlog',   ic: '&#9776;',   name: 'Backlog',   sub: open.length ? `${open.length} open` : 'empty', body: topItems },
     { tab: 'plans',     ic: '&#128203;', name: 'Plans',     sub: 'plan viewer', body: '<div class="surface-line surface-empty">Open to view plans</div>' },
     { tab: 'workflows', ic: '&#9939;',   name: 'Workflows', sub: 'runs',        body: '<div class="surface-line surface-empty">Open to view workflows</div>' },
     { tab: 'activity',  ic: '&#9201;',   name: 'Activity',  sub: 'timeline',    body: '<div class="surface-line surface-empty">Open to view activity</div>' },
     { tab: 'agent-log', ic: '&#128220;', name: 'Agent Log', sub: 'history',     body: '<div class="surface-line surface-empty">Open to view the log</div>' },
+    { action: `openMediaSurface('${esc(p.id)}')`,
+      ic: '&#128444;', name: 'Media',    sub: 'diagrams & images',
+      body: '<div class="surface-line surface-empty">Open to view media</div>' },
   ];
-  const cardHTML = cards.map(c => `
-    <button class="surface-card" onclick="switchModalTab('${esc(p.id)}','${c.tab}')" title="Open ${c.name}">
+  const cardHTML = cards.map(c => {
+    const onclick = c.action || `switchModalTab('${esc(p.id)}','${c.tab}')`;
+    return `
+    <button class="surface-card" onclick="${onclick}" title="Open ${c.name}">
       <div class="surface-card-head"><span class="surface-ic">${c.ic}</span><span class="surface-name">${c.name}</span><span class="surface-sub">${esc(c.sub)}</span></div>
       <div class="surface-card-body">${c.body}</div>
-    </button>`).join('');
+    </button>`;
+  }).join('');
   return `<div class="agent-surfaces">
     <div class="agent-surfaces-title">Surfaces</div>
     ${cardHTML}
