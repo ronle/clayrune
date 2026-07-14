@@ -3531,8 +3531,8 @@
   /* Typing indicator — a left bubble with three staggered pulsing dots, shown
      as the last child of .agent-output while the agent is generating (§4,
      2026-07-05). Ephemeral DOM node (id=typing-<sid>) — NOT persisted to
-     agentOutputBuffers. Do NOT reuse claydo-dots: it animates a single ::after
-     `content` string and can't stagger three independent dots. */
+     agentOutputBuffers. (The old claydo-dots animation this warned against is
+     gone — Claydo now shares the `act-wave` shimmer defined below.) */
   /* Fixed height + vertical centering so the bubble does NOT resize when the
      content swaps between the 6px dots and the 11px spinner — otherwise the
      5px delta (6 vs 11, + 20 padding + 2 border) nudged the whole thread up and
@@ -5497,22 +5497,26 @@
   .claydo-retry-btn:hover {
     background: #ef444430; color: #fed7d7; border-color: #ef4444;
   }
+  /* "Claydo is thinking" — one line, letters shimmering in a travelling wave.
+     Mirrors the chat's .act-word indicator (same `act-wave` keyframes, same
+     per-letter animation-delay set inline by _claydoThinkingEl). nowrap keeps
+     it on ONE line; the old ::after dot-counter animated `content`, which grew
+     the line and pushed the label around inside the bubble. */
   .claydo-thinking {
-    align-self: flex-start;
-    color: var(--text-faint); font-size: 12px; font-style: italic;
-    padding: 6px 12px;
+    display: inline-flex; white-space: nowrap;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-size: 12.5px; font-weight: 600; letter-spacing: .3px;
+    color: var(--text-dim);
   }
-  .claydo-thinking::after {
-    content: ''; display: inline-block; width: 0;
-    animation: claydo-dots 1.4s steps(4, end) infinite;
-    overflow: hidden; vertical-align: bottom;
+  /* white-space:pre is LOAD-BEARING — each character is its own flex item, and
+     the spaces in "Claydo is thinking" would otherwise collapse to zero width
+     and run the words together. */
+  .claydo-thinking span {
+    white-space: pre;
+    animation: act-wave 1.3s ease-in-out infinite;
   }
-  @keyframes claydo-dots {
-    0%   { content: ''; }
-    25%  { content: '.'; }
-    50%  { content: '..'; }
-    75%  { content: '...'; }
-    100% { content: ''; }
+  @media (prefers-reduced-motion: reduce) {
+    .claydo-thinking span { animation-duration: 2.6s; }
   }
   .claydo-input-row {
     flex-shrink: 0; padding: 10px 22px 16px 28px;
