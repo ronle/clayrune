@@ -46,13 +46,58 @@ function _composerCharacterPicker(p, resumeId) {
     const label = esc(c.display_name || c.name) + (c.scope === 'global' ? ' (global)' : '');
     return `<option value="${val}" ${val === cur ? 'selected' : ''}>${label}</option>`;
   }).join('');
+  // Pencil → edit the SELECTED persona (description / instructions / delete).
+  // Only shown when one is selected: there's nothing to edit otherwise, and it
+  // keeps the row quiet in the common "None" case.
+  const editBtn = cur
+    ? `<button class="composer-persona-edit" type="button" title="Edit this persona"
+        onclick="editComposerCharacter('${esc(p.id)}')">&#9998;</button>`
+    : '';
   return `<div class="composer-provider-row composer-character-row">
     <span class="composer-provider-label">Persona</span>
     <select class="composer-provider-select" onchange="setComposerCharacter('${esc(p.id)}',this.value)">
       <option value="">None</option>${opts}
       <option value="__create__">&#43; Create new persona&hellip;</option>
     </select>
+    ${editBtn}
   </div>`;
+}
+
+// Open the persona editor on whatever the picker currently has selected. The
+// editor itself lives in claydo.js (the character domain) and is reached via
+// window.* interop — same ES-module boundary rule as _createNewPersona above.
+function editComposerCharacter(projectId) {
+  const cur = pendingDispatchCharacter[projectId] || '';
+  const i = cur.indexOf(':');
+  if (i < 0) return;
+  if (typeof window.openPersonaEditor === 'function') {
+    window.openPersonaEditor(projectId, cur.slice(0, i), cur.slice(i + 1));
+  }
+}
+
+// Called by the persona editor after a save/delete. Drops the cache and
+// re-fetches so the picker shows the new description immediately.
+// Unlike _ensureCharacters this ALWAYS re-renders — after deleting the last
+// persona the list is empty, and the "only refresh if non-empty" guard there
+// would leave the stale entry on screen.
+function reloadCharacters(projectId) {
+  delete characterCache[projectId];
+  delete characterCacheLoading[projectId];
+  fetch(API_BASE + '/api/characters?project_id=' + encodeURIComponent(projectId))
+    .then(r => r.json())
+    .then(list => {
+      characterCache[projectId] = Array.isArray(list) ? list : [];
+      refreshModalById(projectId);
+    })
+    .catch(() => { characterCache[projectId] = []; refreshModalById(projectId); });
+}
+
+// A deleted persona must not stay armed on the composer — dispatching it would
+// 404 at spawn (_resolve_character reads the file that no longer exists).
+function clearCharacterIfSelected(projectId, character) {
+  if ((pendingDispatchCharacter[projectId] || '') === character) {
+    delete pendingDispatchCharacter[projectId];
+  }
 }
 
 function setComposerCharacter(projectId, character) {
@@ -98,6 +143,9 @@ function resolveCharacterMeta(projectId, character) {
   return { name, scope, display_name: (rec && (rec.display_name || rec.name)) || name };
 }
 window.setComposerCharacter = setComposerCharacter;
+window.editComposerCharacter = editComposerCharacter;
+window.reloadCharacters = reloadCharacters;
+window.clearCharacterIfSelected = clearCharacterIfSelected;
 window.getPendingCharacter = getPendingCharacter;
 window.clearPendingCharacter = clearPendingCharacter;
 window.resolveCharacterMeta = resolveCharacterMeta;

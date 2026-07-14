@@ -867,7 +867,133 @@ function _claydoOpenSavePanel(artifact, suggestedName) {
   setTimeout(() => panel.querySelector('#claydo-save-name')?.focus(), 30);
 }
 
+// ── Persona editor ──────────────────────────────────────────────────────────
+// Claydo's interview CREATES a persona; this edits one that already exists.
+// Before this, the only way to change a saved persona was to re-run the whole
+// interview, retype the same name, and click through the 409 "Overwrite
+// existing" collision — which doesn't prefill, so you rewrote it from scratch.
+//
+// The backend has had PUT + DELETE all along (mc/blueprints/character_routes.py)
+// and nothing in static/ called them. This is the missing caller.
+//
+// NOT editable here, both by backend design: the NAME (it's the file stem and
+// the URL identity — PUT can't rename) and the SCOPE (global vs project = which
+// directory the file lives in). Changing either means save-as-new + delete-old;
+// the dialog says so rather than pretending the fields are live.
+async function openPersonaEditor(projectId, scope, name) {
+  document.querySelector('.persona-editor')?.remove();
+
+  const qs = scope === 'project' && projectId
+    ? '?project_id=' + encodeURIComponent(projectId) : '';
+  let rec;
+  try {
+    const res = await fetch(API_BASE + `/api/characters/${encodeURIComponent(scope)}/${encodeURIComponent(name)}` + qs);
+    if (!res.ok) throw new Error(`load failed (${res.status})`);
+    rec = await res.json();
+  } catch (e) {
+    alert('Could not load that persona: ' + (e.message || e));
+    return;
+  }
+
+  const panel = document.createElement('div');
+  panel.className = 'claydo-save-panel persona-editor';
+  panel.innerHTML = `
+    <div class="claydo-save-inner persona-editor-inner">
+      <div class="claydo-save-title">Edit persona</div>
+      <label>Name <span class="claydo-save-hint">(fixed — it identifies the file)</span></label>
+      <input id="pe-name" type="text" value="${esc(rec.name || name)}" disabled>
+      <label>Description <span class="claydo-save-hint">(when should the agent use it?)</span></label>
+      <input id="pe-desc" type="text" value="${esc(rec.description || '')}">
+      <label>Instructions <span class="claydo-save-hint">(the persona's system prompt)</span></label>
+      <textarea id="pe-body" spellcheck="true" rows="10">${esc(rec.body || '')}</textarea>
+      <div class="persona-editor-meta">
+        <span>${scope === 'global' ? 'Global — all projects' : 'This project only'}</span>
+        <span id="pe-size"></span>
+      </div>
+      <div class="claydo-save-err" id="pe-err" style="display:none"></div>
+      <div class="claydo-save-actions">
+        <button class="claydo-ready-btn danger" id="pe-delete">Delete</button>
+        <span style="flex:1"></span>
+        <button class="claydo-ready-btn" id="pe-cancel">Cancel</button>
+        <button class="claydo-ready-btn accent" id="pe-save">Save changes</button>
+      </div>
+    </div>`;
+  document.body.appendChild(panel);
+
+  const errEl = panel.querySelector('#pe-err');
+  const showErr = (msg) => { errEl.textContent = msg; errEl.style.display = 'block'; };
+  const bodyEl = panel.querySelector('#pe-body');
+  const sizeEl = panel.querySelector('#pe-size');
+  const close = () => panel.remove();
+
+  // The body rides --append-system-prompt, so the server caps it at 6 KB
+  // (MAX_BODY_BYTES in mc/characters.py — Windows' CreateProcess ceiling).
+  // Show the budget live instead of letting Save fail with a 400.
+  const MAX = 6144;
+  const paintSize = () => {
+    const used = new TextEncoder().encode(bodyEl.value).length;
+    sizeEl.textContent = `${used} / ${MAX} bytes`;
+    sizeEl.classList.toggle('over', used > MAX);
+  };
+  bodyEl.addEventListener('input', paintSize);
+  paintSize();
+
+  panel.querySelector('#pe-cancel').onclick = close;
+  panel.addEventListener('mousedown', (e) => { if (e.target === panel) close(); });
+
+  panel.querySelector('#pe-save').onclick = async () => {
+    const desc = panel.querySelector('#pe-desc').value.trim();
+    const body = bodyEl.value;
+    if (!desc) return showErr('Description is required — it tells the agent when to use this persona.');
+    if (!body.trim()) return showErr('Instructions cannot be empty.');
+    if (new TextEncoder().encode(body).length > MAX) {
+      return showErr(`Instructions are too long — the limit is ${MAX} bytes.`);
+    }
+    const btn = panel.querySelector('#pe-save');
+    btn.disabled = true;
+    try {
+      const res = await fetch(API_BASE + `/api/characters/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({description: desc, body, project_id: scope === 'project' ? projectId : null}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { btn.disabled = false; return showErr(data.error || `Save failed (${res.status})`); }
+      close();
+      if (typeof window.reloadCharacters === 'function') window.reloadCharacters(projectId);
+    } catch (e) {
+      btn.disabled = false;
+      showErr('Network error: ' + (e.message || e));
+    }
+  };
+
+  panel.querySelector('#pe-delete').onclick = async () => {
+    if (!confirm(`Delete the persona "${name}"? Chats already running with it keep it — a persona is resolved once, at spawn.`)) return;
+    const btn = panel.querySelector('#pe-delete');
+    btn.disabled = true;
+    try {
+      const res = await fetch(API_BASE + `/api/characters/${encodeURIComponent(scope)}/${encodeURIComponent(name)}` + qs, {method: 'DELETE'});
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        btn.disabled = false;
+        return showErr(data.error || `Delete failed (${res.status})`);
+      }
+      close();
+      if (typeof window.clearCharacterIfSelected === 'function') {
+        window.clearCharacterIfSelected(projectId, scope + ':' + name);
+      }
+      if (typeof window.reloadCharacters === 'function') window.reloadCharacters(projectId);
+    } catch (e) {
+      btn.disabled = false;
+      showErr('Network error: ' + (e.message || e));
+    }
+  };
+
+  setTimeout(() => panel.querySelector('#pe-desc')?.focus(), 30);
+}
+
 // interop: called from inline script/onclick
 window.submitClaydo = submitClaydo;
 window.setClaydoMode = setClaydoMode;
 window.openClaydo = openClaydo;
+window.openPersonaEditor = openPersonaEditor;
