@@ -311,6 +311,25 @@ function _setClaydoState(state) {
   }
 }
 
+// The "Claydo is thinking" indicator: one line, letters shimmering in a
+// travelling wave. Same mechanic as the chat's Thinking/Working indicator —
+// one span per character with a stepped animation-delay, riding the shared
+// `act-wave` keyframes. (The old version was a static italic string + an
+// ::after that animated `content` through '.', '..', '...' — a non-standard
+// trick that grew the line instead of animating in place.)
+const _CLAYDO_THINKING_LABEL = 'Claydo is thinking';
+function _claydoThinkingEl() {
+  const wrap = document.createElement('span');
+  wrap.className = 'claydo-thinking';
+  _CLAYDO_THINKING_LABEL.split('').forEach((ch, i) => {
+    const s = document.createElement('span');
+    s.textContent = ch;   // spaces survive: .claydo-thinking span is white-space:pre
+    s.style.animationDelay = (i * 0.06).toFixed(2) + 's';
+    wrap.appendChild(s);
+  });
+  return wrap;
+}
+
 async function submitClaydo() {
   const input = document.getElementById('claydo-input');
   const send = document.getElementById('claydo-send');
@@ -331,10 +350,7 @@ async function submitClaydo() {
   // Starts empty + shows the typing dots; replaced with real text as we go.
   const botMsg = document.createElement('div');
   botMsg.className = 'claydo-msg bot';
-  const thinking = document.createElement('span');
-  thinking.className = 'claydo-thinking';
-  thinking.textContent = 'Claydo is thinking';
-  botMsg.appendChild(thinking);
+  botMsg.appendChild(_claydoThinkingEl());
   histDiv.appendChild(botMsg);
   histDiv.scrollTop = histDiv.scrollHeight;
 
