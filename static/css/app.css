@@ -5625,6 +5625,46 @@
     flex-wrap: wrap;
   }
 
+  /* ── Persona editor ────────────────────────────────────────────────────
+     Reuses the Claydo save-panel shell, but FIXED to the viewport rather than
+     absolutely positioned inside the Claydo modal — it opens from the composer's
+     persona picker, where there is no Claydo modal to anchor to. */
+  .persona-editor {
+    position: fixed; inset: 0; z-index: 1200;
+    border-radius: 0;
+  }
+  .persona-editor-inner { width: min(560px, 92%); }
+  .persona-editor-inner textarea {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono, ui-monospace, monospace);
+    font-size: 12.5px; line-height: 1.5;
+    padding: 8px 10px; border-radius: 5px; outline: none;
+    resize: vertical; min-height: 140px;
+  }
+  .persona-editor-inner textarea:focus { border-color: var(--accent); }
+  .persona-editor-inner input:disabled {
+    color: var(--text-faint); background: var(--surface2); cursor: not-allowed;
+  }
+  .persona-editor-meta {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 11px; color: var(--text-faint); margin-top: 6px;
+  }
+  .persona-editor-meta .over { color: #fca5a5; font-weight: 600; }
+  .claydo-ready-btn.danger { color: #fca5a5; border-color: #ef444460; }
+  .claydo-ready-btn.danger:hover { background: #ef444420; border-color: #ef4444; }
+
+  /* Pencil beside the persona picker — quiet until hovered, like the composer's
+     other inline affordances. */
+  .composer-persona-edit {
+    flex-shrink: 0; background: transparent; border: 1px solid var(--border2);
+    color: var(--text-dim); border-radius: 6px;
+    width: 26px; height: 26px; font-size: 13px; line-height: 1;
+    cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+  }
+  .composer-persona-edit:hover {
+    background: var(--surface3); color: var(--text); border-color: var(--accent);
+  }
+
   /* Standalone artifact editor — its own draggable modal window. */
   .claydo-editor-body {
     flex: 1; min-height: 0; display: flex;
