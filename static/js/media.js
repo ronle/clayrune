@@ -53,7 +53,13 @@ function openMediaSurface(projectId) {
   document.getElementById('modal-layer').appendChild(win);
   const z = nextModalZ++;
   win.style.zIndex = z;
-  openModals.set(modalId, { projectId: pid, element: win, minimized: false, zIndex: z });
+  // projectId MUST be null. refreshModal() re-renders every open modal whose
+  // entry carries a projectId AS A PROJECT MODAL — so setting it here made the
+  // gallery repaint itself as a second copy of the project on the next refresh,
+  // and its X then called closeModalById(<project-id>) instead of '__media', so
+  // the window couldn't even be closed. The media project lives in _mediaCache,
+  // not in the modal entry. (Extensions/Skills pass null for the same reason.)
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
   centerModalElement(win);
   focusModal(modalId);
   _mediaRenderBody();
@@ -86,9 +92,10 @@ function _mediaRenderBody() {
 }
 
 function setMediaProject(pid) {
+  // Deliberately does NOT write entry.projectId — see the note in
+  // openMediaSurface: a projectId on the modal entry turns this window into a
+  // project modal on the next refreshModal().
   _mediaCache = { items: [], loaded: false, loading: false, projectId: pid };
-  const e = openModals.get('__media');
-  if (e) e.projectId = pid;
   _mediaRenderBody();
   loadMedia();
 }
