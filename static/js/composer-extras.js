@@ -15,6 +15,21 @@ function _micNativeAvailable() {
 function _micBrowserCtor() {
   try { return window.SpeechRecognition || window.webkitSpeechRecognition || null; } catch (_) { return null; }
 }
+// Browsers only hand out the microphone on a SECURE CONTEXT (https, or
+// http://localhost / 127.0.0.1). MC binds 0.0.0.0, so the very same page is
+// also reachable at http://<lan-ip>:5199 — where webkitSpeechRecognition still
+// EXISTS (so the button rendered) but every start() dies with `not-allowed`.
+// That read as "mic permission denied" and sent people hunting through OS
+// privacy settings for a permission that was never the problem.
+function _micSecureContext() {
+  try {
+    if (window.isSecureContext === true) return true;
+    if (window.isSecureContext === false) return false;
+    // Very old engines don't expose isSecureContext — fall back to the origin.
+    const h = location.hostname;
+    return location.protocol === 'https:' || h === 'localhost' || h === '127.0.0.1' || h === '::1';
+  } catch (_) { return true; }   // unknown → let the real API decide
+}
 function micAvailable() { return _micNativeAvailable() || !!_micBrowserCtor(); }
 function micBtnHTML(textareaId) {
   if (!micAvailable()) return '';
@@ -247,6 +262,13 @@ function _startBrowserMic(textareaId) {
   const ta = document.getElementById(textareaId);
   if (!Ctor) { _micToast('voice not supported in this browser'); return; }
   if (!ta) { _micToast('textarea not found: ' + textareaId); return; }
+  // Fail with the REASON, before the API fails with a misleading one.
+  if (!_micSecureContext()) {
+    _micToast(`voice needs a secure page — you're on ${location.protocol}//${location.host}. `
+      + 'Open Clayrune at http://localhost:' + (location.port || '5199')
+      + ' (or over the clayrune.io tunnel) and the mic will work.');
+    return;
+  }
   let rec;
   try { rec = new Ctor(); } catch (e) { _micToast('mic init failed'); return; }
   const gen = ++_micGen;
@@ -282,7 +304,22 @@ function _startBrowserMic(textareaId) {
     const cur = _micState[textareaId];
     if (!cur || cur.gen !== gen) return;
     const err = ev && ev.error;
-    if (err === 'not-allowed' || err === 'service-not-allowed') { _micToast('mic permission denied'); cur.active = false; _hardResetBrowserMic(textareaId); }
+    // These two are NOT the same failure and used to share one useless message.
+    //   not-allowed         → the page was refused the mic: browser site-permission
+    //                         block, or Windows mic privacy off for the browser.
+    //   service-not-allowed → the page is allowed, but the SPEECH BACKEND is
+    //                         unavailable. Typical in WebView2 / the Tauri shell
+    //                         and in Chromium builds without Google's speech
+    //                         service — no amount of clicking Allow fixes it;
+    //                         you need a real Chrome/Edge tab.
+    if (err === 'not-allowed') {
+      _micToast('mic blocked — click the padlock in the address bar → Microphone → Allow, '
+        + 'and check Windows Settings → Privacy → Microphone is on for your browser.');
+      cur.active = false; _hardResetBrowserMic(textareaId);
+    } else if (err === 'service-not-allowed') {
+      _micToast('this browser has no speech service — open Clayrune in Chrome or Edge to dictate.');
+      cur.active = false; _hardResetBrowserMic(textareaId);
+    }
     else if (err === 'no-speech' || err === 'aborted') { /* benign — onend will restart if still active */ }
     else _micToast('mic error: ' + err);
   };
