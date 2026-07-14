@@ -572,10 +572,16 @@ function agentPanelHTML(p) {
   const incOn = getIncognitoFor(p.id);
   const incForced = isIncognitoProject(p);
   const incognitoChip = noActiveTab ? _incognitoChipHTML(p) : '';  // shared with the §8 sheet
-  const _dispatchPlaceholder = incOn ? 'Incognito — ephemeral, not saved to project memory...' : 'Describe a task for the agent... (paste or drop files here)';
-  const _attachBtn = _pcaps.image_input ? `
+  const _dispatchPlaceholder = incOn ? 'Incognito — not saved to memory...' : 'Describe a task for the agent...';
+  const _attachInput = _pcaps.image_input ? `
     <input type="file" multiple id="agent-attach-input-${esc(p.id)}" class="agent-attach-input"
-      onchange="handleAgentAttachPick(event,'${esc(p.id)}')">
+      onchange="handleAgentAttachPick(event,'${esc(p.id)}')">` : '';
+  // Desktop: ＋ on the LEFT opens the picker (mirrors the in-chat composer).
+  // Mobile: keeps its 📎 to the right of the pill.
+  const _dispatchPlusBtn = _pcaps.image_input ? `
+    <button class="btn-composer-plus" type="button" title="Attach files or take a photo"
+      onclick="triggerAgentAttach('${esc(p.id)}')">&#43;</button>` : '';
+  const _attachBtn = _pcaps.image_input ? `
     <button class="btn-attach" type="button" title="Attach files or take a photo"
       onclick="triggerAgentAttach('${esc(p.id)}')">&#128206;</button>` : '';
   const _dispatchMicBtn = micBtnHTML(`agent-task-${esc(p.id)}`);
@@ -630,12 +636,14 @@ function agentPanelHTML(p) {
     ondragenter="handleAgentDragOver(event,this)"
     ondragleave="handleAgentDragLeave(event,this)"
     ondrop="${_pcaps.image_input ? `handleAgentDrop(event,'${esc(p.id)}')` : 'event.preventDefault()'}">
+    ${_attachInput}
+    ${mobileMode ? '' : _dispatchPlusBtn}
     <textarea spellcheck="true" class="agent-task-input" id="agent-task-${esc(p.id)}" rows="1"
       placeholder="${_dispatchPlaceholder}"
       onkeydown="handleInputEnter(event,()=>dispatchAgent('${esc(p.id)}'),'${esc(p.id)}')"
       onpaste="${_pcaps.image_input ? `handleAgentPaste(event,'${esc(p.id)}')` : ''}"
     ></textarea>
-    ${_attachBtn}
+    ${mobileMode ? _attachBtn : ''}
     ${_dispatchMicBtn}
     ${_dispatchBtn}
   </div>`;
@@ -2431,6 +2439,22 @@ async function fetchAgentStatus(projectId) {
       // consumes it now. To bring the nudge back, render it somewhere
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
       agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual', character: s.character || null, pinned: !!s.pinned };
+      // A FRESH conversation has no claude_session_id at dispatch time, so the
+      // zero-gap upsert in startAgent() (resume-preview.js) is skipped for it —
+      // `if (resumeId && task)` is false. Nothing else inserted it, so the new
+      // chat was missing from the rail/Layer-2 list until a page refresh made
+      // loadConversations() re-fetch the (now transcript-backed) server list.
+      // This tick is where the CLI's session id first reaches us, so upsert here.
+      //
+      // Guard on the cache already being LOADED: upsertConversationCache creates
+      // the array if absent, and the `if (!conversationsCache[p.id]) loadConversations(...)`
+      // guards elsewhere would then see a non-empty array and never fetch the
+      // real list — leaving the rail showing ONLY this one conversation.
+      const _csid = s.claude_session_id || '';
+      if (_csid && !s.hivemind_ws_id && Array.isArray(conversationsCache[projectId])
+          && !conversationsCache[projectId].some(c => c.claude_session_id === _csid)) {
+        upsertConversationCache(projectId, _csid, s.task || '', s.status);
+      }
       // Question-form reconciliation (parity with _reconcileAgentBuffer). The
       // wholesale cache rebuild above drops pendingQuestions on every poll. If we
       // don't re-derive it here, a form that only ever lived in the cache — the

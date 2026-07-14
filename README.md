@@ -3,9 +3,7 @@
 **Mission control for your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents.**
 Run, schedule, and babysit many agents across every project — from one console, or from your phone.
 
-<!-- ASSET TODO (docs/MARKETING_ASSETS_SPEC.md, A1): drop the demo GIF at docs/assets/demo.gif and uncomment:
-![Clayrune demo](docs/assets/demo.gif)
--->
+![Clayrune — three agents working across three projects, and the same session live on a phone](docs/assets/demo.gif)
 
 Claude Code is a brilliant agent — but it's one agent, in one terminal, on one repo,
 and it stops when you close the lid. Clayrune is the layer on top: a dashboard where

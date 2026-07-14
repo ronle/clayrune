@@ -286,6 +286,64 @@ def is_nonuser_message(text: str) -> bool:
 _MC_TOOL_HOOKS: Dict[str, Callable] = {}
 
 
+def apply_mc_tool_blocks(session: Dict[str, Any],
+                         turn_text: str) -> Dict[str, bool]:
+    """Scan a completed turn's text for MC Tool Protocol blocks and apply
+    their effects to the session dict. Best-effort: a malformed block is
+    logged and skipped, never raised.
+
+    Returns {'blocks_found': bool, 'paused': bool}. `paused` is True when a
+    block (a question) means the turn should hold in 'idle' awaiting the
+    user's reply rather than completing.
+    """
+    found = False
+    paused = False
+    for tool_type, body in parse_mc_tool_blocks(turn_text):
+        found = True
+        if tool_type == 'question':
+            try:
+                data = json.loads(body, strict=False)
+                questions = (data.get('questions')
+                             if isinstance(data, dict) else data)
+                if isinstance(questions, dict):
+                    questions = [questions]
+                if not isinstance(questions, list) or not questions:
+                    raise ValueError('no questions[]')
+                session.setdefault('pending_questions', []).append({
+                    'questions': questions,
+                    'question_id': uuid.uuid4().hex,
+                })
+                session['waiting_for_question'] = True
+                paused = True
+            except Exception as e:
+                session.setdefault('log_lines', []).append(
+                    f'[mc:question ignored — malformed block: {e}]')
+        elif tool_type == 'todo':
+            try:
+                data = json.loads(body, strict=False)
+                todos = data.get('todos') if isinstance(data, dict) else data
+                if not isinstance(todos, list):
+                    raise ValueError('no todos[]')
+                hook = _MC_TOOL_HOOKS.get('sync_todos')
+                if hook and todos:
+                    n = hook(session.get('project_id'),
+                             session.get('session_id'), todos)
+                    if n:
+                        session.setdefault('log_lines', []).append(
+                            f'[backlog: synced {n} item(s) from mc:todo]')
+            except Exception as e:
+                session.setdefault('log_lines', []).append(
+                    f'[mc:todo ignored — malformed block: {e}]')
+        # 'plan' is recognised by the scanner but intentionally not wired:
+        # MC runs agents headless, where plan-mode approval hangs — the
+        # Claude system prompt itself tells agents not to use plan mode
+        # (server.py _agent_capability_lines). Emulating it would add a
+        # feature the product steers away from. The block is still stripped
+        # from the chat so stray plan JSON never reaches the user.
+    return {'blocks_found': found, 'paused': paused}
+
+
+
 def register_mc_tool_hooks(*, sync_todos: Optional[Callable] = None) -> None:
     """server.py calls this at startup to wire MC Tool Protocol side effects
     that need server-side logic. Every hook is optional — a missing hook just
@@ -342,59 +400,14 @@ class AgentRuntime(ABC):
 
     def apply_mc_tool_blocks(self, session: Dict[str, Any],
                              turn_text: str) -> Dict[str, bool]:
-        """Scan a completed turn's text for MC Tool Protocol blocks and apply
-        their effects to the session dict. Best-effort: a malformed block is
-        logged and skipped, never raised.
+        """Instance form — delegates to the module-level function.
 
-        Returns {'blocks_found': bool, 'paused': bool}. `paused` is True when a
-        block (a question) means the turn should hold in 'idle' awaiting the
-        user's reply rather than completing.
+        The logic needs no `self`, and Claude's stream reader lives in
+        `mc/blueprints/agent_routes.py` where there is no runtime instance to
+        hand — so the real implementation is module-level (`apply_mc_tool_blocks`)
+        and this stays as the provider-facing method Gemini already calls.
         """
-        found = False
-        paused = False
-        for tool_type, body in parse_mc_tool_blocks(turn_text):
-            found = True
-            if tool_type == 'question':
-                try:
-                    data = json.loads(body, strict=False)
-                    questions = (data.get('questions')
-                                 if isinstance(data, dict) else data)
-                    if isinstance(questions, dict):
-                        questions = [questions]
-                    if not isinstance(questions, list) or not questions:
-                        raise ValueError('no questions[]')
-                    session.setdefault('pending_questions', []).append({
-                        'questions': questions,
-                        'question_id': uuid.uuid4().hex,
-                    })
-                    session['waiting_for_question'] = True
-                    paused = True
-                except Exception as e:
-                    session.setdefault('log_lines', []).append(
-                        f'[mc:question ignored — malformed block: {e}]')
-            elif tool_type == 'todo':
-                try:
-                    data = json.loads(body, strict=False)
-                    todos = data.get('todos') if isinstance(data, dict) else data
-                    if not isinstance(todos, list):
-                        raise ValueError('no todos[]')
-                    hook = _MC_TOOL_HOOKS.get('sync_todos')
-                    if hook and todos:
-                        n = hook(session.get('project_id'),
-                                 session.get('session_id'), todos)
-                        if n:
-                            session.setdefault('log_lines', []).append(
-                                f'[backlog: synced {n} item(s) from mc:todo]')
-                except Exception as e:
-                    session.setdefault('log_lines', []).append(
-                        f'[mc:todo ignored — malformed block: {e}]')
-            # 'plan' is recognised by the scanner but intentionally not wired:
-            # MC runs agents headless, where plan-mode approval hangs — the
-            # Claude system prompt itself tells agents not to use plan mode
-            # (server.py _agent_capability_lines). Emulating it would add a
-            # feature the product steers away from. The block is still stripped
-            # from the chat so stray plan JSON never reaches the user.
-        return {'blocks_found': found, 'paused': paused}
+        return apply_mc_tool_blocks(session, turn_text)
 
     @abstractmethod
     def resolve_binary(self) -> Optional[Path]:

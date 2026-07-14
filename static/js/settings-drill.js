@@ -540,6 +540,13 @@ async function _renderSettings() {
           <button class="${typeof _surfaceMode!=='undefined'&&_surfaceMode==='pages'?'active':''}" onclick="setSurfaceMode('pages')">Pages</button>
         </div>
       </div>
+      <div class="settings-row">
+        <div><div class="settings-label">Agent replies</div><div class="settings-hint">Bubbles show each paragraph as its own card; Flow runs the reply together as one block. Your messages stay bubbles either way.</div></div>
+        <div class="mc-seg">
+          <button class="${typeof _chatStyle==='undefined'||_chatStyle!=='flow'?'active':''}" onclick="setChatStyle('bubbles')">Bubbles</button>
+          <button class="${typeof _chatStyle!=='undefined'&&_chatStyle==='flow'?'active':''}" onclick="setChatStyle('flow')">Flow</button>
+        </div>
+      </div>
     </div>
 
     <div class="settings-section">

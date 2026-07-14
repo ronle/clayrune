@@ -29,6 +29,7 @@ COL_CLIENT_KEYS = "client_secret_keys"
 COL_ATTEST_LOG = "attestation_log"
 COL_ENROLL_INTENTS = "enrollment_intents"
 COL_NONCES = "nonces"
+COL_SESSIONS = "sessions"          # our own sessions — see app/sessions.py
 
 
 @lru_cache(maxsize=1)
@@ -75,6 +76,17 @@ def device_by_pub(device_pub_b64: str) -> Optional[dict]:
 def device_by_id(device_id: str) -> Optional[dict]:
     """Look up a device row by its document id."""
     snap = db().collection(COL_DEVICES).document(device_id).get()
+    if not snap.exists:
+        return None
+    data = snap.to_dict() or {}
+    data["_id"] = snap.id
+    return data
+
+
+def user_get(user_id: str) -> Optional[dict]:
+    """Look up a user row. Read fresh on every JWT mint/refresh — that read is
+    what makes the refresh endpoint the live-entitlement chokepoint."""
+    snap = db().collection(COL_USERS).document(user_id).get()
     if not snap.exists:
         return None
     data = snap.to_dict() or {}

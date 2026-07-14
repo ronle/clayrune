@@ -1,14 +1,29 @@
 # Clayrune — Marketing Campaign Plan
 
-**Owner:** Steward (charter `2375e16b`). **Status:** DRAFT v1, 2026-07-11.
+> ## ⚠️ SUPERSEDED IN PART — read `docs/LAUNCH_PLAN.md` first (2026-07-13)
+>
+> `LAUNCH_PLAN.md` is now the authoritative **strategy, sequence, and metrics**.
+> This doc is retained **only** for §2 (competitive landscape) and §4 (segments),
+> which still stand.
+>
+> **Three things below are now FORBIDDEN** (`clayrune-cloud/docs/STEWARD_HANDOFF.md`
+> §2 — legal, not stylistic):
+> - ❌ **"always on" / "no computer to babysit"** — that is the *parked* Cloud tier.
+>   Connect is remote access to the user's own machine. **If it sleeps, the agent
+>   stops.** Struck below.
+> - ❌ The **Cloud tier** in any copy: parked by Ron, 2026-07-13.
+> - ❌ **Stars / downloads / HN rank** as success metrics (§7). Track WAU, D7/D30,
+>   % enabling remote.
+
+**Owner:** Steward (charter `2375e16b`). **Status:** v1, 2026-07-11 — partly stale.
 **Purpose:** the anchor document for the campaign to make Clayrune a known tool
 that stands alongside main-market competitors. Future steward cycles execute
 one slice of this per cycle. This doc is the plan; the backlog notes are the log.
 
 Positioning language already live and to stay consistent with:
 - Site (`marketing/v2`): *"operator console for long-running Claude agents."*
-- Cloud investor brief: *"Your own AI agent — always on, on your phone, with no
-  computer to babysit."*
+- ~~Cloud investor brief: "Your own AI agent — always on, on your phone, with no
+  computer to babysit."~~ **STRUCK 2026-07-13 — forbidden claim.**
 
 ---
 
@@ -24,8 +39,10 @@ many projects — from your phone**, we own an under-served category.
 run, schedule, and babysit many of them across every project, from your desk or
 your phone.*
 
-**One-line pitch (approachable / cloud):** *Your own always-on AI agent, on your
-phone, no computer to babysit.*
+~~**One-line pitch (approachable / cloud):** *Your own always-on AI agent, on your
+phone, no computer to babysit.*~~ **STRUCK 2026-07-13 — forbidden claim (Cloud tier
+is parked; Connect is not always-on).** Replacement: *"Your dev machine, in your
+pocket."*
 
 ---
 
@@ -107,11 +124,14 @@ backlog item when it's the cycle's chosen step. Ordered by leverage:
 
 ---
 
-## 7. Success metrics
+## 7. Success metrics — ⚠️ REPLACED, see `LAUNCH_PLAN.md` §5
 
-GitHub stars, installer downloads (clayrune.io), HN/PH ranking + referral
-traffic, cloud sign-ups (when live), subreddit/Discord mentions. Baseline these
-before Phase C so lift is measurable.
+~~GitHub stars, installer downloads, HN/PH ranking, cloud sign-ups.~~ These are
+**vanity metrics and are explicitly rejected.** Track instead:
+
+**WAU · D7 / D30 retention · % who enable remote · time-to-first-agent-turn.**
+
+**If D7 retention is bad, marketing is irrelevant — fix the product.**
 
 ---
 

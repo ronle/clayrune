@@ -124,6 +124,15 @@ def _load_config():
         'scribe_reconcile_cap': 5,     # max reconciled sessions/project/boot
         'scribe_checkpoint_enabled': False,  # SPEC §3.A.MID Step 6 — default OFF
         'scribe_checkpoint_kb': 0,     # mid-session cadence (KB new transcript); 0=disabled
+
+        # Offline question channel (mc/question_channel.py). When an agent asks a
+        # question and NOBODY is watching the session (a schedule, a steward cycle,
+        # or just a closed tab), the interactive form renders to an empty room and
+        # the run hangs. These route it somewhere the user will actually see it.
+        'question_channel': 'email',      # 'email' | 'off'
+        'question_channel_to': '',        # '' -> the night-mail default recipient
+        'question_channel_grace_s': 45,   # wait this long for a viewer before sending
+        'question_channel_poll_s': 120,   # how often to scan the inbox for replies
         'long_session_advisory_enabled': False,  # soft "restart long Mode-B session" nudge
         'long_session_advisory_turns': 25,      # num_turns threshold for that nudge
         # Idle-session eviction — reclaim a warm Mode B fleet (claude.exe + its
@@ -2127,6 +2136,47 @@ def _register_claude_runtime_hooks():
     _agent_runtime.register_mc_tool_hooks(sync_todos=_sync_todowrite_to_backlog)
 
 
+def _serve_dual_stack(port):
+    """Serve on IPv4 *and* IPv6, from a single dual-stack socket.
+
+    Why this is not just `app.run(host='0.0.0.0')`:
+
+    `0.0.0.0` is IPv4-only. But `localhost` resolves to the AAAA record `::1`
+    BEFORE the A record `127.0.0.1` — so every browser/curl hit to
+    http://localhost:PORT first opens a connection to ::1, finds nothing
+    listening, and only falls back to IPv4 after the Happy-Eyeballs timeout
+    (~200ms in Chrome and curl). That tax is paid PER CONNECTION — every JS
+    file, every CSS file, every API call — which is what made a page refresh
+    take seconds instead of milliseconds. Measured here: 210ms/req via
+    `localhost` vs 2ms via `127.0.0.1`, on an otherwise idle server.
+
+    The naive fix (`host='::'`) is WRONG on Windows: IPV6_V6ONLY defaults to 1
+    there, so an AF_INET6 socket would refuse 127.0.0.1 outright and break LAN,
+    mobile-pairing, and tunnel clients (all of which reach us over IPv4).
+
+    So bind AF_INET6 with IPV6_V6ONLY=0 — one socket that accepts both families
+    (IPv4 peers arrive as ::ffff:a.b.c.d) — and hand the fd to werkzeug. If the
+    host has IPv6 disabled entirely, fall back to the old IPv4-only bind.
+    """
+    import socket as _socket
+    try:
+        sock = _socket.socket(_socket.AF_INET6, _socket.SOCK_STREAM)
+        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        sock.setsockopt(_socket.IPPROTO_IPV6, _socket.IPV6_V6ONLY, 0)
+        sock.bind(('::', port))
+        sock.listen(128)
+    except OSError as e:
+        _log(f"[serve] dual-stack bind unavailable ({e}); falling back to IPv4-only. "
+             f"http://localhost:{port} will be ~200ms/request slower than "
+             f"http://127.0.0.1:{port}.")
+        app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+        return
+
+    from werkzeug.serving import make_server
+    srv = make_server('::', port, app, threaded=True, fd=sock.fileno())
+    srv.serve_forever()
+
+
 if __name__ == '__main__':
     _register_claude_runtime_hooks()
     _check_port_conflict()
@@ -2196,5 +2246,15 @@ if __name__ == '__main__':
     # firing a 12s git operation on every page load. Frontend polls
     # /api/system/update/cached.
     threading.Thread(target=_update_check_loop, daemon=True, name='update-check').start()
+    # Offline question channel: picks up emailed answers to questions raised by
+    # unattended runs and resumes the agent through the normal follow-up path.
+    # Self-disabling — the poller no-ops when nothing is outstanding or no mail
+    # credentials are configured. Roll back: question_channel=off.
+    if str(CONFIG.get('question_channel', 'email')).lower() != 'off':
+        try:
+            from mc import question_channel as _qchan
+            _qchan.start_poller(int(CONFIG.get('question_channel_poll_s', 120)))
+        except Exception as e:
+            _log(f"[question-channel] poller not started: {e}")
     _log(f"Clayrune running at http://localhost:{PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
+    _serve_dual_stack(PORT)

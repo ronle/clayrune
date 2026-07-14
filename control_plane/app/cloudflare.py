@@ -12,12 +12,21 @@ Operations needed by /v1/enroll:
   - create_named_tunnel(name)         → (uuid, token)
   - set_tunnel_ingress(uuid, hostname, service_url)
   - create_dns_cname(hostname, target)→ dns_record_id
-  - create_access_app(hostname, allowed_email) → app_id
-  - add_access_app_policy(app_id, email)
 Operations for revoke / username change:
   - delete_dns_record(record_id)
-  - delete_access_app(app_id)
   - delete_tunnel(uuid)
+Suspension (immediate edge cutoff):
+  - kv_put/kv_delete(namespace_id, key) — the Worker's DENYLIST namespace
+
+**Cloudflare ACCESS is no longer provisioned.** Access is priced per seat ($7/user/mo
+above 50 users) and caps the account at 500 applications; at a $6.99 price that is
+negative margin. It is replaced by the edge Worker + our own session JWT (see
+`app/sessions.py`). TUNNEL and DNS are free and unmetered and stay exactly as they
+were — only Access is the trap.
+
+The `create_access_app` / `delete_access_app` / service-token methods below are kept
+for exactly one reason: tearing down the Access apps we already created for existing
+users (`control_plane/teardown_access.py`). Do not call them from a provisioning path.
 
 Construction:
   - `CloudflareClient.from_env()` reads CLOUDFLARE_API_TOKEN, optionally
@@ -347,6 +356,45 @@ class CloudflareClient:
             "DELETE",
             f"/accounts/{acc}/access/apps/{app_id}/policies/{policy_id}",
         )
+
+    # ─── Workers KV (the suspension denylist) ─────────────────────────────
+    #
+    # The edge Worker reads `u:{user_id}` from the DENYLIST namespace on every
+    # request (~1ms). It is the ONLY immediate kill switch we have: the session
+    # JWT's TTL is a deliberate 30-minute revocation lag, which is fine for a
+    # cancellation and useless against a chargeback.
+
+    async def kv_put(self, *, namespace_id: str, key: str, value: str = "1") -> None:
+        """Write a KV key. CF's KV value-write endpoint takes multipart/form-data,
+        not JSON — it is the one CF call in this client that isn't a JSON body."""
+        acc = await self.get_account_id()
+        path = f"/accounts/{acc}/storage/kv/namespaces/{namespace_id}/values/{key}"
+        try:
+            r = await self._client.request(
+                "PUT", path,
+                files={"value": (None, value), "metadata": (None, "{}")},
+                headers={"Content-Type": None},  # let httpx set the multipart boundary
+            )
+        except httpx.HTTPError as e:
+            raise CloudflareAPIError(f"network error: {e}", status=0, endpoint=path) from e
+        self._raise_unless_ok(r, "PUT", path)
+
+    async def kv_delete(self, *, namespace_id: str, key: str) -> None:
+        acc = await self.get_account_id()
+        await self._call(
+            "DELETE", f"/accounts/{acc}/storage/kv/namespaces/{namespace_id}/values/{key}",
+        )
+
+    def _raise_unless_ok(self, r: httpx.Response, method: str, path: str) -> None:
+        try:
+            body = r.json() if r.content else {}
+        except ValueError:
+            body = {}
+        if r.status_code >= 300 or not body.get("success", False):
+            raise CloudflareAPIError(
+                f"HTTP {r.status_code} from {method} {path}",
+                status=r.status_code, errors=body.get("errors", []), endpoint=path,
+            )
 
     # ─── Verify token (used by SETUP_CHECKLIST §5) ────────────────────────
 

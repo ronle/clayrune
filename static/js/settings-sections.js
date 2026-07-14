@@ -861,9 +861,16 @@ async function refreshRemoteDevices() {
   `;
 }
 
-// ── Active CF Access sign-in sessions (browsers, phones, etc.) ───────────────
-// Different from devices — these are CF Access sessions created by OTP
-// signin to <username>.clayrune.io. Each browser tab on each phone has one.
+// ── Active sign-in sessions (browsers, paired phones) ───────────────────────
+// Different from devices — a session is "someone is signed in and can open the
+// dashboard"; a device is "a machine is running MC behind a tunnel".
+//
+// These were Cloudflare Access sessions until 2026-07-13. They are now our own
+// (control_plane/app/sessions.py) — Access was per-seat priced and had to go.
+// Consequences visible here: revoke is genuinely per-session now (CF's was so
+// unreliable it fell back to nuking all of them), and the fields changed —
+// `created_at` replaces `issued_at`, `kind` replaces `apps_seen`, and there is
+// no `short_id`/`ua` (CF never actually returned a user-agent either).
 
 async function refreshRemoteSessions() {
   const el = document.getElementById('remote-sessions-list');
@@ -875,19 +882,6 @@ async function refreshRemoteSessions() {
     body = await r.json();
   } catch (e) {
     el.innerHTML = '';   // silently hide on network failure
-    return;
-  }
-
-  // Graceful degradation: if CF token doesn't have permission to list users,
-  // hide the section entirely with a small "feature unavailable" hint.
-  // (Adding "Access: Organizations, IDPs, and Groups" scope to the CF token
-  // unlocks this feature on next deploy.)
-  if (body.error === 'list_users_failed' || body.error === 'list_sessions_failed') {
-    el.innerHTML = `
-      <div class="settings-hint" style="font-size:11px;opacity:.6;padding:4px 0">
-        Sign-in session management is not yet configured.
-        <a href="#" onclick="showToast('Add the Access: Organizations, IDPs, and Groups permission to your Cloudflare API token to enable this feature.', 7000); return false;" style="color:var(--accent)">Why?</a>
-      </div>`;
     return;
   }
 
@@ -904,17 +898,14 @@ async function refreshRemoteSessions() {
       <span class="settings-hint" style="font-size:10px">${sessions.length} active</span>
     </div>
     <div class="settings-hint" style="font-size:11px;margin-bottom:6px">
-      Browsers and phones currently signed in via Cloudflare Access. Different from devices above.
-      Each session is named the first time it signs in.
+      Browsers and paired phones currently signed in. Different from devices above.
+      Signing one out stops it renewing; it loses access within 30 minutes.
     </div>`;
 
   let listHtml;
   if (sessions.length === 0) {
-    listHtml = `<div class="settings-hint" style="font-size:11px;font-style:italic">No active sessions. Browsers sign in fresh every 24 hours via email OTP.</div>`;
+    listHtml = `<div class="settings-hint" style="font-size:11px;font-style:italic">No active sessions.</div>`;
   } else {
-    // Sort newest-first by issued_at so the ordinal labels are stable + meaningful.
-    sessions.sort((a, b) => (b.issued_at || 0) - (a.issued_at || 0));
-
     const toMs = (v) => {
       if (v == null) return null;
       if (typeof v === 'number') return v < 1e12 ? v * 1000 : v;
@@ -967,14 +958,14 @@ async function refreshRemoteSessions() {
     };
 
     listHtml = sessions.map((s, idx) => {
-      const issuedMs = toMs(s.issued_at);
+      const issuedMs = toMs(s.created_at);
       const expiresMs = toMs(s.expires_at);
       const ago = issuedMs ? fmtAgo(issuedMs) : '';
       const expIn = expiresMs ? fmtIn(expiresMs) : '';
-      const apps = Array.isArray(s.apps_seen) ? s.apps_seen : [];
-      const appsLine = apps.length
-        ? (apps.length === 1 ? `Used to access ${apps[0]}` : `Accessed ${apps.length} apps · ${apps.slice(0, 2).join(', ')}${apps.length > 2 ? '…' : ''}`)
-        : '';
+      const lastMs = toMs(s.last_refresh_at);
+      const appsLine = s.kind === 'mobile'
+        ? `Paired phone${lastMs ? ` · last active ${fmtAgo(lastMs)}` : ''}`
+        : (lastMs ? `Last active ${fmtAgo(lastMs)}` : '');
       const ua = briefUA(s.ua || '');
       const sidEsc = esc(s.session_id);
       // Headline priority: user-typed label > clickable "Name this session…"

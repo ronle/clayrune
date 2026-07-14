@@ -23,7 +23,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from . import auth, firestore as fs, verify
+from . import auth, entitlement, firestore as fs, verify
 from .schemas import AttestationRequest
 
 router = APIRouter()
@@ -198,6 +198,32 @@ async def attest(
         }, merge=True)
     except Exception as e:
         log.warning("device row last_seen update failed: %s", e)
+
+    # ── Entitlement: chokepoint #2 of exactly two (BILLING_DESIGN §3) ──
+    #
+    # The other is the JWT mint/refresh (app/routes_auth.py), which gates the
+    # browser. This one gates the tunnel. The attestation loop already runs every
+    # 10 minutes and is already the heartbeat — no new mechanism, just a check.
+    #
+    # ⚠️ HONEST LIMIT: `tunnel_token` below is a STATIC token minted once at
+    # enrollment and stored on the device row. It does not expire and is not
+    # rotated, so refusing to re-issue it here does NOT bring a running tunnel
+    # down — cloudflared keeps its token and keeps connecting. What actually
+    # gates an unentitled user today is the edge Worker (no JWT → no dashboard),
+    # and, for fraud, the KV denylist. Making the tunnel itself die on
+    # non-entitlement requires short-lived tunnel tokens, which CF does not
+    # offer for named tunnels — the alternative is deleting the tunnel, which is
+    # destructive and belongs in a dunning job, not the hot path. Written down
+    # rather than papered over.
+    user_row = fs.user_get(result.device.get("user_id", "")) or {}
+    if not entitlement.is_entitled(user_row):
+        log.info("attest: refusing token for unentitled user %s (device %s)",
+                 result.device.get("user_id"), result.device.get("device_id"))
+        raise HTTPException(status_code=403, detail=_err(
+            "not_entitled",
+            "This subscription is not active. Renew to restore remote access.",
+            request_id=rid,
+        ))
 
     # Token issuance.
     # v1 dev: placeholder token. Real impl pulls a per-user token issued

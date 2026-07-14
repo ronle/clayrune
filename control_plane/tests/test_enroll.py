@@ -66,8 +66,14 @@ def test_enroll_happy_path(client, mem_firestore, cf_recorder):
         "set_tunnel_ingress was not called"
     assert any("dns_records" in p and m == "POST" for m, p in methods), \
         "create_dns_cname was not called"
-    assert any(p.endswith("/access/apps") and m == "POST" for m, p in methods), \
-        "create_access_app was not called"
+
+    # ── NO CLOUDFLARE ACCESS. ──
+    # Access is $7/user/mo above 50 seats and caps the account at 500 apps, against
+    # a $6.99 price: every user past #50 was negative margin. Provisioning one per
+    # enrollment is the bug this whole change exists to remove — if this assertion
+    # ever fails, someone put the money bomb back.
+    assert not any("/access/" in p for m, p in methods), \
+        f"enrollment touched Cloudflare Access: {[c for c in methods if '/access/' in c[1]]}"
 
     # Firestore now has the user + device + username row
     dump = mem_firestore.dump()
@@ -80,8 +86,10 @@ def test_enroll_happy_path(client, mem_firestore, cf_recorder):
     assert device_row["cf_tunnel_uuid"].startswith("tun_")
     assert device_row["cf_tunnel_token"].startswith("MOCK_CF_TUNNEL_TOKEN_")
     assert device_row["cf_dns_record_id"].startswith("rec_")
-    assert device_row["cf_access_app_id"].startswith("app_")
     assert device_row["hostname_claim"] == "ron.clayrune.io"
+    # Tunnel + DNS are free and unmetered and stay exactly as they were. Only the
+    # Access app is gone — and with it the per-seat bill.
+    assert "cf_access_app_id" not in device_row
 
     # enrollment_token is stored only as a hash
     assert "enrollment_token_hash" in device_row

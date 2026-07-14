@@ -1681,16 +1681,30 @@
     font-size: 8px; color: var(--text); background: rgba(0,0,0,0.7);
     padding: 1px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  /* Remove-attachment button. Was a dark glyph (var(--text) — near-black in the
+     light themes) on a 70%-black circle: dark-on-dark, so it read as an
+     unexplained black blob rather than a close control. Now a light chip with a
+     clear ✕ and a red hover. */
   .create-preview-remove {
-    position: absolute; top: 2px; right: 2px;
-    width: 16px; height: 16px; border-radius: 50%;
-    background: rgba(0,0,0,0.7); border: none; color: var(--text);
-    cursor: pointer; font-size: 10px; line-height: 1;
+    position: absolute; top: 3px; right: 3px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.28);
+    cursor: pointer; font-size: 11px; font-weight: 700; line-height: 1;
     display: flex; align-items: center; justify-content: center;
-    opacity: 0; transition: opacity 0.15s;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .create-preview-remove:hover {
+    background: var(--red-dim); color: var(--red-text); border-color: var(--red);
   }
   .create-preview-item:hover .create-preview-remove,
   .agent-image-preview:hover .create-preview-remove { opacity: 1; }
+  /* Touch devices never hover — without this the control is unreachable. */
+  @media (hover: none), (pointer: coarse) {
+    .create-preview-item .create-preview-remove,
+    .agent-image-preview .create-preview-remove { opacity: 1; }
+  }
   .priority-select {
     background: var(--bg); border: 1px solid var(--border);
     color: var(--text-dim); font-family: 'Inter', sans-serif;
@@ -2621,36 +2635,49 @@
   .agent-3pane .agent-main .agent-chat-input { background: var(--bg); border-top: none; }
   /* Composer as a single rounded pill: attach 📎 + mic sit INSIDE the entry on
      the right (like the mobile composer), with Send tucked in at the end. */
-  .agent-3pane .agent-main .agent-chat-input-row {
+  /* The +New dispatch row (.agent-input-row) wears the SAME pill as the in-chat
+     follow-up row — ＋ left, mic inside on the right. */
+  .agent-3pane .agent-main .agent-chat-input-row,
+  .agent-3pane .agent-main .agent-input-row {
     background: var(--surface); border: 1px solid var(--border);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     border-radius: 22px; padding: 5px 6px; gap: 4px; align-items: center;
   }
-  .agent-3pane .agent-main .agent-chat-input-row.drag-over { border-color: var(--accent); }
+  .agent-3pane .agent-main .agent-chat-input-row.drag-over,
+  .agent-3pane .agent-main .agent-input-row.drag-over { border-color: var(--accent); }
   /* ＋ on the left opens the picker — a soft accent-tinted rounded square, per
      the PDF composer. */
-  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus {
+  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus,
+  .agent-3pane .agent-main .agent-input-row .btn-composer-plus {
     flex-shrink: 0; width: 34px; height: 34px; border: none; border-radius: 9px;
     background: var(--accent-dim); color: var(--accent);
     font-size: 22px; line-height: 1; cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
     transition: filter 0.12s;
   }
-  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus:hover { filter: brightness(0.96); }
-  .agent-3pane .agent-main .agent-chat-input-row .agent-task-input {
+  .agent-3pane .agent-main .agent-chat-input-row .btn-composer-plus:hover,
+  .agent-3pane .agent-main .agent-input-row .btn-composer-plus:hover { filter: brightness(0.96); }
+  .agent-3pane .agent-main .agent-chat-input-row .agent-task-input,
+  .agent-3pane .agent-main .agent-input-row .agent-task-input {
     background: transparent !important; border: none !important; outline: none !important;
     padding: 8px 4px;
   }
   .agent-3pane .agent-main .agent-chat-input-row .btn-attach,
-  .agent-3pane .agent-main .agent-chat-input-row .btn-mic {
+  .agent-3pane .agent-main .agent-chat-input-row .btn-mic,
+  .agent-3pane .agent-main .agent-input-row .btn-attach,
+  .agent-3pane .agent-main .agent-input-row .btn-mic {
     background: transparent !important; border: none !important; color: var(--text-dim);
     width: 36px; height: 36px;
   }
   /* Bump the clip so it reads as a paperclip, not a dot. */
-  .agent-3pane .agent-main .agent-chat-input-row .btn-attach { font-size: 22px; }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-attach,
+  .agent-3pane .agent-main .agent-input-row .btn-attach { font-size: 22px; }
   .agent-3pane .agent-main .agent-chat-input-row .btn-attach:hover,
-  .agent-3pane .agent-main .agent-chat-input-row .btn-mic:hover { color: var(--text); background: transparent !important; }
-  .agent-3pane .agent-main .agent-chat-input-row .btn-dispatch { border-radius: 16px; }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-mic:hover,
+  .agent-3pane .agent-main .agent-input-row .btn-attach:hover,
+  .agent-3pane .agent-main .agent-input-row .btn-mic:hover { color: var(--text); background: transparent !important; }
+  .agent-3pane .agent-main .agent-chat-input-row .btn-dispatch,
+  .agent-3pane .agent-main .agent-input-row .btn-dispatch { border-radius: 16px; }
   .agent-panel-header {
     display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
     user-select: none; flex-shrink: 0;
@@ -3470,6 +3497,37 @@
     display: block; overflow-x: auto;
   }
 
+  /* ── Flow mode (Settings → Appearance → Interface → "Agent replies") ────
+     The agent streams one .agent-line per paragraph, so a multi-paragraph
+     reply renders as a stack of separate bubbles. In flow mode the plain
+     NARRATION lines shed their card (bg / border / radius / max-width) and
+     butt up against each other, so a reply reads as one continuous document.
+     User prompts stay right-aligned accent bubbles and tool/status stay quiet
+     chips — those two distinctions are what keep the transcript scannable, and
+     removing them would make it impossible to see who said what.
+     Body class is set by setChatStyle() in index.html (localStorage
+     mc_chat_style); no JS in the render path changed. */
+  body.chat-flow .agent-output { gap: 0; }
+  body.chat-flow .agent-output .agent-line:not(.agent-line-prompt):not(.agent-line-tool):not(.agent-line-status):not(.agent-line-error):not(.agent-line-queued):not(.agent-line-followup) {
+    align-self: stretch !important;
+    max-width: 100% !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 3px 2px !important;
+  }
+  /* Restore breathing room around the things that are still bubbles/chips —
+     .agent-output's gap is 0 in flow mode, so they'd otherwise touch. */
+  body.chat-flow .agent-output .agent-line-prompt,
+  body.chat-flow .agent-output .agent-line-tool,
+  body.chat-flow .agent-output .agent-line-status,
+  body.chat-flow .agent-output .agent-line-error,
+  body.chat-flow .agent-output .agent-line-queued,
+  body.chat-flow .agent-output .agent-line-followup {
+    margin: 8px 0 !important;
+  }
+
   /* Typing indicator — a left bubble with three staggered pulsing dots, shown
      as the last child of .agent-output while the agent is generating (§4,
      2026-07-05). Ephemeral DOM node (id=typing-<sid>) — NOT persisted to
@@ -3728,6 +3786,13 @@
     display: flex; flex-direction: column;
     position: relative; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
     overflow: hidden;
+    /* Drag-resizable from the bottom-right. The image viewer overrides the
+       width/height above with the picture's natural size (see _openImageViewer),
+       so it opens fitted rather than filling the screen; these bounds keep a
+       resize sane. `resize` needs overflow != visible — `hidden` above qualifies. */
+    resize: both;
+    min-width: 320px; min-height: 220px;
+    max-width: 95vw; max-height: 92vh;
   }
   .mermaid-viewer-toolbar {
     display: flex; align-items: center; gap: 6px;
@@ -3746,8 +3811,16 @@
     text-align: center; font-family: var(--mono, Consolas, monospace);
   }
   .mermaid-viewer-close { margin-left: auto; font-size: 18px; padding: 5px 10px; }
+  /* Canvas behind the image/diagram. WHITE by default — the checkerboard (the
+     conventional "this pixel is transparent" indicator) was the default, and it
+     fought with the artwork badly enough that images were hard to read. It's now
+     one of three opt-in modes, cycled from the toolbar and remembered. */
   .mermaid-viewer-scroll {
     flex: 1; overflow: auto; padding: 24px;
+    background: #fff;
+  }
+  .mermaid-viewer-scroll.vbg-checker {
+    background-color: #fff;
     background-image:
       linear-gradient(45deg, #f8f4ed 25%, transparent 25%),
       linear-gradient(-45deg, #f8f4ed 25%, transparent 25%),
@@ -3756,6 +3829,7 @@
     background-size: 16px 16px;
     background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   }
+  .mermaid-viewer-scroll.vbg-dark { background: #23272f; }
   .mermaid-viewer-svg {
     /* width:100% means fill the scroll container at scale=1; transform:scale
        grows it beyond, with overflow-scroll on the parent kicking in. */
