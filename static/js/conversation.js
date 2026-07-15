@@ -1084,23 +1084,80 @@ window.startRailResize = startRailResize;
 // The query is preserved per-project (the input value + focus survive refreshes
 // via refreshModalById); _applyRailFilter re-hides rows after each rebuild.
 let _railQuery = {};
-function railSearch(projectId, q) { _railQuery[projectId] = q; _applyRailFilter(projectId); }
+// Conversations whose TRANSCRIPT CONTENT matches the query (not just the label).
+// Keyed by projectId → { q, csids:Set }. Populated by a debounced /search-chats
+// call; drives the "reveal a row the label filter would hide" branch below.
+let _railContentHits = {};
+const _railSearchTimers = {};
+const _railSearchSeq = {};
+
+function railSearch(projectId, q) {
+  _railQuery[projectId] = q;
+  _applyRailFilter(projectId);        // instant label filter — no round-trip
+  // ALSO search transcript content, debounced. The label is a 90-char title;
+  // "mockup.html" (and most things people search for) live in the MESSAGES, so
+  // a label-only filter returned nothing for content that plainly exists. This
+  // reveals those conversations when the scan lands.
+  const query = (q || '').trim();
+  clearTimeout(_railSearchTimers[projectId]);
+  if (query.length < 2) { delete _railContentHits[projectId]; return; }
+  _railSearchTimers[projectId] = setTimeout(() => _railContentSearch(projectId, query), 300);
+}
+
+async function _railContentSearch(projectId, q) {
+  const seq = (_railSearchSeq[projectId] = (_railSearchSeq[projectId] || 0) + 1);
+  const csids = new Set();
+  try {
+    const res = await fetch(API_BASE + `/api/project/${encodeURIComponent(projectId)}/search-chats?q=${encodeURIComponent(q)}`);
+    if (res.ok) {
+      const data = await res.json();
+      for (const r of (data.results || [])) if (r.csid) csids.add(r.csid);
+    }
+  } catch (e) { /* best-effort — a failed scan just means label-only, as before */ }
+  if (seq !== _railSearchSeq[projectId]) return;               // a newer keystroke superseded this
+  if ((_railQuery[projectId] || '').trim() !== q) return;      // input moved on
+  _railContentHits[projectId] = { q, csids };
+  _applyRailFilter(projectId);
+}
+
+// The project's OWN modal element — scoping every query here is what stops one
+// project's search from filtering another's rail (two modals open → typing in
+// one hid rows in the other; the old code queried `document`).
+// Anchored off the search input, whose id is project-scoped: robust, and it
+// avoids findModalIdForProject, which lives in another ES module and is NOT
+// reachable from here (a `typeof` guard would just silently return null and
+// break the filter entirely). The two inputs (desktop rail / mobile Layer-2)
+// carry different ids; either one leads to the same enclosing modal.
+function _railScopeEl(projectId) {
+  const input = document.getElementById('rail-search-' + projectId)
+    || document.getElementById('mconv-search-' + projectId);
+  if (!input) return null;
+  return input.closest('.modal-window') || input.closest('.agent-panel');
+}
+
 function _applyRailFilter(projectId) {
-  const q = (_railQuery[projectId] || '').trim().toLowerCase();
+  const raw = (_railQuery[projectId] || '').trim();
+  const q = raw.toLowerCase();
+  // Content hits count only while they match the CURRENT query (a stale set from
+  // a previous keystroke must not reveal rows for a word no longer typed).
+  const hits = _railContentHits[projectId];
+  const contentSet = (hits && hits.q === raw) ? hits.csids : null;
+  const scope = _railScopeEl(projectId);
+  if (!scope) return;
   // Same per-project query drives BOTH the desktop 3-pane rail and the mobile
-  // Layer-2 conversations list (only one is mounted at a time).
-  document.querySelectorAll('.agent-3pane .agent-rail-list, .mobile-conv-list-view .conv-list-scroll').forEach(list => {
-    list.querySelectorAll('.conv-row').forEach(row => {
-      // data-search (_convSearchText) — the SAME text the hidden-count uses, so
-      // the "Show N hidden" toggle can't promise rows this filter then hides.
-      const hay = row.dataset.search || (row.textContent || '').toLowerCase();
-      row.style.display = (!q || hay.includes(q)) ? '' : 'none';
-    });
+  // Layer-2 list (only one is mounted at a time) — both live inside this modal.
+  scope.querySelectorAll('.agent-rail-list .conv-row, .conv-list-scroll .conv-row').forEach(row => {
+    // data-search (_convSearchText) — the SAME text the hidden-count uses, so
+    // the "Show N hidden" toggle can't promise rows this filter then hides.
+    const hay = row.dataset.search || (row.textContent || '').toLowerCase();
+    const labelMatch = !q || hay.includes(q);
+    const contentMatch = !!(contentSet && row.dataset.csid && contentSet.has(row.dataset.csid));
+    row.style.display = (labelMatch || contentMatch) ? '' : 'none';
   });
   // The toggle is rendered once, but search runs on EVERY keystroke with no
   // re-render — so its count/visibility must be refreshed here or it goes stale
   // and advertises hidden rows this filter would immediately hide.
-  _syncHiddenToggle(projectId, q);
+  _syncHiddenToggle(projectId, q, scope);
 }
 
 // How many HIDDEN chats match `q` ('' = all of them).
@@ -1113,8 +1170,12 @@ function _hiddenMatchCount(projectId, q) {
     .length;
 }
 
-function _syncHiddenToggle(projectId, q) {
-  document.querySelectorAll('.conv-hidden-toggle').forEach(btn => {
+function _syncHiddenToggle(projectId, q, scope) {
+  // Scope to the project's modal — a global query set EVERY open project's
+  // toggle to this project's count (the same cross-project leak as the filter).
+  const root = scope || _railScopeEl(projectId);
+  if (!root) return;
+  root.querySelectorAll('.conv-hidden-toggle').forEach(btn => {
     const n = _hiddenMatchCount(projectId, q);
     btn.style.display = n ? '' : 'none';
     btn.textContent = `${_showHiddenConvos[projectId] ? 'Hide' : 'Show'} ${n} hidden`;
@@ -1328,7 +1389,7 @@ function mobileUserConversationsHTML(p, convos) {
       ? `<button class="conv-hide" onclick="unhideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Move back to the list" aria-label="Unhide">&#8617;</button>`
       : `<button class="conv-hide" onclick="hideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Hide from this list" aria-label="Hide">&#10005;</button>`;
     const isActive = (mcsid && mcsid === activeSid) || (csid && activeCsid && csid === activeCsid);
-    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}${isActive ? ' active' : ''}" data-search="${esc(_convSearchText(c))}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
+    return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}${isActive ? ' active' : ''}" data-search="${esc(_convSearchText(c))}" data-csid="${esc(csid || '')}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
       <div class="conv-main">
         <div class="conv-top">
           <span class="conv-name">${dot}${label}</span>
