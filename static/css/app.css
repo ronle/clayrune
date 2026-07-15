@@ -2919,7 +2919,15 @@
     padding: 8px 12px; border-radius: 5px; outline: none; resize: none;
     min-height: 38px; line-height: 1.5;
     transition: border-color 0.15s;
+    /* Hide the composer scrollbar but keep it scrollable (wheel / arrows /
+       drag). On Windows + WebView2 the native textarea scrollbar renders with
+       stepper arrows that crowded the mic/Send — the "⌃⌄" Ron flagged.
+       scrollbar-width: Firefox + Chromium 121+; ::-webkit-scrollbar: older
+       Chromium/WebKit. */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
   }
+  .agent-task-input::-webkit-scrollbar { width: 0; height: 0; display: none; }
   .agent-task-input:focus { border-color: var(--accent); }
   .agent-drop-zone.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 5px; background: var(--accent-dim); }
   .agent-task-input::placeholder { color: var(--text-faint); }
