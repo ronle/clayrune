@@ -153,6 +153,9 @@ EXCLUDED_SIDECAR_SUFFIXES = (
     '_router_stats.json',
     '_skill_stats.json',           # Phase 4 Distiller — D9 closure
     '_skill_stats_summary.json',   # Phase 4 Distiller cache — D3 closure
+    # signal cold-archive `*_skill_stats_archive.jsonl` is excluded by its
+    # .jsonl extension (never matches the *.json glob) — not listed because
+    # the exclusion test enforces every entry here is glob-matchable.
 )
 
 

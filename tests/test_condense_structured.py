@@ -254,3 +254,47 @@ def test_agent_trigger_unchanged_byte_keyed(tmp_data_dir, tmp_path,
     # Agent path stays combined-byte keyed → the big CLAUDE.md still trips it
     # (proves we did not alter legacy behavior).
     assert s._should_condense(p, include_claude_md=True) is True
+
+
+# ── 2026-07-15 revisit: no-op trigger + byte-aware floor ─────────────────────
+
+def test_structured_trigger_skips_when_no_managed_entries(tmp_data_dir):
+    """A curated-only index over the line budget used to keep the trigger
+    permanently hot — every dispatch a guaranteed no-op model call (378 of
+    them across two projects by 2026-07-15). Structured condense can only
+    demote managed entries; with zero of them, don't dispatch."""
+    s = _server(tmp_data_dir)
+    _config()["condense_mode"] = "structured"
+    _config()["index_line_budget"] = 10
+    curated = "# Index\n" + "\n".join(f"- curated fact {i}" for i in range(40))
+    p, _mp = _seed(s, curated, [])
+    assert s._should_condense(p, include_claude_md=True) is False
+
+
+def test_structured_trigger_fires_on_byte_pressure(tmp_data_dir):
+    """The harness read cap is ~24KB of BYTES; the line budget alone can't
+    see a 30KB file with long lines. Byte pressure + demotable entries must
+    fire the trigger even under the line budget."""
+    s = _server(tmp_data_dir)
+    _config()["condense_mode"] = "structured"
+    _config()["index_line_budget"] = 500          # line trigger can't fire
+    entries = [f"- [2026-07-01] **e{i}** — " + "x" * 1000 for i in range(30)]
+    p, _mp = _seed(s, "# Index", entries)         # ~30KB total
+    assert s._should_condense(p, include_claude_md=True) is True
+
+
+def test_mechanical_floor_evicts_on_byte_pressure(tmp_data_dir):
+    """The floor was line-keyed only: 30KB of entries in 30 lines sailed
+    under a 185-line floor while the harness truncated the file. The byte
+    floor (~23KB) must evict oldest entries to the archive."""
+    s = _server(tmp_data_dir)
+    _config()["index_line_hard_floor"] = 500      # line floor can't fire
+    entries = [f"- [2026-07-01] **e{i}** — " + "x" * 1000 for i in range(30)]
+    p, mp = _seed(s, "# Index", entries)
+    s._commit_managed_entry(p)                    # no-op entry; floor runs
+    out = mp.read_text(encoding="utf-8")
+    assert len(out.encode("utf-8")) <= 24 * 1024 - 1024
+    # Oldest evicted, newest kept, all evictees verbatim in the archive.
+    assert "**e29**" in out and "**e0**" not in out
+    arch = s._get_archive_path(p).read_text(encoding="utf-8")
+    assert "**e0**" in arch

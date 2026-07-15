@@ -90,6 +90,10 @@ EXCLUDED_SIDECAR_SUFFIXES = (
     '_scribe_stats.json',
     '_skill_stats.json',
     '_skill_stats_summary.json',
+    # NOTE: the signal cold-archive `*_skill_stats_archive.jsonl` is NOT
+    # listed here — its .jsonl extension can never match load_projects()'s
+    # `*.json` glob, and the exclusion test enforces that every entry in
+    # this tuple is glob-matchable. If that glob ever widens, add it.
 )
 
 
@@ -114,6 +118,12 @@ VERBS = frozenset({
     # Added 2026-06-15 from vocab-miss telemetry (real recurring OOV verbs;
     # noise like 'no'/'brevity' deliberately excluded).
     'avoid', 'backtest', 'profile', 'recover', 'refresh', 'trim', 'verify',
+    # Added 2026-07-15 from vocab-miss telemetry (loop-health top OOV verbs:
+    # investigate ×11, detect/redirect/explore ×3, the rest ×2; ambiguous
+    # tokens like 'cost'/'price' deliberately excluded — they're nouns in
+    # every sampled phrase).
+    'investigate', 'detect', 'redirect', 'explore', 'measure', 'optimize',
+    'implement', 'authorize', 'resolve', 'condense',
 })
 
 # Nouns: things topics are ABOUT. Subsystem names (condense, scribe,
@@ -144,6 +154,12 @@ NOUNS = frozenset({
     # Added 2026-06-15 from vocab-miss telemetry (real recurring OOV nouns;
     # noise like 'monday'/'before' deliberately excluded).
     'api', 'chat', 'css', 'fetch', 'filter', 'reducer',
+    # Added 2026-07-15 from vocab-miss telemetry (loop-health top OOV nouns:
+    # health ×7, cloudflare/entry/service ×6, query ×5, account/position/
+    # gate ×4, tunnel ×3; project-specific tickers ('fmp','t2','v3') and
+    # one-off nouns ('gambler','expert','pin') deliberately excluded).
+    'health', 'cloudflare', 'entry', 'service', 'query', 'account',
+    'position', 'gate', 'tunnel', 'exit', 'price', 'cost',
 })
 
 # Modifiers: surface narrowing ONLY (not subsystem names). A modifier
@@ -404,13 +420,23 @@ def _write_skill_stats(project_id: str, stats: dict) -> None:
 
 
 def _increment_counter(project_id: str, key: str, n: int = 1) -> None:
-    """Best-effort counter bump. Acquires lock; never raises."""
+    """Best-effort counter bump. Acquires lock; never raises.
+
+    Error/skip-class counters also stamp `counters_last[key]` with the bump
+    time. Lifetime counters alone can't answer "is this still bleeding, or is
+    it a six-week-old backlog?" (the 2026-07-15 revisit found 121 extraction
+    errors with no way to tell) — the timestamp makes every error counter
+    self-dating at the cost of one small dict.
+    """
     if n <= 0:
         return
     try:
         with _get_skill_stats_lock(project_id):
             stats = _read_skill_stats(project_id)
             stats['counters'][key] = int(stats['counters'].get(key, 0)) + n
+            if ('error' in key or 'skip' in key or 'refuse' in key):
+                stats.setdefault('counters_last', {})[key] = (
+                    _now_iso() if _now_iso else '')
             _write_skill_stats(project_id, stats)
     except Exception:
         pass
@@ -1019,7 +1045,62 @@ def _commit_signals(project_id: str, signals: list[dict]) -> None:
     with _get_skill_stats_lock(project_id):
         stats = _read_skill_stats(project_id)
         stats['signals'].extend(signals)
+        _cold_archive_old_signals(project_id, stats)
         _write_skill_stats(project_id, stats)
+
+
+_SIGNAL_RETENTION_FACTOR = 3  # hot-file retention = this × distiller_window_days
+
+
+def _cold_archive_old_signals(project_id: str, stats: dict) -> None:
+    """Move signals far outside the recurrence window from the hot sidecar to
+    an append-only JSONL archive next to it. Caller MUST hold
+    _get_skill_stats_lock; mutates stats['signals'] in place.
+
+    The committee condition "never purge, just filter" (Seat 1 v1.1 Cond 3)
+    is honored: nothing is deleted — every signal survives verbatim in
+    `*_skill_stats_archive.jsonl`. What changes is WHERE it lives: every
+    reader filters to distiller_window_days (30), so signals older than 3×
+    that window are dead weight the hot file re-reads and atomically
+    rewrites on every single counter bump and session end. MC's sidecar had
+    grown to 248KB / 280 signals by 2026-07-15 with no bound — the same
+    unbounded-accumulation class as the watermark leak (49c09cc).
+
+    Ordering: archive-append FIRST, then trim the hot list. A crash between
+    the two can duplicate a signal in the archive (harmless — it's
+    audit-only cold storage) but can never lose one. The `.jsonl` extension
+    keeps it invisible to load_projects()'s `*.json` glob by construction
+    (DATA_DIR pollution rule).
+    """
+    try:
+        window = int(_cfg('distiller_window_days', 30) or 30)
+        keep_days = max(window * _SIGNAL_RETENTION_FACTOR, 90)
+        cutoff = time.time() - keep_days * 86400
+        fresh: list[dict] = []
+        old: list[dict] = []
+        for s in (stats.get('signals') or []):
+            # _iso_to_epoch returns 0.0 on parse failure — such a signal is
+            # already invisible to every read-time window filter, so routing
+            # it to the archive matches how readers treat it.
+            (old if _iso_to_epoch(s.get('ts', '')) < cutoff
+             else fresh).append(s)
+        if not old:
+            return
+        arch = _skill_stats_path(project_id).with_name(
+            _skill_stats_path(project_id).name.replace(
+                '_skill_stats.json', '_skill_stats_archive.jsonl'))
+        with open(arch, 'a', encoding='utf-8') as f:
+            for s in old:
+                f.write(json.dumps(s, ensure_ascii=False) + '\n')
+        stats['signals'] = fresh
+        _structured_log(
+            f"signal_cold_archive:project_id={project_id}:"
+            f"moved={len(old)}:kept={len(fresh)}")
+    except Exception as e:
+        # Best-effort — a failed archive pass leaves the hot file exactly as
+        # it was (bigger, never wrong).
+        _structured_log(
+            f"signal_cold_archive_failed:project_id={project_id}:err={e!r}")
 
 
 # ── Per-project aggregation (dual-layer recurrence per D2) ───────────────────

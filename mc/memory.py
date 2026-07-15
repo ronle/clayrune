@@ -526,10 +526,40 @@ def _should_condense(project, include_claude_md=False):
         if not mem_path.exists():
             return False
         try:
-            n_lines = len(mem_path.read_text(encoding='utf-8').splitlines())
+            text = mem_path.read_text(encoding='utf-8')
         except Exception:
             return False  # a trigger check must never raise
-        return n_lines > int(state.CONFIG.get('index_line_budget', 160) or 160)
+        n_lines = len(text.splitlines())
+        over_lines = n_lines > int(
+            state.CONFIG.get('index_line_budget', 160) or 160)
+        # The harness read cap is BYTES (~24KB), not lines: a file can pass
+        # the line budget and still truncate. Byte pressure is an equally
+        # valid trigger (2026-07-15 revisit).
+        over_bytes = len(text.encode('utf-8')) > _INDEX_BYTE_CAP
+        if not (over_lines or over_bytes):
+            return False
+        # Structured condense only ever acts on managed entries — with zero
+        # of them, every dispatch is a guaranteed no-op model call. Two
+        # curated-bloated projects had racked up 378 such no-ops by
+        # 2026-07-15 because this trigger stayed permanently hot. Skip, but
+        # make the un-actionable bloat loudly visible (once per run per
+        # project): only a human or the condense model tier may shrink the
+        # curated region.
+        try:
+            _, entries, _ = _mem_split_full(_mem_migrate(text))
+        except Exception:
+            return False
+        if not entries:
+            if over_bytes and project.get('id', '') not in _curated_cap_warned:
+                _curated_cap_warned.add(project.get('id', ''))
+                _log(f"[condense] {project.get('id', '')}: MEMORY.md is "
+                     f"{len(text.encode('utf-8')) // 1024}KB (> ~24KB harness "
+                     f"read cap) with NO managed entries to demote — the "
+                     f"agent's auto-loaded index is being silently truncated. "
+                     f"Curated region needs human curation (overflow to "
+                     f"MEMORY_ARCHIVE.md); structured condense cannot act.")
+            return False
+        return True
     mem_path = _get_memory_path(project)
     archive_path = _get_archive_path(project)
     combined = 0
@@ -551,6 +581,26 @@ def _should_condense(project, include_claude_md=False):
 
 
 _MEM_ARCHIVE_HEADER = '## Archived Session Log'
+
+# The Claude Code harness stops reading the auto-loaded MEMORY.md past
+# ~24KB — everything below the cut silently vanishes from agent context
+# (this repo's own index was bitten twice: watermark leak 2026-07-11,
+# curated bloat 2026-07-15). Line budgets alone can't guard this: the cap
+# is bytes. Floor eviction aims 1KB under the cap for headroom.
+_INDEX_BYTE_CAP = 24 * 1024
+_INDEX_BYTE_FLOOR = _INDEX_BYTE_CAP - 1024
+
+# Projects already warned (once per server run) that their curated region
+# alone exceeds the harness cap and machinery cannot shrink it.
+_curated_cap_warned: set = set()
+
+
+def _over_floor(text, hard_floor):
+    """Mechanical-floor predicate: over the LINE hard floor OR the BYTE
+    floor. Both floors evict managed entries only (oldest first, verbatim
+    to archive) — the curated region is never touched by machinery."""
+    return (len(text.splitlines()) > hard_floor
+            or len(text.encode('utf-8')) > _INDEX_BYTE_FLOOR)
 
 
 def _append_to_archive(project, lines):
@@ -601,8 +651,8 @@ def _commit_managed_entry(p, mem_entry=None, wm_upsert=None, wm_remove_sid=None)
         if wm_upsert is not None:
             wm_markers = _wm_upsert(wm_markers, wm_upsert)
         overflow = []
-        while mem_entries and len(
-                _mem_compose(curated, mem_entries, wm_markers).splitlines()) > hard_floor:
+        while mem_entries and _over_floor(
+                _mem_compose(curated, mem_entries, wm_markers), hard_floor):
             overflow.append(mem_entries.pop(0))  # oldest → archive
         _append_to_archive(p, overflow)
         _atomic_write_text(mem_path,
@@ -1530,9 +1580,10 @@ def _condense_apply(project, payload):
         st['skipped_rebased'] = sum(
             1 for did in decs if did not in present_ids)
         curated2 = '\n'.join(cur_lines)
-        # Mechanical line floor backstop (same rule as _commit_managed_entry).
-        while new_entries and len(_mem_compose(
-                curated2, new_entries, wm).splitlines()) > hard_floor:
+        # Mechanical line+byte floor backstop (same rule as
+        # _commit_managed_entry).
+        while new_entries and _over_floor(
+                _mem_compose(curated2, new_entries, wm), hard_floor):
             overflow.append(new_entries.pop(0))
         # Post-apply curated size — a gauge (not additive) so soak can watch
         # the model-authored curated index for monotonic low-value drift
