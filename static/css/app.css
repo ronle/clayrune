@@ -3733,6 +3733,17 @@
   .agent-output .hl-bullet { color: var(--accent); font-weight: 600; }
   .agent-output .hl-num { color: #c4b5fd; }
   .agent-output .hl-url { color: #60a5fa; text-decoration: underline; text-decoration-style: dotted; }
+  /* Agent file deep-links ([file:…] → /api/serve-file). A pill, not a raw
+     underline, so it reads as a "here's a file" affordance rather than a URL. */
+  .hl-file-link {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 9px 2px 7px; border-radius: 12px;
+    background: var(--accent-dim); color: var(--accent);
+    border: 1px solid transparent; text-decoration: none;
+    font-size: 0.95em; vertical-align: baseline;
+  }
+  .hl-file-link:hover { border-color: var(--accent); }
+  .hl-file-link .hl-file-ic { font-size: 0.95em; line-height: 1; }
   /* Inline image embeds in agent output (any render context) */
   .agent-img-wrap { display: block; margin: 8px 0; }
   /* Path caption: only visible as a fallback if the image fails to load. */

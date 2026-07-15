@@ -987,6 +987,86 @@ def serve_image():
     return send_file(real, as_attachment=False, max_age=3600)
 
 
+# Secrets denylist for /api/serve-file. Deep links are more exposed than an
+# agent tool-read (logged, cached, shoulder-surfed), so obvious credential
+# material is refused even when it lives inside an allowed root — matches the
+# scope Ron chose (2026-07-15). basename-based; realpath is resolved first so a
+# `..` can't smuggle a name past it.
+_SECRET_EXTS = {'.key', '.pem', '.p12', '.pfx', '.pkcs12', '.keystore', '.jks', '.ppk'}
+_SECRET_NAMES = {'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', '.netrc', '.htpasswd'}
+
+
+def _is_secret_file(real_path):
+    name = os.path.basename(real_path)
+    low = name.lower()
+    if low == '.env' or low.startswith('.env.'):
+        return True
+    if os.path.splitext(low)[1] in _SECRET_EXTS:
+        return True
+    if low in _SECRET_NAMES:
+        return True
+    if 'credential' in low or 'secret' in low:
+        return True
+    return False
+
+
+@bp.route('/api/serve-file')
+def serve_file():
+    """Serve ANY file the agent deep-links, for local + remote consoles.
+
+    Generalises /api/serve-image beyond images. Same realpath + prefix guard,
+    but a PROJECT-SCOPED allowlist (project working dirs + uploads/media — NOT
+    the whole data root, so project records/rules stay unreachable) plus a
+    secrets denylist. Serves as an attachment (download) by default; ?inline=1
+    lets the browser render it. Query: ?path=<abs>&inline=<0|1>.
+    """
+    raw = (request.args.get('path') or '').strip()
+    if not raw:
+        abort(400)
+    try:
+        real = os.path.realpath(raw)
+    except Exception:
+        abort(400)
+    if not os.path.isfile(real):
+        abort(404)
+    if _is_secret_file(real):
+        abort(403)
+    # Allowlist: uploads + media (siblings under data/), and each project's
+    # working dir. Deliberately NOT _DATA_ROOT — that would expose data/projects
+    # JSON, rules, other sidecars as downloadable links.
+    allowed = [str(UPLOADS_DIR), str(Path(_DATA_ROOT) / 'data' / 'media')]
+    try:
+        for p in load_projects():
+            pp = (p.get('project_path') or '').strip()
+            if not pp:
+                continue
+            # Same drive-root guard as serve-image: a project rooted at C:\ or /
+            # must not turn this into a whole-disk read.
+            try:
+                if len(Path(os.path.realpath(pp)).parts) < 3:
+                    continue
+            except Exception:
+                continue
+            allowed.append(pp)
+    except Exception:
+        pass
+    rn = os.path.normcase(real)
+    ok = False
+    for a in allowed:
+        try:
+            ar = os.path.normcase(os.path.realpath(a))
+        except Exception:
+            continue
+        if rn == ar or rn.startswith(ar + os.sep):
+            ok = True
+            break
+    if not ok:
+        abort(403)
+    inline = request.args.get('inline') in ('1', 'true', 'yes')
+    return send_file(real, as_attachment=not inline,
+                     download_name=os.path.basename(real), max_age=0)
+
+
 @bp.route('/api/project/<project_id>/backlog/<item_id>/attachments/<att_id>', methods=['DELETE'])
 def delete_attachment(project_id, item_id, att_id):
     p = load_project(project_id)
