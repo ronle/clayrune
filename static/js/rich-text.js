@@ -55,6 +55,28 @@ function formatAgentText(raw) {
       return tok;
     });
 
+  // File deep-links: the agent emits [file:<abs path>] or [file:<path>|Label]
+  // and we render a clickable link to /api/serve-file (works locally AND over
+  // the tunnel — plain HTTP, same as images). Tokenized FIRST, like images, so
+  // the path / code regexes below don't shred the anchor. The text is already
+  // esc()'d, so `[` `]` `:` `|` survive verbatim; the path fragment is HTML-
+  // escaped — unescape it for the URL, keep the label's escaped form for display.
+  const _fileTokens = [];
+  t = t.replace(/\[file:([^\]|]+?)(?:\|([^\]]+))?\]/gi, (m, pathEsc, labelEsc) => {
+    const unesc = (s) => (s || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    const path = unesc(pathEsc).trim();
+    if (!path) return m;                                  // malformed → leave literal
+    const href = API_BASE + '/api/serve-file?path=' + encodeURIComponent(path);
+    const fname = path.split(/[\\/]/).pop() || path;
+    const labelHtml = labelEsc ? labelEsc.trim() : esc(fname);  // labelEsc already escaped
+    const tok = '@@CLFile' + _fileTokens.length + '@@';
+    _fileTokens.push(
+      `<a class="hl-file-link" href="${href}" target="_blank" rel="noopener" ` +
+      `title="Download ${pathEsc.trim()}"><span class="hl-file-ic">&#128196;</span>${labelHtml}</a>`);
+    return tok;
+  });
+
   // URLs → real clickable <a> links. Tokenized out BEFORE the path / code /
   // bold regexes below so they can't shred the markup. The absolute-path
   // regex in particular ("/seg/seg" ×2+) matches the "//host/path" tail of
@@ -91,9 +113,12 @@ function formatAgentText(raw) {
   // Absolute paths: /path/to/file or C:\path\to\file
   t = t.replace(/((?:\/[\w.-]+){2,}|(?:[A-Z]:\\[\w.-\\]+))/g, '<span class="hl-path">$1</span>');
 
-  // Swap image + URL tokens back in (kept opaque through the regexes above).
+  // Swap image + file + URL tokens back in (kept opaque through the regexes above).
   if (_imgTokens.length) {
     t = t.replace(/@@CLImg(\d+)@@/g, (_, i) => _imgTokens[+i] || '');
+  }
+  if (_fileTokens.length) {
+    t = t.replace(/@@CLFile(\d+)@@/g, (_, i) => _fileTokens[+i] || '');
   }
   if (_urlTokens.length) {
     t = t.replace(/@@CLUrl(\d+)@@/g, (_, i) => _urlTokens[+i] || '');

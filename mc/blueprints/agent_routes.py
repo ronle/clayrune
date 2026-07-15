@@ -1438,6 +1438,19 @@ def _clayrune_universal_capabilities(port: int | None = None) -> list[str]:
         "or images the user attaches arrive as data/uploads paths you can "
         "open with your file tools.",
 
+        # Deep links to files — /api/serve-file, works over the tunnel too.
+        "Files: To give the user a clickable link to a file that works BOTH "
+        "locally AND from a remote/phone console, put a marker on its own line: "
+        "[file:<ABSOLUTE_PATH>]  — or [file:<ABSOLUTE_PATH>|Label] to set the "
+        "link text. Clayrune renders it as a download link served over HTTP "
+        "(this is why it reaches remote consoles; a bare file:// path only opens "
+        "on the host and is blocked from web pages). Same allowlist as images: "
+        "the file must live under the project root or Clayrune's "
+        "data/uploads|media, and secrets (.env, *.key/*.pem, id_rsa, "
+        "*credential*) are refused. Use this for logs, reports, exports, or any "
+        "artifact the user should open — NOT for images (use a bare image path) "
+        "or diagrams (use a ```mermaid block).",
+
         # Two schedulers exist — pick the right one for the job.
         f"Scheduler — TWO options, pick by lifespan:\n"
         f"  • Clayrune LOCAL scheduler — for LONG-TERM, REPEATABLE jobs scoped "
