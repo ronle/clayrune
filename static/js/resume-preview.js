@@ -875,7 +875,19 @@ const _SYS_PREAMBLE_RE = /\[(?:Resuming|Continuing)\b[^\][]*?(?:Start fresh|grew
 // misfiltered as a "[binding…" system chat by _AGENT_LABEL_RE. Strip it so the
 // real user message drives both the label and the user-conversation filter.
 const _BRIEF_DIRECTIVE_RE = /\[BINDING for this reply\b[\s\S]*?hidden from the user\.\]\s*/gi;
-function stripSysPreamble(s) { return (s || '').replace(_SYS_PREAMBLE_RE, '').replace(_BRIEF_DIRECTIVE_RE, ''); }
+// The mobile "Telegram style" nudge (_BRIEF_REPLY_DIRECTIVE, agent_routes.py):
+// silently prepended to messages POSTed with client="mobile". Like the two
+// above it is agent-facing and "hidden from the user", but a RESUMED / recovered
+// turn comes back from the transcript with the directive still attached, so the
+// chat bubble showed it verbatim. Mirrors agent_runtime.py's _INJECTED_PREAMBLE_RE
+// (the phone directive has no internal ']', so [^\]]* is exact and safe).
+const _PHONE_DIRECTIVE_RE = /\[the user is messaging you from a phone\b[^\]]*\]\s*/gi;
+function stripSysPreamble(s) {
+  return (s || '')
+    .replace(_SYS_PREAMBLE_RE, '')
+    .replace(_BRIEF_DIRECTIVE_RE, '')
+    .replace(_PHONE_DIRECTIVE_RE, '');
+}
 window.stripSysPreamble = stripSysPreamble;
 
 function escPromptWithImages(raw) {
