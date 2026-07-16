@@ -130,3 +130,26 @@ def test_rejected_bucket_not_relisted(tmp_path):
     d = _make_artifact(tmp_path / 'skills', 'myproj', 'bad-idea')
     distiller.reject_proposed(str(d))
     assert distiller.list_proposed() == []
+
+
+def test_degenerate_frontmatter_description_falls_through(tmp_path, monkeypatch):
+    """2026-07-16 incident: a proposal carrying `description: "Why"` (a
+    section heading captured at render time) survived promotion and
+    overwrote a good installed skill's description. A description too short
+    to ever trigger must fall through to the body's first substantial line
+    — which for preference bodies is the plain TITLE line, not the '## Why'
+    heading _first_heading would land on."""
+    import distiller
+    monkeypatch.setattr(distiller, '_skills_root', tmp_path / 'skills')
+    d = tmp_path / 'skills' / '_proposed' / 'proj_x' / '2026-07-09T00-00-00-abcd-preference-abcd'
+    d.mkdir(parents=True)
+    (d / 'PREFERENCE.md').write_text(
+        "---\nkind: preference\nname: preference-abcd\ndescription: \"Why\"\n"
+        "extraction_fingerprint_exact: aaaabbbbccccdddd\n---\n"
+        "Use the native learning-item system for cross-project knowledge\n\n"
+        "## Why\nBecause reasons.\n",
+        encoding='utf-8')
+    art = distiller.read_proposed_artifact(str(d))
+    assert art is not None
+    assert art['description'] == (
+        'Use the native learning-item system for cross-project knowledge')

@@ -2472,6 +2472,18 @@ def _first_heading(body: str) -> str:
     return ''
 
 
+def _first_substantial_line(body: str, min_len: int = 12) -> str:
+    """First line (heading or plain prose) long enough to serve as a
+    description. Preference bodies open with a plain title line — e.g.
+    "Use Clayrune's native learning-item system..." — followed by a
+    '## Why' section; _first_heading alone lands on "Why"."""
+    for ln in (body or '').splitlines():
+        s = ln.strip().lstrip('#').strip()
+        if len(s) >= min_len:
+            return s[:300]
+    return ''
+
+
 def read_proposed_artifact(directory: str) -> dict | None:
     """Read one _proposed/ artifact directory into a flat dict for promotion.
 
@@ -2497,8 +2509,16 @@ def read_proposed_artifact(directory: str) -> dict | None:
             # SKILL artifacts carry a TRIGGER description; explorations /
             # preferences don't, so synthesize one from the first heading or
             # the slug (the user can edit after promotion).
-            desc = (fm.get('description', '') or _first_heading(body)
-                    or name.replace('-', ' '))
+            # A DEGENERATE frontmatter description must fall through too:
+            # one 2026-07-09 artifact carried `description: "Why"` (a section
+            # heading captured at render time), which survived promotion and
+            # overwrote a good installed skill's description on 2026-07-16 —
+            # a loadout entry whose description is "Why" can never trigger.
+            fm_desc = (fm.get('description', '') or '').strip()
+            if len(fm_desc) < 12:
+                fm_desc = ''
+            desc = (fm_desc or _first_substantial_line(body)
+                    or _first_heading(body) or name.replace('-', ' '))
             return {
                 'path': str(f),
                 'directory': str(d),
