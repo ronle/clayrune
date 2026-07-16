@@ -1314,6 +1314,13 @@ function _userInitiatedConvos(projectId, includeHidden) {
 // mc_session_id. Value: 'waiting' (needs the user) | 'working' (running).
 function _liveConvStates(p) {
   const byCsid = {}, byMcid = {};
+  // MC sessions whose CURRENT transcript id we already know — their live state is
+  // pinned to that one csid, so we must NOT also key it by mc_session_id. Claude
+  // Code forks to a new transcript id on auto-compaction while keeping the same
+  // mc_session_id, so a stale pre-compaction transcript shares the live session's
+  // mc id. An mcid-keyed live state would paint "Working…" on that old fork too —
+  // one running session showing as two live cards (the bug this guards).
+  const mcidHasCsid = new Set();
   for (const sid in agentStatusCache) {
     const s = agentStatusCache[sid];
     if (!s || s.projectId !== p.id) continue;
@@ -1321,12 +1328,19 @@ function _liveConvStates(p) {
     const working = s.status === 'running';
     if (!waiting && !working) continue;
     const st = waiting ? 'waiting' : 'working';
-    byMcid[sid] = st;
-    if (s.claudeSessionId) byCsid[s.claudeSessionId] = st;
+    if (s.claudeSessionId) {
+      byCsid[s.claudeSessionId] = st;
+      mcidHasCsid.add(sid);
+    } else {
+      // No transcript id yet (just dispatched) — mc_session_id is the only link.
+      byMcid[sid] = st;
+    }
   }
-  // Server-authoritative fallback for a live session not yet in the cache.
+  // Server-authoritative fallback for a live session not yet in the cache. Skip
+  // it when the cache already resolved this mc session to a specific transcript,
+  // or it would re-introduce the mcid match this function deliberately avoids.
   const la = p.live_agent;
-  if (la && la.session_id && !byMcid[la.session_id]) {
+  if (la && la.session_id && !byMcid[la.session_id] && !mcidHasCsid.has(la.session_id)) {
     byMcid[la.session_id] = (la.reason === 'plan' || la.reason === 'question') ? 'waiting' : 'working';
   }
   return { byCsid, byMcid };
