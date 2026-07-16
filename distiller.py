@@ -1478,6 +1478,62 @@ def _update_summary_cache(project_id: str) -> None:
 _GLOBAL_SUPPRESSION_PID = '_global'
 
 
+# ── Installed-fingerprint dedupe (the durable-"yes" fix, 2026-07-16) ─────────
+# Rejection ("no") is durable via suppression records keyed (fingerprint,
+# kind) — the ratified committee keying, unchanged here. PROMOTION ("yes")
+# had two holes that let installed artifacts re-enter the queue:
+#   1. kind drift — 94084ae5 was promoted as kind=skill, then re-proposed as
+#      kind=preference: the (fingerprint, kind) suppression key can't see it.
+#   2. missing history — b4e4b1bf was promoted before the 2026-07-11 global-
+#      suppression fix, so no record exists anywhere.
+# Both sat INSTALLED in ~/.claude/skills/ while listed as promotable again
+# (found in the 2026-07-16 queue triage, 7 days after the dedupe window
+# expired). The mirror of the durable-"no" bug.
+#
+# Fix: a DYNAMIC check against what is actually installed, ANY kind — the
+# install itself is the record. Semantics are deliberately different from
+# suppression: uninstalling an artifact makes its pattern proposable again
+# (no permanent mark), which is exactly what a promotion revert should mean.
+# Suppression stays permanent; installation stays observable.
+
+# Test override: when set (list of Paths), ONLY these roots are scanned.
+# Production (None) scans ~/.claude/skills plus the project's .claude/skills.
+_installed_skills_roots = None
+
+_FP_LINE_RE = re.compile(
+    r'^extraction_fingerprint_exact:\s*"?([0-9a-f]{16})"?', re.M)
+
+
+def _installed_exact_fingerprints(project: dict | None) -> set:
+    """Exact fingerprints of currently-installed distilled artifacts visible
+    to this project (global loadout + the project's own skills). Best-effort;
+    an unreadable dir contributes nothing (fails toward re-proposing, which
+    the human queue absorbs — never toward blocking a fresh pattern)."""
+    if _installed_skills_roots is not None:
+        roots = list(_installed_skills_roots)
+    else:
+        roots = [Path.home() / '.claude' / 'skills']
+        pp = (project or {}).get('project_path', '') or ''
+        if pp:
+            roots.append(Path(pp) / '.claude' / 'skills')
+    out: set = set()
+    for root in roots:
+        try:
+            if not root.is_dir():
+                continue
+            for d in root.iterdir():
+                f = d / 'SKILL.md'
+                if not f.is_file():
+                    continue
+                m = _FP_LINE_RE.search(
+                    f.read_text(encoding='utf-8', errors='replace')[:2000])
+                if m:
+                    out.add(m.group(1))
+        except Exception:
+            continue
+    return out
+
+
 def _is_suppressed(project_id: str, exact: str, kind: str) -> bool:
     """True if this (fingerprint, kind) was decided 'no' — by THIS project or
     globally. Both stores are consulted: a cross-project artifact rejected while
@@ -1614,6 +1670,18 @@ def _generate_and_write_artifact(project_id: str, project: dict,
         # on it (diagnosed via py-spy 2026-06-15: hung all new-chat dispatches).
         if suppressed:
             _increment_counter(project_id, TELEM_SUPPRESSED_AFTER_GENERATE)
+            return
+        # Durable-"yes": a pattern whose fingerprint is already INSTALLED
+        # (any kind, global or project loadout) is not re-proposed — the
+        # install is the record. Explorations are exempt: they are never
+        # installed, and a reframe-promoted exploration installs under the
+        # reframed SKILL's own identity.
+        if kind != 'exploration' and (
+                candidate['exact'] in _installed_exact_fingerprints(project)):
+            _increment_counter(project_id, f'skipped_installed:{kind}')
+            _structured_log(
+                f"skip_already_installed:kind={kind}:project_id={project_id}:"
+                f"fingerprint={candidate['exact']}")
             return
         # Atomic write via .tmp + rename
         target_path.parent.mkdir(parents=True, exist_ok=True)
