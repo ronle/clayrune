@@ -181,3 +181,49 @@ def test_unknown_session_fails_closed(tmp_path):
     # in steward-enabled projects anyway).
     r = _run_hook({'tool_name': 'Bash', 'tool_input': {'command': 'git push'}})
     assert r.returncode == 2
+
+
+# ── Inert-prose masking (2026-07-16 precision fix) ────────────────────────────
+# Real incident (2026-07-13 DECISION NEEDED note): the steward could not
+# commit the wake-lock feature because the commit MESSAGE contained OS power
+# vocabulary. Prose is data; only command-position text may block.
+
+PROSE_ALLOW_CASES = [
+    # The literal incident shape.
+    'git commit -m "feat(wake-lock): keep machine awake, prevent system shutdown while agents run"',
+    "git commit -m 'fix: handle reboot and shutdown power events in wake_lock'",
+    # Repo heredoc commit convention (quoted delimiter), prose mentions blocked verbs.
+    'git commit -m "$(cat <<\'EOF\'\nfeat: wake lock\n\nPrevents host shutdown/reboot while agents run.\nAlso documents the gcloud run deploy steps.\nEOF\n)"',
+    # PowerShell literal here-string commit (repo convention for pwsh).
+    "git commit -m @'\nfix: power handling\n\nCovers shutdown, reboot, and git push docs.\n'@",
+    # Cloud words in prose.
+    'git commit -m "docs: explain why terraform apply is human-gated"',
+    'git commit --message="chore: note that aws s3 rm needs approval"',
+]
+
+
+@pytest.mark.parametrize('cmd', PROSE_ALLOW_CASES)
+def test_prose_in_commit_messages_is_not_a_command(cmd):
+    d = classify_bash(cmd)
+    assert not d.blocked, f"prose false-positive: {d.reason!r} for {cmd!r}"
+
+
+PROSE_STILL_BLOCK_CASES = [
+    # Unmasked command tail after a masked message.
+    'git commit -m "safe words" && shutdown /s',
+    'git commit -m "safe words" && git push',
+    "git commit -m 'safe' ; reboot",
+    # Substitution inside a double-quoted message CAN execute — never masked.
+    'git commit -m "$(shutdown /s)"',
+    'git commit -m "`reboot`"',
+    # Heredoc fed to an interpreter executes its body — header check catches it.
+    "bash <<'EOF'\nshutdown /s\nEOF",
+    "pwsh <<'EOF'\ngit push\nEOF",
+    # Unquoted heredoc delimiter (expansion live) is never masked.
+    'git commit -m "$(cat <<EOF\n$(git push)\nEOF\n)"',
+]
+
+
+@pytest.mark.parametrize('cmd', PROSE_STILL_BLOCK_CASES)
+def test_masking_introduces_no_false_negatives(cmd):
+    assert classify_bash(cmd).blocked, f"false NEGATIVE: {cmd!r}"

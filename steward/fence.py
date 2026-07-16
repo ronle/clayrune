@@ -86,6 +86,70 @@ _DELETE_PATTERNS = [
 ]
 
 
+# ── Inert-prose masking (false-positive precision fix, 2026-07-16) ───────────
+# The block patterns match the WHOLE command string, so PROSE used to trip
+# them: the steward could not `git commit` the wake-lock feature because the
+# commit message legitimately said "shutdown" (real incident, 2026-07-13
+# DECISION NEEDED note — the #1-priority feature sat uncommitted for days).
+#
+# Masking replaces spans that are PROVABLY inert data with a placeholder
+# before classification. "Provably inert" means the shell cannot execute the
+# span's content:
+#   • a quoted argument directly following -m/--message — an argument to a
+#     flag is data, never a command. Double-quoted args are masked only when
+#     they contain no substitution tokens ($( or `), which WOULD execute.
+#   • a quoted-delimiter heredoc body (<<'EOF' / <<"EOF" — quoting the
+#     delimiter disables expansion) and a PowerShell LITERAL here-string
+#     (@'...'@) — both are raw data, UNLESS the heredoc's own header line
+#     mentions a shell/interpreter (bash <<'EOF' executes its stdin), in
+#     which case that span is left unmasked and the patterns see everything.
+#
+# Command-position text is NEVER masked, so the deny-scope is unchanged:
+# `git commit -m "x" && shutdown` still blocks on the unmasked tail, and
+# `git commit -m "$(shutdown)"` is never masked at all. False-negative risk
+# stays where the design puts it: zero on the catastrophic set.
+_MASK_TOKEN = 'INERT_PROSE'
+
+_MSG_ARG_RE = re.compile(
+    r"""((?:^|\s)(?:-m|--message)(?:=|\s+))(?P<q>['"])(?P<body>(?:\\.|[^\\])*?)(?P=q)""",
+    re.S)
+
+_HEREDOC_RE = re.compile(
+    r"""(?P<head>[^\n]*<<-?\s*(?P<q>['"])(?P<tag>\w+)(?P=q)[^\n]*\n)"""
+    r"""(?P<body>.*?\n)(?P<term>[ \t]*(?P=tag)[ \t]*(?=\n|$|[)"';]))""",
+    re.S)
+
+_PS_HERESTRING_RE = re.compile(
+    r"(?P<head>[^\n]*@'[ \t]*\n)(?P<body>.*?)(?P<term>\n'@)", re.S)
+
+# Anything that can turn stdin/data back into execution.
+_INTERPRETER_RE = re.compile(
+    r'\b(bash|sh|zsh|dash|ksh|pwsh|powershell|python\w*|node|perl|ruby|'
+    r'eval|source|cmd|iex|invoke-expression)\b', re.I)
+
+
+def _mask_inert_prose(cmd: str) -> str:
+    """Replace provably-inert data spans with a placeholder. Best-effort and
+    conservative: any span we cannot PROVE inert is left untouched (fails
+    toward blocking, never toward allowing)."""
+    def _msg_repl(m):
+        if m.group('q') == '"' and ('$(' in m.group('body') or '`' in m.group('body')):
+            return m.group(0)          # substitution could execute — leave it
+        return f"{m.group(1)}{m.group('q')}{_MASK_TOKEN}{m.group('q')}"
+
+    def _block_repl(m):
+        # If the consuming line mentions an interpreter, the "data" may be
+        # executed (bash <<'EOF') — leave the whole span for the patterns.
+        if _INTERPRETER_RE.search(m.group('head')):
+            return m.group(0)
+        return f"{m.group('head')}{_MASK_TOKEN}\n{m.group('term')}"
+
+    out = _MSG_ARG_RE.sub(_msg_repl, cmd)
+    out = _HEREDOC_RE.sub(_block_repl, out)
+    out = _PS_HERESTRING_RE.sub(_block_repl, out)
+    return out
+
+
 def _touches_nonlocal_network(cmd: str) -> FenceDecision:
     """Block external network SENDS (mutating HTTP verbs / uploads to a non-local
     host). Reads (plain GET) and anything targeting localhost are allowed."""
@@ -103,10 +167,18 @@ def _touches_nonlocal_network(cmd: str) -> FenceDecision:
 
 
 def classify_bash(command: str) -> FenceDecision:
-    """Classify a Bash command string. Returns (blocked, reason)."""
+    """Classify a Bash command string. Returns (blocked, reason).
+
+    Classification runs on the inert-prose-MASKED command: commit-message /
+    literal-heredoc content is data, not commands (see _mask_inert_prose).
+    Command-position text always survives masking, so every shape the fence
+    blocked before, it still blocks."""
     if not command or not command.strip():
         return FenceDecision(False, '')
-    cmd = command.strip()
+    try:
+        cmd = _mask_inert_prose(command.strip())
+    except Exception:
+        cmd = command.strip()   # masking is best-effort; unmasked = stricter
 
     for pat, reason in _BLOCK_PATTERNS:
         if pat.search(cmd):
