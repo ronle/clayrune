@@ -750,10 +750,14 @@ def _write_session_memory(p, session, status, summary_fallback, ts_date):
         else:
             tf = _find_transcript_file(p.get('project_path', ''), csid)
             jsonl_path = str(tf) if tf else None
-            # _UNATTENDED_LOOP_RULE: stamp steward-cycle provenance onto every
+            # _UNATTENDED_LOOP_RULE: stamp unattended provenance onto every
             # artifact this session's evidence produces, so the read-floor can
-            # keep autonomous output from becoming autonomous input.
-            unattended = _distiller.is_unattended_task(task)
+            # keep autonomous output from becoming autonomous input. Allowlist
+            # shape (committee M4): interactive ONLY when trigger_type=='manual'
+            # and the task text carries no unattended marker; a session with
+            # missing/backfilled trigger provenance stamps unattended.
+            unattended = _distiller.is_unattended_session(
+                task, session.get('trigger_type'))
             _log(f"[distiller] dispatch FIRE project_id={project_id} sid={sid[:12]} "
                  f"csid={csid[:8]} jsonl_path={'yes' if jsonl_path else 'no'} "
                  f"origin={'unattended' if unattended else 'interactive'}")

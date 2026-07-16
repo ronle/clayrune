@@ -227,3 +227,30 @@ PROSE_STILL_BLOCK_CASES = [
 @pytest.mark.parametrize('cmd', PROSE_STILL_BLOCK_CASES)
 def test_masking_introduces_no_false_negatives(cmd):
     assert classify_bash(cmd).blocked, f"false NEGATIVE: {cmd!r}"
+
+
+# ── Learning-loop supply-chain fence (committee M3, 2026-07-16) ───────────────
+# Proposal frontmatter + skill-stats records are what decides loadout entry;
+# an unattended agent must not be able to edit its own provenance.
+
+SUPPLY_CHAIN_BLOCK_PATHS = [
+    r'C:\repo\data\skills\_proposed\proj\2026-07-16T00-00-00-abcd-x\SKILL.md',
+    'data/skills/_proposed/global/2026-07-16T00-00-00-abcd-x/EXPLORATION.md',
+    'data/skills/_rejected/old/PREFERENCE.md',
+    'data/projects/mission_control_skill_stats.json',
+    r'C:\repo\data\projects\proj_skill_stats_archive.jsonl',
+]
+
+
+@pytest.mark.parametrize('path', SUPPLY_CHAIN_BLOCK_PATHS)
+def test_fence_blocks_learning_supply_chain_writes(path):
+    for tool in ('Write', 'Edit', 'MultiEdit'):
+        d = classify_action(tool, {'file_path': path})
+        assert d.blocked, f"{tool} to {path} must be fenced"
+
+
+def test_fence_still_allows_ordinary_project_writes():
+    for path in (r'C:\repo\server.py', 'docs/PLAN.md',
+                 'data/projects/notes.md', 'data/uploads/x.png'):
+        d = classify_action('Write', {'file_path': path})
+        assert not d.blocked, f"ordinary write false-positive: {path}"

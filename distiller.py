@@ -1562,8 +1562,31 @@ STEWARD_TASK_MARKER = '[Steward cycle]'
 
 
 def is_unattended_task(task: str | None) -> bool:
-    """True if this task is an autonomous steward cycle (no human watching)."""
-    return (task or '').lstrip().startswith(STEWARD_TASK_MARKER)
+    """True if this task text is recognizably unattended: a steward cycle,
+    or a prompt that announces itself as unattended (night-shift shape).
+    Text-only — callers with a session in hand should prefer
+    is_unattended_session, which also consults trigger provenance."""
+    t = (task or '').lstrip()
+    if t.startswith(STEWARD_TASK_MARKER):
+        return True
+    return 'you run unattended' in t[:400].lower()
+
+
+def is_unattended_session(task: str | None, trigger_type: str | None) -> bool:
+    """ALLOWLIST unattended detection (committee M4 / Seat 1 Cond 4).
+
+    The old shape enumerated known unattended markers and defaulted
+    everything else to interactive — it failed OPEN for exactly the cases
+    that appear next (transcript-backfilled sessions lose trigger_type;
+    a rephrased night-shift prompt sheds the text marker). Inverted:
+    a session is interactive ONLY when its trigger_type is literally
+    'manual' (the one human-initiated value in the closed taxonomy) AND
+    its task text carries no unattended marker. Missing/unknown/backfilled
+    trigger_type → unattended. Any future trigger type defaults SAFE.
+    """
+    if is_unattended_task(task):
+        return True
+    return (trigger_type or '') != 'manual'
 
 
 # ── Authority-class guard (the constitutional bright line) ───────────────────
@@ -1695,6 +1718,19 @@ def _generate_and_write_artifact(project_id: str, project: dict,
             }
             _write_skill_stats(project_id, stats)
         _increment_counter(project_id, f'proposed:{kind}')
+        # Passive yield telemetry for the auto-scope retrospective (committee
+        # M12/S2-C4): count proposals that would meet the ratified auto-install
+        # gate (skills-only, interactive origin, project scope, exact rec >= 3).
+        # An UPPER bound — M1 fingerprint-taint is not applied here. No install
+        # happens; this only makes "would the feature ever fire?" measurable.
+        if (kind == 'skill' and not candidate.get('unattended')
+                and candidate.get('scope_tag') == 'project-specific'
+                and int(candidate.get('recurrence_exact', 0) or 0) >= 3):
+            _increment_counter(project_id, 'auto_scope_would_install')
+            _structured_log(
+                f"auto_scope_would_install:project_id={project_id}:"
+                f"fingerprint={candidate['exact']}:"
+                f"rec={candidate.get('recurrence_exact')}")
     except Exception as e:
         _structured_log(
             f"render_exception:kind={kind}:project_id={project_id}:err={e!r}"

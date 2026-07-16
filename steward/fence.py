@@ -213,6 +213,16 @@ def classify_action(tool_name: str, tool_input: dict) -> FenceDecision:
         low = path.replace('\\', '/').lower()
         if '/.claude/' in low or low.endswith('/.claude'):
             return FenceDecision(True, "editing global ~/.claude config (out of project scope)")
+        # Learning-loop supply chain (committee M3, 2026-07-16): proposal
+        # frontmatter and the skill-stats signal store are the INPUTS that
+        # decide what enters agent loadouts. An unattended agent editing its
+        # own provenance/recurrence records is the origin-laundering write
+        # path — same fence posture as `.claude/`.
+        if ('/data/skills/' in low or low.startswith('data/skills/')
+                or low.endswith('_skill_stats.json')
+                or low.endswith('_skill_stats_archive.jsonl')):
+            return FenceDecision(True, "editing learning-loop artifacts/telemetry "
+                                       "(loadout supply chain — human-owned)")
     return FenceDecision(False, '')
 
 
