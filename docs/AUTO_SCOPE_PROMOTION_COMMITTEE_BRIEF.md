@@ -165,3 +165,110 @@ documents + `distiller.py`'s rails section end-to-end before writing.
 Verdicts: RATIFY / RATIFY-WITH-CONDITIONS / REJECT. Conditions must be
 closable in design or implementation (say which). Synthesis appended to
 this file before any code lands.
+
+---
+
+## Committee review (2026-07-16) — SYNTHESIS
+
+> Four seats dispatched 2026-07-16, independent, no cross-talk. Full
+> assessments: `docs/_committee/AUTO_SCOPE_seat{1,2,3,4}_*.md`.
+
+**Verdict: 4× RATIFY-WITH-CONDITIONS — unanimous, no REJECT, no blockers as
+filed.** One condition is blocker-grade (Seat 1 flips to REJECT if unclosed).
+30 seat-conditions consolidate to the 12 below after dedup; the convergences
+were strong (three conditions were independently named by 3+ seats).
+
+**The two findings that reshape the proposal:**
+
+1. **The laundering circuit is real (Seat 1, blocker-grade).** Steward
+   exploration (`origin: unattended`) → read-floor injection into attended
+   sessions → those sessions re-emit the fingerprint as `interactive`
+   (extraction checks only the session's own task) → 3 injections manufacture
+   recurrence ≥3 → auto-install → installed skill loads into steward cycles
+   (no origin filter on loadouts). Autonomous output becomes autonomous
+   standing instruction with no human reading any artifact. Must close via
+   fingerprint-level taint (M1).
+
+2. **The preference leg is an empirically null set (Seat 2's audit of all 93
+   artifact instances).** Preferences generate at recurrence 1 BY DESIGN
+   ("the human promotion step is the quality gate"); 50/50 observed
+   preference fingerprints never recurred, so `preference + rec≥3` admits
+   nothing — and the first fp ever to reach 3 is disproportionately likely a
+   closed-vocab collision blending unrelated remarks into one standing
+   instruction (fp `a0faa2e13c42` demonstrably rendered two unrelated
+   bodies). Seat 4 independently flagged the preference leg as contradicting
+   the parent scope doc. **Resolution: the preference leg is DROPPED — auto
+   scope is skills-only.** Preferences keep the human queue permanently.
+
+**Honest yield statement (Seat 2, evidence requirement met):** as the disk
+stands, 0 artifacts would have auto-installed (fail-closed on origin); under
+the most generous counterfactual, 11 — 0 harmful, 1 redundant pair, 3 good
+skills starved by fingerprint collision. With §3.4 tightening (which
+reclassifies the heaviest rec≥3 producers as unattended), expected yield is
+**~0–3 installs**. The queue-drain motivation is moot anyway — the queue was
+manually drained to zero promotables on 2026-07-16 and durable-yes now
+prevents re-accumulation of installed content. Auto-scope is
+**future-proofing the interactive path**, not backlog relief. The brief's §1
+motivation is superseded by this statement.
+
+### Consolidated must-close conditions
+
+M1 (design+impl, BLOCKER-GRADE) — Fingerprint taint closes the laundering
+    circuit: a fingerprint with any unattended-origin sibling (exact OR
+    coarse) anywhere in _proposed/_promoted/_rejected is ineligible. [S1-C1]
+M2 (impl) — Eligibility (origin, recurrence, suppression) recomputed from
+    _skill_stats.json at install time; frontmatter is display-only.
+    [S1-C2 + S2-C5 + S3-C6 — strongest convergence]
+M3 (impl) — Steward fence extended to data/skills/** and *_skill_stats.json
+    writes, with regression tests beside test_distiller_safety.py. [S1-C3]
+M4 (design+impl) — Unattended detection inverted to an ALLOWLIST:
+    interactive ⇔ trigger_type=='manual' present AND no unattended markers;
+    missing/backfilled/unknown → unattended. Machine-dispatched child
+    sessions (steward → local API) carry initiator provenance so they can't
+    shed unattendedness in one hop. [S1-C4, S1-C5; supersedes §3.4]
+M5 (design) — Skills-only: preference leg dropped per the null-set + collision
+    evidence. [S2-C1, S4-flag]
+M6 (design+impl) — Lifecycle: proposal-dir rename is the atomic claim token
+    (NOT the stats lock — self-deadlock class); post-claim suppression
+    re-check so a human "no" always wins; startup reconciler for crash
+    windows keyed on suppression source; explicit artifact state machine;
+    auto-install writes NO suppression, revert does. [S3-C1,C2,C3,C8]
+M7 (impl) — Durable-"no" on EVERY removal path for auto_authored artifacts
+    (Skills-panel delete included), or revert becomes a reinstall loop.
+    [S1-C6, S3-C3]
+M8 (impl) — Atomic install writes + collision guard: never overwrite a
+    non-auto-authored skill (the 2026-07-16 b4e4b1bf overwrite is live
+    evidence of the clobber class); install-time structural re-validation
+    (name/description present, non-REFUSE body, length floor) + re-run
+    _authority_violation. [S3-C4,C5; S4-C6; S2-C3]
+M9 (design) — Loop containment: per-project per-day auto-install rate cap +
+    coarse-family telemetry for derivative-fingerprint amplification.
+    [S1-C7, S3-C7, S4-C10 — 3-seat convergence]
+M10 (impl) — Observability ships in the SAME commit: structured per-install
+    log (fingerprint, evidence, origin), auto_installed:<kind>/auto_reverted
+    counters, real-time Inbox event per auto-install, discovery surface
+    (ledger + panel filter + one-click and bulk revert), monthly-audit
+    extension. [S1-C7, S4-C4,C5,C9]
+M11 (impl) — Kill-switch wiring: two-flag gate joins ENTRY_POINTS with an
+    independence test; flag-off semantics = installed artifacts STAY,
+    surfaced, nothing silently removed; dark-ship proven by fresh-config +
+    defaults-table tests; no new DATA_DIR sidecar. [S4-C1,C2,C3,C8]
+M12 (design) — Collision-starvation fix: a candidate whose fp is already
+    auto-installed routes to the HUMAN queue instead of silent skip (the
+    exact-fp durable-yes block demonstrably starves distinct skills on
+    collided fingerprints); revert completeness defined testably; 30-day
+    retrospective yield measured and published BEFORE the flag is enabled
+    anywhere. [S2-C2,C4; S4-C7]
+
+### Build sequencing (synthesis recommendation)
+
+M3, M4, M8's atomic-write/collision guard, and M10's counters are
+freestanding hardening — worth shipping regardless of whether the installer
+is ever built. Ship those first. Then M12's retrospective yield measurement
+runs against real data; the installer itself (M1, M2, M5–M7, M9, M11) is
+built only if the measured yield justifies it. This sequencing is effectively
+mandated by S2-C4 and matches the committee's posture: the feature is safe
+as conditioned, but its value case must be demonstrated, not assumed.
+
+**No code lands until the operator accepts this synthesis.** Conditions
+close in the order above; M1 and M4 gate everything downstream.
