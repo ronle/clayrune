@@ -226,6 +226,16 @@ function toggleIncognito(projectId) {
   refreshModalById(projectId);
 }
 
+// Incognito is a per-session, one-shot choice: once a dispatch bakes the flag
+// into that session, reset the composer toggle so the NEXT new chat defaults to
+// OFF (opt-in per chat, mirroring clearPendingCharacter). The dispatched session
+// keeps its own incognito flag; only the composer default resets. No refresh
+// here — the dispatch flow re-renders right after.
+function clearIncognito(projectId) {
+  if (projectId === '_incognito') return;  // forced on — never resets
+  incognitoToggle[projectId] = false;
+}
+
 // ── §8 ＋ options bottom sheet (MOBILE-only, pre-dispatch/+New screen) ───────
 // Decisions 5a (pre-dispatch only) + 6b (desktop keeps the inline controls;
 // the slide-up sheet is the mobile-canonical home). On mobile the composer
@@ -2376,7 +2386,14 @@ async function sendFollowup(projectId, sessionId) {
   // to incognito (matters when the server falls back to dispatching fresh —
   // e.g. revive of a purged session that has no log entry).
   const sendBody = { message: fullMessage, session_id: sessionId };
-  if (getIncognitoFor(projectId)) sendBody.incognito = true;
+  // Forward incognito from the SESSION's own flag, not just the project toggle:
+  // the toggle is now a one-shot that resets after dispatch, but this session
+  // may itself be incognito. Matters when the server falls back to a fresh
+  // dispatch (revive of a purged session with no log entry) — it must stay
+  // incognito even though the composer default has since reset.
+  const _sessInc = (agentStatusCache[sessionId] && agentStatusCache[sessionId].incognito)
+    || (agentHistory.find(h => h.sessionId === sessionId) || {}).incognito;
+  if (getIncognitoFor(projectId) || _sessInc) sendBody.incognito = true;
   _maybeTagMobileClient(sendBody);
   // Fail-fast timeout: on Android after a Doze cycle the WebView fetch can
   // hang forever on dead sockets — the user sees their prompt cleared, the
@@ -2802,5 +2819,6 @@ window.submitQuestionAnswer = submitQuestionAnswer;
 window.submitQuestionChip = submitQuestionChip;
 window.submitQuestionOther = submitQuestionOther;
 window.toggleIncognito = toggleIncognito;
+window.clearIncognito = clearIncognito;
 window.openComposerSheet = openComposerSheet;
 window.closeComposerSheet = closeComposerSheet;

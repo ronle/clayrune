@@ -306,6 +306,7 @@ async function dispatchAgent(projectId) {
   activeAgentTab[projectId] = tempSessionId;
   delete agentConvNew[projectId];  // dispatched → drill into the new convo
   clearPendingCharacter(projectId);  // next new chat defaults to None (opt-in per chat)
+  clearIncognito(projectId);         // incognito is one-shot per session — reset the composer default
   refreshModal();
   renderAgentConsole();
 
