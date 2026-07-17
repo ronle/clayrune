@@ -1695,7 +1695,20 @@ function switchAgentTab(projectId, sessionId) {
   // than a direct _reconcileAgentBuffer append: the append could race a
   // concurrent background poll's repaint and render the recovered lines twice,
   // whereas the clear-and-rebuild repaint is idempotent.
-  fetchAgentStatus(projectId);
+  //
+  // But fetchAgentStatus's internal repaint is GATED on !agentEventSources[sid]
+  // (it skips a session that still holds a live SSE, to avoid flickering the
+  // actively-streaming foreground chat on every routine poll). An idle-but-
+  // active conversation KEEPS its SSE open, so switching away and back left its
+  // panel frozen on the pre-refill render until a hard page reload (2026-07-16
+  // repro: switch away mid/after a turn, come back, last messages missing).
+  // A deliberate switch is user-initiated and rare, so bypass that gate here:
+  // once the buffer is server-authoritative, repaint the now-active panel from
+  // it unconditionally. _repaintAgentOutput is a clear-and-rebuild, so it is
+  // idempotent and safe even if the internal repaint already ran.
+  fetchAgentStatus(projectId).then(() => {
+    if (activeAgentTab[projectId] === sessionId) _repaintAgentOutput(sessionId);
+  }).catch(() => {});
 }
 
 function newAgentTab(projectId) {
