@@ -657,12 +657,36 @@ def seed_onboarding_on_startup():
     try:
         marker = DATA_DIR.parent / 'onboarding_seeded.flag'
         if marker.exists():
+            _heal_missing_onboarding_project()
             return
         if not _has_real_user_project():
             _seed_onboarding_project()
         marker.write_text(now_iso(), encoding='utf-8')
     except Exception as e:
         print(f"[onboarding] startup seed failed: {e}", flush=True)
+
+
+def _heal_missing_onboarding_project():
+    """One-time repair for installs damaged by the incognito-skip bug.
+
+    The buggy seeder counted _incognito.json as an existing project, so it
+    stamped the seed marker WITHOUT ever creating the Clayrune project — a
+    fresh install that skipped the tour ended up permanently empty, and the
+    marker blocks a normal re-seed. This runs when the seed marker is already
+    set: if there is still no real user project AND no clayrune.json, seed it
+    once. Guarded by its OWN one-shot marker (onboarding_heal_v1.flag), so a
+    user who deliberately empties their app never sees the project resurrected
+    more than this single repair pass. No-op on healthy installs."""
+    heal_marker = DATA_DIR.parent / 'onboarding_heal_v1.flag'
+    if heal_marker.exists():
+        return
+    try:
+        if (not _has_real_user_project()
+                and not (DATA_DIR / 'clayrune.json').exists()):
+            _seed_onboarding_project()
+        heal_marker.write_text(now_iso(), encoding='utf-8')
+    except Exception as e:
+        print(f"[onboarding] heal failed: {e}", flush=True)
 
 
 def _has_real_user_project() -> bool:

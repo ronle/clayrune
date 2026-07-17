@@ -434,12 +434,33 @@ class TestOnboardingSeed:
         assert client.saved == []
         assert (client.tmp / 'onboarding_seeded.flag').exists()
 
-    def test_marker_present_is_noop(self, client):
+    def test_marker_present_heals_broken_install(self, client):
+        # Damaged install: seed marker stamped by the buggy version, but only
+        # the incognito pseudo-project exists and no clayrune.json was created.
         (client.tmp / 'onboarding_seeded.flag').write_text('x', encoding='utf-8')
         (client.data_dir / '_incognito.json').write_text(
             '{"id": "_incognito", "_is_incognito_project": true}', encoding='utf-8')
         client.gr.seed_onboarding_on_startup()
+        # One-time heal seeds the missing project + stamps its own marker.
+        assert any(pid == 'clayrune' for (pid, _) in client.saved)
+        assert (client.tmp / 'onboarding_heal_v1.flag').exists()
+
+    def test_heal_is_one_shot(self, client):
+        (client.tmp / 'onboarding_seeded.flag').write_text('x', encoding='utf-8')
+        (client.tmp / 'onboarding_heal_v1.flag').write_text('x', encoding='utf-8')
+        (client.data_dir / '_incognito.json').write_text(
+            '{"id": "_incognito", "_is_incognito_project": true}', encoding='utf-8')
+        client.gr.seed_onboarding_on_startup()
         assert client.saved == []
+
+    def test_heal_skips_when_real_project_exists(self, client):
+        (client.tmp / 'onboarding_seeded.flag').write_text('x', encoding='utf-8')
+        (client.data_dir / 'myproj.json').write_text(
+            '{"id": "myproj", "name": "Mine"}', encoding='utf-8')
+        client.gr.seed_onboarding_on_startup()
+        assert client.saved == []
+        # Heal marker still stamped so the check never repeats.
+        assert (client.tmp / 'onboarding_heal_v1.flag').exists()
 
 
 # ── Builder modes (Prompt Builder Phase 1) ───────────────────────────────────

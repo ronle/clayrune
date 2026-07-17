@@ -115,6 +115,8 @@ data/system_status.json
 # First-boot onboarding-seed marker (guide_routes.seed_onboarding_on_startup).
 # Lives in data/ (NOT data/projects/ — load_projects() must never see it).
 data/onboarding_seeded.flag
+# One-shot repair marker for the incognito-skip bug (_heal_missing_onboarding_project).
+data/onboarding_heal_v1.flag
 
 # SQLite state DB (docs/SQLITE_MIGRATION_SPEC.md) + its WAL/SHM sidecars.
 # Runtime state, rebuilt by backfill from the JSON during migration; never commit.
