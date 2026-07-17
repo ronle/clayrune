@@ -35,16 +35,23 @@ agent, or work you'd rather not sit and watch.
 ## Everything It Does
 
 - **Manage multiple projects** with status tracking, descriptions, and domains
-- **Dispatch Claude Code agents** to work on tasks across any project
+- **Dispatch agents** across any project — Claude Code first-class, plus Gemini, Codex, Aider, OpenCode, and Goose
 - **Reuse previous chat sessions** within the same project to reduce overall token usage
-- **Monitor agent activity in real-time** via streaming output
+- **Monitor agent activity in real-time** via streaming output, with live "thinking vs. writing" activity states
+- **Answer agents' questions inline** — an agent can ask you to choose between options, and if nobody's watching it reaches you over your configured channel
+- **Cross-session memory** — agents carry context forward instead of starting each task cold
+- **Run agents unattended** — a Scheduler (once / daily / interval / cron) and an autonomous **Steward** you hand a standing charter
+- **Orchestrate multiple agents** on one goal with **Hivemind**, and watch live Claude Code **Workflow** progress
+- **Manage Skills and MCP servers** (Anthropic-format skills, stdio/HTTP/SSE MCP) from dedicated surfaces
 - **Maintain project backlogs** with priorities, drag-and-drop ordering, and file attachments
+- **Inbox / "Waiting on you"** surfaces the runs that actually need a decision
 - **Schedule automated tasks** with once, daily, or interval-based triggers
 - **Sync backlogs with GitHub Issues** — bidirectional sync via `gh` CLI
 - **Track token usage and costs** across all sessions with time-range filtering
 - **Open multiple project windows** simultaneously (multi-modal windowing system) — open conversations and their layouts persist across page refresh and reboot
-- **Manage from any device** via the clayrune.io tunnel — including a one-click server restart from your phone after deploying changes
+- **Manage from any device** via the clayrune.io tunnel — installable as a phone app with push, plus a one-click server restart from your phone after deploying changes
 - **View agent plans** in a dedicated wide-format viewer
+- **Try it first** — an interactive, fully-simulated demo at [clayrune.io/demo](https://clayrune.io/demo)
 - **Share baseline rules** across all projects (SHARED_RULES.md)
 - **Arrange project tiles** freely on a grid (Android home screen style)
 - **First-run walkthrough tour** guides new users through the interface
