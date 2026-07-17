@@ -5626,6 +5626,15 @@ def reconstruct_from_transcript(project_id, claude_session_id):
     p = load_project(project_id)
     if not p:
         return jsonify({'error': 'project not found'}), 404
+    # Defense-in-depth against the STOPPED-vs-Working desync: this transcript may
+    # belong to a session that is STILL LIVE (a resume reuses the same
+    # claude_session_id under a fresh mc id). Handing back a read-only buffer for
+    # it fabricated a "STOPPED / send a message to resume" tab while the agent
+    # kept working. If the csid maps to a live session, tell the client to open
+    # THAT tab instead. The sibling /session/<id>/reconstruct has the same guard.
+    for _sid, _sess in agent_sessions.items():
+        if _sess.get('claude_session_id') == claude_session_id:
+            return jsonify({'error': 'session is live', 'session_id': _sid}), 409
     user_label = state.CONFIG.get('user_name') or 'User'
     lines = _transcript_buffer_lines(p.get('project_path', ''), claude_session_id,
                                      user_label, max_messages=300)

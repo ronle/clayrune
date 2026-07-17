@@ -658,11 +658,38 @@ def seed_onboarding_on_startup():
         marker = DATA_DIR.parent / 'onboarding_seeded.flag'
         if marker.exists():
             return
-        if not any(DATA_DIR.glob('*.json')):
+        if not _has_real_user_project():
             _seed_onboarding_project()
         marker.write_text(now_iso(), encoding='utf-8')
     except Exception as e:
         print(f"[onboarding] startup seed failed: {e}", flush=True)
+
+
+def _has_real_user_project() -> bool:
+    """True if DATA_DIR holds at least one REAL user project.
+
+    Deliberately excludes (a) sidecar telemetry files by suffix and (b) the
+    `_incognito` / `_steward_*` pseudo-projects that startup bootstraps just
+    BEFORE us (_ensure_incognito_project runs first, writing
+    data/projects/_incognito.json). A naive `any(DATA_DIR.glob('*.json'))`
+    counts that incognito file and mis-classifies a fresh install as
+    established, so the onboarding project never gets seeded when the tour is
+    skipped. Mirrors the UI's realProjectCount filter
+    (isIncognitoProject + isStewardWorkspace)."""
+    from mc.blueprints.project_routes import EXCLUDED_SIDECAR_SUFFIXES
+    for f in DATA_DIR.glob('*.json'):
+        if f.name.endswith(EXCLUDED_SIDECAR_SUFFIXES):
+            continue
+        try:
+            p = json.loads(f.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if not isinstance(p, dict):
+            continue
+        if p.get('_is_incognito_project') or p.get('_is_steward_workspace'):
+            continue
+        return True
+    return False
 
 
 def _seed_onboarding_project() -> bool:

@@ -830,6 +830,26 @@ def _stop_all_sessions_for_restart(grace_seconds=3.0):
         _time.sleep(0.1)
 
 
+def _has_visible_console() -> bool:
+    """Windows: True only if this process owns a VISIBLE console window.
+
+    A windowless (start-hidden.vbs) launch owns a HIDDEN console — GetConsoleWindow
+    returns a handle but IsWindowVisible is false — so this returns False and the
+    restart path keeps the new instance windowless instead of popping a console.
+    Fail-safe returns True (preserve the prior new-console behaviour) on any error
+    or on non-Windows."""
+    if sys.platform != 'win32':
+        return False
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if not hwnd:
+            return False
+        return bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+    except Exception:
+        return True
+
+
 def _perform_server_restart_async(audit_entry):
     """Run after the HTTP response flushes: stop everything, then re-exec.
 
@@ -874,13 +894,32 @@ def _perform_server_restart_async(audit_entry):
                 'close_fds': True,
             }
             if sys.platform == 'win32':
-                # DETACHED_PROCESS so it survives our exit; CREATE_NEW_PROCESS_GROUP
-                # so Ctrl-C in the old terminal doesn't propagate. CREATE_NEW_CONSOLE
-                # gives it a visible window if launched from one (matches user expectation).
+                # CREATE_NEW_PROCESS_GROUP so Ctrl-C in the old terminal doesn't
+                # propagate to the fresh instance. For the console flag we branch:
+                #   - Windowless launch (end users, via start-hidden.vbs): the
+                #     process owns a HIDDEN console, so CREATE_NEW_CONSOLE would
+                #     pop a visible python.exe log window on EVERY restart / self-
+                #     update. Stay windowless (CREATE_NO_WINDOW) and redirect the
+                #     new instance's output to the same log start.bat uses.
+                #   - Dev launch from a real terminal: keep CREATE_NEW_CONSOLE so
+                #     the restarted server stays visible (matches expectation).
+                _windowless = (os.environ.get('CLAYRUNE_HIDDEN') == '1'
+                               or not _has_visible_console())
                 popen_kwargs['creationflags'] = (
                     subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.CREATE_NEW_CONSOLE
+                    | (subprocess.CREATE_NO_WINDOW if _windowless
+                       else subprocess.CREATE_NEW_CONSOLE)
                 )
+                if _windowless:
+                    # No console to print into — persist logs like the VBS path.
+                    try:
+                        log_path = os.path.join(os.getcwd(), 'data', 'logs', 'clayrune.log')
+                        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                        _restart_log = open(log_path, 'ab')  # leaked intentionally; we os._exit shortly
+                        popen_kwargs['stdout'] = _restart_log
+                        popen_kwargs['stderr'] = subprocess.STDOUT
+                    except Exception as e:
+                        _log(f"[restart] windowless log redirect failed: {e}")
             else:
                 popen_kwargs['start_new_session'] = True
             subprocess.Popen([sys.executable] + sys.argv, **popen_kwargs)

@@ -1500,9 +1500,29 @@ async function openConversation(projectId, csid, mcSessionId, isLive) {
   // which renders a blank page on Android WebView — and matches "tap opens it in
   // chat mode ready to continue". Falls back to arming a resume if unreconstructable.
   if (csid) {
+    // A live conversation can reach here with NO mc_session_id (its
+    // claude_session_id matched a running agent_session, but this row never
+    // carried the MC id, so the live route at 1454 was skipped). If any cache
+    // entry already tracks THIS transcript as live (running / awaiting the
+    // user), open that real tab. Otherwise we fabricate a read-only "STOPPED"
+    // tab keyed on the csid while the sidebar badge — driven by the same byCsid
+    // signal — correctly shows "Working…", a desync that only a hard reload
+    // cleared. Predicate mirrors _liveConvStates().
+    const liveSid = Object.keys(agentStatusCache).find(sid => {
+      const s = agentStatusCache[sid];
+      return s && s.projectId === projectId && s.claudeSessionId === csid &&
+        (s.status === 'running' || s.waitingForQuestion || s.waitingForPlanApproval);
+    });
+    if (liveSid) { switchAgentTab(projectId, liveSid); return; }
     if (agentStatusCache[csid]) { switchAgentTab(projectId, csid); return; }
     try {
       const rr = await fetch(API_BASE + `/api/project/${projectId}/transcript/${encodeURIComponent(csid)}/reconstruct`);
+      if (rr.status === 409) {
+        // Server says this transcript belongs to a live session (race: the
+        // cache scan above missed it). Open the live tab it points us at.
+        const rd = await rr.json().catch(() => ({}));
+        if (rd.session_id) { switchAgentTab(projectId, rd.session_id); return; }
+      }
       if (rr.ok) {
         const rd = await rr.json();
         agentStatusCache[csid] = {

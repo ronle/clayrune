@@ -407,6 +407,41 @@ class TestWalkthrough:
         assert client.saved == []
 
 
+# ── seed_onboarding_on_startup (first-boot seeder) ───────────────────────────
+
+class TestOnboardingSeed:
+    def test_incognito_present_still_seeds_on_fresh_install(self, client):
+        # REGRESSION: _ensure_incognito_project() writes _incognito.json into
+        # DATA_DIR moments BEFORE the seeder runs. A naive any(*.json) check
+        # counted it and skipped seeding, leaving a fresh install (tour skipped)
+        # with zero real projects.
+        (client.data_dir / '_incognito.json').write_text(
+            '{"id": "_incognito", "_is_incognito_project": true}', encoding='utf-8')
+        client.gr.seed_onboarding_on_startup()
+        assert any(pid == 'clayrune' for (pid, _) in client.saved)
+        assert (client.tmp / 'onboarding_seeded.flag').exists()
+
+    def test_sidecar_only_still_seeds(self, client):
+        # Telemetry sidecars aren't real projects either.
+        (client.data_dir / 'x_agent_log.json').write_text('[]', encoding='utf-8')
+        client.gr.seed_onboarding_on_startup()
+        assert any(pid == 'clayrune' for (pid, _) in client.saved)
+
+    def test_real_project_present_skips_seed(self, client):
+        (client.data_dir / 'myproj.json').write_text(
+            '{"id": "myproj", "name": "Mine"}', encoding='utf-8')
+        client.gr.seed_onboarding_on_startup()
+        assert client.saved == []
+        assert (client.tmp / 'onboarding_seeded.flag').exists()
+
+    def test_marker_present_is_noop(self, client):
+        (client.tmp / 'onboarding_seeded.flag').write_text('x', encoding='utf-8')
+        (client.data_dir / '_incognito.json').write_text(
+            '{"id": "_incognito", "_is_incognito_project": true}', encoding='utf-8')
+        client.gr.seed_onboarding_on_startup()
+        assert client.saved == []
+
+
 # ── Builder modes (Prompt Builder Phase 1) ───────────────────────────────────
 
 def _seed_briefs(tmp):
