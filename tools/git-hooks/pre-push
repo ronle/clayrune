@@ -1,0 +1,39 @@
+#!/bin/sh
+# ── Clayrune pre-push guardrail ──────────────────────────────────────────────
+# Refuse to push any ref whose tip tree contains an operator-private or secret
+# path. This repo is PUBLIC; several deliberately-untracked files still live in
+# the history of old feature branches (data/SHARED_RULES.md, cloud pricing under
+# docs/poc/, signing/creds). Merging or pushing one of those branches would
+# re-publish them. This hook blocks the push locally, BEFORE anything leaves the
+# machine — a CI check can only notice the leak after it is already public.
+#
+# Source of truth: tools/git-hooks/pre-push  (install via tools/install-hooks.sh)
+# Genuine exception (rare): git push --no-verify
+# See CLAUDE.md "nothing operator-specific goes in the repo" (commit 3a1fd04).
+
+# Paths that must never reach the public repo (grep -E, matched against the
+# pushed tip's `git ls-tree -r --name-only`).
+FORBIDDEN='^data/SHARED_RULES\.md$|(^|/)AGENT_RULES\.md$|^docs/poc/|(^|/)HOSTED_CLOUD_|^tools/signing\.env$|^tools/gcp-cost-review/|(^|/)\.env$|\.pem$|\.key$|(^|/)id_rsa$|credential'
+
+status=0
+
+# stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Branch deletion (all-zero local sha): nothing to scan.
+  case "$local_sha" in *[!0]*) : ;; *) continue ;; esac
+
+  hits=$(git ls-tree -r --name-only "$local_sha" | grep -E "$FORBIDDEN")
+  if [ -n "$hits" ]; then
+    echo "" >&2
+    echo "BLOCKED: push to ${remote_ref:-<new ref>} carries operator-private / secret files:" >&2
+    printf '%s\n' "$hits" | sed 's/^/    - /' >&2
+    echo "" >&2
+    echo "  These must never reach the public repo. If a feature on this branch is" >&2
+    echo "  wanted, cherry-pick the CODE commit(s) without the paths above." >&2
+    echo "  Genuine exception only: git push --no-verify" >&2
+    echo "" >&2
+    status=1
+  fi
+done
+
+exit $status
