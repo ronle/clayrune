@@ -1374,6 +1374,26 @@ function _convSearchText(c) {
   return `${label} ${meta}`.toLowerCase();
 }
 
+// Resolve whether a conversation row is an incognito session. Incognito
+// sessions are ephemeral server-side (no agent_log entry), so the row `c`
+// carries no flag — we recover it from the LIVE session state instead:
+// the cache/history entry (keyed by mc id, or matched on the transcript csid)
+// still holds `incognito:true` while the session is live or recent.
+function _convIsIncognito(c) {
+  if (c && c.incognito) return true;
+  const mcsid = (c && c.mc_session_id) || '';
+  const csid = (c && c.claude_session_id) || '';
+  if (mcsid && agentStatusCache[mcsid] && agentStatusCache[mcsid].incognito) return true;
+  if (csid) {
+    for (const sid in agentStatusCache) {
+      const s = agentStatusCache[sid];
+      if (s && s.claudeSessionId === csid && s.incognito) return true;
+    }
+  }
+  const h = mcsid && agentHistory.find(x => x.sessionId === mcsid);
+  return !!(h && h.incognito);
+}
+
 function mobileUserConversationsHTML(p, convos) {
   const hidden = _hiddenConvSet(p.id);
   const live = _liveConvStates(p);
@@ -1409,6 +1429,9 @@ function mobileUserConversationsHTML(p, convos) {
       dot = `<span class="agent-status-dot ${esc(stt)}" title="${esc(stt)}"></span>`;
     }
     const meta = [esc(c.ts_relative || ''), c.turns ? `${c.turns} turn${c.turns !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+    const incIcon = _convIsIncognito(c)
+      ? '<span class="conv-inc-icon" title="Incognito — not saved to project memory or agent log">&#x1F576;&#xFE0F;</span>'
+      : '';
     const hideBtn = isHidden
       ? `<button class="conv-hide" onclick="unhideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Move back to the list" aria-label="Unhide">&#8617;</button>`
       : `<button class="conv-hide" onclick="hideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Hide from this list" aria-label="Hide">&#10005;</button>`;
@@ -1416,7 +1439,7 @@ function mobileUserConversationsHTML(p, convos) {
     return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}${isActive ? ' active' : ''}" data-search="${esc(_convSearchText(c))}" data-csid="${esc(csid || '')}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
       <div class="conv-main">
         <div class="conv-top">
-          <span class="conv-name">${dot}${label}</span>
+          <span class="conv-name">${dot}${incIcon}${label}</span>
           <span class="conv-time">${badge || esc(c.ts_relative || '')}</span>
         </div>
         <div class="conv-bot"><span class="conv-sub">${esc(meta)}</span></div>

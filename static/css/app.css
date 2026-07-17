@@ -2834,6 +2834,8 @@
     flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  /* Incognito marker next to a conversation's name in the rail list. */
+  .conv-inc-icon { font-size: 12px; line-height: 1; margin-right: 4px; opacity: 0.9; }
   .conv-time { font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
   /* Live status pill shown in place of the timestamp when a chat is active. */
   .conv-live-badge {
