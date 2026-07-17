@@ -109,6 +109,10 @@ _CONFIG_EDITABLE_KEYS = {
     'scribe_reconcile_cap', 'scribe_checkpoint_enabled',
     'scribe_checkpoint_kb', 'read_floor_topk',
     'long_session_advisory_enabled', 'long_session_advisory_turns',
+    # Keep-awake wake lock (mc/wake_lock.py). Reconciler reads both live —
+    # no respawn, no restart. Without these here the Settings toggle
+    # rendered OFF and silently failed to save (found 2026-07-16).
+    'keep_awake_enabled', 'keep_awake_poll_s',
     'idle_eviction_enabled', 'idle_eviction_minutes',
     'projects_base', 'shared_rules_path', 'port', 'log_level',
     'mobile_brief_replies_enabled', 'brief_replies_always_enabled',
