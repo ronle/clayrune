@@ -133,6 +133,12 @@ def _load_config():
         'question_channel_to': '',        # '' -> the night-mail default recipient
         'question_channel_grace_s': 45,   # wait this long for a viewer before sending
         'question_channel_poll_s': 120,   # how often to scan the inbox for replies
+
+        # Keep the machine awake while an agent is running (mc/wake_lock.py).
+        # The product runs agents on the user's own box; if it sleeps, the agent
+        # stops. Off by default — opt-in per install.
+        'keep_awake_enabled': False,
+        'keep_awake_poll_s': 20,
         'long_session_advisory_enabled': False,  # soft "restart long Mode-B session" nudge
         'long_session_advisory_turns': 25,      # num_turns threshold for that nudge
         # Idle-session eviction — reclaim a warm Mode B fleet (claude.exe + its
@@ -2257,6 +2263,21 @@ if __name__ == '__main__':
     # firing a 12s git operation on every page load. Frontend polls
     # /api/system/update/cached.
     threading.Thread(target=_update_check_loop, daemon=True, name='update-check').start()
+    # Keep-awake reconciler: holds an OS wake lock while any agent is running, so
+    # the machine doesn't sleep out from under a working agent. Off by default
+    # (keep_awake_enabled); the reconciler reads the flag live so the toggle
+    # needs no restart. Roll back: delete this block + mc/wake_lock.py.
+    try:
+        from mc import wake_lock as _wake_lock
+        from mc.state import agent_sessions as _agent_sessions
+        _wake_lock.start(
+            count_running=lambda: sum(
+                1 for s in _agent_sessions.values() if s.get('status') == 'running'),
+            is_enabled=lambda: bool(CONFIG.get('keep_awake_enabled', False)),
+            interval_s=int(CONFIG.get('keep_awake_poll_s', 20)),
+        )
+    except Exception as e:
+        _log(f"[wake-lock] not started: {e}")
     # Offline question channel: picks up emailed answers to questions raised by
     # unattended runs and resumes the agent through the normal follow-up path.
     # Self-disabling — the poller no-ops when nothing is outstanding or no mail

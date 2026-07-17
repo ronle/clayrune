@@ -134,6 +134,15 @@ def post_distiller_promote():
                             'error': 'artifact not found or outside _proposed/'}), 404
         # FIX 2a — exploration→skill reframe. Only explorations are reframable;
         # SKILL/PREFERENCE promote through their existing body untouched.
+        # Structural validation (committee M8/S2-C3): the refusal pipeline has
+        # leaked REFUSE-shaped bodies to _proposed/ twice before; a promote
+        # (or, later, an auto-install) must never turn one into a loadout
+        # entry. Same floor for a degenerate stub body.
+        if _distiller._is_refusal(art.get('body', '')) \
+                or len((art.get('body') or '').strip()) < 40:
+            return jsonify({'ok': False,
+                            'error': 'artifact body is refusal-shaped or too '
+                                     'thin to install — reject it instead'}), 422
         install_name = art['name']
         install_desc = art['description']
         install_body = art['body']

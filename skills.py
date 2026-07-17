@@ -297,7 +297,12 @@ def write_skill(
         meta.update({k: v for k, v in extra_meta.items() if k not in ('name', 'description')})
 
     path.mkdir(parents=True, exist_ok=True)
-    skill_md.write_text(dump_skill_md(meta, body), encoding='utf-8')
+    # Atomic (tmp + replace) — committee M8/S3-C4: a plain write_text leaves a
+    # torn half-written SKILL.md readable by a concurrently-dispatching
+    # session; installs must be all-or-nothing.
+    tmp = skill_md.with_suffix('.md.tmp')
+    tmp.write_text(dump_skill_md(meta, body), encoding='utf-8')
+    os.replace(tmp, skill_md)
     return _read_one(path, scope, project_id)  # type: ignore[return-value]
 
 

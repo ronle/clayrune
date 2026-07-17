@@ -181,3 +181,76 @@ def test_unknown_session_fails_closed(tmp_path):
     # in steward-enabled projects anyway).
     r = _run_hook({'tool_name': 'Bash', 'tool_input': {'command': 'git push'}})
     assert r.returncode == 2
+
+
+# ── Inert-prose masking (2026-07-16 precision fix) ────────────────────────────
+# Real incident (2026-07-13 DECISION NEEDED note): the steward could not
+# commit the wake-lock feature because the commit MESSAGE contained OS power
+# vocabulary. Prose is data; only command-position text may block.
+
+PROSE_ALLOW_CASES = [
+    # The literal incident shape.
+    'git commit -m "feat(wake-lock): keep machine awake, prevent system shutdown while agents run"',
+    "git commit -m 'fix: handle reboot and shutdown power events in wake_lock'",
+    # Repo heredoc commit convention (quoted delimiter), prose mentions blocked verbs.
+    'git commit -m "$(cat <<\'EOF\'\nfeat: wake lock\n\nPrevents host shutdown/reboot while agents run.\nAlso documents the gcloud run deploy steps.\nEOF\n)"',
+    # PowerShell literal here-string commit (repo convention for pwsh).
+    "git commit -m @'\nfix: power handling\n\nCovers shutdown, reboot, and git push docs.\n'@",
+    # Cloud words in prose.
+    'git commit -m "docs: explain why terraform apply is human-gated"',
+    'git commit --message="chore: note that aws s3 rm needs approval"',
+]
+
+
+@pytest.mark.parametrize('cmd', PROSE_ALLOW_CASES)
+def test_prose_in_commit_messages_is_not_a_command(cmd):
+    d = classify_bash(cmd)
+    assert not d.blocked, f"prose false-positive: {d.reason!r} for {cmd!r}"
+
+
+PROSE_STILL_BLOCK_CASES = [
+    # Unmasked command tail after a masked message.
+    'git commit -m "safe words" && shutdown /s',
+    'git commit -m "safe words" && git push',
+    "git commit -m 'safe' ; reboot",
+    # Substitution inside a double-quoted message CAN execute — never masked.
+    'git commit -m "$(shutdown /s)"',
+    'git commit -m "`reboot`"',
+    # Heredoc fed to an interpreter executes its body — header check catches it.
+    "bash <<'EOF'\nshutdown /s\nEOF",
+    "pwsh <<'EOF'\ngit push\nEOF",
+    # Unquoted heredoc delimiter (expansion live) is never masked.
+    'git commit -m "$(cat <<EOF\n$(git push)\nEOF\n)"',
+]
+
+
+@pytest.mark.parametrize('cmd', PROSE_STILL_BLOCK_CASES)
+def test_masking_introduces_no_false_negatives(cmd):
+    assert classify_bash(cmd).blocked, f"false NEGATIVE: {cmd!r}"
+
+
+# ── Learning-loop supply-chain fence (committee M3, 2026-07-16) ───────────────
+# Proposal frontmatter + skill-stats records are what decides loadout entry;
+# an unattended agent must not be able to edit its own provenance.
+
+SUPPLY_CHAIN_BLOCK_PATHS = [
+    r'C:\repo\data\skills\_proposed\proj\2026-07-16T00-00-00-abcd-x\SKILL.md',
+    'data/skills/_proposed/global/2026-07-16T00-00-00-abcd-x/EXPLORATION.md',
+    'data/skills/_rejected/old/PREFERENCE.md',
+    'data/projects/mission_control_skill_stats.json',
+    r'C:\repo\data\projects\proj_skill_stats_archive.jsonl',
+]
+
+
+@pytest.mark.parametrize('path', SUPPLY_CHAIN_BLOCK_PATHS)
+def test_fence_blocks_learning_supply_chain_writes(path):
+    for tool in ('Write', 'Edit', 'MultiEdit'):
+        d = classify_action(tool, {'file_path': path})
+        assert d.blocked, f"{tool} to {path} must be fenced"
+
+
+def test_fence_still_allows_ordinary_project_writes():
+    for path in (r'C:\repo\server.py', 'docs/PLAN.md',
+                 'data/projects/notes.md', 'data/uploads/x.png'):
+        d = classify_action('Write', {'file_path': path})
+        assert not d.blocked, f"ordinary write false-positive: {path}"

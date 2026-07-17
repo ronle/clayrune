@@ -432,6 +432,13 @@ async function _renderSettings() {
         </div>
         ${toggle('activity_states_enabled', cfg.activity_states_enabled)}
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Keep machine awake</div>
+          <div class="settings-hint">Holds an OS wake lock while any agent is running, so the computer can't sleep out from under a working agent. Releases the moment the last agent finishes. Takes effect without a restart.</div>
+        </div>
+        ${toggle('keep_awake_enabled', cfg.keep_awake_enabled)}
+      </div>
     </div>
 
     <div class="settings-section">

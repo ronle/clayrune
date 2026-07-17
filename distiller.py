@@ -1478,6 +1478,62 @@ def _update_summary_cache(project_id: str) -> None:
 _GLOBAL_SUPPRESSION_PID = '_global'
 
 
+# ── Installed-fingerprint dedupe (the durable-"yes" fix, 2026-07-16) ─────────
+# Rejection ("no") is durable via suppression records keyed (fingerprint,
+# kind) — the ratified committee keying, unchanged here. PROMOTION ("yes")
+# had two holes that let installed artifacts re-enter the queue:
+#   1. kind drift — 94084ae5 was promoted as kind=skill, then re-proposed as
+#      kind=preference: the (fingerprint, kind) suppression key can't see it.
+#   2. missing history — b4e4b1bf was promoted before the 2026-07-11 global-
+#      suppression fix, so no record exists anywhere.
+# Both sat INSTALLED in ~/.claude/skills/ while listed as promotable again
+# (found in the 2026-07-16 queue triage, 7 days after the dedupe window
+# expired). The mirror of the durable-"no" bug.
+#
+# Fix: a DYNAMIC check against what is actually installed, ANY kind — the
+# install itself is the record. Semantics are deliberately different from
+# suppression: uninstalling an artifact makes its pattern proposable again
+# (no permanent mark), which is exactly what a promotion revert should mean.
+# Suppression stays permanent; installation stays observable.
+
+# Test override: when set (list of Paths), ONLY these roots are scanned.
+# Production (None) scans ~/.claude/skills plus the project's .claude/skills.
+_installed_skills_roots = None
+
+_FP_LINE_RE = re.compile(
+    r'^extraction_fingerprint_exact:\s*"?([0-9a-f]{16})"?', re.M)
+
+
+def _installed_exact_fingerprints(project: dict | None) -> set:
+    """Exact fingerprints of currently-installed distilled artifacts visible
+    to this project (global loadout + the project's own skills). Best-effort;
+    an unreadable dir contributes nothing (fails toward re-proposing, which
+    the human queue absorbs — never toward blocking a fresh pattern)."""
+    if _installed_skills_roots is not None:
+        roots = list(_installed_skills_roots)
+    else:
+        roots = [Path.home() / '.claude' / 'skills']
+        pp = (project or {}).get('project_path', '') or ''
+        if pp:
+            roots.append(Path(pp) / '.claude' / 'skills')
+    out: set = set()
+    for root in roots:
+        try:
+            if not root.is_dir():
+                continue
+            for d in root.iterdir():
+                f = d / 'SKILL.md'
+                if not f.is_file():
+                    continue
+                m = _FP_LINE_RE.search(
+                    f.read_text(encoding='utf-8', errors='replace')[:2000])
+                if m:
+                    out.add(m.group(1))
+        except Exception:
+            continue
+    return out
+
+
 def _is_suppressed(project_id: str, exact: str, kind: str) -> bool:
     """True if this (fingerprint, kind) was decided 'no' — by THIS project or
     globally. Both stores are consulted: a cross-project artifact rejected while
@@ -1506,8 +1562,31 @@ STEWARD_TASK_MARKER = '[Steward cycle]'
 
 
 def is_unattended_task(task: str | None) -> bool:
-    """True if this task is an autonomous steward cycle (no human watching)."""
-    return (task or '').lstrip().startswith(STEWARD_TASK_MARKER)
+    """True if this task text is recognizably unattended: a steward cycle,
+    or a prompt that announces itself as unattended (night-shift shape).
+    Text-only — callers with a session in hand should prefer
+    is_unattended_session, which also consults trigger provenance."""
+    t = (task or '').lstrip()
+    if t.startswith(STEWARD_TASK_MARKER):
+        return True
+    return 'you run unattended' in t[:400].lower()
+
+
+def is_unattended_session(task: str | None, trigger_type: str | None) -> bool:
+    """ALLOWLIST unattended detection (committee M4 / Seat 1 Cond 4).
+
+    The old shape enumerated known unattended markers and defaulted
+    everything else to interactive — it failed OPEN for exactly the cases
+    that appear next (transcript-backfilled sessions lose trigger_type;
+    a rephrased night-shift prompt sheds the text marker). Inverted:
+    a session is interactive ONLY when its trigger_type is literally
+    'manual' (the one human-initiated value in the closed taxonomy) AND
+    its task text carries no unattended marker. Missing/unknown/backfilled
+    trigger_type → unattended. Any future trigger type defaults SAFE.
+    """
+    if is_unattended_task(task):
+        return True
+    return (trigger_type or '') != 'manual'
 
 
 # ── Authority-class guard (the constitutional bright line) ───────────────────
@@ -1615,6 +1694,18 @@ def _generate_and_write_artifact(project_id: str, project: dict,
         if suppressed:
             _increment_counter(project_id, TELEM_SUPPRESSED_AFTER_GENERATE)
             return
+        # Durable-"yes": a pattern whose fingerprint is already INSTALLED
+        # (any kind, global or project loadout) is not re-proposed — the
+        # install is the record. Explorations are exempt: they are never
+        # installed, and a reframe-promoted exploration installs under the
+        # reframed SKILL's own identity.
+        if kind != 'exploration' and (
+                candidate['exact'] in _installed_exact_fingerprints(project)):
+            _increment_counter(project_id, f'skipped_installed:{kind}')
+            _structured_log(
+                f"skip_already_installed:kind={kind}:project_id={project_id}:"
+                f"fingerprint={candidate['exact']}")
+            return
         # Atomic write via .tmp + rename
         target_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(target_path, body)
@@ -1627,6 +1718,19 @@ def _generate_and_write_artifact(project_id: str, project: dict,
             }
             _write_skill_stats(project_id, stats)
         _increment_counter(project_id, f'proposed:{kind}')
+        # Passive yield telemetry for the auto-scope retrospective (committee
+        # M12/S2-C4): count proposals that would meet the ratified auto-install
+        # gate (skills-only, interactive origin, project scope, exact rec >= 3).
+        # An UPPER bound — M1 fingerprint-taint is not applied here. No install
+        # happens; this only makes "would the feature ever fire?" measurable.
+        if (kind == 'skill' and not candidate.get('unattended')
+                and candidate.get('scope_tag') == 'project-specific'
+                and int(candidate.get('recurrence_exact', 0) or 0) >= 3):
+            _increment_counter(project_id, 'auto_scope_would_install')
+            _structured_log(
+                f"auto_scope_would_install:project_id={project_id}:"
+                f"fingerprint={candidate['exact']}:"
+                f"rec={candidate.get('recurrence_exact')}")
     except Exception as e:
         _structured_log(
             f"render_exception:kind={kind}:project_id={project_id}:err={e!r}"
@@ -2404,6 +2508,18 @@ def _first_heading(body: str) -> str:
     return ''
 
 
+def _first_substantial_line(body: str, min_len: int = 12) -> str:
+    """First line (heading or plain prose) long enough to serve as a
+    description. Preference bodies open with a plain title line — e.g.
+    "Use Clayrune's native learning-item system..." — followed by a
+    '## Why' section; _first_heading alone lands on "Why"."""
+    for ln in (body or '').splitlines():
+        s = ln.strip().lstrip('#').strip()
+        if len(s) >= min_len:
+            return s[:300]
+    return ''
+
+
 def read_proposed_artifact(directory: str) -> dict | None:
     """Read one _proposed/ artifact directory into a flat dict for promotion.
 
@@ -2429,8 +2545,16 @@ def read_proposed_artifact(directory: str) -> dict | None:
             # SKILL artifacts carry a TRIGGER description; explorations /
             # preferences don't, so synthesize one from the first heading or
             # the slug (the user can edit after promotion).
-            desc = (fm.get('description', '') or _first_heading(body)
-                    or name.replace('-', ' '))
+            # A DEGENERATE frontmatter description must fall through too:
+            # one 2026-07-09 artifact carried `description: "Why"` (a section
+            # heading captured at render time), which survived promotion and
+            # overwrote a good installed skill's description on 2026-07-16 —
+            # a loadout entry whose description is "Why" can never trigger.
+            fm_desc = (fm.get('description', '') or '').strip()
+            if len(fm_desc) < 12:
+                fm_desc = ''
+            desc = (fm_desc or _first_substantial_line(body)
+                    or _first_heading(body) or name.replace('-', ' '))
             return {
                 'path': str(f),
                 'directory': str(d),

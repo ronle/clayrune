@@ -676,6 +676,17 @@ function _renderProfileDialog() {
       <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text);font-size:16px;min-width:48px" onclick="editProjectEmoji('${esc(p.id)}')">${p.emoji ? esc(p.emoji) : 'Pick…'}</button>
     </div>
     <div class="settings-row" style="align-items:flex-start;flex-direction:column;gap:6px">
+      <div><div class="settings-label">Folder</div><div class="settings-hint">Working directory the agent runs in — enables dispatch, skills, MCP</div></div>
+      <div style="display:flex;width:100%;gap:6px;align-items:center">
+        <input id="pfd-path" class="path-input" type="text" value="${esc(p.project_path || '')}"
+          placeholder="No folder selected — click Browse, or type a path"
+          onblur="saveProjectPath('${esc(p.id)}',this)"
+          onkeydown="if(event.key==='Enter'){this.blur()}"
+          style="flex:1;box-sizing:border-box">
+        <button class="btn-browse" onclick="openFolderPicker('${esc(p.id)}')" title="Browse for folder">Browse…</button>
+      </div>
+    </div>
+    <div class="settings-row" style="align-items:flex-start;flex-direction:column;gap:6px">
       <div><div class="settings-label">Description</div><div class="settings-hint">What this project is — agents see this as context</div></div>
       <textarea id="pfd-desc" rows="4" style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:12px;font-family:inherit;resize:vertical">${esc(p.description || '')}</textarea>
     </div>
