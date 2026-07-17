@@ -272,7 +272,12 @@ function _zoneRect(zoneId) {
   const halfH = Math.round(w.height / 2);
   const thirdW = Math.round(w.width / 3);
   switch (zoneId) {
-    case 'full':         return { left: w.left,             top: w.top,         width: w.width,             height: w.height };
+    // Maximize covers the ENTIRE viewport — over the top app bar and the
+    // sidebar rail — for a true full-screen. (The half/quarter/third zones
+    // still respect the workspace rect below.) Pairs with the .is-maximized
+    // CSS that squares the corners and raises the modal-layer above the
+    // sidebar (z-400) so nothing paints over the maximized window.
+    case 'full':         return { left: 0,                  top: 0,             width: window.innerWidth,   height: window.innerHeight };
     case 'left-half':    return { left: w.left,             top: w.top,         width: halfW,               height: w.height };
     case 'right-half':   return { left: w.left + halfW,     top: w.top,         width: w.width - halfW,     height: w.height };
     case 'top-half':     return { left: w.left,             top: w.top,         width: w.width,             height: halfH };
@@ -337,6 +342,23 @@ function _clearSnapPreview() {
   _snapPreviewEl.classList.remove('visible');
 }
 
+// A maximized (fullscreen) modal must paint OVER the sidebar rail, which sits
+// at z-400 — above the modal-layer's z-300. We can't beat that from inside the
+// layer's stacking context, so we raise the whole layer via a body class while
+// any visible modal is maximized, and drop it back otherwise. Recomputed from
+// live DOM state so close / minimize / restore all converge without each having
+// to know about maximize.
+function _syncMaximizedBodyClass() {
+  let any = false;
+  for (const e of openModals.values()) {
+    const el = e && e.element;
+    if (el && el.classList.contains('is-maximized')
+        && !el.classList.contains('minimized')) { any = true; break; }
+  }
+  document.body.classList.toggle('mc-modal-maximized', any);
+}
+window._syncMaximizedBodyClass = _syncMaximizedBodyClass;
+
 // Apply a snap zone to a modal window. Captures pre-snap geometry on the
 // first snap so unSnap can restore it. Persists snap + preSnap in
 // mc_modal_prefs and the open-modals snapshot for restore-on-reload.
@@ -362,6 +384,8 @@ function applySnap(modalId, zoneId) {
   }
   entry.snap = zoneId;
   win.classList.add('is-snapped');
+  win.classList.toggle('is-maximized', zoneId === 'full');
+  _syncMaximizedBodyClass();
   win.style.left = r.left + 'px';
   win.style.top = r.top + 'px';
   content.style.width = r.width + 'px';
@@ -413,6 +437,8 @@ function unSnap(modalId) {
   entry.snap = null;
   entry.preSnap = null;
   win.classList.remove('is-snapped');
+  win.classList.remove('is-maximized');
+  _syncMaximizedBodyClass();
   if (entry.projectId && !modalId.startsWith('__')) {
     _setModalPref(entry.projectId, { snap: null, preSnap: null });
   }

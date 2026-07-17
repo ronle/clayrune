@@ -349,6 +349,7 @@ function closeModalById(modalId) {
   const chip = document.getElementById('chip-' + CSS.escape(modalId));
   if (chip) chip.remove();
   openModals.delete(modalId);
+  window._syncMaximizedBodyClass && window._syncMaximizedBodyClass();
 
   if (entry.projectId && !modalId.startsWith('__')) {
     const p = allProjects.find(x => x.id === entry.projectId);
@@ -841,6 +842,7 @@ function minimizeModal(modalId) {
   entry.minimized = true;
   entry.savedScrollTop = entry.element.querySelector('.modal-scroll-body')?.scrollTop || 0;
   entry.element.classList.add('minimized');
+  window._syncMaximizedBodyClass && window._syncMaximizedBodyClass();
 
   const tray = document.getElementById('minimized-tray');
   const p = entry.projectId ? allProjects.find(x => x.id === entry.projectId) : null;
@@ -968,6 +970,7 @@ function restoreModal(modalId) {
   if (!entry) return;
   entry.minimized = false;
   entry.element.classList.remove('minimized');
+  window._syncMaximizedBodyClass && window._syncMaximizedBodyClass();
   const chip = document.getElementById('chip-' + CSS.escape(modalId));
   if (chip) chip.remove();
   if (entry.projectId && !modalId.startsWith('__hivemind_')) refreshModalById(modalId);

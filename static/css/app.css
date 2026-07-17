@@ -934,6 +934,18 @@
     max-width: none; max-height: none;
   }
   .modal-window.is-snapped .modal-content::after { display: none; }
+  /* Maximize = true full-screen: fill the viewport edge-to-edge (over the app
+     bar AND the sidebar), square the corners, drop the floating shadow. The
+     modal-layer (z-300) normally sits BELOW the sidebar (z-400) so its rail can
+     hover-expand over modals; while a modal is maximized we raise the layer
+     above the sidebar and header so nothing paints over the full-screen window. */
+  body.mc-modal-maximized .modal-layer { z-index: 500; }
+  .modal-window.is-maximized { filter: none; }
+  .modal-window.is-maximized .modal-content {
+    border-radius: 0;
+    border: none;
+    max-width: none; max-height: none;
+  }
   .mc-snap-preview {
     position: fixed;
     z-index: 9998;
