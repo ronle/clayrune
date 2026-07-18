@@ -1403,6 +1403,10 @@ function _convIsIncognito(c) {
 }
 
 function mobileUserConversationsHTML(p, convos) {
+  // mobileMode is a LOCAL const inside agentPanelHTML — not visible here. The
+  // split-view affordance below needs it, so recompute from the shared source
+  // (bare `mobileMode` threw ReferenceError, aborting the whole rail render).
+  const mobileMode = (typeof isMobileChatList === 'function') ? isMobileChatList() : window.innerWidth <= 960;
   const hidden = _hiddenConvSet(p.id);
   const live = _liveConvStates(p);
   // The currently-open conversation (desktop 3-pane rail) gets a white card;
