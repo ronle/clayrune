@@ -240,10 +240,22 @@ function closeAgentTab(projectId, sessionId) {
   agentHistory = agentHistory.filter(h => h.sessionId !== sessionId);
   acOpenSessions.delete(sessionId);
 
-  // Drill-down semantics: don't auto-jump into another conversation. Drop
-  // the selection and let agentPanelHTML decide — back to the list if >1
-  // remain, direct chat if exactly 1, dispatch screen if none.
-  delete activeAgentTab[projectId];
+  // Split-view: if the closed conversation was one of the two panes, keep the
+  // OTHER as the single active view instead of dropping to the list.
+  const _wasActive = activeAgentTab[projectId] === sessionId;
+  const _wasSplit = splitAgentTab[projectId] === sessionId;
+  if (_wasSplit) {
+    delete splitAgentTab[projectId];   // closed the 2nd pane → back to single (primary stays)
+  } else if (_wasActive && splitAgentTab[projectId]) {
+    activeAgentTab[projectId] = splitAgentTab[projectId];  // closed primary → promote the split pane
+    delete splitAgentTab[projectId];
+  } else {
+    // Drill-down semantics: don't auto-jump into another conversation. Drop
+    // the selection and let agentPanelHTML decide — back to the list if >1
+    // remain, direct chat if exactly 1, dispatch screen if none.
+    delete activeAgentTab[projectId];
+    delete splitAgentTab[projectId];
+  }
   delete agentConvNew[projectId];
   refreshModal();
   renderAgentConsole();

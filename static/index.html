@@ -832,6 +832,7 @@ let agentServerLines = {};     // session_id → count of lines received from se
 let agentStatusCache = {};     // session_id → {status, task, projectId, startedAt}
 let agentHistory = [];         // [{projectId, sessionId, projectName, task, status, startedAt}]
 let activeAgentTab = {};       // project_id → session_id (which tab is active in modal)
+let splitAgentTab = {};        // project_id → session_id shown in the 2nd (split) pane, or unset. Desktop split-view.
 let agentConvNew = {};         // project_id → true when the user explicitly chose
 let agentPendingImages = {};   // key (projectId or sessionId) → [{file, objectUrl, serverPath}]
 let acOpenSessions = new Set(); // session_id → expanded in console
@@ -839,7 +840,7 @@ let planViewerContent = {};    // session_id → string[] of raw plan text lines
 let planFileTitle = {};        // session_id → extracted first heading from plan file
 let pendingResumeId = {};      // project_id → claude_session_id to resume (null = fresh)
 let incognitoToggle = {};      // project_id → bool — when true, next dispatch is incognito (skips MEMORY/RULES/log)
-let _skipAgentOutput = false;  // set by refreshModalById to skip expensive output rendering
+let _skipAgentOutputSids = new Set();  // sids whose output node refreshModalById is preserving (skip expensive re-render). Split-view = up to 2.
 let agentSSEWatchdogs = {};  // sessionId → timer ID
 // sessionId → timestamp ms of the last SSE event (data or heartbeat). Mirrors
 // connectAgentStream's closure-local lastEventTime so the foreground freshness
@@ -1692,43 +1693,43 @@ function refreshModalById(modalId) {
   });
 
   // Preserve existing agent output DOM to avoid expensive re-render.
-  const sid = activeAgentTab[entry.projectId];
   const curTab = modalActiveTab[entry.projectId] || 'agent';
-  let savedOutput = null, savedOutputScroll = 0, savedChatHeight = null;
-  if (sid && curTab === 'agent') {
-    const existingOutput = document.getElementById(`agent-output-${sid}`);
+  const sid = activeAgentTab[entry.projectId];        // primary pane (downstream sizing/questions)
+  const _splitSid = splitAgentTab[entry.projectId];   // 2nd pane, if split-view is active
+  // Split-view preserves BOTH the active pane AND the split pane's live DOM
+  // (output node + compose textarea) across this innerHTML rebuild — otherwise
+  // the every-few-seconds refresh would blow away a streaming pane's rendered
+  // lines + scroll and reset the IME/caret. Single view = a one-element list,
+  // byte-identical behavior to before. (Textarea preservation rationale: a
+  // fresh element every turn measured as font-size reset, dead autocorrect,
+  // multi-press backspace, ~205ms/keystroke on mobile — perf-HUD probe
+  // 2026-05-15.)
+  const _preserveSids = (curTab === 'agent')
+    ? [...new Set([activeAgentTab[entry.projectId], splitAgentTab[entry.projectId]].filter(Boolean))]
+    : [];
+  const _savedOutputs = {};   // sid → {node, scroll, chatHeight}
+  const _savedInputs = {};    // sid → {node, selStart, selEnd}
+  _skipAgentOutputSids = new Set();
+  for (const psid of _preserveSids) {
+    const existingOutput = document.getElementById(`agent-output-${psid}`);
     if (existingOutput && existingOutput.children.length > 0) {
-      savedOutputScroll = existingOutput.scrollTop;
       const chat = existingOutput.closest('.agent-chat');
-      if (chat) savedChatHeight = chat.style.height;
+      _savedOutputs[psid] = { node: existingOutput, scroll: existingOutput.scrollTop,
+        chatHeight: chat ? chat.style.height : null };
       existingOutput.remove();  // detach from DOM before innerHTML wipe
-      savedOutput = existingOutput;
+      _skipAgentOutputSids.add(psid);
     }
-  }
-
-  // Preserve the chat textarea DOM node UNCONDITIONALLY across the innerHTML
-  // rebuild. Rebuilding it recreates a fresh element every agent turn (+ on
-  // idle SSE ticks), which on mobile measured as: text-size reset, dead
-  // autocorrect/predictive, multi-press backspace (Android IME compose buffer
-  // wiped), and ~205ms paint per keystroke. The old guard only preserved the
-  // node when it was document.activeElement — which is false on mobile
-  // whenever a rebuild lands between keystrokes / during a focus race, i.e.
-  // almost always. Keeping the SAME node (detach + reattach) carries its
-  // font-size, height, value, selection, and IME state through the rebuild.
-  // Verified via the perf-HUD textarea-kill probe (2026-05-15).
-  let savedChatInput = null, savedSelStart = null, savedSelEnd = null;
-  if (sid && curTab === 'agent') {
-    const existingInput = document.getElementById(`agent-followup-${sid}`);
+    const existingInput = document.getElementById(`agent-followup-${psid}`);
     if (existingInput) {
-      try { savedSelStart = existingInput.selectionStart; savedSelEnd = existingInput.selectionEnd; } catch (_) {}
+      let ss = null, se = null;
+      try { ss = existingInput.selectionStart; se = existingInput.selectionEnd; } catch (_) {}
       existingInput.remove();
-      savedChatInput = existingInput;
+      _savedInputs[psid] = { node: existingInput, selStart: ss, selEnd: se };
     }
   }
 
-  _skipAgentOutput = !!savedOutput;
   content.innerHTML = modalContentHTML(p);
-  _skipAgentOutput = false;
+  _skipAgentOutputSids = new Set();
 
   // Restore the resume-preview's inner scroll (only when the same conversation
   // is still selected; loadConvPreview repopulates content asynchronously).
@@ -1739,48 +1740,42 @@ function refreshModalById(modalId) {
     }
   }
 
-  // Re-attach preserved agent output (replacing the freshly rendered empty one)
-  if (savedOutput) {
-    const newOutput = document.getElementById(`agent-output-${sid}`);
+  // Re-attach preserved agent output(s) (replacing the freshly rendered empty
+  // one). Split-view: up to two panes.
+  for (const psid of Object.keys(_savedOutputs)) {
+    const rec = _savedOutputs[psid];
+    const newOutput = document.getElementById(`agent-output-${psid}`);
     if (newOutput) {
-      newOutput.replaceWith(savedOutput);
-      savedOutput.scrollTop = savedOutputScroll;
-      if (savedChatHeight) {
-        const chat = savedOutput.closest('.agent-chat');
-        if (chat) chat.style.height = savedChatHeight;
+      newOutput.replaceWith(rec.node);
+      rec.node.scrollTop = rec.scroll;
+      if (rec.chatHeight) {
+        const chat = rec.node.closest('.agent-chat');
+        if (chat) chat.style.height = rec.chatHeight;
       }
     }
   }
-  // Re-attach preserved chat input textarea (same node → IME/size/value kept)
-  if (savedChatInput) {
-    const newInput = document.getElementById(`agent-followup-${sid}`);
+  // Re-attach preserved chat input textarea(s) (same node → IME/size/value kept)
+  const _preservedInputIds = new Set();
+  for (const psid of Object.keys(_savedInputs)) {
+    const rec = _savedInputs[psid];
+    const newInput = document.getElementById(`agent-followup-${psid}`);
     if (newInput) {
-      newInput.replaceWith(savedChatInput);
-      // Enforce textareaValues as the source of truth for the preserved node.
-      // Android WebView can restore the previously-typed text to the input when
-      // the app returns from background — before refreshModalById runs. That
-      // OS-restored value ends up on the preserved node even though sendFollowup
-      // already cleared it and deleted it from textareaValues. Setting .value
-      // here overrides the OS restoration. We ONLY do this when textareaValues
-      // has no entry (key deleted after send) — if the user is mid-typing the
-      // cached value matches and we safely skip the assignment, preserving IME.
-      const _cachedVal = textareaValues[savedChatInput.id];
-      if (_cachedVal === undefined) {
-        savedChatInput.value = '';  // safe: no IME state to disrupt on an empty field
-      }
-      // Restore caret/selection — detaching can drop it in some engines.
-      if (savedSelStart !== null) {
-        try { savedChatInput.setSelectionRange(savedSelStart, savedSelEnd); } catch (_) {}
+      newInput.replaceWith(rec.node);
+      _preservedInputIds.add(rec.node.id);
+      // Enforce textareaValues as the source of truth for the preserved node
+      // (Android WebView can OS-restore a stale value after background return).
+      const _cachedVal = textareaValues[rec.node.id];
+      if (_cachedVal === undefined) rec.node.value = '';
+      if (rec.selStart !== null) {
+        try { rec.node.setSelectionRange(rec.selStart, rec.selEnd); } catch (_) {}
       }
     }
   }
 
-  // Skip the preserved chat input — its value (and IME compose state) are
-  // already correct on the reattached node; re-assigning .value would reset
-  // the cursor and re-trigger the Android IME desync we're avoiding.
-  const _preservedInputId = savedChatInput ? savedChatInput.id : null;
+  // Skip the preserved chat input(s) — value + IME compose state are already
+  // correct on the reattached node; re-assigning .value would reset the cursor.
   for (const [id, val] of Object.entries(saved)) {
-    if (id === _preservedInputId) continue;
+    if (_preservedInputIds.has(id)) continue;
     const el = document.getElementById(id);
     if (el) el.value = val;
   }
@@ -1788,7 +1783,7 @@ function refreshModalById(modalId) {
   // claydo-* inputs are excluded from caching (see modal-layer input
   // handler) — guard here too so a pre-existing cached value can't leak back.
   for (const [id, val] of Object.entries(textareaValues)) {
-    if (id === _preservedInputId || id.indexOf('claydo-') === 0) continue;
+    if (_preservedInputIds.has(id) || id.indexOf('claydo-') === 0) continue;
     const el = document.getElementById(id);
     if (el && !saved[id] && val) el.value = val;
   }
@@ -1799,7 +1794,7 @@ function refreshModalById(modalId) {
   if (focusedId) {
     const el = document.getElementById(focusedId);
     if (el) {
-      if (focusedId === _preservedInputId) {
+      if (_preservedInputIds.has(focusedId)) {
         // Reattached node lost focus during detach. Refocus, but DO NOT touch
         // .selectionStart/.selectionEnd — the reattached node still carries
         // the correct selection + Android IME compose buffer, and writing to
@@ -1831,10 +1826,42 @@ function refreshModalById(modalId) {
     // The rebuild creates a fresh agent-output unless the node was preserved;
     // restore any unanswered question form so it survives tab switches / reopens.
     _rerenderPendingQuestions(entry.projectId, sid);
-    // Observe non-chat panel children (status bar, tab bar, etc.) so
-    // sizeAgentChat re-fires when the badge/timer text causes the status
-    // row to wrap to a 2nd line during streaming. Without this, the
-    // panel's overflow:hidden clips the input area once the bar grows.
+    // In split-view the PRIMARY pane also renders via splitPaneHTML (empty
+    // output node), so it needs the same fresh-node repaint as the 2nd pane.
+    // The non-split path bakes outputLines (children > 0) → this no-ops.
+    if (_splitSid) {
+      const _po = document.getElementById(`agent-output-${sid}`);
+      if (_po && _po.childElementCount === 0 && (agentOutputBuffers[sid] || []).length) {
+        try { window._repaintAgentOutput(sid); } catch (_) {}
+        const _pc = agentStatusCache[sid] || {};
+        if (_pc.status === 'running' && !_pc.waitingForPlanApproval && !_pc.waitingForQuestion) {
+          try { window.showTypingIndicator(sid); } catch (_) {}
+        }
+      }
+    }
+  }
+  // Split-view 2nd pane: when its output node was rendered FRESH (not preserved
+  // above — i.e. first open, or a refresh that had nothing to preserve), fill it
+  // from the authoritative buffer and re-show its Thinking indicator. A
+  // preserved node already has children, so this no-ops (no per-tick flicker) —
+  // same discipline as the switch-back repaint (commit fdb8eeb/6244401).
+  if (_splitSid && curTab === 'agent') {
+    sizeAgentChat(entry.element, _splitSid);
+    _rerenderPendingQuestions(entry.projectId, _splitSid);
+    const _so = document.getElementById(`agent-output-${_splitSid}`);
+    if (_so && _so.childElementCount === 0 && (agentOutputBuffers[_splitSid] || []).length) {
+      try { window._repaintAgentOutput(_splitSid); } catch (_) {}
+      const _sc = agentStatusCache[_splitSid] || {};
+      if (_sc.status === 'running' && !_sc.waitingForPlanApproval && !_sc.waitingForQuestion) {
+        try { window.showTypingIndicator(_splitSid); } catch (_) {}
+      }
+    }
+  }
+  // Observe non-chat panel children (status bar, tab bar, etc.) so
+  // sizeAgentChat re-fires when the badge/timer text causes the status
+  // row to wrap to a 2nd line during streaming. Without this, the
+  // panel's overflow:hidden clips the input area once the bar grows.
+  if (curTab === 'agent') {
     const _panel = content.querySelector('.agent-panel');
     if (_panel) {
       if (entry._statusBarObserver) entry._statusBarObserver.disconnect();
@@ -1844,6 +1871,8 @@ function refreshModalById(modalId) {
         const _s = activeAgentTab[_e.projectId];
         if (_s && (modalActiveTab[_e.projectId] || 'agent') === 'agent') {
           sizeAgentChat(_e.element, _s);
+          const _sp = splitAgentTab[_e.projectId];
+          if (_sp) sizeAgentChat(_e.element, _sp);
         }
       });
       for (const _child of _panel.children) {

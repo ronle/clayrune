@@ -737,7 +737,7 @@ function agentPanelHTML(p) {
   let tabContent = '';
   if (activeSession && activeSessionId) {
     const MAX_RENDER_LINES = 500;
-    const outputLines = _skipAgentOutput ? '' : (() => {
+    const outputLines = _skipAgentOutputSids.has(activeSessionId) ? '' : (() => {
       const fullBuf = (agentOutputBuffers[activeSessionId] || []).flatMap(l => l.trimStart().startsWith('> ') ? [l] : l.split('\n'));
       const forceAll = expandedOutputSessions.has(activeSessionId);
       const truncated = !forceAll && fullBuf.length > MAX_RENDER_LINES;
@@ -1031,6 +1031,15 @@ function agentPanelHTML(p) {
       : '<div class="agent-rail-empty">No conversations yet.</div>';
     const _railW = parseInt(localStorage.getItem('mc_rail_w') || '', 10);
     const _railStyle = (_railW >= 200 && _railW <= 560) ? ` style="width:${_railW}px"` : '';
+    // Split-view: two conversation panes side by side. Active only when a 2nd
+    // session is pinned AND it's a real, distinct, known session (guards against
+    // a stale split id after a conversation is closed/detached).
+    const _splitSid = splitAgentTab[p.id];
+    const _splitActive = !!(_splitSid && activeSessionId && _splitSid !== activeSessionId
+      && agentStatusCache[_splitSid]);
+    const _mainInner = _splitActive
+      ? `${splitPaneHTML(p, activeSessionId, true)}<div class="agent-split-divider"></div>${splitPaneHTML(p, _splitSid, false)}`
+      : `${tabContent}${dispatchRow}`;
     return `<div class="agent-panel agent-3pane">
       <div class="agent-rail"${_railStyle}>
         <button class="conv-newbtn agent-rail-new" onclick="newAgentTab('${esc(p.id)}')">&#43; New conversation</button>
@@ -1042,9 +1051,8 @@ function agentPanelHTML(p) {
         <div class="agent-rail-list">${railRows}</div>
       </div>
       <div class="agent-rail-resizer" onmousedown="startRailResize(event)" title="Drag to resize"></div>
-      <div class="agent-main">
-        ${tabContent}
-        ${dispatchRow}
+      <div class="agent-main${_splitActive ? ' split' : ''}">
+        ${_mainInner}
       </div>
       ${_agentSurfacesHTML(p)}
     </div>`;
@@ -1436,6 +1444,13 @@ function mobileUserConversationsHTML(p, convos) {
       ? `<button class="conv-hide" onclick="unhideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Move back to the list" aria-label="Unhide">&#8617;</button>`
       : `<button class="conv-hide" onclick="hideConversation(event,'${esc(p.id)}','${esc(csid)}')" title="Hide from this list" aria-label="Hide">&#10005;</button>`;
     const isActive = (mcsid && mcsid === activeSid) || (csid && activeCsid && csid === activeCsid);
+    // Split-view affordance (desktop only): open this conversation as a 2nd pane
+    // beside the current one. Only offered for a LIVE conversation that isn't the
+    // one already open. Hidden on mobile (single-pane drill-down there).
+    const _canSplit = !mobileMode && c.live && mcsid && !isActive && activeAgentTab[p.id];
+    const splitBtn = _canSplit
+      ? `<button class="conv-split" onclick="event.stopPropagation();openInSplit('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="Open beside the current chat (split view)" aria-label="Open in split view">&#9707;</button>`
+      : '';
     return `<div class="conv-row ${isHidden ? 'conv-hidden' : ''}${liveSt ? ' conv-live-' + liveSt : ''}${isActive ? ' active' : ''}" data-search="${esc(_convSearchText(c))}" data-csid="${esc(csid || '')}" onclick="openConversation('${esc(p.id)}','${esc(csid)}','${esc(mcsid)}',${c.live ? 'true' : 'false'})" title="${esc(c.label || '')}">
       <div class="conv-main">
         <div class="conv-top">
@@ -1444,7 +1459,7 @@ function mobileUserConversationsHTML(p, convos) {
         </div>
         <div class="conv-bot"><span class="conv-sub">${esc(meta)}</span></div>
       </div>
-      ${hideBtn}
+      ${splitBtn}${hideBtn}
     </div>`;
   }).join('');
   // The toggle counts only the hidden chats MATCHING the current search. Using
@@ -1657,6 +1672,7 @@ function backToConvList(projectId) {
   // the user stays stranded on Backlog. No-op when already on the Agent tab.
   modalActiveTab[projectId] = 'agent';
   delete activeAgentTab[projectId];
+  delete splitAgentTab[projectId];   // leaving the thread view exits split too
   delete agentConvNew[projectId];
   delete pendingResumeId[projectId];  // deselect any armed resume → back to the Layer-2 list
   refreshModal();
@@ -1723,12 +1739,115 @@ function switchAgentTab(projectId, sessionId) {
   }).catch(() => {});
 }
 
+// ── Split view (desktop): two conversations of one project, side by side ─────
+// The differentiator over N terminals: many agents, one console, watched at
+// once. Panes REUSE the shared per-session machinery (agent-output-<sid>,
+// appendAgentLine, _repaintAgentOutput, showTypingIndicator, sendFollowup,
+// stopAgent) so streaming/repaint/typing "just work" for both. State:
+// splitAgentTab[pid] = the 2nd pane's session id (primary stays activeAgentTab).
+
+// A compact, self-contained conversation pane. Output node renders EMPTY and is
+// filled after mount by refreshModalById's split hydrate (fresh) or preserved
+// live across refreshes — same discipline as the switch-back repaint.
+function splitPaneHTML(p, sid, isPrimary) {
+  const s = agentStatusCache[sid] || {};
+  const st = s.status || 'completed';
+  const isRunning = st === 'running';
+  const label = (s.task || '').substring(0, 44) || 'Conversation';
+  const dot = `<span class="agent-status-dot ${esc(st)}"></span>`;
+  const statusLbl = `<span class="agent-status-label ${esc(st)}">${esc(consoleStatusLabel(st, s))}</span>`;
+  const stopBtn = (isRunning || st === 'idle' || st === 'error')
+    ? `<button class="btn-stop" onclick="stopAgent('${esc(p.id)}','${esc(sid)}')">Stop</button>` : '';
+  // ✕ closes THIS pane and keeps the other as the single view.
+  const closeBtn = `<button class="agent-split-close" onclick="closeSplitPane('${esc(p.id)}','${esc(sid)}')" title="Close this pane">&#10005;</button>`;
+  const composeEnabled = (st === 'running' || st === 'completed' || st === 'stopped' || st === 'idle' || st === 'error');
+  const compose = composeEnabled ? `
+      <div class="agent-chat-separator"></div>
+      <div class="agent-chat-input"><div class="agent-chat-input-row">
+        <textarea spellcheck="true" class="agent-task-input" id="agent-followup-${esc(sid)}" rows="1"
+          placeholder="${isRunning ? 'Interrupt and redirect… (Enter)' : 'Send follow-up…'}"
+          onkeydown="handleInputEnter(event,()=>sendFollowup('${esc(p.id)}','${esc(sid)}'),'${esc(p.id)}')"></textarea>
+        <button class="btn-dispatch" onclick="sendFollowup('${esc(p.id)}','${esc(sid)}')">Send</button>
+      </div></div>` : '';
+  return `<div class="agent-split-pane${isPrimary ? ' primary' : ''}" data-sid="${esc(sid)}">
+    <div class="agent-split-head">
+      ${dot}<span class="agent-split-label" title="${esc(s.task || '')}">${esc(label)}</span>
+      ${statusLbl}<span style="flex:1"></span>${stopBtn}${closeBtn}
+    </div>
+    <div class="agent-chat">
+      <div class="agent-output" id="agent-output-${esc(sid)}"></div>
+      ${compose}
+    </div>
+  </div>`;
+}
+
+// Open a rail conversation as the 2nd (split) pane. MVP: live sessions only.
+function openInSplit(projectId, csid, mcSessionId, isLive) {
+  let sid = null;
+  if (mcSessionId && agentStatusCache[mcSessionId]) {
+    sid = mcSessionId;
+  } else if (isLive && mcSessionId) {
+    // Seed the cache like openConversation's live route so SSE + status fill in.
+    const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
+    agentStatusCache[mcSessionId] = { status: 'running', task: '', projectId,
+      startedAt: '', claudeSessionId: csid || '', _liveSeeded: true };
+    if (!agentHistory.find(h => h.sessionId === mcSessionId)) {
+      agentHistory.unshift({ projectId, sessionId: mcSessionId, projectName: pName,
+        task: '', status: 'running', startedAt: '' });
+    }
+    sid = mcSessionId;
+  }
+  if (!sid) { if (typeof showToast === 'function') showToast('Split view supports live conversations', 2500); return; }
+  const active = activeAgentTab[projectId];
+  if (!active) { switchAgentTab(projectId, sid); return; }  // nothing to split against
+  if (sid === active) return;  // can't split a conversation with itself
+  splitAgentTab[projectId] = sid;
+  refreshModal();
+  // Hydrate both panes from server truth + connect their streams. The
+  // refreshModalById split-hydrate already repainted fresh nodes; this makes
+  // the buffers authoritative and (re)connects any missing SSE.
+  fetchAgentStatus(projectId).then(() => {
+    if (splitAgentTab[projectId] !== sid) return;
+    for (const psid of [active, sid]) {
+      _repaintAgentOutput(psid);
+      const c = agentStatusCache[psid] || {};
+      if (c.status === 'running' && !c.waitingForPlanApproval && !c.waitingForQuestion) {
+        showTypingIndicator(psid);
+      }
+    }
+  }).catch(() => {});
+}
+
+// Close one split pane; the OTHER pane becomes the single active conversation.
+function closeSplitPane(projectId, closeSid) {
+  const a = activeAgentTab[projectId], s = splitAgentTab[projectId];
+  const keep = (closeSid === a) ? s : a;   // keep whichever pane wasn't closed
+  delete splitAgentTab[projectId];
+  if (keep) activeAgentTab[projectId] = keep;
+  refreshModal();
+  const sid = activeAgentTab[projectId];
+  if (!sid) return;
+  fetchAgentStatus(projectId).then(() => {
+    if (activeAgentTab[projectId] !== sid) return;
+    _repaintAgentOutput(sid);
+    const c = agentStatusCache[sid] || {};
+    if (c.status === 'running' && !c.waitingForPlanApproval && !c.waitingForQuestion) {
+      showTypingIndicator(sid);
+    }
+  }).catch(() => {});
+}
+
+window.splitPaneHTML = splitPaneHTML;
+window.openInSplit = openInSplit;
+window.closeSplitPane = closeSplitPane;
+
 function newAgentTab(projectId) {
   // Clear active tab and force the dispatch screen. agentConvNew keeps it
   // there even with sessions present (otherwise multi would fall back to
   // the list and single would auto-reselect the lone conversation).
   const wasOnList = !activeAgentTab[projectId] && agentConvNew[projectId] !== true;
   delete activeAgentTab[projectId];
+  delete splitAgentTab[projectId];   // starting a new chat exits split view
   agentConvNew[projectId] = true;
   // The "New / Resume" screen is a sub-level of the list — push the L2 sentinel
   // so hardware-back returns to the list, not out (mobile always has a list now).
@@ -2742,7 +2861,10 @@ async function fetchAgentStatus(projectId) {
       //    has to open the stream, which can miss a fast turn_start → idle)
       // We still skip idle background sessions to preserve Chromium's 6-slot
       // per-origin cap; only the currently-visible idle one is subscribed.
-      const isActiveTab = activeAgentTab[projectId] === sid && openModals.has(projectId);
+      // Split-view: the 2nd pane's session is "active" too — keep its idle SSE
+      // connected and its repaint ungated so both panes stream live.
+      const isActiveTab = (activeAgentTab[projectId] === sid
+        || splitAgentTab[projectId] === sid) && openModals.has(projectId);
       const wantsLiveStream = (
         s.status === 'running' ||
         (s.status === 'idle' && (s.waiting_for_question || isActiveTab))
