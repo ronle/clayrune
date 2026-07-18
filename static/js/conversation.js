@@ -1707,7 +1707,19 @@ function switchAgentTab(projectId, sessionId) {
   // it unconditionally. _repaintAgentOutput is a clear-and-rebuild, so it is
   // idempotent and safe even if the internal repaint already ran.
   fetchAgentStatus(projectId).then(() => {
-    if (activeAgentTab[projectId] === sessionId) _repaintAgentOutput(sessionId);
+    if (activeAgentTab[projectId] !== sessionId) return;
+    _repaintAgentOutput(sessionId);
+    // _repaintAgentOutput clears the whole output node and rebuilds it from the
+    // buffer — but the "Thinking/Working" typing indicator lives INSIDE that
+    // node (agentPanelHTML bakes it in as a child), so the repaint drops it.
+    // Re-derive it from live run-state, exactly as agentPanelHTML does: show it
+    // only while the session is generating (running) and not parked on a plan
+    // or question. showTypingIndicator is idempotent and paints the right kind
+    // (thinking/writing/tool) from agentActivityState.
+    const c = agentStatusCache[sessionId] || {};
+    if (c.status === 'running' && !c.waitingForPlanApproval && !c.waitingForQuestion) {
+      showTypingIndicator(sessionId);
+    }
   }).catch(() => {});
 }
 
