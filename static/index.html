@@ -734,6 +734,11 @@
     <div class="mobile-drawer-item" data-nav="processes" onclick="mobileDrawerNav('processes')">
       <span class="mdi-icon">&#x2630;</span><span class="mdi-label">Processes</span>
     </div>
+    <!-- Mobile-only route to the usage/status panel: .header (and its status
+         pill) is display:none below 960px, so this is the sole way in there. -->
+    <div class="mobile-drawer-item" data-nav="usage" onclick="mobileDrawerNav('usage')" title="Subscription usage limits and system status">
+      <span class="mdi-icon">&#x1F4CA;</span><span class="mdi-label">Usage &amp; limits</span>
+    </div>
     <div class="mobile-drawer-divider"></div>
     <div class="mobile-drawer-item" onclick="mobileDrawerNav('incognito')" title="Ephemeral scratch agent — skips memory and rules">
       <span class="mdi-icon">&#x1F576;&#xFE0F;</span><span class="mdi-label">Incognito</span>
@@ -1339,6 +1344,7 @@ function sidebarNav(target) {
   else if (target === 'settings') openSettings();
   else if (target === 'shared-rules') openSharedRulesEditor();
   else if (target === 'processes') openProcessManager();
+  else if (target === 'usage') openSystemUsage();
   else if (target === 'backlog') openAllBacklog();
   else if (target === 'hivemind') openAllHiveminds();
   else if (target === 'skills') openAllSkills();

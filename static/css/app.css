@@ -447,6 +447,17 @@
     display: none;
   }
   .sys-status-popover.open { display: block; }
+  /* Same panel, rendered INSIDE a modal surface instead of as a header popover
+     (mobile hides .header, so the status pill — and with it the Usage tab —
+     is unreachable there). Inherits every `.sys-status-popover .ssp-*` rule
+     below; this just undoes the fixed-overlay chrome so it lays out in-flow. */
+  .sys-status-popover.ssp-inline {
+    position: static; display: block;
+    width: auto; max-width: none; max-height: none; overflow-y: visible;
+    top: auto; right: auto; margin: 0; padding: 0;
+    background: transparent; border: none; border-radius: 0;
+    box-shadow: none; z-index: auto;
+  }
   .sys-status-popover .ssp-row {
     display: flex; justify-content: space-between; gap: 12px;
     padding: 6px 0; border-bottom: 1px dashed var(--border);

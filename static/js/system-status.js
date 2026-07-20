@@ -485,12 +485,65 @@ async function refreshSystemStatus(ev) {
   _rerenderSysStatusSurfaces();
 }
 
+// ── Usage/status as a standalone surface (mobile entry point) ───────────────
+// Mobile hides .header entirely (app.css @960: `.header { display: none }`),
+// which takes the status pill — and the only route to the Usage tab — with it.
+// This opens the SAME panel as a normal global-surface modal, so mobile gets
+// subscription usage %, reset windows and MC token totals. Desktop keeps the
+// pill; this is simply a second door onto one renderer, not a second renderer.
+function openSystemUsage() {
+  const modalId = '__usage';
+  // Land on Usage (the reason this surface exists); the other tabs stay usable.
+  _sysStatusActiveTab = 'usage';
+  if (!systemUsageCache && !_sysUsageFetching) fetchSystemUsage();
+  fetchSystemStatus();
+
+  if (openModals.has(modalId)) {
+    const entry = openModals.get(modalId);
+    if (entry.minimized) restoreModal(modalId);
+    focusModal(modalId);
+    _rerenderSysStatusSurfaces();
+    return;
+  }
+
+  const win = document.createElement('div');
+  win.className = 'modal-window';
+  win.dataset.modalId = modalId;
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  _clampModalSize(content, 520);
+  content.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px 12px 28px">
+      <span style="font-size:16px;font-weight:700;color:var(--text)">Usage &amp; system status</span>
+      <div class="modal-window-controls" style="position:static;display:flex;gap:4px">
+        <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
+        <button class="modal-close" onclick="closeModalById('${modalId}')" title="Close">&#10005;</button>
+      </div>
+    </div>
+    <div style="padding:4px 24px 20px 28px;overflow-y:auto">
+      <div class="sys-status-popover ssp-inline" id="sys-status-surface"></div>
+    </div>`;
+  win.appendChild(content);
+  document.getElementById('modal-layer').appendChild(win);
+
+  const z = nextModalZ++;
+  win.style.zIndex = z;
+  openModals.set(modalId, { projectId: null, element: win, minimized: false, zIndex: z });
+  centerModalElement(win);
+  focusModal(modalId);
+  _rerenderSysStatusSurfaces();
+}
+
 function _rerenderSysStatusSurfaces() {
-  // Header popover is now the sole surface for system status.
+  // Two possible surfaces now: the desktop header popover and the standalone
+  // Usage modal (mobile's only route in). Both render the same panel; either
+  // may be absent, so each is guarded independently.
   if (_sysStatusPopoverOpen) {
     renderSysStatusPopover();
     _positionSysStatusPopover();
   }
+  const surface = document.getElementById('sys-status-surface');
+  if (surface) surface.innerHTML = renderSysStatusPanel();
 }
 
 // Keep the popover pixel-snapped if the window is resized while it's open.
@@ -528,6 +581,7 @@ setInterval(fetchSystemStatus, 60000);
 //    All 6 state vars + the remaining helpers are module-private (zero
 //    outside refs). ──
 window.toggleSysStatusPopover = toggleSysStatusPopover;   // pill static onclick
+window.openSystemUsage = openSystemUsage;                 // sidebarNav('usage') + mobile drawer
 window._rerenderSysStatusSurfaces = _rerenderSysStatusSurfaces; // typeof-guarded token-usage caller
 // region-generated on*= handler targets:
 window._sysStatusSwitchTab = _sysStatusSwitchTab;
