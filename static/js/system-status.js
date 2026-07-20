@@ -326,15 +326,51 @@ function _renderUsageTab() {
   // when the OAuth fetch was unavailable (missing/expired token, offline).
   const lim = u.usage_limits || null;
   let limitsHTML;
-  if (lim && (lim.five_hour || lim.seven_day || lim.seven_day_opus || lim.seven_day_sonnet)) {
+  const _limArr = (lim && Array.isArray(lim.limits)) ? lim.limits : [];
+  if (lim && (lim.five_hour || lim.seven_day || lim.seven_day_opus || lim.seven_day_sonnet || _limArr.length)) {
     const extra = lim.extra_usage || {};
+    // Per-model weekly caps. The top-level seven_day_opus / seven_day_sonnet
+    // keys only ever describe those two models; an account scoped to any OTHER
+    // model (e.g. Fable) carries it ONLY as a `weekly_scoped` entry in limits[],
+    // which previously rendered nowhere. Skip any model already drawn above so
+    // the two sources can't double-render the same window.
+    const _drawn = new Set();
+    if (lim.seven_day_opus) _drawn.add('opus');
+    if (lim.seven_day_sonnet) _drawn.add('sonnet');
+    const scopedHTML = _limArr
+      .filter(e => e && e.kind === 'weekly_scoped' && e.percent != null)
+      .map(e => {
+        const name = (e.scope && e.scope.model && e.scope.model.display_name) || '';
+        if (!name || _drawn.has(name.toLowerCase())) return '';
+        _drawn.add(name.toLowerCase());
+        return _ssUsageLimitBar('Weekly · ' + name, { utilization: e.percent, resets_at: e.resets_at });
+      }).join('');
+
+    // Extra usage ("spend" is the same figures in structured form). Amounts are
+    // MINOR units — monthly_limit 7500 with decimal_places 2 is $75.00, not
+    // $7500 (what the old `'$' + monthly_limit` printed). Shown whenever there
+    // is spend to report, not only while enabled: an org-disabled or capped-out
+    // account still wants to see where it landed, marked (off) so the state is
+    // unambiguous.
+    const _dp = Number.isFinite(Number(extra.decimal_places)) ? Number(extra.decimal_places) : 2;
+    const _money = (minor) => (minor == null ? null : '$' + (Number(minor) / Math.pow(10, _dp)).toFixed(_dp));
+    const _used = _money(extra.used_credits);
+    const _cap = _money(extra.monthly_limit);
+    const _pct = Number(extra.utilization) || 0;
+    const _pctCls = _pct >= 90 ? ' red' : _pct >= 70 ? ' amber' : '';
+    const _showExtra = !!extra.is_enabled || Number(extra.used_credits) > 0;
+    const extraHTML = _showExtra
+      ? `<div class="ssp-row"><span class="ssp-k">Extra usage${extra.is_enabled ? '' : ' (off)'}</span><span class="ssp-v${_pctCls}">${_pct.toFixed(0)}%${_used ? ' · ' + _used + (_cap ? ' of ' + _cap : '') : ''}</span></div>`
+      : '';
+
     limitsHTML = `
     <div class="ssp-section-head" style="margin-top:6px">Usage limits</div>
     ${_ssUsageLimitBar('Session · 5-hour', lim.five_hour)}
     ${_ssUsageLimitBar('Weekly · all models', lim.seven_day)}
     ${_ssUsageLimitBar('Weekly · Opus', lim.seven_day_opus)}
     ${_ssUsageLimitBar('Weekly · Sonnet', lim.seven_day_sonnet)}
-    ${extra.is_enabled ? `<div class="ssp-row"><span class="ssp-k">Extra usage</span><span class="ssp-v">${(Number(extra.utilization) || 0).toFixed(0)}%${extra.monthly_limit != null ? ' of $' + extra.monthly_limit : ''}</span></div>` : ''}`;
+    ${scopedHTML}
+    ${extraHTML}`;
   } else {
     limitsHTML = `
     <div class="ssp-section-head" style="margin-top:6px">Current rate-limit window</div>
