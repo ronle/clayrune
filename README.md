@@ -6,14 +6,18 @@ Run, schedule, and babysit many agents across every project — from one console
 ![Clayrune — three agents working across three projects, and the same session live on a phone](docs/assets/demo.gif)
 
 Claude Code is a brilliant agent — but it's one agent, in one terminal, on one repo,
-and it stops when you close the lid. Clayrune is the layer on top: a dashboard where
-every project is a tile, every agent is running, and none of it needs you at the desk.
+and everything it knew is gone when the session ends. Clayrune is the layer on top: a
+dashboard where every project is a tile, every agent is running, and the work keeps
+moving while you're away from the keyboard.
 
 - **A fleet, not one agent** — every project on one grid, agents dispatched and monitored side by side.
 - **Control it from your phone** — dispatch a task, watch it stream, restart the server, from anywhere.
 - **It runs without you** — schedule agents, or hand one a standing charter and let it work unattended.
 - **It remembers** — cross-session memory, so your agents don't start every task cold.
 - **It's yours** — local-first, bring your own key, all of it open. The cloud is optional.
+
+Clayrune runs on *your* machine. If the machine sleeps, so does your agent — and Clayrune
+tells you it did. There's a setting to keep it awake while an agent is working.
 
 **[⬇ Download for Windows](https://clayrune.io)** · macOS + Linux + [from source](#running-from-source) below.
 
