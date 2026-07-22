@@ -64,6 +64,7 @@ EXPECTED_ROUTES = {
     '/api/project/<project_id>/agent/log',
     '/api/project/<project_id>/agent/plan-file',
     '/api/project/<project_id>/agent/send',
+    '/api/project/<project_id>/agent/<session_id>/model',
     '/api/project/<project_id>/agent/session',
     '/api/project/<project_id>/agent/status',
     '/api/project/<project_id>/agent/stop',
@@ -247,3 +248,66 @@ def test_stream_exact_cursor_no_reset(client):
     finally:
         resp.close()
     assert evs[0].get('type') == 'turn_start'
+
+
+# ── in-chat model switcher: POST /agent/<sid>/model (pin/clear) ───────────────
+
+def _seed_model_session(sid, provider='claude', model='claude-opus-4-8',
+                        pinned=''):
+    from mc import state as mc_state
+    mc_state.agent_sessions[sid] = {
+        'project_id': 'mdl-proj', 'mode': 'B', 'status': 'idle',
+        'provider': provider, 'model': model, 'model_source': 'manual',
+        'pinned_model': pinned, 'log_lines': [],
+    }
+
+
+def test_model_pin_sets_pinned_model(client):
+    from mc import state as mc_state
+    _seed_model_session('mdl-1')
+    r = client.post('/api/project/mdl-proj/agent/mdl-1/model',
+                    json={'model': 'claude-haiku-4-5-20251001'})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body['ok'] and body['pinned_model'] == 'claude-haiku-4-5-20251001'
+    # Running model was Opus → a tier change is pending for the next turn.
+    assert body['pending'] is True
+    assert mc_state.agent_sessions['mdl-1']['pinned_model'] == 'claude-haiku-4-5-20251001'
+
+
+def test_model_clear_unpins(client):
+    from mc import state as mc_state
+    _seed_model_session('mdl-2', pinned='claude-haiku-4-5-20251001')
+    r = client.post('/api/project/mdl-proj/agent/mdl-2/model', json={'model': ''})
+    assert r.status_code == 200
+    assert r.get_json()['pinned_model'] == ''
+    assert mc_state.agent_sessions['mdl-2']['pinned_model'] == ''
+
+
+def test_model_pin_same_tier_not_pending(client):
+    # Pinning the tier already running is a no-op switch (no respawn needed).
+    _seed_model_session('mdl-3', model='opus')
+    r = client.post('/api/project/mdl-proj/agent/mdl-3/model',
+                    json={'model': 'claude-opus-4-8'})
+    assert r.status_code == 200
+    assert r.get_json()['pending'] is False
+
+
+def test_model_pin_rejects_bad_id(client):
+    _seed_model_session('mdl-4')
+    r = client.post('/api/project/mdl-proj/agent/mdl-4/model',
+                    json={'model': 'evil --dangerously-skip-permissions'})
+    assert r.status_code == 400
+
+
+def test_model_pin_claude_only(client):
+    _seed_model_session('mdl-5', provider='gemini')
+    r = client.post('/api/project/mdl-proj/agent/mdl-5/model',
+                    json={'model': 'claude-opus-4-8'})
+    assert r.status_code == 400
+
+
+def test_model_pin_session_not_found(client):
+    r = client.post('/api/project/mdl-proj/agent/nope/model',
+                    json={'model': 'claude-opus-4-8'})
+    assert r.status_code == 404

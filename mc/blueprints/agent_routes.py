@@ -3156,8 +3156,14 @@ def _auto_dispatch_followup(session, message):
         resume_flags = ['--continue']
 
     _sp_args, _sp_path = _respawn_sysprompt_args(session, p, message)
-    cmd = [_resolve_claude(), *resume_flags, '-p', message, *_build_claude_flags(p),
-           *_sp_args]
+    # Honor a per-chat model pin (Mode A respawns per turn — without this the
+    # pinned conversation would drop back to the project/global model).
+    _pin = session.get('pinned_model') or None
+    cmd = [_resolve_claude(), *resume_flags, '-p', message,
+           *_build_claude_flags(p, model_override=_pin), *_sp_args]
+    if _pin:
+        session['model'] = _pin
+        session['model_source'] = 'manual'
 
     try:
         proc = subprocess.Popen(
@@ -3810,6 +3816,11 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 # 'manual' / 'auto' / 'fallback'. Frontend pill reads these.
                 'model': routed_model,
                 'model_source': routed_source,
+                # Per-chat model PIN. An explicit choice (+New picker or the
+                # in-chat switcher) pins this conversation to one model and
+                # BYPASSES the auto-router for its whole life — until the user
+                # changes or clears it. Empty = follow project/global/auto.
+                'pinned_model': model_override or '',
                 # Per-chat persona (Prompt Builder Phase 2): {name,scope,
                 # display_name} or None. Immutable; drives the header pill.
                 'character': character_meta,
@@ -3899,6 +3910,11 @@ def _dispatch_agent_internal(project_id, task, resume_id='', incognito=False,
                 'agent_model': p.get('agent_model', '') or state.CONFIG.get('agent_model', ''),
                 'model': routed_model,
                 'model_source': routed_source,
+                # Per-chat model PIN. An explicit choice (+New picker or the
+                # in-chat switcher) pins this conversation to one model and
+                # BYPASSES the auto-router for its whole life — until the user
+                # changes or clears it. Empty = follow project/global/auto.
+                'pinned_model': model_override or '',
                 # Per-chat persona (Prompt Builder Phase 2): {name,scope,
                 # display_name} or None. Immutable; drives the header pill.
                 'character': character_meta,
@@ -3981,6 +3997,55 @@ def agent_dispatch(project_id):
     except Exception as e:
         return jsonify({'error': f'dispatch failed: {e}'}), 500
     return jsonify({'ok': True, 'session_id': session_id})
+
+
+@bp.route('/api/project/<project_id>/agent/<session_id>/model', methods=['POST'])
+def agent_set_model(project_id, session_id):
+    """Pin (or clear) the model for ONE live conversation — the in-chat switcher.
+
+    Body: {"model": "<id>"} to pin, or {"model": ""} to clear (follow the
+    project/global default, or the auto-router when it's on). A pin is user
+    intent and beats the classifier: while set, the conversation stays on that
+    model every turn until changed. Claude-only (other runtimes ignore --model).
+
+    The switch is LAZY: we set the pin and let the next follow-up respawn the
+    process with `-r` + the new model (via the same _respawn_sysprompt_args path
+    the auto-router uses, so memory/rules survive). The header pill reflects the
+    pin immediately; `pending` says whether the running model still differs.
+
+    Live-session scoped: the pin lives on the in-memory session (persists across
+    -r respawns). It is not restored after an MC restart — a revived chat falls
+    back to default/auto until re-pinned.
+    """
+    data = request.get_json(silent=True) or {}
+    model = (data.get('model') or '').strip()
+    # Guard against flag injection (this goes to --model): allow empty, or a
+    # conservative id shape. Mirrors the models the +New picker offers.
+    if model and not _re_auth.fullmatch(r'[A-Za-z0-9._-]{1,60}', model):
+        return jsonify({'error': 'invalid model id'}), 400
+
+    with get_manager(project_id).lock:
+        session = agent_sessions.get(session_id)
+        if not session:
+            return jsonify({'error': 'session not found'}), 404
+        if (session.get('provider') or 'claude').lower() != 'claude':
+            return jsonify({'error': 'model switch is claude-only'}), 400
+        session['pinned_model'] = model
+        current = session.get('model') or ''
+        # Empty pin + auto off ⇒ next turn uses the project/global default; we
+        # can't know that target here without the prompt, so just report current.
+        pending = bool(model) and (_router_model_tier(model) != _router_model_tier(current))
+        running_status = session.get('status')
+
+    _log_agent_activity(project_id,
+                        f"Model {'pinned to ' + model if model else 'unpinned (follow default)'}")
+    return jsonify({
+        'ok': True, 'session_id': session_id,
+        'pinned_model': model,
+        'model': current,
+        'pending': pending,          # running model still differs → switches next turn
+        'status': running_status,
+    })
 
 
 @bp.route('/api/project/<project_id>/agent/send', methods=['POST'])
@@ -4468,9 +4533,16 @@ def agent_followup(project_id):
                         old_proc.stdin.close()
                     except Exception:
                         pass
-                # Build command while under lock, spawn outside to avoid blocking
+                # Build command while under lock, spawn outside to avoid blocking.
+                # Honor a per-chat model pin across the death/respawn so the
+                # conversation keeps its chosen model (else it silently reverts
+                # to the project/global default on the next crash-respawn).
+                _pin = existing.get('pinned_model') or None
                 cmd = [_resolve_claude(), *resume_flags,
-                       *_build_claude_flags(p, streaming=True)]
+                       *_build_claude_flags(p, streaming=True, model_override=_pin)]
+                if _pin:
+                    existing['model'] = _pin
+                    existing['model_source'] = 'manual'
                 _sp_path = None
                 if resume_flags:
                     # -r respawn: re-append the spawn context (stash-first —
@@ -4513,8 +4585,15 @@ def agent_followup(project_id):
                         and existing.pop('_needs_respawn', None)):
                     _sticky_sid = existing.get('claude_session_id')
                     _sticky_resume = ['-r', _sticky_sid] if _sticky_sid else []
+                    # A per-chat pin outranks the project/global model even while
+                    # applying other changed settings — keep it across the respawn.
+                    _sticky_pin = existing.get('pinned_model') or None
                     _sticky_cmd = [_resolve_claude(), *_sticky_resume,
-                                   *_build_claude_flags(p, streaming=True)]
+                                   *_build_claude_flags(p, streaming=True,
+                                                        model_override=_sticky_pin)]
+                    if _sticky_pin:
+                        existing['model'] = _sticky_pin
+                        existing['model_source'] = 'manual'
                     # Rebuild the context (not the stash): the whole point of
                     # this respawn is applying changed settings, and since CLI
                     # ≥2.1.206 the -r re-append DOES take effect — so
@@ -4545,6 +4624,19 @@ def agent_followup(project_id):
                         'request_data': data,
                     }
                     # Fall through — spawn happens after lock release.
+                elif existing.get('pinned_model') and message:
+                    # Per-chat manual pin — user intent beats the classifier, so
+                    # the auto-router is bypassed. Respawn only when the running
+                    # model differs from the pin (post-lock, mirroring the auto
+                    # path). The 'pinned' key signals the fixed target.
+                    _model_route_state = {
+                        'current_model': existing.get('model') or 'sonnet',
+                        'claude_sid': existing.get('claude_session_id'),
+                        'proc': existing['proc'],
+                        'existing': existing,
+                        'pinned': existing['pinned_model'],
+                    }
+                    # Fall through to post-lock routing section
                 elif state.CONFIG.get('auto_model_enabled', False) and message:
                     # Defer stdin write — classify model post-lock to avoid
                     # blocking mgr.lock for the ~0.5s Haiku classifier call.
@@ -4613,7 +4705,12 @@ def agent_followup(project_id):
     # Classifier runs here — outside mgr.lock — to avoid blocking other requests.
     if _model_route_state:
         mrs = _model_route_state
-        new_model, new_source = _resolve_dispatch_model(p, message)
+        _pinned = mrs.get('pinned')
+        if _pinned:
+            # Manual per-chat pin: the target IS the pin, no classifier call.
+            new_model, new_source = _pinned, 'manual'
+        else:
+            new_model, new_source = _resolve_dispatch_model(p, message)
         current_model = mrs['current_model']
         _router_stat(project_id,
                      requested_model=current_model,
@@ -4621,7 +4718,8 @@ def agent_followup(project_id):
                      source=new_source)
         if _router_model_tier(new_model) != _router_model_tier(current_model):
             # Model tier changed — kill current process, respawn with -r + new model
-            _log(f"[followup-B-route] {project_id}: model switch {current_model} → {new_model}")
+            _switch_kind = 'pin' if _pinned else 'auto-router'
+            _log(f"[followup-B-route] {project_id}: {_switch_kind} model switch {current_model} → {new_model}")
             claude_sid = mrs['claude_sid']
             resume_flags = ['-r', claude_sid] if claude_sid else []
             _sp_path = None
@@ -4640,7 +4738,9 @@ def agent_followup(project_id):
                     _route_existing['model_source'] = new_source
                     _route_existing['process_alive'] = False
                     _route_existing['log_lines'].append(
-                        f'[Auto-router: switching {current_model} → {new_model}]')
+                        (f'[Model pinned: switching {current_model} → {new_model}]'
+                         if _pinned else
+                         f'[Auto-router: switching {current_model} → {new_model}]'))
             _respawn_b = {
                 'cmd': cmd, 'pp': pp, 'message': message,
                 'existing': mrs['existing'],
@@ -4766,7 +4866,13 @@ def agent_followup(project_id):
             # Mobile-brief applied here so log_lines + telemetry use the
             # unaugmented message; only the claude -p arg gets the directive.
             claude_followup_msg = _apply_mobile_brief(followup_msg, data)
-            cmd = [_resolve_claude(), *resume_flags, '-p', claude_followup_msg, *_build_claude_flags(p)]
+            # Honor a per-chat model pin (Mode A rebuilds the command each turn).
+            _pin = existing.get('pinned_model') or None
+            cmd = [_resolve_claude(), *resume_flags, '-p', claude_followup_msg,
+                   *_build_claude_flags(p, model_override=_pin)]
+            if _pin:
+                existing['model'] = _pin
+                existing['model_source'] = 'manual'
             if resume_flags:
                 _sp_args, _sp_path = _respawn_sysprompt_args(existing, p, followup_msg)
             else:
@@ -5295,6 +5401,9 @@ def agent_status(project_id):
                 # both to decide whether to render an auto-router badge.
                 'model': s.get('model') or s.get('agent_model') or _proj_default_model,
                 'model_source': s.get('model_source', 'manual'),
+                # Per-chat model pin (empty = follow default/auto). Drives the
+                # header pill's "pinned" state + the in-chat model switcher.
+                'pinned_model': s.get('pinned_model', ''),
                 # Per-chat persona {name,scope,display_name} or None → header pill.
                 'character': s.get('character'),
                 # Chat-level pin marker — server-authoritative (see _pinned_csids).

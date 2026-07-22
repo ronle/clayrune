@@ -4858,6 +4858,38 @@
   .provider-badge.prov-aider   { color: #ef4444; background: rgba(239,68,68,.12); }
   .provider-badge.prov-kiro    { color: #06b6d4; background: rgba(6,182,212,.12); }
 
+  /* ── In-chat model switcher (the claude badge becomes a dropdown) ───────── */
+  .provider-badge.model-switch { position: relative; cursor: pointer; gap: 3px; }
+  .provider-badge.model-switch:hover { filter: brightness(1.08); }
+  .provider-badge.model-switch.pinned { outline: 1px solid var(--accent); }
+  .provider-badge .cms-caret { font-size: 8px; opacity: 0.7; margin-left: 1px; }
+  .provider-badge .cms-pin { font-size: 9px; }
+  .chat-model-menu {
+    display: none; position: absolute; top: calc(100% + 6px); left: 0;
+    min-width: 190px; z-index: 60; padding: 4px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 10px 28px rgba(0,0,0,0.4);
+    text-transform: none; letter-spacing: normal;
+  }
+  .chat-model-menu.open { display: block; }
+  .chat-model-menu .cms-head {
+    font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--text-faint); padding: 3px 8px 5px;
+  }
+  .chat-model-menu .cms-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    width: 100%; text-align: left; background: transparent; border: none;
+    color: var(--text); font-family: inherit; font-size: 12px; font-weight: 600;
+    padding: 6px 8px; border-radius: 5px; cursor: pointer;
+  }
+  .chat-model-menu .cms-item:hover { background: var(--surface3); }
+  .chat-model-menu .cms-item.active { color: var(--accent); }
+  .chat-model-menu .cms-item.active::after { content: '\2713'; font-size: 11px; }
+  .chat-model-menu .cms-sub {
+    font-size: 10px; font-weight: 600; color: var(--text-faint);
+    text-transform: none; letter-spacing: 0.2px;
+  }
+
   .shared-rules-editor {
     padding: 0 24px 16px; display: flex; flex-direction: column;
     flex: 1; min-height: 0; box-sizing: border-box;

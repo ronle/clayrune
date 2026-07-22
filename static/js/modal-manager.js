@@ -785,7 +785,7 @@ function _renderAgentSettingsDialog() {
       <span>Agent settings — ${esc(p.name || p.id)}</span>
       <button class="mc-dialog-close" onclick="closeAgentSettingsDialog()" title="Close">&#10005;</button>
     </div>
-    <div class="settings-hint" style="margin-bottom:10px">Overrides for this project. Global defaults live in Settings &rarr; Agent.</div>
+    <div class="settings-hint" style="margin-bottom:10px">Project defaults that seed <em>new</em> chats. Global defaults live in Settings &rarr; Agent; switch a single conversation from its header model pill.</div>
     <div class="settings-row">
       <div><div class="settings-label">Model</div><div class="settings-hint">Default for new chats in this project</div></div>
       <select class="settings-select" onchange="_agentSettingsSet('agent_model', this.value)">${modelSel}</select>

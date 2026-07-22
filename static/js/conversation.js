@@ -214,6 +214,59 @@ function setComposerModel(projectId, model) {
   refreshModalById(projectId);
 }
 
+// ── In-chat model switcher (header pill dropdown) ───────────────────────────
+// sid of the open model menu, or null. Survives refreshModalById's every-few-
+// seconds rebuild: agentPanelHTML re-adds `.open` from this on each render.
+let _chatModelMenuSid = null;
+
+function toggleChatModelMenu(event, sid) {
+  if (event) { event.stopPropagation(); event.preventDefault(); }
+  _chatModelMenuSid = (_chatModelMenuSid === sid) ? null : sid;
+  // Immediate visual feedback without waiting for the next refresh.
+  const menu = document.getElementById('chat-model-menu-' + sid);
+  if (menu) menu.classList.toggle('open', _chatModelMenuSid === sid);
+}
+
+// Pin (model set) or un-pin (model === '') the model for THIS conversation.
+// Optimistic: stamp pinnedModel locally so the pill updates instantly; the
+// server persists it and applies the switch on the next turn (a `-r` respawn
+// that re-injects memory/rules). We deliberately do NOT touch the running
+// `model` field — it catches up when the next turn actually respawns, so the
+// pill can't flip-flop against the status poll.
+async function switchChatModel(projectId, sid, model) {
+  _chatModelMenuSid = null;
+  const s = agentStatusCache[sid];
+  if (s) s.pinnedModel = model;
+  refreshModalById(projectId);
+  try {
+    await fetch(`${API_BASE}/api/project/${projectId}/agent/${sid}/model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+    if (typeof showToast === 'function') {
+      showToast(model ? `Model pinned — applies on your next message` : `Following the default model again`, 2600);
+    }
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('Could not change model', 2500);
+  }
+}
+
+// Close the in-chat model menu on any outside click (bound once).
+if (typeof window !== 'undefined' && !window._chatModelMenuCloserBound) {
+  window._chatModelMenuCloserBound = true;
+  document.addEventListener('click', (e) => {
+    if (_chatModelMenuSid == null) return;
+    const pill = e.target.closest && e.target.closest('.provider-badge.model-switch');
+    if (pill) return;  // clicks inside the pill/menu are handled locally
+    _chatModelMenuSid = null;
+    document.querySelectorAll('.chat-model-menu.open').forEach(m => m.classList.remove('open'));
+  });
+}
+
+window.toggleChatModelMenu = toggleChatModelMenu;
+window.switchChatModel = switchChatModel;
+
 function getIncognitoFor(projectId) {
   // Global incognito project is always incognito; user can't turn it off.
   if (projectId === '_incognito') return true;
@@ -967,7 +1020,43 @@ function agentPanelHTML(p) {
     const _provTitle = _provModel
       ? `Provider: ${_provLabel} • Model: ${_provModel}${_modelSource === 'auto' ? ' (auto-picked by router)' : (_modelSource === 'fallback' ? ' (classifier failed, fallback)' : '')}`
       : `Provider: ${_provLabel} (default model)`;
-    const _provBadge = `<span class="provider-badge prov-${esc(_provName.replace(/[^a-z]/g,''))}" title="${esc(_provTitle)}">${esc(_provText)}${_routerSuffixHTML}</span>`;
+    // In-chat model switcher (claude only — other runtimes ignore --model).
+    // The badge becomes a dropdown: pick a model to PIN this conversation (auto-
+    // router off for it until changed) or "Follow default" to un-pin. The pin is
+    // applied on the next turn via a `-r` respawn that re-injects memory/rules.
+    const _pinnedModel = (activeSession && activeSession.pinnedModel) || '';
+    const _mShort = (id) => (typeof window._modelShortLabel === 'function' ? window._modelShortLabel(id) : id);
+    let _provBadge;
+    if (_provName !== 'claude') {
+      _provBadge = `<span class="provider-badge prov-${esc(_provName.replace(/[^a-z]/g,''))}" title="${esc(_provTitle)}">${esc(_provText)}${_routerSuffixHTML}</span>`;
+    } else {
+      const _choices = (window.MC_MODEL_CHOICES || []).filter(([v]) => v !== '');
+      // What "Follow default" resolves to right now (mirrors the +New picker).
+      const _defLabel = (() => {
+        if (_globalConfig && _globalConfig.auto_model_enabled && !p.agent_model) return 'Auto-router';
+        const m = _choices.find(c => c[0] === (p.agent_model || ''));
+        return (p.agent_model && m) ? m[1] : 'Project / global default';
+      })();
+      const _pillLabel = _pinnedModel
+        ? `${esc(_provName)} · ${esc(_mShort(_pinnedModel))}`
+        : esc(_provText);
+      const _pinMark = _pinnedModel
+        ? ` <span class="cms-pin" title="Pinned to this chat">&#128204;</span>`
+        : '';
+      const _suffix = _pinnedModel ? '' : _routerSuffixHTML;
+      const _items = [
+        `<button class="cms-item${!_pinnedModel ? ' active' : ''}" onclick="switchChatModel('${esc(p.id)}','${esc(activeSessionId)}','')">Follow default<span class="cms-sub">${esc(_defLabel)}</span></button>`,
+        ..._choices.map(([v, l]) =>
+          `<button class="cms-item${_pinnedModel === v ? ' active' : ''}" onclick="switchChatModel('${esc(p.id)}','${esc(activeSessionId)}','${esc(v)}')">${esc(l)}</button>`)
+      ].join('');
+      const _openCls = (_chatModelMenuSid === activeSessionId) ? ' open' : '';
+      _provBadge = `<span class="provider-badge model-switch prov-claude${_pinnedModel ? ' pinned' : ''}" title="${esc(_provTitle)} — click to switch model for this chat" onclick="toggleChatModelMenu(event,'${esc(activeSessionId)}')">${_pillLabel}${_suffix}${_pinMark} <span class="cms-caret" aria-hidden="true">&#9662;</span>
+        <div class="chat-model-menu${_openCls}" id="chat-model-menu-${esc(activeSessionId)}" onclick="event.stopPropagation()">
+          <div class="cms-head">Model &middot; this chat</div>
+          ${_items}
+        </div>
+      </span>`;
+    }
     // Persona pill (Prompt Builder Phase 2) — visible for the whole chat
     // when a character was chosen at spawn; immutable for this chat's life.
     const _char = activeSession && activeSession.character;
@@ -2779,7 +2868,7 @@ async function fetchAgentStatus(projectId) {
       // nag. The server still computes `s.long_session_advisory`; nothing
       // consumes it now. To bring the nudge back, render it somewhere
       // non-intrusive (e.g. an inline session-panel hint) rather than a toast.
-      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual', character: s.character || null, pinned: !!s.pinned };
+      agentStatusCache[sid] = { status: s.status, task: s.task, projectId, startedAt: s.started_at, planFile: s.plan_file || '', usage: s.usage || {}, cost_usd: s.cost_usd || 0, num_turns: s.num_turns || 0, hivemindId: s.hivemind_id || '', hivemindWsId: s.hivemind_ws_id || '', hivemindRole: s.hivemind_role || '', triggerType: s.trigger_type || 'manual', triggerId: s.trigger_id || '', waitingForPlanApproval: s.waiting_for_plan_approval || false, waitingForQuestion: s.waiting_for_question || false, guardianState: s.guardian_state || null, circuitBreakerTripped: s.circuit_breaker_tripped || false, claudeSessionId: s.claude_session_id || '', incognito: !!s.incognito, provider: s.provider || 'claude', agentModel: s.agent_model || '', model: s.model || '', modelSource: s.model_source || 'manual', pinnedModel: s.pinned_model || '', character: s.character || null, pinned: !!s.pinned };
       // A FRESH conversation has no claude_session_id at dispatch time, so the
       // zero-gap upsert in startAgent() (resume-preview.js) is skipped for it —
       // `if (resumeId && task)` is false. Nothing else inserted it, so the new
