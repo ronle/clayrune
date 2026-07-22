@@ -1234,6 +1234,24 @@
     background: var(--modal-accent, var(--accent));
   }
 
+  /* "← Dashboard" back button — top-left of a project modal header, mirroring
+     the window controls on the right. Closes the modal → back to the grid
+     (activeAgentTab is preserved, so reopening restores the same chat). Desktop
+     only; mobile has the drawer + hardware back and a compact full-screen header. */
+  .modal-dashboard-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-bottom: 10px; padding: 5px 11px 5px 9px; border-radius: 8px;
+    background: var(--surface); border: 1px solid var(--border2);
+    color: var(--text-dim); font-family: inherit; font-size: 12.5px; font-weight: 700;
+    cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease;
+    position: relative; z-index: 11;
+  }
+  .modal-dashboard-btn:hover { background: var(--surface3); color: var(--text); border-color: var(--accent); }
+  .modal-dashboard-btn .mdb-arrow { font-size: 15px; line-height: 1; }
+  @media (max-width: 960px) { .modal-dashboard-btn { display: none; } }
+  /* Unpinned (collapsed data-sheet) header is tight — shrink the button's gap. */
+  .modal-window.is-unpinned .modal-dashboard-btn { margin-bottom: 6px; }
+
   /* CARD SUMMARY (modal) */
   .card-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .summary-item { padding: 12px 18px 14px 22px; border-right: 1px solid var(--border); }

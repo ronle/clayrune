@@ -437,6 +437,9 @@ function modalContentHTML(p) {
 
   return `
     <div class="modal-header" ${accentStyle}>
+      <button class="modal-dashboard-btn" onclick="closeModalById('${esc(p.id)}')" title="Back to the dashboard">
+        <span class="mdb-arrow" aria-hidden="true">&#8592;</span> Dashboard
+      </button>
       <div class="modal-window-controls">
         <button class="modal-pin" onclick="toggleModalPin('${esc(p.id)}')" title="Collapse / expand data sheet">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
