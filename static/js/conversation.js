@@ -214,17 +214,62 @@ function setComposerModel(projectId, model) {
   refreshModalById(projectId);
 }
 
-// ── In-chat model switcher (header pill dropdown) ───────────────────────────
-// sid of the open model menu, or null. Survives refreshModalById's every-few-
-// seconds rebuild: agentPanelHTML re-adds `.open` from this on each render.
+// ── In-chat model switcher (header pill → body popover) ─────────────────────
+// The menu is rendered into document.body (NOT nested in the chat header) so
+// the chat-output's overflow can't clip it, and so refreshModalById's periodic
+// rebuild of the header can't blow it away. Only one is ever open.
 let _chatModelMenuSid = null;
+const _CMS_POP_ID = 'chat-model-menu-pop';
 
-function toggleChatModelMenu(event, sid) {
+function _closeChatModelMenu() {
+  _chatModelMenuSid = null;
+  const pop = document.getElementById(_CMS_POP_ID);
+  if (pop) pop.remove();
+}
+
+function toggleChatModelMenu(event, projectId, sid) {
   if (event) { event.stopPropagation(); event.preventDefault(); }
-  _chatModelMenuSid = (_chatModelMenuSid === sid) ? null : sid;
-  // Immediate visual feedback without waiting for the next refresh.
-  const menu = document.getElementById('chat-model-menu-' + sid);
-  if (menu) menu.classList.toggle('open', _chatModelMenuSid === sid);
+  if (_chatModelMenuSid === sid && document.getElementById(_CMS_POP_ID)) {
+    _closeChatModelMenu();
+    return;
+  }
+  _closeChatModelMenu();
+  _chatModelMenuSid = sid;
+  const pillEl = event && event.currentTarget;
+  const p = (typeof allProjects !== 'undefined' ? allProjects : []).find(x => x.id === projectId) || {};
+  const s = agentStatusCache[sid] || {};
+  const pinned = s.pinnedModel || '';
+  const choices = (window.MC_MODEL_CHOICES || []).filter(([v]) => v !== '');
+  // What "Follow default" resolves to right now (mirrors the +New picker).
+  const defLabel = (() => {
+    if (typeof _globalConfig !== 'undefined' && _globalConfig.auto_model_enabled && !p.agent_model) return 'Auto-router';
+    const m = choices.find(c => c[0] === (p.agent_model || ''));
+    return (p.agent_model && m) ? m[1] : 'Project / global default';
+  })();
+  const items = [
+    `<button class="cms-item${!pinned ? ' active' : ''}" onclick="switchChatModel('${esc(projectId)}','${esc(sid)}','')">Follow default<span class="cms-sub">${esc(defLabel)}</span></button>`,
+    ...choices.map(([v, l]) =>
+      `<button class="cms-item${pinned === v ? ' active' : ''}" onclick="switchChatModel('${esc(projectId)}','${esc(sid)}','${esc(v)}')">${esc(l)}</button>`)
+  ].join('');
+  const pop = document.createElement('div');
+  pop.className = 'chat-model-menu open';
+  pop.id = _CMS_POP_ID;
+  pop.addEventListener('click', (e) => e.stopPropagation());
+  pop.innerHTML = `<div class="cms-head">Model &middot; this chat</div>${items}`;
+  document.body.appendChild(pop);
+  _positionChatModelMenu(pillEl);
+}
+
+// Anchor the fixed popover just under the pill, clamped into the viewport.
+function _positionChatModelMenu(pillEl) {
+  const pop = document.getElementById(_CMS_POP_ID);
+  if (!pop || !pillEl) return;
+  const r = pillEl.getBoundingClientRect();
+  const w = pop.offsetWidth || 200;
+  let left = Math.round(r.left);
+  if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+  pop.style.top = Math.round(r.bottom + 6) + 'px';
+  pop.style.left = Math.max(8, left) + 'px';
 }
 
 // Pin (model set) or un-pin (model === '') the model for THIS conversation.
@@ -234,7 +279,7 @@ function toggleChatModelMenu(event, sid) {
 // `model` field — it catches up when the next turn actually respawns, so the
 // pill can't flip-flop against the status poll.
 async function switchChatModel(projectId, sid, model) {
-  _chatModelMenuSid = null;
+  _closeChatModelMenu();
   const s = agentStatusCache[sid];
   if (s) s.pinnedModel = model;
   refreshModalById(projectId);
@@ -252,16 +297,15 @@ async function switchChatModel(projectId, sid, model) {
   }
 }
 
-// Close the in-chat model menu on any outside click (bound once).
+// Close on any outside click, and keep it anchored on resize/scroll (bound once).
 if (typeof window !== 'undefined' && !window._chatModelMenuCloserBound) {
   window._chatModelMenuCloserBound = true;
   document.addEventListener('click', (e) => {
     if (_chatModelMenuSid == null) return;
-    const pill = e.target.closest && e.target.closest('.provider-badge.model-switch');
-    if (pill) return;  // clicks inside the pill/menu are handled locally
-    _chatModelMenuSid = null;
-    document.querySelectorAll('.chat-model-menu.open').forEach(m => m.classList.remove('open'));
+    if (e.target.closest && (e.target.closest('.provider-badge.model-switch') || e.target.closest('#' + _CMS_POP_ID))) return;
+    _closeChatModelMenu();
   });
+  window.addEventListener('resize', _closeChatModelMenu);
 }
 
 window.toggleChatModelMenu = toggleChatModelMenu;
@@ -1030,32 +1074,19 @@ function agentPanelHTML(p) {
     if (_provName !== 'claude') {
       _provBadge = `<span class="provider-badge prov-${esc(_provName.replace(/[^a-z]/g,''))}" title="${esc(_provTitle)}">${esc(_provText)}${_routerSuffixHTML}</span>`;
     } else {
-      const _choices = (window.MC_MODEL_CHOICES || []).filter(([v]) => v !== '');
-      // What "Follow default" resolves to right now (mirrors the +New picker).
-      const _defLabel = (() => {
-        if (_globalConfig && _globalConfig.auto_model_enabled && !p.agent_model) return 'Auto-router';
-        const m = _choices.find(c => c[0] === (p.agent_model || ''));
-        return (p.agent_model && m) ? m[1] : 'Project / global default';
-      })();
-      const _pillLabel = _pinnedModel
-        ? `${esc(_provName)} · ${esc(_mShort(_pinnedModel))}`
-        : esc(_provText);
+      // The current model to show on the control: pinned wins, else the routed/
+      // configured model, else "Default". Friendly label (Opus 4.8, not the id).
+      const _curLabel = _pinnedModel
+        ? _mShort(_pinnedModel)
+        : (_provModel ? _mShort(_provModel) : 'Default');
       const _pinMark = _pinnedModel
         ? ` <span class="cms-pin" title="Pinned to this chat">&#128204;</span>`
         : '';
       const _suffix = _pinnedModel ? '' : _routerSuffixHTML;
-      const _items = [
-        `<button class="cms-item${!_pinnedModel ? ' active' : ''}" onclick="switchChatModel('${esc(p.id)}','${esc(activeSessionId)}','')">Follow default<span class="cms-sub">${esc(_defLabel)}</span></button>`,
-        ..._choices.map(([v, l]) =>
-          `<button class="cms-item${_pinnedModel === v ? ' active' : ''}" onclick="switchChatModel('${esc(p.id)}','${esc(activeSessionId)}','${esc(v)}')">${esc(l)}</button>`)
-      ].join('');
-      const _openCls = (_chatModelMenuSid === activeSessionId) ? ' open' : '';
-      _provBadge = `<span class="provider-badge model-switch prov-claude${_pinnedModel ? ' pinned' : ''}" title="${esc(_provTitle)} — click to switch model for this chat" onclick="toggleChatModelMenu(event,'${esc(activeSessionId)}')">${_pillLabel}${_suffix}${_pinMark} <span class="cms-caret" aria-hidden="true">&#9662;</span>
-        <div class="chat-model-menu${_openCls}" id="chat-model-menu-${esc(activeSessionId)}" onclick="event.stopPropagation()">
-          <div class="cms-head">Model &middot; this chat</div>
-          ${_items}
-        </div>
-      </span>`;
+      const _swTitle = `Model for THIS conversation${_pinnedModel ? ' (pinned)' : ''} — click to switch. ${_provTitle}`;
+      // The menu itself is built + positioned in document.body on click (escapes
+      // the chat-output overflow that was clipping an in-flow dropdown).
+      _provBadge = `<button type="button" class="provider-badge model-switch prov-claude${_pinnedModel ? ' pinned' : ''}" title="${esc(_swTitle)}" onclick="toggleChatModelMenu(event,'${esc(p.id)}','${esc(activeSessionId)}')"><span class="cms-key">Model</span><span class="cms-val">${esc(_curLabel)}</span>${_suffix}${_pinMark} <span class="cms-caret" aria-hidden="true">&#9662;</span></button>`;
     }
     // Persona pill (Prompt Builder Phase 2) — visible for the whole chat
     // when a character was chosen at spawn; immutable for this chat's life.
