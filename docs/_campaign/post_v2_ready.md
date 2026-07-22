@@ -36,7 +36,7 @@ I've been running Claude Code across about 5 projects at once for a few months, 
 
 One thing worth saying since it always comes up: all of this runs on **your own Claude subscription through the CLI — not the API.** So it costs exactly what Claude Code costs you today. Nothing extra metered, nothing routed through a third party, nothing leaves your machine.
 
-I ended up bundling all of the above into a tool called **Clayrune** — free, MIT, runs on your own machine. Easiest way to see it is the **live demo, zero install: clayrune.io/demo**. If you want to actually run it, there's a one-click installer (Windows/Mac/Linux) at **clayrune.io** — source is on GitHub (github.com/ronle/clayrune) if you'd rather read it first.
+I ended up bundling all of the above into a tool called **Clayrune** — free, MIT, runs on your own machine. Easiest way to see it is the **live demo, zero install: clayrune.io/demo**. If you want to actually run it, it installs with a single command (Windows/Mac/Linux) from **clayrune.io** — source is on GitHub (github.com/ronle/clayrune) if you'd rather read it first.
 
 Curious how everyone else keeps multiple agents straight — always looking to steal a better system.
 

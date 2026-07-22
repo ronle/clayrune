@@ -63,12 +63,19 @@ agent, or work you'd rather not sit and watch.
 
 ## Quick Start (Windows)
 
-1. **Download** the installer from **[clayrune.io](https://clayrune.io)** (`Clayrune-Installer.exe`)
-2. **Double-click** it and follow the prompts
+Open **PowerShell** (Start → type `PowerShell` → Enter), paste one line, press Enter:
 
-The installer sets up Claude CLI, clones Clayrune, installs dependencies,
-and drops a Desktop/Start Menu shortcut. First launch opens the dashboard at
+```powershell
+iwr https://clayrune.io/install.ps1 -useb | iex
+```
+
+It installs the Claude CLI, clones Clayrune, installs dependencies, and drops a
+Desktop/Start Menu shortcut. First launch opens the dashboard at
 `http://localhost:5199`.
+
+Prefer a double-click? There's an installer `.exe` on [clayrune.io](https://clayrune.io) —
+it's unsigned, so Windows shows an "unrecognized app" notice once (**More info →
+Run anyway**). Same install, just the one-time prompt.
 
 Prefer running from source instead? See [Running from Source](#running-from-source) below.
 
@@ -105,9 +112,9 @@ python server.py
 First run: the in-app Settings panel walks you through the port, project
 directory, agent model, and other settings — no setup script needed.
 
-> Prefer a guided, no-clone install? Use the one-click installer at
-> [clayrune.io](https://clayrune.io) (Windows `.exe` / macOS / Linux), which
-> drives the whole setup for you.
+> Prefer a guided, no-clone install? Use the one-command installer at
+> [clayrune.io](https://clayrune.io) (PowerShell on Windows, one line on macOS /
+> Linux), which drives the whole setup for you.
 
 ## Configuration
 
@@ -233,7 +240,7 @@ mission-control/
     projects/            Project JSON files (auto-created)
     uploads/             File attachments
   config.json            User configuration (auto-created, gitignored)
-  installer/             Hosted one-click installer (clayrune.io)
+  installer/             Hosted one-command installer (clayrune.io)
 ```
 
 - **Backend**: Python Flask server on configurable port (default 5199)
