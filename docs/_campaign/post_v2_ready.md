@@ -14,8 +14,9 @@
   r/vibecoding (tools need mod pre-approval), r/LLMDevs (no commercial/disguised promo).
 
 **Type:** text/self post · **When:** Tuesday or Wednesday, ~10am PT (1pm ET). Not Sunday, not evening.
-**After posting:** drop the 20s clip (`clayrune_clip_reddit.mp4`) as your FIRST comment.
-Links are already in the body (allowed — it's a self post, not a link post).
+**After posting:** post the FIRST COMMENT below (links + clip). r/AgentsOfAI Rule 4
+requires links go in the comments, not the body — Reddit's pre-submit checker flags
+body links. Body stays link-free; the detailed workflow satisfies the rest of Rule 4.
 
 ---
 
@@ -38,9 +39,21 @@ I've been running Claude Code across about 5 projects at once for a few months, 
 
 One thing worth saying since it always comes up: all of this runs on **your own Claude subscription through the CLI — not the API.** So it costs exactly what Claude Code costs you today. Nothing extra metered, nothing routed through a third party, nothing leaves your machine.
 
-I ended up bundling all of the above into a tool called **Clayrune** — free, MIT, runs on your own machine. Easiest way to see it is the **live demo, zero install: clayrune.io/demo**. If you want to actually run it, it installs with a single command (Windows/Mac/Linux) from **clayrune.io** — source is on GitHub (github.com/ronle/clayrune) if you'd rather read it first.
+I ended up bundling all of the above into a tool called **Clayrune** — free, MIT, runs on your own machine. There's a live demo you can click through with zero install, a one-command install if you want to actually run it, and the whole thing is open source. Dropping the links in a comment below so this isn't just a link-drop.
 
 Curious how everyone else keeps multiple agents straight — always looking to steal a better system.
+
+---
+
+## FIRST COMMENT (post immediately after — links + clip live here per Rule 4)
+
+Links, as promised:
+
+- Live demo, no install: https://clayrune.io/demo
+- Install (one command — PowerShell on Windows, one line on Mac/Linux): https://clayrune.io
+- Source, MIT: https://github.com/ronle/clayrune
+
+Also attaching a ~20s clip of it running a few agents at once (clayrune_clip_reddit.mp4) — add it to this comment or a quick follow-up.
 
 ---
 
