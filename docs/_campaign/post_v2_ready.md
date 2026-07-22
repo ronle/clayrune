@@ -1,10 +1,18 @@
 # READY TO POST — give-first teaching post (v2)
 
-**Sub:** r/ClaudeAI · **Type:** text/self post · **Flair:** Built with Claude
-(alt: "Claude Code Workflow" if you want it to read less promo — but Rule 7 wants
-the built-with-Claude flair for anything promoting a project, so prefer that)
-**When:** Tuesday or Wednesday, ~10am PT (1pm ET). Not Sunday, not evening.
-**After posting:** drop the 20s clip as your FIRST comment ("short clip of it running").
+## Routing (rules verified 2026-07-22 via API)
+- **STEP 1 — test bed: r/AgentsOfAI** (120k). Self-promo allowed *if the body is a
+  detailed text description* (Rule 4) — ours is. On-topic (managing multiple agents),
+  fresh room, mid-size. This proves the message cheaply.
+- **STEP 2 — flagship: r/ClaudeCode** (360k), only after the message is proven.
+  Flair: **"Tutorial / Guide"** (reads far less promo than "Showcase"). Rule 6 needs
+  disclosure (what it does / who benefits / cost / your relationship) — the post covers all.
+- **Backup:** r/mcp (allowed w/ showcase tag, but MCP-specific angle).
+- **RULED OUT:** r/ClaudeAI (already posted — no reposting), r/Anthropic (bans self-promo),
+  r/vibecoding (tools need mod pre-approval), r/LLMDevs (no commercial/disguised promo).
+
+**Type:** text/self post · **When:** Tuesday or Wednesday, ~10am PT (1pm ET). Not Sunday, not evening.
+**After posting:** drop the 20s clip (`clayrune_clip_reddit.mp4`) as your FIRST comment.
 Links are already in the body (allowed — it's a self post, not a link post).
 
 ---
