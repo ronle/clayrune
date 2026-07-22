@@ -295,3 +295,6 @@ demo-export/_*
 docs/play-store/assets/screenshots/
 docs/play-store/assets/screenshots-padded/
 docs/play-store/assets/thumbs/
+
+# Internal campaign planning/execution — not for public git
+docs/_campaign/
