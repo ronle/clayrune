@@ -4,6 +4,8 @@
 - **STEP 1 — test bed: r/AgentsOfAI** (120k). Self-promo allowed *if the body is a
   detailed text description* (Rule 4) — ours is. On-topic (managing multiple agents),
   fresh room, mid-size. This proves the message cheaply.
+  **Flair: "I Made This"** (the dominant showcase flair, 41/100 hot posts; correct
+  disclosure per Rule 4 — don't dress it as "Resources/Discussion").
 - **STEP 2 — flagship: r/ClaudeCode** (360k), only after the message is proven.
   Flair: **"Tutorial / Guide"** (reads far less promo than "Showcase"). Rule 6 needs
   disclosure (what it does / who benefits / cost / your relationship) — the post covers all.
