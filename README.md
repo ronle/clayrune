@@ -14,12 +14,13 @@ moving while you're away from the keyboard.
 - **Control it from your phone** — dispatch a task, watch it stream, restart the server, from anywhere.
 - **It runs without you** — schedule agents, or hand one a standing charter and let it work unattended.
 - **It remembers** — cross-session memory, so your agents don't start every task cold.
+- **Your Claude subscription, not the API** — Clayrune drives the Claude Code CLI you already run, so agent work costs exactly what it does today. No extra token bills, nothing metered, nothing routed through us.
 - **It's yours** — local-first, bring your own key, all of it open. The cloud is optional.
 
 Clayrune runs on *your* machine. If the machine sleeps, so does your agent — and Clayrune
 tells you it did. There's a setting to keep it awake while an agent is working.
 
-**[⬇ Download for Windows](https://clayrune.io)** · macOS + Linux + [from source](#running-from-source) below.
+**[▶ Try the live demo — no install](https://clayrune.io/demo)** &nbsp;·&nbsp; or **[⬇ Download for Windows](https://clayrune.io)** — macOS + Linux + [from source](#running-from-source) below.
 
 ---
 
