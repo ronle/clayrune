@@ -205,6 +205,7 @@ function _openMermaidViewer(source, svg) {
       <pre class="mermaid-source" style="display:none">${esc(source)}</pre>
     </div>`;
   document.body.appendChild(overlay);
+  if (typeof makeResizable === 'function') makeResizable(overlay.querySelector('.mermaid-viewer-content'));
   const svgWrap = overlay.querySelector('.mermaid-viewer-svg');
   const zoomLabel = overlay.querySelector('.mermaid-viewer-zoom-label');
   let scale = 1;
@@ -382,6 +383,7 @@ function _openImageViewer(src) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+  if (typeof makeResizable === 'function') makeResizable(overlay.querySelector('.mermaid-viewer-content'));
   const wrap = overlay.querySelector('.mermaid-viewer-svg');
   const zoomLabel = overlay.querySelector('.mermaid-viewer-zoom-label');
   const content = overlay.querySelector('.mermaid-viewer-content');

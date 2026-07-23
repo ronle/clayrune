@@ -1075,7 +1075,10 @@
     display: flex; flex-direction: column; overflow: hidden;
     border-radius: 12px;
     border: 1px solid var(--border);
-    resize: both;
+    /* Resize is handled by 8 custom drag handles on the .modal-window wrapper
+       (see makeResizable in interactions.js) — NOT native `resize: both`, which
+       only ever exposes a bottom-right grabber. min/max below are still read by
+       the JS resizer via getComputedStyle. */
     min-width: 380px;
     min-height: 300px;
     position: relative;
@@ -1097,6 +1100,28 @@
       border-radius: 0;
     }
     .modal-content::after { display: none; } /* corner-grip useless without a mouse */
+  }
+
+  /* ── Custom multi-directional resize handles ─────────────────────────────
+     8 grab strips (4 edges + 4 corners) that replace native `resize: both`.
+     Live on the .modal-window wrapper for managed modals (so the periodic
+     content.innerHTML rebuild can't wipe them) and on the sized element for
+     the stand-alone overlays. z-index 6/7 keeps them above the content body
+     but BELOW .modal-window-controls (z-index 11), so the close/min/max
+     buttons stay clickable even where the NE corner overlaps them. */
+  .mc-resize-handle { position: absolute; z-index: 6; touch-action: none; }
+  .mc-resize-n  { top: 0; left: 0; right: 0; height: 6px; cursor: ns-resize; }
+  .mc-resize-s  { bottom: 0; left: 0; right: 0; height: 6px; cursor: ns-resize; }
+  .mc-resize-e  { top: 0; bottom: 0; right: 0; width: 6px; cursor: ew-resize; }
+  .mc-resize-w  { top: 0; bottom: 0; left: 0; width: 6px; cursor: ew-resize; }
+  .mc-resize-ne { top: 0; right: 0; width: 14px; height: 14px; cursor: nesw-resize; z-index: 7; }
+  .mc-resize-nw { top: 0; left: 0; width: 14px; height: 14px; cursor: nwse-resize; z-index: 7; }
+  .mc-resize-se { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize; z-index: 7; }
+  .mc-resize-sw { bottom: 0; left: 0; width: 14px; height: 14px; cursor: nesw-resize; z-index: 7; }
+  /* Touch devices resize via the existing corner-drag / pinch handlers; the
+     thin mouse handles would only steal taps from scrollbars and edge content. */
+  @media (hover: none), (pointer: coarse) {
+    .mc-resize-handle { display: none; }
   }
 
   .modal-window-controls {
@@ -3888,8 +3913,8 @@
     /* Drag-resizable from the bottom-right. The image viewer overrides the
        width/height above with the picture's natural size (see _openImageViewer),
        so it opens fitted rather than filling the screen; these bounds keep a
-       resize sane. `resize` needs overflow != visible — `hidden` above qualifies. */
-    resize: both;
+       resize sane. Custom 8-way handles (makeResizable) replace native
+       `resize: both`; min/max below are read by the JS resizer. */
     min-width: 320px; min-height: 220px;
     max-width: 95vw; max-height: 92vh;
   }
@@ -5792,7 +5817,9 @@
     width: min(560px, 92vw); height: min(560px, 86vh);
     min-width: 340px; min-height: 300px;
     max-width: 96vw; max-height: 92vh;
-    resize: both; overflow: hidden;
+    /* Custom 8-way handles (makeResizable) replace native `resize: both`.
+       overflow:hidden required so the flex textarea hands space to the window. */
+    overflow: hidden;
   }
   .persona-editor-inner textarea {
     background: var(--bg); border: 1px solid var(--border);

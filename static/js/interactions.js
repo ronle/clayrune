@@ -922,6 +922,168 @@ document.addEventListener('touchend', (e) => {
   if (e.touches.length < 2) modalPinch = null;
 });
 
+// ── Multi-directional modal resize (mouse) ──────────────────────────────────
+// Replaces the CSS `resize: both` (bottom-right corner only) with 8 drag
+// handles (4 edges + 4 corners). One helper applied centrally to every managed
+// .modal-content window (via the #modal-layer observer below) plus the two
+// stand-alone overlays (mermaid/image viewer, persona editor) that live outside
+// #modal-layer and call makeResizable() themselves.
+//
+// Handles are hung on a HOST element that survives the periodic
+// content.innerHTML rebuild in refreshModalById: the .modal-window wrapper for
+// managed modals, or the sized element itself for the refresh-free overlays.
+// The sized element (what actually gets width/height) is stored on the host as
+// __mcSizeEl. For N/W drags the window's left/top must also move so the
+// opposite edge stays anchored; that move target is the .modal-window (managed)
+// or the pinned sized element (overlay).
+const _MC_RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+
+function makeResizable(sizeEl, host) {
+  if (!sizeEl) return;
+  host = host || sizeEl;
+  if (host.__mcResizable) return;
+  host.__mcResizable = true;
+  host.__mcSizeEl = sizeEl;
+  for (const dir of _MC_RESIZE_DIRS) {
+    const h = document.createElement('div');
+    h.className = 'mc-resize-handle mc-resize-' + dir;
+    h.dataset.resizeDir = dir;
+    host.appendChild(h);
+  }
+}
+window.makeResizable = makeResizable;
+
+let modalResize = null;
+
+function _mcReadPx(v, fallback) {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function modalResizeStart(x, y, target) {
+  const handle = target.closest && target.closest('.mc-resize-handle');
+  if (!handle) return false;
+  const host = handle.parentElement;
+  const sizeEl = host && host.__mcSizeEl;
+  if (!sizeEl) return false;
+  const dir = handle.dataset.resizeDir || '';
+  const win = host.classList && host.classList.contains('modal-window') ? host : null;
+  // The element whose left/top move for N/W drags.
+  let moveEl = win || sizeEl;
+
+  if (win) {
+    // Managed modal: clear any snap/maximize so resizing yields a free-form
+    // size, mirroring the drag tear-off (interactions.js modalDragMove).
+    let entry = null, modalId = null;
+    for (const [mid, ent] of openModals) {
+      if (ent.element === win) { entry = ent; modalId = mid; break; }
+    }
+    if (entry && entry.snap) {
+      entry.snap = null; entry.preSnap = null;
+      win.classList.remove('is-snapped');
+      win.classList.remove('is-maximized');
+      if (typeof _syncMaximizedBodyClass === 'function') _syncMaximizedBodyClass();
+      if (entry.projectId && modalId && !modalId.startsWith('__') && typeof _setModalPref === 'function') {
+        _setModalPref(entry.projectId, { snap: null, preSnap: null });
+      }
+      if (typeof _syncMaximizeBtn === 'function') _syncMaximizeBtn(modalId);
+    }
+  } else {
+    // Stand-alone overlay child (mermaid / persona): it is flex-centered until
+    // now. Pin it to explicit fixed geometry so N/W edges track the cursor
+    // instead of the box growing symmetrically about its center.
+    const r = sizeEl.getBoundingClientRect();
+    sizeEl.style.position = 'fixed';
+    sizeEl.style.margin = '0';
+    sizeEl.style.left = r.left + 'px';
+    sizeEl.style.top = r.top + 'px';
+  }
+
+  const cs = getComputedStyle(sizeEl);
+  const mr = moveEl.getBoundingClientRect();
+  modalResize = {
+    sizeEl, moveEl, win, dir,
+    startX: x, startY: y,
+    startW: sizeEl.offsetWidth, startH: sizeEl.offsetHeight,
+    startLeft: mr.left, startTop: mr.top,
+    minW: _mcReadPx(cs.minWidth, 220), minH: _mcReadPx(cs.minHeight, 160),
+    maxW: _mcReadPx(cs.maxWidth, window.innerWidth),
+    maxH: _mcReadPx(cs.maxHeight, window.innerHeight),
+  };
+  document.body.style.userSelect = 'none';
+  document.body.style.cursor = getComputedStyle(handle).cursor;
+  return true;
+}
+
+function modalResizeMove(x, y) {
+  if (!modalResize) return;
+  const s = modalResize;
+  const dx = x - s.startX, dy = y - s.startY;
+  const east = s.dir.includes('e'), west = s.dir.includes('w');
+  const south = s.dir.includes('s'), north = s.dir.includes('n');
+  let w = s.startW, h = s.startH, left = s.startLeft, top = s.startTop;
+  if (east) w = s.startW + dx;
+  if (west) w = s.startW - dx;
+  if (south) h = s.startH + dy;
+  if (north) h = s.startH - dy;
+  w = Math.max(s.minW, Math.min(s.maxW, w));
+  h = Math.max(s.minH, Math.min(s.maxH, h));
+  // Anchor the opposite edge: shift the origin by the ACTUAL applied delta
+  // (respecting min/max clamping), clamped on-screen.
+  if (west) left = Math.max(0, s.startLeft + (s.startW - w));
+  if (north) top = Math.max(0, s.startTop + (s.startH - h));
+  s.sizeEl.style.width = w + 'px';
+  s.sizeEl.style.height = h + 'px';
+  if (west) s.moveEl.style.left = left + 'px';
+  if (north) s.moveEl.style.top = top + 'px';
+}
+
+function modalResizeEnd() {
+  if (!modalResize) return;
+  const s = modalResize;
+  document.body.style.userSelect = '';
+  document.body.style.cursor = '';
+  modalResize = null;
+  // Managed project windows persist geometry. width/height is saved live by the
+  // ResizeObserver in openProjectModal; here we persist the left/top that N/W
+  // drags moved. Synthetic (__) and overlay surfaces aren't persisted.
+  if (s.win && typeof _saveOpenModalsSnapshot === 'function') _saveOpenModalsSnapshot();
+}
+
+document.addEventListener('mousedown', (e) => {
+  if (modalDrag || chatResize) return;
+  if (modalResizeStart(e.clientX, e.clientY, e.target)) e.preventDefault();
+});
+document.addEventListener('mousemove', (e) => modalResizeMove(e.clientX, e.clientY));
+document.addEventListener('mouseup', modalResizeEnd);
+
+// Attach handles to every managed modal window. They're built dynamically by
+// ~25 modules but all land as a .modal-window inside #modal-layer, so one
+// observer covers them; the stand-alone overlays call makeResizable directly.
+function _mcInitModalResize() {
+  const layer = document.getElementById('modal-layer');
+  if (!layer) return;
+  const attach = (win) => {
+    const content = win.querySelector(':scope > .modal-content') || win.querySelector('.modal-content');
+    if (content) makeResizable(content, win);
+  };
+  layer.querySelectorAll(':scope > .modal-window').forEach(attach);
+  new MutationObserver((muts) => {
+    for (const m of muts) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType === 1 && node.classList && node.classList.contains('modal-window')) {
+          attach(node);
+        }
+      }
+    }
+  }).observe(layer, { childList: true });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _mcInitModalResize);
+} else {
+  _mcInitModalResize();
+}
+
 // ── Ctrl+Scroll zoom on all modal content ───────────────────────────────────
 
 

@@ -922,6 +922,7 @@ async function openPersonaEditor(projectId, scope, name, onDone) {
       </div>
     </div>`;
   document.body.appendChild(panel);
+  if (typeof makeResizable === 'function') makeResizable(panel.querySelector('.persona-editor-inner'));
 
   const errEl = panel.querySelector('#pe-err');
   const showErr = (msg) => { errEl.textContent = msg; errEl.style.display = 'block'; };
