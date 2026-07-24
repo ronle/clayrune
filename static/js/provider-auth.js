@@ -4,6 +4,23 @@
 // also checks that provider and surfaces provider-specific messaging.
 let _authBannerDismissed = false;
 let _authBannerLastReason = null;
+// First-run auth gate state. `_claudeAuthOk`: null = unverified, true = signed
+// in (verified by a probe), false = confirmed not signed in. `_authProbeKicked`
+// guards the one-time boot probe so we don't spawn a `claude -p ok` subprocess
+// on every 90s poll.
+let _claudeAuthOk = null;
+let _authProbeKicked = false;
+
+// Track the last-known CLAUDE auth verdict so the dispatch path can refuse to
+// fire a doomed run. Only claude states update it (other providers pass through
+// _renderAuthBanner too). "ok" only counts when a probe actually verified it
+// (last_probe_at set) — the seeded optimistic ok:True default stays "unknown".
+function _updateClaudeAuthKnown(state) {
+  if (state && state._provider && state._provider !== 'claude') return;
+  if (state && state.ok === false) _claudeAuthOk = false;
+  else if (state && state.ok === true && state.last_probe_at) _claudeAuthOk = true;
+  else _claudeAuthOk = null;
+}
 
 async function refreshAuthStatus() {
   try {
@@ -13,10 +30,34 @@ async function refreshAuthStatus() {
     const state = await res.json();
     // Attach provider name so _renderAuthBanner can label it correctly.
     state._provider = 'claude';
+    // First-run gate: the server seeds _claude_auth_state optimistically
+    // (ok:true, never probed). If we've never verified (no last_probe_at) and
+    // aren't already known-bad, actively probe ONCE so a not-signed-in install
+    // surfaces the sign-in CTA up front instead of after a doomed dispatch.
+    if (state.ok !== false && !state.last_probe_at && !_authProbeKicked) {
+      _authProbeKicked = true;
+      _claudeAuthProbe();  // async; re-renders on completion
+    }
+    _updateClaudeAuthKnown(state);
     _renderAuthBanner(state);
   } catch (e) {
     // Network blip — leave whatever banner state we have.
   }
+}
+
+// Actively probe claude auth (spawns `claude -p ok` server-side, ~fast when
+// not signed in). Best-effort; renders the banner + Settings status line on
+// completion. Used by the boot gate above.
+async function _claudeAuthProbe() {
+  try {
+    const res = await fetch(API_BASE + '/api/claude/auth-probe', { method: 'POST' });
+    if (!res.ok) return;
+    const state = await res.json();
+    state._provider = 'claude';
+    _updateClaudeAuthKnown(state);
+    _renderAuthBanner(state);
+    _renderClaudeAuthStatusLine(state);
+  } catch (e) { /* best-effort */ }
 }
 
 async function refreshProviderAuthStatus(providerName) {
@@ -75,7 +116,7 @@ function _authBannerMessage(state) {
     : ((_agentProviders || []).find(p => p.name === prov) || {}).display_name || prov;
   switch (state && state.reason) {
     case 'not_logged_in':
-      return `${provLabel} isn't signed in. Agents will fail until you authenticate.`;
+      return `Log in to ${provLabel} to get started — agents can't run until you're signed in.`;
     case 'invalid_api_key':
       return `${provLabel} credentials are invalid — sign in again to refresh them.`;
     case 'cli_not_found':
@@ -255,6 +296,7 @@ function _renderClaudeAuthStatusLine(state) {
 //    _authBannerMessage / _renderClaudeAuthStatusLine / refreshProviderAuthStatus
 //    are module-private. ──
 window.refreshAuthStatus = refreshAuthStatus;     // startRefresh 90s poll (shim) + SSE-error + fetchProjects callback
+window.claudeAuthKnownBad = () => _claudeAuthOk === false; // dispatch gate: true only when a probe confirmed not-signed-in
 window.dismissAuthBanner = dismissAuthBanner;     // auth-banner static onclick
 window.claudeAuthenticate = claudeAuthenticate;   // auth-banner static onclick
 window.claudeAuthRecheck = claudeAuthRecheck;     // auth-banner static onclick

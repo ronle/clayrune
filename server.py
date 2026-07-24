@@ -2231,6 +2231,17 @@ if __name__ == '__main__':
     # mean a fresh install had zero projects. Swallows internally; never blocks
     # startup.
     _bp_guide.seed_onboarding_on_startup()
+    # First-run Claude auth gate: actively probe auth once at startup (background,
+    # best-effort) so _claude_auth_state reflects reality BEFORE the user dispatches.
+    # The state defaults optimistically to ok:True and is only flipped by a failing
+    # run — so a fresh, never-authenticated install would show NO sign-in banner
+    # until the first dispatch fails at runtime (the exact mid-use error we saw on
+    # the clean-VM test). Probing here surfaces the "sign in" CTA up front instead.
+    try:
+        threading.Thread(target=_bp_agent._run_claude_auth_probe,
+                         name='startup-claude-auth-probe', daemon=True).start()
+    except Exception as e:
+        _log(f"[auth] startup probe launch failed: {e}")
     # Reconcile pending agent_log rows: any 'in_progress' entry leftover from a
     # session that was killed by the previous shutdown is by definition orphaned
     # (no live sessions exist yet at startup). Flip those to 'interrupted' so
