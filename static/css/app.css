@@ -2493,7 +2493,12 @@
     background: var(--surface3); border-left-color: var(--accent);
     color: var(--accent); font-weight: 700;
   }
-  .mobile-drawer-item .mdi-icon { font-size: 19px; width: 24px; text-align: center; }
+  .mobile-drawer-item .mdi-icon { font-size: 19px; width: 24px; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
+  .mdi-svg {
+    width: 21px; height: 21px; display: block;
+    fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
   .mobile-drawer-divider {
     height: 1px; background: var(--border); margin: 8px 12px;
   }

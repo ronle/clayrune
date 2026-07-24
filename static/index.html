@@ -419,6 +419,7 @@
     <symbol id="ic-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></symbol>
     <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
     <symbol id="ic-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+    <symbol id="ic-usage" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
   </defs>
 </svg>
 
@@ -738,37 +739,37 @@
   </div>
   <div class="mobile-drawer-list">
     <div class="mobile-drawer-item" data-nav="dashboard" onclick="mobileDrawerNav('dashboard')">
-      <span class="mdi-icon">&#x25A6;</span><span class="mdi-label">Dashboard</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-dashboard"/></svg></span><span class="mdi-label">Dashboard</span>
     </div>
     <div class="mobile-drawer-item" data-nav="skills" onclick="mobileDrawerNav('skills')">
-      <span class="mdi-icon">&#x1F9E9;</span><span class="mdi-label">Skills &amp; MCP</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-skills"/></svg></span><span class="mdi-label">Skills &amp; MCP</span>
     </div>
     <div class="mobile-drawer-item" data-nav="backlog" onclick="mobileDrawerNav('backlog')">
-      <span class="mdi-icon">&#x1F4CB;</span><span class="mdi-label">Backlog</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-backlog"/></svg></span><span class="mdi-label">Backlog</span>
     </div>
     <div class="mobile-drawer-item" data-nav="hivemind" onclick="mobileDrawerNav('hivemind')">
-      <span class="mdi-icon">&#x1F41D;</span><span class="mdi-label">Hivemind</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-hivemind"/></svg></span><span class="mdi-label">Hivemind</span>
     </div>
     <div class="mobile-drawer-item" data-nav="scheduler" onclick="mobileDrawerNav('scheduler')">
-      <span class="mdi-icon">&#x23F1;</span><span class="mdi-label">Automation</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-automation"/></svg></span><span class="mdi-label">Automation</span>
     </div>
     <div class="mobile-drawer-item" data-nav="history" onclick="mobileDrawerNav('history')">
-      <span class="mdi-icon">&#x1F553;</span><span class="mdi-label">History</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-history"/></svg></span><span class="mdi-label">History</span>
     </div>
     <div class="mobile-drawer-item" data-nav="shared-rules" onclick="mobileDrawerNav('shared-rules')">
-      <span class="mdi-icon">&#x1F4DC;</span><span class="mdi-label">Shared Rules</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-rules"/></svg></span><span class="mdi-label">Shared Rules</span>
     </div>
     <div class="mobile-drawer-item" data-nav="processes" onclick="mobileDrawerNav('processes')">
-      <span class="mdi-icon">&#x2630;</span><span class="mdi-label">Processes</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-processes"/></svg></span><span class="mdi-label">Processes</span>
     </div>
     <!-- Mobile-only route to the usage/status panel: .header (and its status
          pill) is display:none below 960px, so this is the sole way in there. -->
     <div class="mobile-drawer-item" data-nav="usage" onclick="mobileDrawerNav('usage')" title="Subscription usage limits and system status">
-      <span class="mdi-icon">&#x1F4CA;</span><span class="mdi-label">Usage &amp; limits</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-usage"/></svg></span><span class="mdi-label">Usage &amp; limits</span>
     </div>
     <div class="mobile-drawer-divider"></div>
     <div class="mobile-drawer-item" onclick="mobileDrawerNav('incognito')" title="Ephemeral scratch agent — skips memory and rules">
-      <span class="mdi-icon">&#x1F576;&#xFE0F;</span><span class="mdi-label">Incognito</span>
+      <span class="mdi-icon"><svg class="mdi-svg"><use href="#ic-incognito"/></svg></span><span class="mdi-label">Incognito</span>
     </div>
   </div>
 </aside>
