@@ -55,6 +55,8 @@ async function renderStewards() {
           onclick="stewardOpenChat('${pid}','${esc(s.claude_session_id || '')}')" title="Open the steward's conversation to read its work and reply">Open chat</button>
         <button class="btn-header-action" style="padding:3px 8px;font-size:11px"
           onclick="stewardOpenCharter('${pid}')" title="Open the project backlog to review the charter + decisions">Charter</button>
+        <button class="btn-header-action" style="padding:3px 8px;font-size:11px"
+          onclick="editSteward('${pid}')" title="Edit the objective (charter) and cadence">Edit</button>
         <button class="btn-header-action" style="padding:3px 8px;font-size:11px;color:var(--red-text);border-color:var(--red)"
           onclick="stewardDisable('${pid}')" title="Stop this steward (kill switch)">Stop</button>
       </div>
@@ -127,8 +129,12 @@ function setStewardScope(scope) {
   if (f) f.innerHTML = _stewardScopeField(scope);
 }
 
+// null = creating a new steward; a project id = editing that steward in place.
+let stewardEditPid = null;
+
 function showStewardForm() {
-  if (stewardFormOpen) { hideStewardForm(); return; }
+  if (stewardFormOpen && !stewardEditPid) { hideStewardForm(); return; }
+  stewardEditPid = null;
   stewardFormOpen = true;
   stewardScope = 'project';
   const area = document.getElementById('steward-form-area');
@@ -140,13 +146,7 @@ function showStewardForm() {
       <button class="sched-type-btn" data-scope="standalone" onclick="setStewardScope('standalone')">Standalone</button>
     </div>
     <div id="steward-scope-field">${_stewardScopeField('project')}</div>
-    <label>Objective <span class="memory-hint" style="margin:0;font-weight:normal">(what the steward is responsible for — its charter)</span></label>
-    <textarea id="steward-objective" rows="2" placeholder="e.g. Keep the README and docs in sync with the code; open a decision when a release is warranted."></textarea>
-    <label>Cadence (minutes between cycles)</label>
-    <input type="number" id="steward-cadence" value="180" min="30" max="1440" step="30">
-    <div class="memory-hint" style="margin:6px 0 0;font-size:11px">🛡 Reversible work runs unattended. Anything
-      irreversible (push, deploy, delete, external send, spend) is <b>hard-blocked</b> — the steward must post a
-      decision for you to approve.</div>
+    ${_stewardObjectiveCadenceHTML('', 180)}
     <div class="sched-actions">
       <button class="btn-sched-save" onclick="createSteward()">Start steward</button>
       <button class="btn-sched-cancel" onclick="hideStewardForm()">Cancel</button>
@@ -154,8 +154,47 @@ function showStewardForm() {
   </div>`;
 }
 
+// Objective + cadence + fence note — shared by the create and edit forms.
+function _stewardObjectiveCadenceHTML(objective, cadence) {
+  return `<label>Objective <span class="memory-hint" style="margin:0;font-weight:normal">(what the steward is responsible for — its charter)</span></label>
+    <textarea id="steward-objective" rows="3" placeholder="e.g. Keep the README and docs in sync with the code; open a decision when a release is warranted.">${esc(objective || '')}</textarea>
+    <label>Cadence (minutes between cycles)</label>
+    <input type="number" id="steward-cadence" value="${cadence || 180}" min="30" max="1440" step="30">
+    <div class="memory-hint" style="margin:6px 0 0;font-size:11px">🛡 Reversible work runs unattended. Anything
+      irreversible (push, deploy, delete, external send, spend) is <b>hard-blocked</b> — the steward must post a
+      decision for you to approve.</div>`;
+}
+
+// Open the form pre-filled to EDIT an existing steward's objective + cadence.
+// Scope/project can't change on an edit (that would be a different steward), so
+// the picker is replaced by a static label. Save posts to the same idempotent
+// enable endpoint, which updates config, charter text, and the schedule in place.
+async function editSteward(pid) {
+  const area = document.getElementById('steward-form-area');
+  if (!area) return;
+  let st;
+  try {
+    st = await fetch(`${API_BASE}/api/project/${encodeURIComponent(pid)}/steward`).then(r => r.json());
+  } catch (e) { if (window.showToast) showToast('Could not load steward config.', 4000); return; }
+  stewardEditPid = pid;
+  stewardFormOpen = true;
+  const label = (typeof allProjects !== 'undefined' ? allProjects : []).find(p => p.id === pid);
+  const projName = label ? label.name : pid;
+  area.innerHTML = `<div class="schedule-form">
+    <label>Editing steward</label>
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px">${esc(projName)}</div>
+    ${_stewardObjectiveCadenceHTML(st.objective || '', st.cadence_minutes || 180)}
+    <div class="sched-actions">
+      <button class="btn-sched-save" onclick="createSteward()">Save changes</button>
+      <button class="btn-sched-cancel" onclick="hideStewardForm()">Cancel</button>
+    </div>
+  </div>`;
+  area.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 function hideStewardForm() {
   stewardFormOpen = false;
+  stewardEditPid = null;
   const area = document.getElementById('steward-form-area');
   if (area) area.innerHTML = '';
 }
@@ -166,7 +205,13 @@ async function createSteward() {
   if (!objective) { alert('An objective is required — it is the steward’s field of responsibility.'); return; }
 
   let url, body;
-  if (stewardScope === 'standalone') {
+  if (stewardEditPid) {
+    // Edit in place — the per-project enable endpoint is idempotent and updates
+    // objective, cadence, charter text, and the schedule. Works for standalone
+    // stewards too (their pid is a real _steward_ project record).
+    url = `${API_BASE}/api/project/${encodeURIComponent(stewardEditPid)}/steward/enable`;
+    body = { objective, cadence_minutes: cadence };
+  } else if (stewardScope === 'standalone') {
     const name = (document.getElementById('steward-name')?.value || '').trim();
     if (!name) { alert('Give the standalone steward a name.'); return; }
     url = `${API_BASE}/api/steward/standalone/enable`;
@@ -177,16 +222,17 @@ async function createSteward() {
     url = `${API_BASE}/api/project/${encodeURIComponent(pid)}/steward/enable`;
     body = { objective, cadence_minutes: cadence };
   }
+  const editing = !!stewardEditPid;
   try {
     const res = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (!res.ok || !data.ok) { alert(data.error || 'Failed to start steward'); return; }
+    if (!res.ok || !data.ok) { alert(data.error || 'Failed to save steward'); return; }
     if (data.fenced === false && window.showToast)
-      showToast('Steward started, but the safety fence could NOT be installed — running unfenced.', 8000);
-    else if (window.showToast) showToast('Steward started.', 3000);
+      showToast('Saved, but the safety fence could NOT be installed — running unfenced.', 8000);
+    else if (window.showToast) showToast(editing ? 'Steward updated.' : 'Steward started.', 3000);
     hideStewardForm();
     await renderStewards();
     if (window.refreshScheduleList) refreshScheduleList();
@@ -205,6 +251,7 @@ async function stewardDisable(pid) {
 // ── Interop exports (runtime-resolved; matches scheduler.js convention) ──
 window.renderStewards = renderStewards;
 window.showStewardForm = showStewardForm;
+window.editSteward = editSteward;
 window.setStewardScope = setStewardScope;
 window.hideStewardForm = hideStewardForm;
 window.createSteward = createSteward;

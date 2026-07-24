@@ -189,3 +189,33 @@ def test_disable_preserves_user_hooks(sclient):
     cmds = [h['command'] for e in pre for h in e['hooks']]
     assert 'echo user-hook' in cmds                    # user hook survived
     assert not any('fence.py' in c for c in cmds)       # steward hook gone
+
+
+def test_edit_updates_objective_cadence_and_charter(sclient):
+    """Re-enabling an existing steward EDITS it in place: objective, cadence, the
+    pinned charter item's text, and the schedule interval — without duplicating
+    the charter or the schedule. Backs the Automation-modal 'Edit' button."""
+    client, proj_path, pr, sr = sclient
+    r1 = client.post('/api/project/p1/steward/enable',
+                     json={'objective': 'First mandate', 'cadence_minutes': 60})
+    assert r1.status_code == 200
+    cid1 = r1.get_json()['charter_item_id']
+
+    r2 = client.post('/api/project/p1/steward/enable',
+                     json={'objective': 'Second, revised mandate', 'cadence_minutes': 120})
+    assert r2.status_code == 200
+    body = r2.get_json()
+    assert body['cadence_minutes'] == 120
+    assert body['charter_item_id'] == cid1          # same charter, not a new one
+
+    p = pr.load_project('p1')
+    assert p['steward_objective'] == 'Second, revised mandate'
+    assert p['steward_cadence_minutes'] == 120
+    charters = [it for it in p['backlog'] if it.get('source') == 'steward-charter']
+    assert len(charters) == 1                        # not duplicated
+    assert charters[0]['text'] == 'STEWARD CHARTER: Second, revised mandate'
+
+    scheds = json.loads((sr.SCHEDULES_PATH).read_text(encoding='utf-8'))
+    steward_scheds = [s for s in scheds if s.get('steward') and s['project_id'] == 'p1']
+    assert len(steward_scheds) == 1                  # schedule updated, not duplicated
+    assert steward_scheds[0]['interval_minutes'] == 120

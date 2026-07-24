@@ -117,6 +117,22 @@ def _do_enable(project_id, objective, cadence):
     if charter is None:
         return {'error': 'could not create charter'}, 500
 
+    # 2b. ensure_charter is find-or-create — on an EDIT the objective changed but
+    # the existing charter item's text is stale. Sync it so the pinned charter
+    # record matches the (possibly edited) objective. build_cycle_task already
+    # reads the fresh steward_objective, so the cycle prompt was never stale;
+    # this keeps the human-visible charter item in step too.
+    want_text = _core.CHARTER_PREFIX + objective
+    p_c = load_project(project_id)
+    if p_c is not None and charter.get('text') != want_text:
+        for it in (p_c.get('backlog') or []):
+            if it.get('id') == charter.get('id'):
+                it['text'] = want_text
+                break
+        p_c['last_updated'] = now_iso()
+        save_project(project_id, p_c)
+        charter['text'] = want_text
+
     # 3. Install the reversibility fence into the project's .claude/settings.json.
     project_path = p.get('project_path', '')
     fenced = _core.install_fence_to_project(project_path) if project_path else False
