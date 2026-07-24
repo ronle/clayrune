@@ -753,6 +753,11 @@ def _seed_onboarding_project() -> bool:
     project = {
         'id': pid,
         'name': 'Clayrune',
+        # Marks this as the seeded onboarding starter (not a real user project).
+        # The frontend's first-run walkthrough detection excludes it from the
+        # "real project count" via isOnboardingProject() so a fresh install still
+        # auto-starts the tour despite the startup seed guaranteeing count >= 1.
+        '_is_onboarding_project': True,
         'domain': 'general',
         'status': 'active',
         'project_path': str(workspace),

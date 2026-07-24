@@ -6,6 +6,44 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-07-24] — First-run UX: Claude auth gate + walkthrough auto-start
+
+Three first-run fixes surfaced by a clean-VM install test (the installer flow
+itself is unchanged — these are all app-side).
+
+**1. First-run Claude auth gate.** A fresh install could complete, open a
+project, and dispatch a prompt before ever learning the CLI wasn't signed in —
+the user only saw a cryptic mid-run "unauthenticated" error. Root cause:
+`_claude_auth_state` defaults optimistically to `ok:True` and is only flipped by
+a *failing* run, and `/api/claude/auth-status` returns that cached optimism, so
+the sign-in banner stayed hidden until after the first doomed dispatch. Fixes:
+- **Startup probe** (`server.py`): a best-effort background `_run_claude_auth_probe`
+  fires once at boot so the auth state reflects reality before any dispatch —
+  covers all clients (web + mobile), no frontend needed.
+- **Boot-time probe fallback** (`provider-auth.js`): if the frontend reads an
+  unverified optimistic state (`ok:true`, no `last_probe_at`) it kicks a one-time
+  probe and re-renders, closing the startup race.
+- **Dispatch gate** (`resume-preview.js`): a *confirmed* not-signed-in claude
+  verdict refuses to fire the dispatch and surfaces the sign-in CTA instead
+  (never blocks on unknown state or other providers).
+- Friendlier banner copy: "Log in to Claude to get started…".
+- *Installer finding (not changed, by design):* `install.ps1`'s `Test-ClaudeAuth`
+  only greps for `not logged in` / `please run /login` and returns `$true` on any
+  other output or non-zero exit — a false-positive-prone check that lets an
+  unauthenticated state whose message differs slip through as "authenticated".
+  The robust fix is the app-side gate above.
+
+**2. Onboarding project name.** Already on-brand ("Clayrune", since the
+2026-05-08 rename) — no "Sample Project" string remains in source. No change
+needed; verified.
+
+**3. Walkthrough not auto-starting on fresh installs.** The onboarding
+`clayrune` project is seeded at startup, so `realProjectCount` was always ≥ 1 and
+the `=== 0` first-run gate never fired. Fix: `isOnboardingProject()` excludes the
+seeded starter from the first-run count (mirrors the incognito/steward
+exclusions); the project dict now carries an `_is_onboarding_project` marker,
+with an `id === 'clayrune'` fallback for already-seeded installs.
+
 ## [2026-07-23] — Installer + auto-update: three clean-VM smoke-test bugs
 
 A real clean-VM install (2026-07-23) completed end to end — download → deps →

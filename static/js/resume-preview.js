@@ -285,6 +285,24 @@ async function dispatchAgent(projectId) {
   const pName = (allProjects.find(x => x.id === projectId) || {}).name || projectId;
   const _projForProv = allProjects.find(x => x.id === projectId);
   const _chosenProvider = _composerProvider(_projForProv);
+
+  // First-run auth gate: don't fire a doomed Claude dispatch when a probe has
+  // CONFIRMED the CLI isn't signed in — surface the sign-in CTA up front instead
+  // of letting the user hit a cryptic mid-run 'unauthenticated' error. Only
+  // blocks on a confirmed-bad claude verdict (never on unknown, never for other
+  // providers), so it can't wedge a legitimate dispatch.
+  if ((_chosenProvider === 'claude' || !_chosenProvider) &&
+      typeof window.claudeAuthKnownBad === 'function' && window.claudeAuthKnownBad()) {
+    input.value = task;  // restore the prompt we cleared above
+    if (typeof window.refreshAuthStatus === 'function') window.refreshAuthStatus();
+    const banner = document.getElementById('auth-banner');
+    if (banner) banner.classList.remove('hidden');
+    if (typeof showToast === 'function')
+      showToast("Log in to Claude first — click 'Authenticate Claude' in the banner at the top.", 8000);
+    else alert('Log in to Claude to get started — agents can\'t run until you\'re signed in.');
+    return;
+  }
+
   const incognitoFlag = !!getIncognitoFor(projectId);
   // Per-chat persona — only on a FRESH chat (resume keeps the original
   // spawn's persona; claude -r can't change the system prompt). The value

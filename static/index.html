@@ -1204,6 +1204,16 @@ function isStewardWorkspace(p) {
   return !!(p && (p._is_steward_workspace || String(p.id || '').startsWith('_steward_')));
 }
 
+// The onboarding starter project ('clayrune') is seeded at server startup so
+// that skipping the tour still leaves a usable project. It's a REAL project
+// (shown in the grid) but must NOT count as a "real user project" for first-run
+// detection — the seed guarantees count >= 1, which would otherwise suppress the
+// auto-start walkthrough on the exact fresh installs it's meant for. The id
+// fallback covers installs seeded before the _is_onboarding_project marker.
+function isOnboardingProject(p) {
+  return !!(p && (p._is_onboarding_project || p.id === 'clayrune'));
+}
+
 function filterProjects() {
   // Hide the global incognito pseudo-project from regular listings — it's
   // surfaced via the dedicated "Incognito" sidebar entry instead.
@@ -2919,7 +2929,7 @@ fetchProjects().then(async () => {
   // Filter out the auto-created `_incognito` pseudo-project — it always exists
   // even on fresh installs, so counting it would suppress the walkthrough on
   // the exact users it's meant for.
-  const realProjectCount = allProjects.filter(p => !isIncognitoProject(p) && !isStewardWorkspace(p)).length;
+  const realProjectCount = allProjects.filter(p => !isIncognitoProject(p) && !isStewardWorkspace(p) && !isOnboardingProject(p)).length;
   if (realProjectCount === 0 && !localStorage.getItem('walkthrough_done')) {
     setTimeout(() => startWalkthrough(), 600);
   }
