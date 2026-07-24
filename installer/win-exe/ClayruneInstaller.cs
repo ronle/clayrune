@@ -21,11 +21,22 @@
 using System;
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
 
 internal static class ClayruneInstaller
 {
     private const string DefaultPs1Url =
         "https://raw.githubusercontent.com/ronle/clayrune/master/installer/install.ps1";
+
+    // Exit codes returned by installer/install.ps1. This is a CONTRACT — see
+    // the "EXIT CODES" block at the top of that file. Keep them in sync.
+    private const int RcOk           = 0;
+    private const int RcPrereq       = 1;  // Node / Claude CLI / runtime shell
+    private const int RcInstallStep  = 2;  // a [STEP n/5] failed
+    private const int RcNotLoggedIn  = 3;  // Claude CLI present but not authed
+
+    // Held for the process lifetime — see AcquireSingleInstance().
+    private static Mutex _instanceLock;
 
     private static string Ps1Url()
     {
@@ -33,10 +44,45 @@ internal static class ClayruneInstaller
         return string.IsNullOrWhiteSpace(o) ? DefaultPs1Url : o;
     }
 
+    // One launch = one installer. A clean-VM smoke test (2026-07-23) saw a
+    // single double-click produce TWO "Clayrune Installer" windows; the stray
+    // second run raced the first one's `git clone`/`git pull` and left the
+    // checkout diverged from origin, which then broke every later update.
+    //
+    // Note: there is no self-relaunch in this file, so the duplicate came from
+    // outside it (Explorer double-activation / SmartScreen re-launch / a second
+    // human double-click). A named mutex makes the symptom impossible whatever
+    // the cause, and — more importantly — makes two concurrent installs writing
+    // the same directory impossible.
+    //
+    // The loser exits IMMEDIATELY with no pause, so a spurious second window
+    // closes on its own and the user is left looking at exactly one. The line
+    // it prints is still visible when the exe is run from an existing console.
+    // Never let a mutex problem block a real install: on any failure, proceed.
+    private static bool AcquireSingleInstance()
+    {
+        try
+        {
+            bool createdNew;
+            _instanceLock = new Mutex(true, @"Local\ClayruneInstaller.SingleInstance", out createdNew);
+            return createdNew;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
     private static int Main()
     {
         try { Console.OutputEncoding = Encoding.UTF8; } catch { /* legacy console */ }
         Console.Title = "Clayrune Installer";
+
+        if (!AcquireSingleInstance())
+        {
+            Console.WriteLine("Clayrune Installer is already running in another window.");
+            return RcOk;
+        }
 
         Console.WriteLine();
         Console.WriteLine("============================================================");
@@ -86,18 +132,57 @@ internal static class ClayruneInstaller
 
             Console.WriteLine("  Installer paused.");
             Console.WriteLine();
-            Console.WriteLine("  Most often this means Claude CLI isn't logged in yet. The");
-            Console.WriteLine("  full output above shows what happened. We can handle the");
-            Console.WriteLine("  login for you - just pick L below.");
+
+            // Diagnose the ACTUAL failure. Previously every non-zero exit was
+            // reported as "you probably aren't logged in", which sent a user
+            // through a pointless OAuth login while the real failure was git
+            // (clean-VM smoke test, 2026-07-23) — they logged in and hit the
+            // identical error. Offer [L] only when login is plausibly the fix.
+            bool offerLogin = (rc == RcNotLoggedIn || rc == RcPrereq);
+            switch (rc)
+            {
+                case RcNotLoggedIn:
+                    Console.WriteLine("  Claude CLI is installed but not logged in yet.");
+                    Console.WriteLine("  We can handle the login for you - pick L below.");
+                    break;
+                case RcInstallStep:
+                    Console.WriteLine("  An install step failed. Scroll up to the red line that");
+                    Console.WriteLine("  starts with [STEP n/5] FAIL - it names the exact step and");
+                    Console.WriteLine("  what to do about it.");
+                    Console.WriteLine();
+                    Console.WriteLine("  This is NOT a login problem, so logging in will not help.");
+                    Console.WriteLine("  Common causes: no internet, git/Python missing or blocked");
+                    Console.WriteLine("  by antivirus, or a damaged checkout in %USERPROFILE%\\Clayrune.");
+                    break;
+                case RcPrereq:
+                    Console.WriteLine("  A prerequisite could not be installed (Node.js, Git, or the");
+                    Console.WriteLine("  Claude CLI). The output above says which one and how to");
+                    Console.WriteLine("  install it by hand.");
+                    Console.WriteLine();
+                    Console.WriteLine("  If the output above says \"not authenticated\", pick L.");
+                    Console.WriteLine("  Otherwise install the missing piece first, then pick R.");
+                    break;
+                default:
+                    Console.WriteLine("  The installer stopped with an unexpected error (exit code "
+                                      + rc + ").");
+                    Console.WriteLine("  The full output above shows what happened.");
+                    offerLogin = true;
+                    break;
+            }
             Console.WriteLine("============================================================");
             Console.WriteLine();
             Console.WriteLine("  What now?");
-            Console.WriteLine("    [L] Log me in to Claude now (opens browser, then re-runs installer)");
+            if (offerLogin)
+                Console.WriteLine("    [L] Log me in to Claude now (opens browser, then re-runs installer)");
             Console.WriteLine("    [R] Retry the installer (if you've already fixed the issue)");
             Console.WriteLine("    [Q] Quit and close this window");
             Console.WriteLine();
 
-            char choice = ReadChoice("Press L, R, or Q then Enter: ", "LRQ");
+            string allowed = offerLogin ? "LRQ" : "RQ";
+            string prompt = offerLogin
+                ? "Press L, R, or Q then Enter: "
+                : "Press R or Q then Enter: ";
+            char choice = ReadChoice(prompt, allowed);
             if (choice == 'Q') return rc;
             if (choice == 'L') DoLogin();
             // L and R both fall through to the top of the loop (re-run).

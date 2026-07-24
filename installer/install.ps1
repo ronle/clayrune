@@ -20,6 +20,17 @@
 # Override URLs (for testing):
 #   $env:CLAYRUNE_PROMPT_URL = '...'
 #   $env:CLAYRUNE_NO_CONFIRM = '1'   # skip the 5-second abort window
+#
+# EXIT CODES — a contract, not an accident. installer/win-exe/ClayruneInstaller.cs
+# maps these to the remediation menu it shows the user, so DO NOT reuse or
+# renumber them without updating that file too. (Before 2026-07-23 everything
+# non-zero was reported to the user as "you probably aren't logged in", which
+# sent someone through a pointless OAuth login when the real failure was git.)
+#
+#   0  success
+#   1  a prerequisite could not be installed (Node.js / Claude CLI / runtime shell)
+#   2  a deterministic install step failed — see the red "[STEP n/5] FAIL" line
+#   3  Claude CLI is installed but NOT AUTHENTICATED (this and only this = login)
 
 $ErrorActionPreference = 'Stop'
 
@@ -598,7 +609,10 @@ if (-not (Test-ClaudeAuth)) {
     Write-Host '         $env:CLAYRUNE_PROMPT_URL = ''https://raw.githubusercontent.com/ronle/clayrune/master/installer/install-prompt.md''' -ForegroundColor Cyan
     Write-Host '         iwr https://raw.githubusercontent.com/ronle/clayrune/master/installer/install.ps1 -useb | iex' -ForegroundColor Cyan
     Write-Host ''
-    exit 1
+    # Exit code 3 = "not authenticated", specifically. See the EXIT CODES
+    # contract at the top of this file: ClayruneInstaller.exe keys its
+    # remediation menu off this, so only THIS path may return 3.
+    [Environment]::Exit(3)
 }
 Write-Host 'OK Authenticated' -ForegroundColor Green
 Write-Host ''
@@ -636,14 +650,57 @@ if (-not $env:CLAYRUNE_NO_CONFIRM) {
 Write-Host ''
 
 # -- [STEP 1/5] Clone or update the repository -----------------------------
+#
+# LOAD-BEARING: `git pull --ff-only` alone is NOT enough. When the release
+# branch is force-pushed upstream, ff-only aborts outright
+# ("fatal: Not possible to fast-forward, aborting") and every EXISTING install
+# is bricked - it can never update again, silently. Observed on a clean VM
+# 2026-07-23. So: try ff-only first (cheapest, preserves any local commits);
+# if that fails, re-sync hard to the remote tip.
+#
+# `git reset --hard` only rewrites TRACKED files. Every piece of user data in
+# this checkout is untracked or gitignored - data\, data\projects\, config.json,
+# data\settings.json, data\logs\, .venv\ - so it all survives untouched.
+# NEVER add `git clean` here: that WOULD delete it.
+$env:GIT_TERMINAL_PROMPT = '0'   # fail fast instead of popping a credential dialog
 Write-Host '[STEP 1/5] Cloning repository...' -ForegroundColor White
 if (Test-Path $installDir) {
     if (Test-Path (Join-Path $installDir '.git')) {
         Write-Host "  Existing checkout at $installDir - pulling latest."
         & git -C $installDir pull --ff-only
         if ($LASTEXITCODE -ne 0) {
-            Write-Host '[STEP 1/5] FAIL git pull failed' -ForegroundColor Red
-            [Environment]::Exit(2)
+            Write-Host ''
+            Write-Host '  Fast-forward pull failed (upstream history was rewritten).' -ForegroundColor Yellow
+            Write-Host '  Re-syncing this checkout to the remote tip instead.' -ForegroundColor Yellow
+            Write-Host '  Your data is untouched: data\, config.json, .venv\ are not tracked by git.' -ForegroundColor Yellow
+
+            & git -C $installDir fetch --prune origin
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host '[STEP 1/5] FAIL git fetch failed - check your network connection.' -ForegroundColor Red
+                [Environment]::Exit(2)
+            }
+
+            # Which remote branch to land on. Detached HEAD (or an unknown
+            # local branch) falls back to master, the release channel.
+            $branch = (& git -C $installDir rev-parse --abbrev-ref HEAD 2>$null | Out-String).Trim()
+            if (-not $branch -or $branch -eq 'HEAD') { $branch = 'master' }
+            & git -C $installDir rev-parse --verify --quiet "refs/remotes/origin/$branch" *> $null
+            if ($LASTEXITCODE -ne 0) { $branch = 'master' }
+
+            $oldSha = (& git -C $installDir rev-parse --short HEAD 2>$null | Out-String).Trim()
+            & git -C $installDir reset --hard "origin/$branch"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[STEP 1/5] FAIL could not re-sync $installDir to origin/$branch." -ForegroundColor Red
+                Write-Host '          The checkout looks unusable. Move it aside and re-run this' -ForegroundColor Red
+                Write-Host '          installer to get a fresh clone:' -ForegroundColor Red
+                Write-Host "          Rename-Item '$installDir' '$installDir.old'" -ForegroundColor Cyan
+                Write-Host '          (your projects live in the .old copy under data\ - copy them back after)' -ForegroundColor Red
+                [Environment]::Exit(2)
+            }
+            if ($oldSha) {
+                Write-Host "  Re-synced to origin/$branch. Previous commit was $oldSha" -ForegroundColor DarkGray
+                Write-Host "  (recover it with: git -C '$installDir' reset --hard $oldSha)" -ForegroundColor DarkGray
+            }
         }
     } else {
         Write-Host "[STEP 1/5] FAIL $installDir exists but is not a git checkout." -ForegroundColor Red

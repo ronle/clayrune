@@ -12,8 +12,17 @@ $ErrorActionPreference = 'Stop'
 $here    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $src     = Join-Path $here 'ClayruneInstaller.cs'
 $repo    = Resolve-Path (Join-Path $here '..\..')
-$icon    = Join-Path $repo 'src-tauri\icons\icon.ico'
 $outExe  = Join-Path $repo 'installer\Clayrune-Installer.exe'
+
+# Icon. assets\clayrune.ico is the TRACKED one and the only reliable choice —
+# src-tauri\icons\ is untracked build scaffolding that is absent from a fresh
+# clone (and from this repo since the Tauri experiment was dropped), which made
+# this script unrunnable: it hard-failed on a missing icon before compiling.
+$iconCandidates = @(
+    (Join-Path $repo 'assets\clayrune.ico'),
+    (Join-Path $repo 'src-tauri\icons\icon.ico')
+)
+$icon = $iconCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 # Locate csc.exe — prefer 64-bit Framework, fall back to 32-bit.
 $cscCandidates = @(
@@ -28,11 +37,10 @@ if (-not $csc) {
     exit 1
 }
 if (-not (Test-Path $src))  { Write-Host "ERROR: missing $src"  -ForegroundColor Red; exit 1 }
-if (-not (Test-Path $icon)) { Write-Host "ERROR: missing $icon" -ForegroundColor Red; exit 1 }
 
 Write-Host "csc : $csc"
 Write-Host "src : $src"
-Write-Host "icon: $icon"
+Write-Host "icon: $(if ($icon) { $icon } else { '(none found - building without one)' })"
 Write-Host "out : $outExe"
 Write-Host ''
 
@@ -40,11 +48,13 @@ $args = @(
     '/nologo',
     '/target:exe',
     '/platform:anycpu',
-    '/optimize+',
-    "/win32icon:$icon",
-    "/out:$outExe",
-    $src
+    '/optimize+'
 )
+# A missing icon is cosmetic — never let it block a build of the installer.
+if ($icon) { $args += "/win32icon:$icon" } else {
+    Write-Host 'WARN: no .ico found; the exe will use the default icon.' -ForegroundColor Yellow
+}
+$args += @("/out:$outExe", $src)
 & $csc @args
 if ($LASTEXITCODE -ne 0) {
     Write-Host "csc failed (exit $LASTEXITCODE)" -ForegroundColor Red

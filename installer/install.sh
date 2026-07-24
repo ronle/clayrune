@@ -359,7 +359,8 @@ elif ! _check_claude_auth; then
   printf "         (After you see \"Logged in\", type %sexit%s or press Ctrl+D to leave the Claude REPL.)\n\n" "$C" "$R"
   printf "%sStep 2.%s Re-run this installer:\n" "$B" "$R"
   printf "         %scurl -sSL https://clayrune.io/install.sh | sh%s\n" "$C" "$R"
-  exit 1
+  # 3 = "not authenticated", matching install.ps1's exit-code contract.
+  exit 3
 else
   printf "%sOK%s Authenticated\n\n" "$G" "$R"
 fi
@@ -411,9 +412,36 @@ printf "%s[STEP 1/5]%s Cloning repository...\n" "$B" "$R"
 if [ -d "$INSTALL_DIR" ]; then
   if [ -d "$INSTALL_DIR/.git" ]; then
     printf "  Existing checkout at %s — pulling latest.\n" "$INSTALL_DIR"
+    # LOAD-BEARING: ff-only aborts outright when the release branch is
+    # force-pushed upstream ("Not possible to fast-forward"), which bricks
+    # every existing install permanently and silently. Fall back to a hard
+    # re-sync. `reset --hard` rewrites TRACKED files only — data/, config.json,
+    # .venv/ are untracked/ignored and survive. NEVER add `git clean` here.
+    export GIT_TERMINAL_PROMPT=0
     if ! git -C "$INSTALL_DIR" pull --ff-only; then
-      printf "%s[STEP 1/5] FAIL%s git pull failed\n" "$E" "$R"
-      exit 2
+      printf "\n  %sFast-forward pull failed (upstream history was rewritten).%s\n" "$Y" "$R"
+      printf "  %sRe-syncing to the remote tip. Your data (data/, config.json, .venv/) is untouched.%s\n" "$Y" "$R"
+      if ! git -C "$INSTALL_DIR" fetch --prune origin; then
+        printf "%s[STEP 1/5] FAIL%s git fetch failed — check your network connection.\n" "$E" "$R"
+        exit 2
+      fi
+      _branch=$(git -C "$INSTALL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')
+      if [ -z "$_branch" ] || [ "$_branch" = "HEAD" ]; then _branch=master; fi
+      if ! git -C "$INSTALL_DIR" rev-parse --verify --quiet "refs/remotes/origin/$_branch" >/dev/null 2>&1; then
+        _branch=master
+      fi
+      _old_sha=$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || echo '')
+      if ! git -C "$INSTALL_DIR" reset --hard "origin/$_branch"; then
+        printf "%s[STEP 1/5] FAIL%s could not re-sync %s to origin/%s.\n" "$E" "$R" "$INSTALL_DIR" "$_branch"
+        printf "          Move it aside and re-run for a fresh clone:\n"
+        printf "          %smv '%s' '%s.old'%s\n" "$C" "$INSTALL_DIR" "$INSTALL_DIR" "$R"
+        printf "          (your projects live in the .old copy under data/ — copy them back after)\n"
+        exit 2
+      fi
+      if [ -n "$_old_sha" ]; then
+        printf "  Re-synced to origin/%s. Previous commit was %s\n" "$_branch" "$_old_sha"
+        printf "  (recover it with: git -C '%s' reset --hard %s)\n" "$INSTALL_DIR" "$_old_sha"
+      fi
     fi
   else
     printf "%s[STEP 1/5] FAIL%s %s exists but is not a git checkout.\n" "$E" "$R" "$INSTALL_DIR"

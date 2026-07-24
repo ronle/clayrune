@@ -1012,6 +1012,24 @@ def system_restart_status():
 
 # ── Update Clayrune (git pull from inside the dashboard) ───────────────────
 
+# "Is the working tree dirty enough that updating would destroy the user's
+# work?" — asked before every update, and used for the UI's update-available
+# badge.
+#
+# `-uno` (don't list untracked files) is LOAD-BEARING. Clayrune's own user data
+# lives INSIDE the checkout (data/projects/, config.json, data/logs/, .venv/),
+# and so does anything the user happens to drop in the install dir. Plain
+# `--porcelain` reports all of that as "local changes", so a single stray
+# untracked file made this endpoint answer 409 forever and set
+# update_available=False — the install could never update again, with no
+# indication why. Untracked files are user data, not edits to our source; the
+# question here is only about MODIFIED TRACKED files.
+#
+# Narrow accepted trade-off: if the user parks a file at a path a future commit
+# also adds, the update overwrites it. That beats never updating at all.
+_DIRTY_TREE_ARGS = ['status', '--porcelain', '-uno']
+
+
 def _git(args, cwd, timeout=30):
     """Run git with the given args in cwd. Returns (returncode, stdout+stderr).
 
@@ -1111,7 +1129,7 @@ def system_update_status():
             pass
 
     # Detect dirty working tree (uncommitted changes that would block pull).
-    rc, status_out = _git(['status', '--porcelain'], repo_root)
+    rc, status_out = _git(_DIRTY_TREE_ARGS, repo_root)
     has_local_changes = bool(status_out)
 
     # Remote tip SHA + commit dates, so the UI can show "installed X (date) →
@@ -1182,7 +1200,7 @@ def _refresh_update_cache():
         except Exception:
             pass
 
-    rc, status_out = _git(['status', '--porcelain'], repo_root)
+    rc, status_out = _git(_DIRTY_TREE_ARGS, repo_root)
     has_local_changes = bool(status_out)
 
     rc, remote_sha = _git(['rev-parse', '--short', f'origin/{current_branch}'], repo_root)
@@ -1244,15 +1262,27 @@ def system_update_cached():
 
 @bp.route('/api/system/update', methods=['POST'])
 def system_update():
-    """Run `git pull --ff-only` in the install dir. The Settings UI calls this
+    """Update the install dir to the remote tip. The Settings UI calls this
     after the user confirms. Returns the git output so the user sees what
     changed. Does NOT auto-restart — the UI prompts the user separately.
+
+    LOAD-BEARING: `git pull --ff-only` is tried first, but it is NOT sufficient
+    on its own. When the release branch is force-pushed upstream, ff-only
+    aborts ("fatal: Not possible to fast-forward, aborting") and this endpoint —
+    the ONLY update channel most users have — fails forever, silently. So we
+    fall back to `fetch` + `reset --hard origin/<branch>`.
+
+    Safe because: (a) we already refused above if the working tree is dirty, and
+    (b) `reset --hard` rewrites TRACKED files only. All user data lives in
+    untracked/gitignored paths (data/projects/, data/settings.json, config.json,
+    data/logs/, .venv/) and is untouched. NEVER add `git clean` here — that
+    WOULD delete it.
     """
     repo_root = _APP_DIR  # repo root in dev, app dir frozen; __file__ here is mc/blueprints/ — not the checkout
     if not (repo_root / '.git').exists():
         return jsonify({'error': 'install dir is not a git checkout'}), 400
 
-    rc, status_out = _git(['status', '--porcelain'], repo_root)
+    rc, status_out = _git(_DIRTY_TREE_ARGS, repo_root)
     if rc != 0:
         return jsonify({'error': f'git status failed: {status_out}'}), 500
     if status_out:
@@ -1262,18 +1292,54 @@ def system_update():
             'hint': 'Stash or commit local changes, then re-try.',
         }), 409
 
+    rc_old, old_sha = _git(['rev-parse', '--short', 'HEAD'], repo_root)
+    previous_commit = old_sha if rc_old == 0 else ''
+
+    resynced = False
     rc, pull_out = _git(['pull', '--ff-only', '--quiet'], repo_root, timeout=60)
     if rc != 0:
-        return jsonify({
-            'error': f'git pull failed (rc={rc})',
-            'detail': pull_out[:1000],
-        }), 500
+        _log(f"[update] ff-only pull failed (rc={rc}); falling back to hard "
+             f"re-sync. git said: {pull_out[:300]}", flush=True)
+
+        rc_f, fetch_out = _git(['fetch', '--prune', 'origin'], repo_root, timeout=60)
+        if rc_f != 0:
+            return jsonify({
+                'error': f'git fetch failed (rc={rc_f})',
+                'detail': fetch_out[:1000],
+                'hint': 'Check network connectivity to github.com.',
+            }), 500
+
+        rc_b, branch = _git(['rev-parse', '--abbrev-ref', 'HEAD'], repo_root)
+        branch = (branch or '').strip() if rc_b == 0 else ''
+        if not branch or branch == 'HEAD':
+            branch = 'master'  # detached HEAD → land on the release channel
+        rc_v, _ = _git(['rev-parse', '--verify', '--quiet',
+                        f'refs/remotes/origin/{branch}'], repo_root)
+        if rc_v != 0:
+            branch = 'master'
+
+        rc_r, reset_out = _git(['reset', '--hard', f'origin/{branch}'],
+                               repo_root, timeout=60)
+        if rc_r != 0:
+            return jsonify({
+                'error': f'git pull failed (rc={rc}) and re-sync to '
+                         f'origin/{branch} failed (rc={rc_r})',
+                'detail': (pull_out + '\n---\n' + reset_out)[:1000],
+                'hint': 'The checkout may be damaged. Re-run the Clayrune '
+                        'installer, or re-clone and copy your data/ dir over.',
+            }), 500
+        resynced = True
 
     rc, new_sha = _git(['rev-parse', '--short', 'HEAD'], repo_root)
     rc2, log_out = _git(['log', '-5', '--pretty=format:%h %s'], repo_root)
     return jsonify({
         'ok': True,
         'new_commit': new_sha if rc == 0 else 'unknown',
+        'previous_commit': previous_commit,
+        # True when ff-only was impossible (upstream force-push) and we had to
+        # reset --hard. Surfaced so the UI can say so, and so previous_commit is
+        # meaningful for recovery: git reset --hard <previous_commit>.
+        'resynced': resynced,
         'recent_log': log_out if rc2 == 0 else '',
         'restart_recommended': True,  # FE should prompt for restart after pull
     })

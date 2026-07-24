@@ -6,6 +6,70 @@
 > Cloud Run service, keystore namespace) intentionally remain "mission-control"
 > to avoid breaking existing installs.
 
+## [2026-07-23] — Installer + auto-update: three clean-VM smoke-test bugs
+
+A real clean-VM install (2026-07-23) completed end to end — download → deps →
+Claude OAuth → clone → dashboard — but surfaced three defects on the way. The
+happy path is unchanged; these are all failure-path fixes.
+
+**The update channel was bricked by our own force-push (CRITICAL).**
+`git pull --ff-only` *aborts* when the remote branch has had its history
+rewritten:
+
+```
++ b82654a...a4a55a8 master (forced update)
+hint: Diverging branches can't be fast-forwarded
+fatal: Not possible to fast-forward, aborting.
+```
+
+`master` **has** been force-pushed, and ff-only is what both the installer's
+existing-checkout path *and* `/api/system/update` ran — so every already-installed
+copy could never update again, silently, with no error surfaced anywhere. All
+three call sites (`installer/install.ps1`, `installer/install.sh`,
+`mc/blueprints/system_routes.py`) now try ff-only first and fall back to
+`git fetch` + `git reset --hard origin/<branch>`.
+
+Safe because `reset --hard` rewrites **tracked** files only, and every piece of
+Clayrune user state inside the checkout is untracked/gitignored —
+`data/projects/`, `config.json`, `data/settings.json`, `data/logs/`, `.venv/`.
+**Never add `git clean` to these paths**; that would delete all of it. The
+endpoint returns `resynced` + `previous_commit` so a hard re-sync is visible and
+reversible (`git reset --hard <previous_commit>`). A dirty tree is still refused
+with 409 rather than reset.
+
+**Untracked files made updates impossible, permanently (found while testing the
+above).** The dirty-tree guard used `git status --porcelain`, which lists
+*untracked* files — so one stray file in the install dir answered 409 forever and
+set `update_available: false`. It's `-uno` now: the question is only about
+modified tracked files. Same silent-brick class as the bug above.
+
+**Truthful failure diagnosis in the installer .exe.** Every non-zero exit was
+reported as *"Most often this means Claude CLI isn't logged in yet… just pick
+L"*. On the smoke test the real failure was git; the user logged in and hit the
+identical error. `install.ps1` now has a documented **exit-code contract**
+(`1` prereq / `2` install step / `3` not authenticated) and
+`ClayruneInstaller.cs` keys its remediation menu off it — `[L]` is only offered
+when login can actually be the fix.
+
+**One launch = one installer.** A single double-click produced two
+"Clayrune Installer" windows; the stray second run raced the first one's clone
+and left the checkout diverged — which is what set up the bug above. There is no
+self-relaunch in `ClayruneInstaller.cs`, so the duplicate originated outside it;
+a named mutex makes the symptom impossible whatever the cause, and makes two
+concurrent installs writing the same directory impossible. The loser prints one
+line and exits immediately.
+
+**Also:** `installer/win-exe/build.ps1` hard-failed on
+`src-tauri\icons\icon.ico`, which no longer exists in the repo — the installer
+.exe could not be rebuilt by anyone. It uses the tracked `assets\clayrune.ico`
+now, and a missing icon is a warning rather than a build failure.
+
+New: `tests/test_system_update_resync.py` (5 tests) builds a real force-pushed
+upstream and asserts recovery, user-data survival, that the happy path still
+takes the plain ff-only route, and that a dirty tree is still refused. It
+includes a control test proving the scenario genuinely breaks bare ff-only, so
+it can't silently stop testing anything.
+
 ## [2026-07-13b] — Control plane: session-auth hardening (night-review findings)
 
 The session-JWT code below shipped unreviewed. The 2026-07-13 night review found
