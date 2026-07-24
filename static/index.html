@@ -395,6 +395,33 @@
 })();
 </script>
 
+<!-- ── ICON SPRITE ──────────────────────────────────────
+     One hidden set of Lucide-style stroke symbols, referenced by <use> from the
+     sidebar and the mobile bottom tabs. They inherit stroke:currentColor (see
+     .si-svg / .bti-svg in app.css), so hover/active recoloring just works and
+     they render identically on every OS — unlike the old emoji glyphs. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="ic-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="ic-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+    <symbol id="ic-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="ic-backlog" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></symbol>
+    <symbol id="ic-automation" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M6.38 18.7 4 21"/><path d="M17.64 18.67 20 21"/></symbol>
+    <symbol id="ic-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol>
+    <symbol id="ic-hivemind" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></symbol>
+    <symbol id="ic-skills" viewBox="0 0 24 24"><path d="M15.5 6a3.5 3.5 0 0 0-6.9-.8L8.5 6H6a2 2 0 0 0-2 2v2.5l.8.1a3.5 3.5 0 0 1 0 6.9l-.8.1V20a2 2 0 0 0 2 2h2.5l-.1-.8a3.5 3.5 0 0 1 6.9 0l-.1.8H18a2 2 0 0 0 2-2v-2.5l-.8-.1a3.5 3.5 0 0 1 0-6.9l.8-.1V8a2 2 0 0 0-2-2h-2.5z"/></symbol>
+    <symbol id="ic-personas" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="ic-media" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></symbol>
+    <symbol id="ic-rules" viewBox="0 0 24 24"><path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/></symbol>
+    <symbol id="ic-processes" viewBox="0 0 24 24"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></symbol>
+    <symbol id="ic-incognito" viewBox="0 0 24 24"><circle cx="6" cy="15" r="4"/><circle cx="18" cy="15" r="4"/><path d="M14 15a2 2 0 0 0-2-2 2 2 0 0 0-2 2"/><path d="M2.5 13 5 7c.7-1.3 1.4-2 3-2"/><path d="M21.5 13 19 7c-.7-1.3-1.5-2-3-2"/></symbol>
+    <symbol id="ic-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="ic-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></symbol>
+    <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="ic-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+  </defs>
+</svg>
+
 <!-- ── SIDEBAR ──────────────────────────────────────── -->
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-logo">
@@ -403,29 +430,29 @@
   </div>
   <div class="sidebar-nav">
     <div class="sidebar-item active" data-nav="dashboard" onclick="sidebarNav('dashboard')">
-      <span class="si-icon">&#x25A6;</span>
+      <span class="si-icon"><svg class="si-svg"><use href="#ic-dashboard"/></svg></span>
       <span class="si-label">Dashboard</span>
     </div>
     <div class="sidebar-item" data-nav="inbox" onclick="sidebarNav('inbox')">
-      <span class="si-icon">&#x1F514;<span class="si-badge" id="sidebar-inbox-badge" hidden></span></span>
+      <span class="si-icon"><svg class="si-svg"><use href="#ic-inbox"/></svg><span class="si-badge" id="sidebar-inbox-badge" hidden></span></span>
       <span class="si-label">Inbox</span>
     </div>
     <div class="sidebar-item si-new" data-nav="new" onclick="openNewProjectForm()">
-      <span class="si-icon">&#x2795;</span>
+      <span class="si-icon"><svg class="si-svg"><use href="#ic-plus"/></svg></span>
       <span class="si-label">New Project</span>
     </div>
 
     <div class="sidebar-section-label">Workspace</div>
     <div class="sidebar-item" data-nav="backlog" onclick="sidebarNav('backlog')">
-      <span class="si-icon">&#x1F4CB;</span>
+      <span class="si-icon"><svg class="si-svg"><use href="#ic-backlog"/></svg></span>
       <span class="si-label">Backlog</span>
     </div>
     <div class="sidebar-item" data-nav="scheduler" onclick="sidebarNav('scheduler')">
-      <span class="si-icon">&#x23F1;</span>
+      <span class="si-icon"><svg class="si-svg"><use href="#ic-automation"/></svg></span>
       <span class="si-label">Automation</span>
     </div>
     <div class="sidebar-item" data-nav="history" onclick="sidebarNav('history')">
-      <span class="si-icon">&#x1F553;</span>
+      <span class="si-icon"><svg class="si-svg"><use href="#ic-history"/></svg></span>
       <span class="si-label">History</span>
     </div>
 
@@ -434,42 +461,42 @@
     </div>
     <div class="sidebar-advanced-group" id="sidebar-advanced-group">
       <div class="sidebar-item si-advanced" data-nav="hivemind" onclick="sidebarNav('hivemind')">
-        <span class="si-icon">&#x1F41D;</span>
+        <span class="si-icon"><svg class="si-svg"><use href="#ic-hivemind"/></svg></span>
         <span class="si-label">Hivemind</span>
       </div>
       <div class="sidebar-item si-advanced" data-nav="skills" onclick="sidebarNav('skills')">
-        <span class="si-icon">&#x1F9E9;</span>
+        <span class="si-icon"><svg class="si-svg"><use href="#ic-skills"/></svg></span>
         <span class="si-label">Skills &amp; MCP</span>
       </div>
       <div class="sidebar-item si-advanced" data-nav="personas" onclick="sidebarNav('personas')" title="Reusable system prompts you can attach to a new chat">
-        <span class="si-icon">&#x1F3AD;</span>
+        <span class="si-icon"><svg class="si-svg"><use href="#ic-personas"/></svg></span>
         <span class="si-label">Personas</span>
       </div>
       <div class="sidebar-item si-advanced" data-nav="media" onclick="sidebarNav('media')" title="Diagrams and images the agent produced">
-        <span class="si-icon">&#x1F5BC;</span>
+        <span class="si-icon"><svg class="si-svg"><use href="#ic-media"/></svg></span>
         <span class="si-label">Media</span>
       </div>
       <div class="sidebar-item si-advanced" data-nav="shared-rules" onclick="sidebarNav('shared-rules')">
-        <span class="si-icon">&#x1F4DC;</span>
+        <span class="si-icon"><svg class="si-svg"><use href="#ic-rules"/></svg></span>
         <span class="si-label">Shared Rules</span>
       </div>
       <div class="sidebar-item si-advanced" data-nav="processes" onclick="sidebarNav('processes')">
-        <span class="si-icon">&#x2630;</span>
+        <span class="si-icon"><svg class="si-svg"><use href="#ic-processes"/></svg></span>
         <span class="si-label">Processes</span>
       </div>
       <div class="sidebar-item si-advanced" data-nav="incognito" onclick="openIncognito()" title="Ephemeral scratch agent — skips memory and rules">
-        <span class="si-icon">&#x1F576;&#xFE0F;</span>
+        <span class="si-icon"><svg class="si-svg"><use href="#ic-incognito"/></svg></span>
         <span class="si-label">Incognito</span>
       </div>
     </div>
 
     <div class="sidebar-divider"></div>
     <div class="sidebar-item" data-nav="settings" onclick="sidebarNav('settings')">
-      <span class="si-icon">&#x2699;</span>
+      <span class="si-icon"><svg class="si-svg"><use href="#ic-settings"/></svg></span>
       <span class="si-label">Settings</span>
     </div>
     <div class="sidebar-item" data-nav="power" onclick="openPowerDialog()" title="Power — restart or shut down Clayrune">
-      <span class="si-icon">&#x23FB;</span>
+      <span class="si-icon"><svg class="si-svg"><use href="#ic-power"/></svg></span>
       <span class="si-label">Power</span>
     </div>
     <div class="sidebar-divider"></div>
@@ -657,19 +684,19 @@
      than as a floating FAB (which covered content and forced + off-centre). -->
 <div class="bottom-tab-bar" id="bottom-tab-bar">
   <div class="bottom-tab-item" data-nav="inbox" onclick="openInbox()">
-    <span class="bti-icon">&#x1F514;<span class="bti-badge" id="inbox-badge" hidden></span></span>Inbox
+    <span class="bti-icon"><svg class="bti-svg"><use href="#ic-inbox"/></svg><span class="bti-badge" id="inbox-badge" hidden></span></span>Inbox
   </div>
   <div class="bottom-tab-item" data-nav="search" onclick="openGlobalSearch()">
-    <span class="bti-icon">&#x1F50D;</span>Search
+    <span class="bti-icon"><svg class="bti-svg"><use href="#ic-search"/></svg></span>Search
   </div>
   <div class="bottom-tab-item" data-nav="new" onclick="openNewProjectForm()" title="New project">
-    <span class="bti-icon">&#x2795;</span>New
+    <span class="bti-icon"><svg class="bti-svg"><use href="#ic-plus"/></svg></span>New
   </div>
   <div class="bottom-tab-item" data-nav="claydo" onclick="openClaydo()" title="Ask Claydo">
     <span class="bti-icon bti-claydo"><img src="/assets/claydo-idle.webp" alt="" draggable="false"></span>Claydo
   </div>
   <div class="bottom-tab-item" data-nav="you" onclick="sidebarNav('settings')">
-    <span class="bti-icon">&#x1F464;</span>You
+    <span class="bti-icon"><svg class="bti-svg"><use href="#ic-user"/></svg></span>You
   </div>
 </div>
 

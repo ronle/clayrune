@@ -357,6 +357,13 @@
     align-items: center; justify-content: center;
     font-size: 16px; flex-shrink: 0;
   }
+  /* Lucide-style stroke icons (sprite in index.html). fill:none + currentColor
+     means each icon inherits the sidebar item's text/hover/active color. */
+  .si-svg {
+    width: 20px; height: 20px; display: block;
+    fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
   .sidebar-item .si-label { opacity: 0; transition: opacity 0.15s; }
   .sidebar:hover .si-label, .sidebar.expanded .si-label { opacity: 1; }
   .sidebar-divider { height: 1px; background: var(--border); margin: 8px 14px; }
@@ -2187,6 +2194,11 @@
   }
   .bottom-tab-item.active { color: var(--accent); }
   .bottom-tab-item .bti-icon { font-size: 18px; margin-bottom: 2px; position: relative; }
+  .bti-svg {
+    width: 22px; height: 22px; display: block;
+    fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
   .bti-badge {
     position: absolute; top: -5px; right: -11px;
     min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
