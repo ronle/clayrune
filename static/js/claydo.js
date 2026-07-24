@@ -252,8 +252,8 @@ function _claydoResetConversation(mode) {
 
   const chips = mode === 'ask'
     ? `<div class="claydo-chips">
-         <button class="claydo-chip" onclick="setClaydoMode('prompt')">&#x270D;&#xFE0F; Help me write a prompt</button>
-         <button class="claydo-chip" onclick="setClaydoMode('character')">&#x1F3AD; Create an agent character</button>
+         <button class="claydo-chip" onclick="setClaydoMode('prompt')"><span class="claydo-chip-ico">&#x270D;&#xFE0F;</span> Help me write a prompt</button>
+         <button class="claydo-chip" onclick="setClaydoMode('character')"><span class="claydo-chip-ico">&#x1F3AD;</span> Create an agent character</button>
        </div>`
     : '';
   histDiv.innerHTML = `<div class="claydo-msg bot">${ui.greeting}</div>${chips}`;

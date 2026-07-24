@@ -5744,11 +5744,14 @@
     align-self: flex-start; max-width: 92%;
   }
   .claydo-chip {
+    display: inline-flex; align-items: center; gap: 7px;
     background: var(--surface2); border: 1px solid var(--border);
     color: var(--text); padding: 7px 14px; border-radius: 16px;
     cursor: pointer; font-size: 12px; font-family: inherit;
     transition: border-color 0.15s, transform 0.15s;
   }
+  /* Bump just the emoji so it's legible at the 12px chip text size. */
+  .claydo-chip-ico { font-size: 18px; line-height: 1; }
   .claydo-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
   .claydo-chip-back { color: var(--text-faint); }
   .claydo-home-btn {
