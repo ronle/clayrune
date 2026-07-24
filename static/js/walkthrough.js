@@ -320,31 +320,31 @@ function wtDemoMenuHTML() {
         </div>
           <div class="modal-menu-dropdown" style="display:block;pointer-events:none;position:absolute;top:44px;right:8px;min-width:220px;z-index:50">
             <button class="modal-menu-item wt-menu-status" style="pointer-events:none">
-              <span class="menu-icon">&#x25CF;</span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-status"/></svg></span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
             </button>
             <button class="modal-menu-item" style="pointer-events:none">
-              <span class="menu-icon">&#x1F3A8;</span> Appearance <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-appearance"/></svg></span> Appearance <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
             </button>
             <button class="modal-menu-item" style="pointer-events:none">
-              <span class="menu-icon">&#x270E;</span> Edit Profile&#8230;
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-edit"/></svg></span> Edit Profile&#8230;
             </button>
             <button class="modal-menu-item wt-menu-model" style="pointer-events:none">
-              <span class="menu-icon">&#x2699;</span> Agent Settings <span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-settings"/></svg></span> Agent Settings <span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>
             </button>
             <div class="modal-menu-sep"></div>
             <button class="modal-menu-item wt-menu-github" style="pointer-events:none">
-              <span class="menu-icon">&#x1F517;</span> GitHub Sync <span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-github"/></svg></span> GitHub Sync <span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span> <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
             </button>
             <div class="modal-menu-sep"></div>
             <button class="modal-menu-item" style="pointer-events:none">
-              <span class="menu-icon">&#x1F4DD;</span> Memory
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-memory"/></svg></span> Memory
             </button>
             <button class="modal-menu-item" style="pointer-events:none">
-              <span class="menu-icon">&#x1F4DC;</span> Rules
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-rules"/></svg></span> Rules
             </button>
             <div class="modal-menu-sep"></div>
             <button class="modal-menu-item danger" style="pointer-events:none">
-              <span class="menu-icon">&#x1F5D1;</span> Delete Project
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-trash"/></svg></span> Delete Project
             </button>
           </div>
         <div class="card-title-row">

@@ -693,7 +693,7 @@ function _renderProfileDialog() {
     </div>
     <div class="settings-row">
       <div><div class="settings-label">Auto-generate</div><div class="settings-hint">Agent writes the summary + emoji from the project files</div></div>
-      <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="closeProfileDialog();generateProjectProfile('${esc(p.id)}')">&#x2728; ${p.summary ? 'Regenerate' : 'Generate'}</button>
+      <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text);display:inline-flex;align-items:center;gap:6px;justify-content:center" onclick="closeProfileDialog();generateProjectProfile('${esc(p.id)}')"><svg class="menu-svg"><use href="#ic-sparkle"/></svg> ${p.summary ? 'Regenerate' : 'Generate'}</button>
     </div>
     <div class="mc-dialog-footer">
       <button class="btn-dispatch" style="background:var(--surface3);border-color:var(--border2);color:var(--text)" onclick="closeProfileDialog()">Cancel</button>
@@ -906,13 +906,13 @@ function renderCommandResults(query) {
 
   // Actions group
   const actions = [
-    { text: 'New Project', icon: '&#x2B;', action: () => { toggleCommandPalette(); openNewProjectForm(); } },
-    { text: 'Open Incognito', icon: '&#x1F576;', action: () => { toggleCommandPalette(); openIncognito(); } },
-    { text: 'Open Scheduler', icon: '&#x23F1;', action: () => { toggleCommandPalette(); openScheduler(); } },
-    { text: 'Settings', icon: '&#x2699;', action: () => { toggleCommandPalette(); openSettings(); } },
-    { text: 'Shared Rules', icon: '&#x1F4DC;', action: () => { toggleCommandPalette(); openSharedRulesEditor(); } },
-    { text: 'Processes', icon: '&#x2630;', action: () => { toggleCommandPalette(); openProcessManager(); } },
-    { text: 'Minimize All', icon: '&#x1F5D4;', action: () => { toggleCommandPalette(); showDesktop(); } },
+    { text: 'New Project', icon: '<svg class="menu-svg"><use href="#ic-plus"/></svg>', action: () => { toggleCommandPalette(); openNewProjectForm(); } },
+    { text: 'Open Incognito', icon: '<svg class="menu-svg"><use href="#ic-incognito"/></svg>', action: () => { toggleCommandPalette(); openIncognito(); } },
+    { text: 'Open Scheduler', icon: '<svg class="menu-svg"><use href="#ic-automation"/></svg>', action: () => { toggleCommandPalette(); openScheduler(); } },
+    { text: 'Settings', icon: '<svg class="menu-svg"><use href="#ic-settings"/></svg>', action: () => { toggleCommandPalette(); openSettings(); } },
+    { text: 'Shared Rules', icon: '<svg class="menu-svg"><use href="#ic-rules"/></svg>', action: () => { toggleCommandPalette(); openSharedRulesEditor(); } },
+    { text: 'Processes', icon: '<svg class="menu-svg"><use href="#ic-processes"/></svg>', action: () => { toggleCommandPalette(); openProcessManager(); } },
+    { text: 'Minimize All', icon: '<svg class="menu-svg"><use href="#ic-minimize-all"/></svg>', action: () => { toggleCommandPalette(); showDesktop(); } },
     { text: 'Take Tour', icon: '?', action: () => { toggleCommandPalette(); startWalkthrough(); } },
   ];
   const matchingActions = actions.filter(a => !q || a.text.toLowerCase().includes(q));
@@ -923,10 +923,10 @@ function renderCommandResults(query) {
 
   // View group
   const views = [
-    { text: 'Grid View', icon: '&#x25A6;', action: () => { toggleCommandPalette(); setView('grid'); } },
-    { text: 'List View', icon: '&#x2630;', action: () => { toggleCommandPalette(); setView('list'); } },
-    { text: 'Toggle Compact', icon: '&#x25A6;', action: () => { toggleCommandPalette(); toggleDensity(); } },
-    { text: 'Toggle Feed', icon: '&#x276E;', action: () => { toggleCommandPalette(); toggleFeed(); } },
+    { text: 'Grid View', icon: '<svg class="menu-svg"><use href="#ic-dashboard"/></svg>', action: () => { toggleCommandPalette(); setView('grid'); } },
+    { text: 'List View', icon: '<svg class="menu-svg"><use href="#ic-list"/></svg>', action: () => { toggleCommandPalette(); setView('list'); } },
+    { text: 'Toggle Compact', icon: '<svg class="menu-svg"><use href="#ic-advanced"/></svg>', action: () => { toggleCommandPalette(); toggleDensity(); } },
+    { text: 'Toggle Feed', icon: '<svg class="menu-svg"><use href="#ic-feed"/></svg>', action: () => { toggleCommandPalette(); toggleFeed(); } },
   ];
   const matchingViews = views.filter(v => !q || v.text.toLowerCase().includes(q));
   if (matchingViews.length) {

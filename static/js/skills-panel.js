@@ -63,9 +63,9 @@ function openExtensions(tab) {
     <div class="modal-header" style="display:flex;align-items:center;gap:12px;padding:14px 24px 0 28px">
       <span style="font-size:16px;font-weight:700;color:var(--text)">Extensions</span>
       <div class="ext-tabs">
-        <button class="ext-tab" data-tab="skills" onclick="switchExtTab('skills')">&#x1F9E9; Skills</button>
-        <button class="ext-tab" data-tab="mcp" onclick="switchExtTab('mcp')">&#x1F50C; MCP</button>
-        <button class="ext-tab" data-tab="personas" onclick="switchExtTab('personas')">&#x1F3AD; Personas</button>
+        <button class="ext-tab" data-tab="skills" onclick="switchExtTab('skills')"><svg class="menu-svg" style="display:inline-block;vertical-align:-3px"><use href="#ic-skills"/></svg> Skills</button>
+        <button class="ext-tab" data-tab="mcp" onclick="switchExtTab('mcp')"><svg class="menu-svg" style="display:inline-block;vertical-align:-3px"><use href="#ic-mcp"/></svg> MCP</button>
+        <button class="ext-tab" data-tab="personas" onclick="switchExtTab('personas')"><svg class="menu-svg" style="display:inline-block;vertical-align:-3px"><use href="#ic-personas"/></svg> Personas</button>
       </div>
       <div class="modal-window-controls" style="position:static;display:flex;gap:4px;margin-left:auto">
         <button class="modal-minimize" onclick="minimizeModal('${modalId}')" title="Minimize">&#x2015;</button>
@@ -292,16 +292,16 @@ function _allSkillsBodyHTML() {
           <button class="btn-add" onclick="openSkillEditor('global', '', null, true)">+ New Skill</button>
           <div id="skills-import-menu" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 0;z-index:10;min-width:220px;box-shadow:0 8px 24px rgba(0,0,0,.3)">
             <button class="modal-menu-item" onclick="openSkillImportPaste()" style="width:100%;text-align:left">
-              <span class="menu-icon">&#x1F4CB;</span> Paste SKILL.md
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-paste"/></svg></span> Paste SKILL.md
             </button>
             <button class="modal-menu-item" onclick="openSkillImportFolder()" style="width:100%;text-align:left">
-              <span class="menu-icon">&#x1F4C1;</span> From a folder
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-folder"/></svg></span> From a folder
             </button>
             <button class="modal-menu-item" onclick="openSkillImportGit()" style="width:100%;text-align:left">
-              <span class="menu-icon">&#x1F310;</span> From a Git URL
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-globe"/></svg></span> From a Git URL
             </button>
             <button class="modal-menu-item" onclick="openSkillImportBrowse()" style="width:100%;text-align:left">
-              <span class="menu-icon">&#x1F50D;</span> Browse other projects
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-search"/></svg></span> Browse other projects
             </button>
           </div>
         </div>

@@ -465,27 +465,27 @@ function modalContentHTML(p) {
         <div class="modal-menu-dropdown" id="modal-menu-${esc(p.id)}">
           <div class="mc-tabs-in-menu">
             <button class="modal-menu-item${activeTab==='agent'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','agent')">
-              <span class="menu-icon">&#x25A0;</span> Agent
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-agent"/></svg></span> Agent
             </button>
             <button class="modal-menu-item${activeTab==='backlog'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','backlog')">
-              <span class="menu-icon">&#x2630;</span> Backlog${openItems.length ? `<span class="tab-badge" style="margin-left:auto">${openItems.length}</span>` : ''}
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-backlog"/></svg></span> Backlog${openItems.length ? `<span class="tab-badge" style="margin-left:auto">${openItems.length}</span>` : ''}
             </button>
             <button class="modal-menu-item${activeTab==='agent-log'?' active':''}" data-tab-name="agent-log" onclick="_mcMenuSwitchTab('${esc(p.id)}','agent-log')">
-              <span class="menu-icon">&#x1F4DC;</span> Agent Log
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-log"/></svg></span> Agent Log
             </button>
             <button class="modal-menu-item${activeTab==='plans'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','plans')">
-              <span class="menu-icon">&#x1F4CB;</span> Plans
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-plan"/></svg></span> Plans
             </button>
             <button class="modal-menu-item${activeTab==='activity'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','activity')">
-              <span class="menu-icon">&#x23F1;</span> Activity
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-activity"/></svg></span> Activity
             </button>
             <button class="modal-menu-item${activeTab==='workflows'?' active':''}" onclick="_mcMenuSwitchTab('${esc(p.id)}','workflows')">
-              <span class="menu-icon">&#x26D3;</span> Workflows
+              <span class="menu-icon"><svg class="menu-svg"><use href="#ic-workflow"/></svg></span> Workflows
             </button>
             <div class="modal-menu-sep"></div>
           </div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'status-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x25CF;</span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-status"/></svg></span> Change Status <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
           <div class="modal-menu-sub" id="status-sub-${esc(p.id)}">
             <button class="modal-menu-sub-item${(p.status||'')==='active'?' active':''}" onclick="setProjectStatus('${esc(p.id)}','active')">
@@ -498,7 +498,7 @@ function modalContentHTML(p) {
               <span class="modal-menu-sub-dot" style="background:var(--text-faint)"></span> Parked</button>
           </div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'appearance-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x1F3A8;</span> Appearance <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-appearance"/></svg></span> Appearance <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
           <div class="modal-menu-sub" id="appearance-sub-${esc(p.id)}" style="min-width:230px">
             <div style="padding:4px 8px 6px">
@@ -537,10 +537,10 @@ function modalContentHTML(p) {
             </div>
           </div>
           <button class="modal-menu-item" onclick="_mcMenuClose();openProjectProfileDialog('${esc(p.id)}')">
-            <span class="menu-icon">${p.emoji ? esc(p.emoji) : '&#x270E;'}</span> Edit Profile&#8230;
+            <span class="menu-icon">${p.emoji ? esc(p.emoji) : '<svg class="menu-svg"><use href="#ic-edit"/></svg>'}</span> Edit Profile&#8230;
           </button>
           <button class="modal-menu-item" onclick="_mcMenuClose();openAgentSettingsDialog('${esc(p.id)}')" title="Project defaults — model/effort/provider that SEED new chats here. To change one conversation, use the model pill in its header.">
-            <span class="menu-icon">&#x2699;</span> Agent Settings ${p.agent_model ? `<span style="margin-left:4px;color:var(--accent);font-size:11px" title="Project default model">${esc(_modelShortLabel(p.agent_model))}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>'}
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-settings"/></svg></span> Agent Settings${p.agent_model ? `<span style="margin-left:4px;color:var(--accent);font-size:11px" title="Project default model">${esc(_modelShortLabel(p.agent_model))}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">default</span>'}
           </button>
           ${(() => {
             // Providers not fetched yet — kick a load and refresh this modal
@@ -555,11 +555,11 @@ function modalContentHTML(p) {
           })()}
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item modal-menu-adv-toggle${_advOpen ? ' expanded' : ''}" onclick="toggleModalMenuAdvanced(event,'${esc(p.id)}')">
-            <span class="menu-icon">&#x1F527;</span> Advanced <span class="mmadv-chev" style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-advanced"/></svg></span> Advanced <span class="mmadv-chev" style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
           <div class="modal-menu-advanced-group${_advOpen ? ' expanded' : ''}" id="modal-menu-adv-group-${esc(p.id)}">
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'gh-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x1F517;</span> GitHub Sync ${p.github_sync_enabled ? `<span style="margin-left:4px;color:var(--green);font-size:11px">&#x2713; ${esc(p.github_repo)}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-github"/></svg></span> GitHub Sync${p.github_sync_enabled ? `<span style="margin-left:4px;color:var(--green);font-size:11px">&#x2713; ${esc(p.github_repo)}</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">not connected</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
           <div class="modal-menu-sub" id="gh-sub-${esc(p.id)}" style="min-width:220px">
             ${p.github_sync_enabled ? `
@@ -582,7 +582,7 @@ function modalContentHTML(p) {
             `}
           </div>
           <button class="modal-menu-item" onclick="toggleModalMenuSub(event,'code-sync-sub-${esc(p.id)}')">
-            <span class="menu-icon">&#x1F501;</span> Code Sync ${p.code_sync_enabled ? `<span style="margin-left:4px;color:var(--green);font-size:11px">&#x2713; enabled</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">not enabled</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-sync"/></svg></span> Code Sync${p.code_sync_enabled ? `<span style="margin-left:4px;color:var(--green);font-size:11px">&#x2713; enabled</span>` : '<span style="margin-left:4px;color:var(--text-faint);font-size:11px">not enabled</span>'} <span style="margin-left:auto;color:var(--text-faint);font-size:11px">&#x25B8;</span>
           </button>
           <div class="modal-menu-sub" id="code-sync-sub-${esc(p.id)}" style="min-width:240px">
             ${p.code_sync_enabled ? `
@@ -613,30 +613,30 @@ function modalContentHTML(p) {
           </div>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item mc-adv-memory" onclick="openMemoryModal('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F4DD;</span> Memory
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-memory"/></svg></span> Memory
           </button>
           <button class="modal-menu-item mc-adv-memory" onclick="openRulesModal('${esc(p.id)}')">
-            <span class="menu-icon">&#x2699;</span> Rules
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-rules"/></svg></span> Rules
           </button>
           <button class="modal-menu-item" onclick="openAllSkillsForProject('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F9E9;</span> Skills
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-skills"/></svg></span> Skills
           </button>
           <button class="modal-menu-item" onclick="openAllMCPForProject('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F50C;</span> MCP servers
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-mcp"/></svg></span> MCP servers
           </button>
           <button class="modal-menu-item" onclick="openAllPersonasForProject('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F3AD;</span> Personas
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-personas"/></svg></span> Personas
           </button>
           <button class="modal-menu-item" onclick="_mcMenuClose();openMediaSurface('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F5BC;</span> Media
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-media"/></svg></span> Media
           </button>
           <button class="modal-menu-item" onclick="_mcMenuClose();openAllHivemindsForProject('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F41D;</span> Hiveminds
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-hivemind"/></svg></span> Hiveminds
           </button>
           </div>
           <div class="modal-menu-sep"></div>
           <button class="modal-menu-item danger" onclick="deleteProject('${esc(p.id)}')">
-            <span class="menu-icon">&#x1F5D1;</span> Delete Project
+            <span class="menu-icon"><svg class="menu-svg"><use href="#ic-trash"/></svg></span> Delete Project
           </button>
         </div>
       </div>

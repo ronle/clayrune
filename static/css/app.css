@@ -1190,7 +1190,14 @@
     background: none; width: 100%; text-align: left;
   }
   .modal-menu-item:hover { background: var(--surface3); }
-  .modal-menu-item .menu-icon { width: 16px; text-align: center; color: var(--text-faint); font-size: 14px; }
+  .modal-menu-item .menu-icon { width: 16px; text-align: center; color: var(--text-faint); font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
+  /* Sprite icons inside menus (three-dot menu, command palette, panel tabs).
+     Inherit the menu-icon color so faint/active/danger states carry through. */
+  .menu-svg {
+    width: 15px; height: 15px; display: block;
+    fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
   .modal-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
   /* Collapsible "Advanced" group — mirrors the sidebar's Advanced section. */
   .modal-menu-adv-toggle .mmadv-chev { font-size: 9px; transition: transform 0.15s; }
@@ -5328,7 +5335,7 @@
     cursor: pointer; transition: background 0.1s;
   }
   .cmd-item:hover, .cmd-item.selected { background: var(--accent-dim); }
-  .cmd-item .ci-icon { font-size: 15px; color: var(--text-dim); width: 20px; text-align: center; }
+  .cmd-item .ci-icon { font-size: 15px; color: var(--text-dim); width: 20px; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
   .cmd-item .ci-text { font-size: 13px; color: var(--text); font-weight: 500; }
   .cmd-item .ci-hint {
     margin-left: auto; font-size: 10px; color: var(--text-faint);
